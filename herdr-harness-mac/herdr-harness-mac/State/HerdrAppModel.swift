@@ -4565,7 +4565,9 @@ final class HerdrAppModel {
                     terminalID: pane.terminalID,
                     status: pane.agentStatus,
                     episodeKey: pane.episodeKey,
-                    newDoneAlertID: alertIDByPaneID[pane.paneID]
+                    newDoneAlertID: alertIDByPaneID[pane.paneID],
+                    workingSince: pane.workingSince.map(HerdrTimestamp.string),
+                    piCursor: pane.piSemantic?.cursor
                 ))
             }
         }
@@ -4573,7 +4575,8 @@ final class HerdrAppModel {
             AgentCompletionFeedbackCoordinator.DoneAlertObservation(
                 paneID: alert.paneID,
                 terminalID: terminalIDByPaneID[alert.paneID] ?? alert.paneID,
-                alertID: alert.id
+                alertID: alert.id,
+                createdAt: alert.createdAt
             )
         }
         agentCompletionFeedback.observeFleet(

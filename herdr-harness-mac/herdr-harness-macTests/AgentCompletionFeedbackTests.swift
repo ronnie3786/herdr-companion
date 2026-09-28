@@ -35,6 +35,8 @@ struct AgentCompletionFeedbackTests {
         _ status: AgentStatus,
         episodeKey: String,
         newDoneAlertID: String? = nil,
+        workingSince: String? = nil,
+        piCursor: String? = nil,
         machineID: String = "machine-a",
         paneID: String = "w1:p1",
         terminalID: String = "terminal-1"
@@ -44,7 +46,9 @@ struct AgentCompletionFeedbackTests {
             terminalID: terminalID,
             status: status,
             episodeKey: episodeKey,
-            newDoneAlertID: newDoneAlertID
+            newDoneAlertID: newDoneAlertID,
+            workingSince: workingSince,
+            piCursor: piCursor
         )
     }
 
@@ -57,6 +61,20 @@ struct AgentCompletionFeedbackTests {
         coordinator.observeFleet(machineID: machineID, panes: panes, doneAlerts: alerts)
     }
 
+    private func alert(
+        _ id: String,
+        createdAt: String? = nil,
+        paneID: String = "w1:p1",
+        terminalID: String = "terminal-1"
+    ) -> AgentCompletionFeedbackCoordinator.DoneAlertObservation {
+        AgentCompletionFeedbackCoordinator.DoneAlertObservation(
+            paneID: paneID,
+            terminalID: terminalID,
+            alertID: id,
+            createdAt: createdAt
+        )
+    }
+
     @Test("Prompt start and a historical done result stay silent")
     func submissionAndHistoryAreSilent() {
         let (coordinator, recorder) = makeCoordinator()
@@ -66,9 +84,9 @@ struct AgentCompletionFeedbackTests {
 
         // The user submits; committed work starts with the previous done still
         // displayed and the revision churning.
-        coordinator.piWorkStarted(scope: scope(), sessionID: "s1")
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
         refresh(coordinator, [paneObservation(.done, episodeKey: "e2")])
-        coordinator.piWorkStarted(scope: scope(), sessionID: "s1")
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
 
         #expect(recorder.count == 0)
     }
@@ -78,21 +96,21 @@ struct AgentCompletionFeedbackTests {
         let (coordinator, recorder) = makeCoordinator()
         refresh(coordinator, [paneObservation(.idle, episodeKey: "e0")])
 
-        coordinator.piWorkStarted(scope: scope(), sessionID: "s1")
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 1)
 
-        coordinator.piWorkStarted(scope: scope(), sessionID: "s1")
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 2)
     }
 
     @Test("A settlement whose start was never published still plays once")
     func settlementWithoutPublishedStart() {
         let (coordinator, recorder) = makeCoordinator()
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 1)
     }
 
@@ -100,8 +118,8 @@ struct AgentCompletionFeedbackTests {
     func fleetAfterSettlementIsSilent() {
         let (coordinator, recorder) = makeCoordinator()
         refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
-        coordinator.piWorkStarted(scope: scope(), sessionID: "s1")
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 1)
 
         refresh(coordinator, [paneObservation(.done, episodeKey: "e2")])
@@ -118,11 +136,11 @@ struct AgentCompletionFeedbackTests {
     func settlementAfterFleetIsSilent() {
         let (coordinator, recorder) = makeCoordinator()
         refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
-        coordinator.piWorkStarted(scope: scope(), sessionID: "s1")
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1"))
         refresh(coordinator, [paneObservation(.done, episodeKey: "e2")])
         #expect(recorder.count == 1)
 
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 1)
     }
 
@@ -170,15 +188,180 @@ struct AgentCompletionFeedbackTests {
         // The user acknowledged quickly, so the companion projects the pane as
         // idle while the new completion alert still reports the transition.
         refresh(coordinator, [paneObservation(.idle, episodeKey: "e1")], alerts: [
-            .init(paneID: pane, terminalID: terminal, alertID: "alert-1")
+            alert("alert-1")
         ])
         #expect(recorder.count == 1)
 
         // The same alert observed again is not a second completion.
         refresh(coordinator, [paneObservation(.idle, episodeKey: "e1")], alerts: [
-            .init(paneID: pane, terminalID: terminal, alertID: "alert-1")
+            alert("alert-1")
         ])
         #expect(recorder.count == 1)
+
+        // A new work episode discards the status acknowledgement the projected
+        // idle can never deliver, so the next completion still plays.
+        refresh(coordinator, [paneObservation(
+            .working,
+            episodeKey: "e2",
+            workingSince: "2030-01-01T00:01:00Z"
+        )])
+        refresh(coordinator, [paneObservation(.done, episodeKey: "e3")])
+        #expect(recorder.count == 2)
+    }
+
+    @Test("An alert before its debounced done transition shares one receipt")
+    func alertBeforeDoneTransitionIsSilent() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
+        // The server publishes the alert first; the cached pane still reads
+        // working until the next refresh.
+        refresh(coordinator, [
+            paneObservation(.working, episodeKey: "e1", workingSince: "2030-01-01T00:00:00Z")
+        ], alerts: [
+            alert("alert-1", createdAt: "2030-01-01T00:00:01Z")
+        ])
+        #expect(recorder.count == 1)
+
+        // The matching done transition is the same completion, not a new one.
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:00:02Z")])
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn plays its own single cue.
+        refresh(coordinator, [paneObservation(
+            .working,
+            episodeKey: "2030-01-01T00:01:00Z",
+            workingSince: "2030-01-01T00:01:00Z"
+        )])
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:01:05Z")])
+        #expect(recorder.count == 2)
+    }
+
+    @Test("A delayed alert never completes a newer Pi turn")
+    func delayedAlertAfterNewTurnIsSilent() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
+        refresh(coordinator, [paneObservation(.done, episodeKey: "e2")])
+        #expect(recorder.count == 1)
+
+        // The next turn starts before the old completion's alert arrives.
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:00Z")
+        )
+        refresh(coordinator, [
+            paneObservation(.working, episodeKey: "e3", workingSince: "2030-01-01T00:01:00Z")
+        ], alerts: [
+            alert("alert-1", createdAt: "2030-01-01T00:00:02Z")
+        ])
+        #expect(recorder.count == 1)
+
+        // The alert was the previous completion's partner, so the new turn
+        // still cues its own settlement exactly once.
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:05Z")
+        )
+        #expect(recorder.count == 2)
+
+        // The delayed alert repeated is still silent.
+        refresh(coordinator, [paneObservation(.done, episodeKey: "e4")], alerts: [
+            alert("alert-1", createdAt: "2030-01-01T00:00:02Z")
+        ])
+        #expect(recorder.count == 2)
+    }
+
+    @Test("A fleet-first receipt survives a delayed Pi start and settlement replay")
+    func fleetReceiptSurvivesDelayedPiReplay() {
+        let (coordinator, recorder) = makeCoordinator()
+        let completedAt = "2030-01-01T00:00:10Z"
+        refresh(coordinator, [paneObservation(.working, episodeKey: "2030-01-01T00:00:00Z")])
+        refresh(coordinator, [paneObservation(.done, episodeKey: completedAt)])
+        #expect(recorder.count == 1)
+
+        // The stream resumes and replays the already-completed turn. Both
+        // events predate the fleet completion evidence, so the receipt stays.
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:05Z", cursor: "10")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:06Z", cursor: "11")
+        )
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn is newer than the receipt and plays once.
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:00Z", cursor: "20")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:05Z", cursor: "21")
+        )
+        #expect(recorder.count == 2)
+    }
+
+    @Test("The same delayed Pi replay after a fleet alert claim stays silent")
+    func delayedPiReplayAfterAlertClaim() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e1")], alerts: [
+            alert("alert-1", createdAt: "2030-01-01T00:00:10Z")
+        ])
+        #expect(recorder.count == 1)
+
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:05Z")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:06Z")
+        )
+        #expect(recorder.count == 1)
+
+        // A later turn still cues.
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:00Z")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:05Z")
+        )
+        #expect(recorder.count == 2)
+    }
+
+    @Test("A fleet-first receipt survives a delayed Pi replay by journal cursor")
+    func fleetReceiptSurvivesDelayedPiReplayByCursor() {
+        let (coordinator, recorder) = makeCoordinator()
+        // The completion timestamp is not parseable, so only the committed
+        // journal cursor can prove the delayed start belongs to this receipt.
+        refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
+        refresh(coordinator, [paneObservation(.done, episodeKey: "e2", piCursor: "11")])
+        #expect(recorder.count == 1)
+
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", cursor: "10")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", cursor: "11")
+        )
+        #expect(recorder.count == 1)
+
+        // A later turn past the receipted watermark still cues once.
+        coordinator.piWorkStarted(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", cursor: "20")
+        )
+        coordinator.piWorkSettled(
+            scope: scope(),
+            evidence: .init(sessionID: "s1", cursor: "21")
+        )
+        #expect(recorder.count == 2)
     }
 
     @Test("Two machines with identical raw pane ids stay independent")
@@ -252,13 +435,13 @@ struct AgentCompletionFeedbackTests {
         let (coordinator, recorder) = makeCoordinator()
         refresh(coordinator, [paneObservation(.working, episodeKey: "e1")])
         refresh(coordinator, [paneObservation(.done, episodeKey: "e2", newDoneAlertID: "alert-1")])
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 1)
 
         // Every later replay of the same evidence is a duplicate.
         refresh(coordinator, [paneObservation(.done, episodeKey: "e2", newDoneAlertID: "alert-1")])
         refresh(coordinator, [paneObservation(.done, episodeKey: "e2")])
-        coordinator.piWorkSettled(scope: scope(), sessionID: "s1")
+        coordinator.piWorkSettled(scope: scope(), evidence: .init(sessionID: "s1"))
         #expect(recorder.count == 1)
     }
 }

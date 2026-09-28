@@ -8,16 +8,21 @@ import Foundation
 /// therefore be heard twice, and a prompt submission could be mistaken for a
 /// finish. Every source now reports evidence here instead:
 ///
-/// - committed Pi settlement from `PiConversationStore`,
+/// - committed Pi settlement and committed Pi work starts from
+///   `PiConversationStore`,
 /// - successful fleet refreshes and fresh completion alerts from `HerdrAppModel`,
 /// - terminal user-facing headless runs from `HeadlessAgentController`.
 ///
 /// Evidence is scoped to a machine and a pane/terminal identity, with the Pi
 /// session recorded per work episode, and each episode carries at most one
-/// receipt, so the same completion observed by several sources still requests
-/// exactly one playback. No global time window is involved: receipts are keyed
-/// to actual identities and dropped only at identity boundaries (a new
-/// connection generation, a recreated pane, or a pane that left the fleet).
+/// receipt. One completion normally produces two fleet observations - the
+/// `working → done` transition and the done alert, published by the server at
+/// different times - and both must share the single receipt. The coordinator
+/// therefore tracks a separately acknowledged expectation per channel instead
+/// of treating the second observation as a new completion. Pi starts carry the
+/// committed event's server timestamp and cursor so a replay after a
+/// disconnected stream can be ordered against a completion the fleet already
+/// receipted, instead of replacing that receipt.
 ///
 /// The coordinator lives on `HerdrAppModel`, so completion ownership survives
 /// the main window closing. `playback` is injectable so tests record requests
@@ -39,6 +44,30 @@ final class AgentCompletionFeedbackCoordinator {
         }
     }
 
+    /// Identifiable provenance for one committed Pi lifecycle observation.
+    ///
+    /// `observedAt` is the envelope's `generated_at`, written by the same
+    /// server clock that timestamps fleet pane activity and alerts, and
+    /// `cursor` is the committed journal cursor. Together they identify the
+    /// event without relying on a local elapsed-time window.
+    struct PiWorkEvidence: Equatable, Sendable {
+        let sessionID: String?
+        let observedAt: String?
+        let cursor: String?
+
+        init(sessionID: String? = nil, observedAt: String? = nil, cursor: String? = nil) {
+            self.sessionID = sessionID
+            self.observedAt = observedAt
+            self.cursor = cursor
+        }
+
+        static let none = PiWorkEvidence()
+
+        var date: Date? {
+            observedAt.flatMap(HerdrTimestamp.date(from:))
+        }
+    }
+
     /// One pane as a successful fleet refresh reported it.
     struct FleetObservation: Equatable, Sendable {
         let paneID: String
@@ -51,6 +80,32 @@ final class AgentCompletionFeedbackCoordinator {
         /// A completion alert this refresh reported for the first time for this
         /// pane. The server creates one alert per transition into `.done`.
         let newDoneAlertID: String?
+        /// `HerdrPane.workingSince`: unlike `episodeKey`, it does not move on
+        /// revision churn inside one work episode, so a changed value proves a
+        /// new episode began.
+        let workingSince: String?
+        /// The pane's latest committed Pi journal cursor (`pi_semantic.cursor`)
+        /// at this observation, used to order a replayed Pi start against the
+        /// receipted completion.
+        let piCursor: String?
+
+        init(
+            paneID: String,
+            terminalID: String,
+            status: AgentStatus,
+            episodeKey: String,
+            newDoneAlertID: String? = nil,
+            workingSince: String? = nil,
+            piCursor: String? = nil
+        ) {
+            self.paneID = paneID
+            self.terminalID = terminalID
+            self.status = status
+            self.episodeKey = episodeKey
+            self.newDoneAlertID = newDoneAlertID
+            self.workingSince = workingSince
+            self.piCursor = piCursor
+        }
     }
 
     /// A fresh `.done` alert whose pane was not reported as `.done` this time
@@ -59,6 +114,21 @@ final class AgentCompletionFeedbackCoordinator {
         let paneID: String
         let terminalID: String
         let alertID: String
+        /// The alert's server timestamp, used as the completion time when the
+        /// pane transition itself was not observed.
+        let createdAt: String?
+
+        init(
+            paneID: String,
+            terminalID: String,
+            alertID: String,
+            createdAt: String? = nil
+        ) {
+            self.paneID = paneID
+            self.terminalID = terminalID
+            self.alertID = alertID
+            self.createdAt = createdAt
+        }
     }
 
     typealias Playback = @MainActor () -> Void
@@ -67,20 +137,40 @@ final class AgentCompletionFeedbackCoordinator {
     /// sound; tests substitute a recording closure.
     var playback: Playback
 
-    /// One finished piece of work. `pendingFleetAcknowledgements` counts Pi
-    /// settlements whose matching fleet observation has not arrived yet: both
-    /// sources describe the same run, so the first fleet completion evidence
-    /// after a settlement consumes one acknowledgement instead of playing a
-    /// second cue.
+    /// One finished piece of work and the acknowledgements it still expects.
+    ///
+    /// The counters make the two server-side fleet observations of one
+    /// completion idempotent:
+    /// - `pendingPiAcknowledgements`: a committed Pi settlement already played,
+    ///   so the first fleet evidence for the same run consumes one instead of
+    ///   playing again.
+    /// - `pendingAlertAcknowledgements`: a `working → done` transition already
+    ///   played, so its alert consumes one instead of claiming a new completion
+    ///   even when it arrives after a later turn started.
+    /// - `pendingStatusAcknowledgements`: an alert already played, so the
+    ///   matching done transition consumes one. A changed `workingSince`
+    ///   discards these, because that transition can no longer arrive.
     private struct Episode {
         var sessionID: String?
-        var isComplete: Bool
-        var pendingFleetAcknowledgements: Int
+        var isComplete = false
+        /// Server completion time of the receipted completion. A Pi work start
+        /// at or before this instant belongs to the receipted episode, not to a
+        /// newer turn.
+        var completedAt: Date?
+        /// The latest committed Pi journal cursor covered by the receipt. A Pi
+        /// work start at or before this cursor is the receipted episode's own
+        /// replay, even when its timestamp cannot be compared.
+        var completedPiCursor: String?
+        var pendingPiAcknowledgements = 0
+        var pendingAlertAcknowledgements = 0
+        var pendingStatusAcknowledgements = 0
     }
 
     private struct PaneState {
         var episode: Episode?
         var fleetStatus: AgentStatus?
+        var workingSince: String?
+        var observedPiCursor: String?
         var seenDoneEpisodeKeys: [String] = []
         var consumedDoneAlertIDs: [String] = []
     }
@@ -90,12 +180,17 @@ final class AgentCompletionFeedbackCoordinator {
         let runID: String
     }
 
+    private enum FleetChannel {
+        case status
+        case alert
+    }
+
     /// How many recent episode keys or alert ids one pane remembers. Bounded so
     /// a long-lived process cannot grow without limit while still outliving any
     /// realistic delayed duplicate observation.
     private static let recentEvidenceLimit = 8
     /// How many acknowledgement slots one pane can carry across a carry-over
-    /// into a newer episode. More than this means the fleet path is not
+    /// into a newer episode. More than this means the matching channel is not
     /// observing the pane, and suppressing every later completion would hide
     /// real work.
     private static let acknowledgementLimit = 2
@@ -136,51 +231,83 @@ final class AgentCompletionFeedbackCoordinator {
 
     /// Committed work started: a published working phase, or a snapshot that
     /// restored an already-active run. Start evidence never plays a cue.
-    func piWorkStarted(scope: PaneScope, sessionID: String?) {
+    func piWorkStarted(scope: PaneScope, evidence: PiWorkEvidence = .none) {
         var state = paneStates[scope] ?? PaneState()
-        if var episode = state.episode,
-           !episode.isComplete,
-           episode.sessionID == nil || sessionID == nil || episode.sessionID == sessionID {
-            if episode.sessionID == nil { episode.sessionID = sessionID }
+        if var episode = state.episode {
+            if !episode.isComplete,
+               episode.sessionID == nil || evidence.sessionID == nil || episode.sessionID == evidence.sessionID {
+                if episode.sessionID == nil { episode.sessionID = evidence.sessionID }
+                state.episode = episode
+                paneStates[scope] = state
+                return
+            }
+            if isReplayedStart(episode: episode, evidence: evidence) {
+                // The committed stream resumed and replayed the start of the
+                // episode the fleet already receipted. Keep the receipt so the
+                // replayed settlement cannot play a second cue.
+                if episode.sessionID == nil { episode.sessionID = evidence.sessionID }
+                state.episode = episode
+                paneStates[scope] = state
+                return
+            }
+            // A newer turn (or a different Pi session). Fleet acknowledgement
+            // counters carry over so delayed evidence for the previous
+            // completion consumes its slot instead of completing this turn.
+            episode.sessionID = evidence.sessionID
+            episode.isComplete = false
+            episode.completedAt = nil
+            episode.completedPiCursor = nil
             state.episode = episode
             paneStates[scope] = state
             return
         }
-        // A newer turn (or a different Pi session) replaces the finished
-        // episode. Any settlement still waiting for its fleet observation is
-        // carried over so an old done result cannot finish this new turn.
-        state.episode = Episode(
-            sessionID: sessionID,
-            isComplete: false,
-            pendingFleetAcknowledgements: state.episode?.pendingFleetAcknowledgements ?? 0
-        )
+        state.episode = Episode(sessionID: evidence.sessionID)
         paneStates[scope] = state
+    }
+
+    /// A completed receipt absorbs a Pi start that the fleet already covered.
+    /// The recorded completion instant decides whenever both sides have one;
+    /// only when that instant is unavailable does the committed journal cursor
+    /// order the start against the receipt's watermark.
+    private func isReplayedStart(episode: Episode, evidence: PiWorkEvidence) -> Bool {
+        guard episode.isComplete else { return false }
+        if let startedAt = evidence.date, let completedAt = episode.completedAt {
+            return startedAt <= completedAt
+        }
+        if let cursor = evidence.cursor.flatMap(Int64.init),
+           let completedCursor = episode.completedPiCursor.flatMap(Int64.init) {
+            return cursor <= completedCursor
+        }
+        return false
     }
 
     /// Committed Pi settlement: an `agent_settled` that the committed reducer
     /// applied while the published phase was working. Failure, cancellation,
     /// private recovery replay, and historical snapshots never reach this.
-    func piWorkSettled(scope: PaneScope, sessionID: String?) {
+    func piWorkSettled(scope: PaneScope, evidence: PiWorkEvidence = .none) {
         var state = paneStates[scope] ?? PaneState()
-        if let episode = state.episode, episode.isComplete {
-            // The episode already owns a receipt: a delayed duplicate.
+        var episode = state.episode ?? Episode()
+        if episode.isComplete {
+            // The episode already owns a receipt: a delayed duplicate, or the
+            // Pi evidence for a completion the fleet observed first.
+            state.episode = episode
             paneStates[scope] = state
             return
         }
-        var episode = state.episode ?? Episode(
-            sessionID: sessionID,
-            isComplete: false,
-            pendingFleetAcknowledgements: 0
-        )
-        if let sessionID, let episodeSession = episode.sessionID, episodeSession != sessionID {
+        if let sessionID = evidence.sessionID,
+           let episodeSession = episode.sessionID,
+           episodeSession != sessionID {
             // Settlement for an earlier session must not complete newer work.
+            state.episode = episode
             paneStates[scope] = state
             return
         }
-        if episode.sessionID == nil { episode.sessionID = sessionID }
+        if episode.sessionID == nil { episode.sessionID = evidence.sessionID }
         episode.isComplete = true
-        episode.pendingFleetAcknowledgements = min(
-            episode.pendingFleetAcknowledgements + 1,
+        if let completedAt = evidence.date { episode.completedAt = completedAt }
+        if let cursor = evidence.cursor { episode.completedPiCursor = cursor }
+        episode.pendingPiAcknowledgements = min(
+            episode.pendingPiAcknowledgements + 1,
             Self.acknowledgementLimit
         )
         state.episode = episode
@@ -229,13 +356,15 @@ final class AgentCompletionFeedbackCoordinator {
         var state = paneStates[scope] ?? PaneState()
         let previousStatus = state.fleetStatus
         state.fleetStatus = pane.status
+        if let piCursor = pane.piCursor { state.observedPiCursor = piCursor }
 
         guard pane.status == .done else {
-            // Working, blocked, idle, and shell panes only update the
-            // transition baseline. Starting work is silent.
+            observeNonDoneStatus(pane, previousStatus: previousStatus, state: &state)
             paneStates[scope] = state
             return
         }
+        // Leaving `working` ends the episode `workingSince` describes.
+        state.workingSince = nil
 
         let freshEpisodeKey = !state.seenDoneEpisodeKeys.contains(pane.episodeKey)
         let freshAlert = pane.newDoneAlertID.map { !state.consumedDoneAlertIDs.contains($0) } ?? false
@@ -244,20 +373,60 @@ final class AgentCompletionFeedbackCoordinator {
             appendBounded(alertID, to: &state.consumedDoneAlertIDs)
         }
 
-        let transitionedFromWork = previousStatus == .working || previousStatus == .blocked
+        let statusEvidence = freshEpisodeKey && (previousStatus == .working || previousStatus == .blocked)
         // A repeated done status is never fresh evidence. The transition proves
         // work was in flight; a brand-new completion alert proves the companion
         // observed a transition even when no poll caught the working state.
-        guard freshAlert || (freshEpisodeKey && transitionedFromWork) else {
+        guard statusEvidence || freshAlert else {
             paneStates[scope] = state
             return
         }
-        // Consume the evidence even while seeding a baseline, so a later
-        // replayed observation cannot play it. Only a post-baseline
-        // observation is allowed to make the receipt audible.
-        let shouldPlay = claimFleetCompletion(&state)
+        let shouldPlay: Bool
+        if statusEvidence {
+            shouldPlay = receiveFleetCompletion(
+                &state,
+                channel: .status,
+                partnerIncluded: freshAlert,
+                completedAt: pane.episodeKey,
+                piCursor: state.observedPiCursor
+            )
+        } else {
+            // The done status confirms the pane's completion instant even when
+            // only its alert is new to the coordinator.
+            shouldPlay = receiveFleetCompletion(
+                &state,
+                channel: .alert,
+                partnerIncluded: false,
+                completedAt: pane.episodeKey,
+                piCursor: state.observedPiCursor
+            )
+        }
         paneStates[scope] = state
         if shouldPlay && !isBaseline { playback() }
+    }
+
+    /// Tracks work-episode boundaries without claiming a completion. A new
+    /// `workingSince` discards alert-claimed status acknowledgements whose done
+    /// transition was superseded, so they cannot silence the new episode.
+    private func observeNonDoneStatus(
+        _ pane: FleetObservation,
+        previousStatus: AgentStatus?,
+        state: inout PaneState
+    ) {
+        guard pane.status == .working else {
+            state.workingSince = nil
+            return
+        }
+        let newEpisode: Bool
+        if let workingSince = pane.workingSince {
+            newEpisode = state.workingSince != workingSince
+            state.workingSince = workingSince
+        } else {
+            newEpisode = previousStatus != .working
+        }
+        if newEpisode, state.episode != nil {
+            state.episode?.pendingStatusAcknowledgements = 0
+        }
     }
 
     private func observeDoneAlert(
@@ -274,7 +443,13 @@ final class AgentCompletionFeedbackCoordinator {
         appendBounded(alert.alertID, to: &state.consumedDoneAlertIDs)
         // Consume the evidence even while seeding a baseline; only a later
         // observation may play the receipt.
-        let shouldPlay = claimFleetCompletion(&state)
+        let shouldPlay = receiveFleetCompletion(
+            &state,
+            channel: .alert,
+            partnerIncluded: false,
+            completedAt: alert.createdAt,
+            piCursor: state.observedPiCursor
+        )
         paneStates[scope] = state
         if shouldPlay && !isBaseline { playback() }
     }
@@ -282,27 +457,68 @@ final class AgentCompletionFeedbackCoordinator {
     /// Applies one piece of fresh fleet completion evidence to a pane. The
     /// caller has already recorded the evidence itself, so a replayed
     /// observation cannot reach this again. Returns whether the cue should
-    /// play; a pending Pi settlement consumes the evidence instead.
-    private func claimFleetCompletion(_ state: inout PaneState) -> Bool {
-        if var episode = state.episode {
-            if episode.pendingFleetAcknowledgements > 0 {
-                // The committed Pi settlement already played for this run.
-                episode.pendingFleetAcknowledgements -= 1
-                state.episode = episode
-                return false
-            }
-            if !episode.isComplete {
-                episode.isComplete = true
-                state.episode = episode
-                return true
-            }
+    /// play; a pending acknowledgement consumes the evidence instead.
+    private func receiveFleetCompletion(
+        _ state: inout PaneState,
+        channel: FleetChannel,
+        partnerIncluded: Bool,
+        completedAt: String?,
+        piCursor: String?
+    ) -> Bool {
+        var episode = state.episode ?? Episode()
+
+        // The matching observation for a completion already receipted through
+        // the other fleet channel: consume it without claiming a new episode.
+        switch channel {
+        case .status where episode.pendingStatusAcknowledgements > 0:
+            episode.pendingStatusAcknowledgements -= 1
+            state.episode = episode
+            return false
+        case .alert where episode.pendingAlertAcknowledgements > 0:
+            episode.pendingAlertAcknowledgements -= 1
+            state.episode = episode
+            return false
+        default:
+            break
         }
-        state.episode = Episode(
-            sessionID: nil,
-            isComplete: true,
-            pendingFleetAcknowledgements: 0
-        )
+
+        // The committed Pi settlement already played for this run.
+        if episode.pendingPiAcknowledgements > 0 {
+            episode.pendingPiAcknowledgements -= 1
+            if !partnerIncluded {
+                recordExpectation(for: channel, in: &episode)
+            }
+            state.episode = episode
+            return false
+        }
+
+        // First evidence for this completion. Record the other channel's
+        // expectation unless it arrived in the same refresh.
+        episode.isComplete = true
+        if let completedAt, let date = HerdrTimestamp.date(from: completedAt) {
+            episode.completedAt = date
+        }
+        if let piCursor { episode.completedPiCursor = piCursor }
+        if !partnerIncluded {
+            recordExpectation(for: channel, in: &episode)
+        }
+        state.episode = episode
         return true
+    }
+
+    private func recordExpectation(for channel: FleetChannel, in episode: inout Episode) {
+        switch channel {
+        case .status:
+            episode.pendingAlertAcknowledgements = min(
+                episode.pendingAlertAcknowledgements + 1,
+                Self.acknowledgementLimit
+            )
+        case .alert:
+            episode.pendingStatusAcknowledgements = min(
+                episode.pendingStatusAcknowledgements + 1,
+                Self.acknowledgementLimit
+            )
+        }
     }
 
     // MARK: User-facing headless runs

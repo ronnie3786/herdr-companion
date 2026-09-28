@@ -54,7 +54,22 @@ struct AgentCompletionFeedbackIntegrationTests {
         eventsContinuation?.yield(try Self.streamEvent(3, #"{"type":"agent_settled"}"#))
         try await Self.waitUntil { recorder.count == 1 }
 
-        // The fleet observes the same completion; the receipt already exists.
+        // The fleet observes work starting for the same run. That working
+        // transition makes the later done refresh independently able to claim
+        // a completion, so this exercises the shared receipt rather than a
+        // refresh that could never play on its own.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:04Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 1)
+
+        // The fleet observes the same completion; the committed settlement
+        // receipt consumes the transition instead of playing again.
         CompletionFleetURLProtocol.state.withLock {
             $0 = CompletionFleetProtocolState(paneStatus: "done", lastActivityAt: "2030-01-01T00:00:05Z", alerts: [])
         }
@@ -275,6 +290,234 @@ struct AgentCompletionFeedbackIntegrationTests {
         #expect(recorder.count == 1)
     }
 
+    @Test("A fleet alert published before its done transition shares one receipt")
+    func fleetAlertBeforeDoneTransitionSharesReceipt() async throws {
+        let fixture = try ModelFixture()
+        defer { fixture.cleanUp() }
+        let recorder = CompletionFeedbackRecorder()
+        fixture.model.agentCompletionFeedback.playback = { recorder.record() }
+        let client = fixture.fleetClient()
+        let generation = fixture.model.connectionGeneration
+
+        // Baseline idle.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "idle", lastActivityAt: "2030-01-01T00:00:00Z", alerts: [])
+        }
+        try await fixture.model.refresh(machineID: fixture.machine.id, using: client, expectedGeneration: generation)
+        #expect(recorder.count == 0)
+
+        // Work starts.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:01Z", alerts: [])
+        }
+        try await fixture.model.refresh(machineID: fixture.machine.id, using: client, expectedGeneration: generation)
+        #expect(recorder.count == 0)
+
+        // The server publishes the alert before the debounced snapshot reports
+        // the done transition, so the cached pane still reads working.
+        let doneAlert = Self.alertJSON(id: "a1", status: "done", createdAt: "2030-01-01T00:00:02Z")
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:01Z", alerts: [doneAlert])
+        }
+        try await fixture.model.refresh(machineID: fixture.machine.id, using: client, expectedGeneration: generation)
+        #expect(recorder.count == 1)
+
+        // The following done transition is the same completion, not a new one.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "done", lastActivityAt: "2030-01-01T00:00:02Z", alerts: [doneAlert])
+        }
+        try await fixture.model.refresh(machineID: fixture.machine.id, using: client, expectedGeneration: generation)
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn plays its own single cue.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:01:00Z", alerts: [doneAlert])
+        }
+        try await fixture.model.refresh(machineID: fixture.machine.id, using: client, expectedGeneration: generation)
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "done", lastActivityAt: "2030-01-01T00:01:05Z", alerts: [doneAlert])
+        }
+        try await fixture.model.refresh(machineID: fixture.machine.id, using: client, expectedGeneration: generation)
+        #expect(recorder.count == 2)
+    }
+
+    @Test("A fleet-first receipt survives a delayed Pi start and settlement replay")
+    func fleetFirstReceiptSurvivesDelayedPiReplay() async throws {
+        let fixture = try ModelFixture()
+        defer { fixture.cleanUp() }
+        let recorder = CompletionFeedbackRecorder()
+        fixture.model.agentCompletionFeedback.playback = { recorder.record() }
+        let pane = Self.testPane()
+
+        // Baseline idle.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "idle", lastActivityAt: "2030-01-01T00:00:00Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 0)
+
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        var eventsContinuation: AsyncThrowingStream<PiConversationStreamEvent, any Error>.Continuation?
+        store.snapshotProvider = { _ in try Self.snapshot(prompt: "Earlier answer") }
+        store.eventsProvider = { _, _ in
+            AsyncThrowingStream { continuation in eventsContinuation = continuation }
+        }
+        let follow = Task { @MainActor in
+            await store.follow(model: fixture.model, pane: pane)
+        }
+        defer {
+            follow.cancel()
+            eventsContinuation?.finish()
+        }
+
+        try await Self.waitUntil { store.sessionID == "s1" && !store.turns.isEmpty }
+        #expect(recorder.count == 0)
+
+        // The fleet observes the whole run while the stream is disconnected.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:01Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 0)
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "done", lastActivityAt: "2030-01-01T00:00:10Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 1)
+
+        // The committed stream resumes and replays the same turn. Both events
+        // predate the fleet completion, so the existing receipt stays single.
+        eventsContinuation?.yield(try Self.streamEvent(
+            2,
+            #"{"type":"agent_start"}"#,
+            generatedAt: "2030-01-01T00:00:05Z"
+        ))
+        eventsContinuation?.yield(try Self.streamEvent(
+            3,
+            #"{"type":"agent_settled"}"#,
+            generatedAt: "2030-01-01T00:00:06Z"
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(recorder.count == 1)
+
+        // A genuinely later turn is newer than the receipt and plays once.
+        eventsContinuation?.yield(try Self.streamEvent(
+            4,
+            #"{"type":"agent_start"}"#,
+            generatedAt: "2030-01-01T00:01:00Z"
+        ))
+        try await Self.waitUntil { store.phase == .working }
+        eventsContinuation?.yield(try Self.streamEvent(
+            5,
+            #"{"type":"agent_settled"}"#,
+            generatedAt: "2030-01-01T00:01:05Z"
+        ))
+        try await Self.waitUntil { recorder.count == 2 }
+
+        follow.cancel()
+        eventsContinuation?.finish()
+        await follow.value
+    }
+
+    @Test("A delayed fleet alert never completes a newer Pi turn")
+    func delayedFleetAlertDoesNotCompleteNewPiTurn() async throws {
+        let fixture = try ModelFixture()
+        defer { fixture.cleanUp() }
+        let recorder = CompletionFeedbackRecorder()
+        fixture.model.agentCompletionFeedback.playback = { recorder.record() }
+        let pane = Self.testPane()
+
+        // Baseline idle.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "idle", lastActivityAt: "2030-01-01T00:00:00Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+
+        let store = PiConversationStore()
+        store.reconnectBackoffBase = .zero
+        var eventsContinuation: AsyncThrowingStream<PiConversationStreamEvent, any Error>.Continuation?
+        store.snapshotProvider = { _ in try Self.snapshot(prompt: "Earlier answer") }
+        store.eventsProvider = { _, _ in
+            AsyncThrowingStream { continuation in eventsContinuation = continuation }
+        }
+        let follow = Task { @MainActor in
+            await store.follow(model: fixture.model, pane: pane)
+        }
+        defer {
+            follow.cancel()
+            eventsContinuation?.finish()
+        }
+        try await Self.waitUntil { store.sessionID == "s1" && !store.turns.isEmpty }
+
+        // The fleet observes turn one start and finish; that receipt plays.
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:01Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "done", lastActivityAt: "2030-01-01T00:00:10Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 1)
+
+        // A new turn starts before the previous completion's alert arrives.
+        eventsContinuation?.yield(try Self.streamEvent(
+            2,
+            #"{"type":"agent_start"}"#,
+            generatedAt: "2030-01-01T00:01:00Z"
+        ))
+        try await Self.waitUntil { store.phase == .working }
+
+        // The delayed alert for turn one must not complete or play for the new
+        // turn, and must not suppress its eventual settlement.
+        let delayedAlert = Self.alertJSON(id: "a1", status: "done", createdAt: "2030-01-01T00:00:10Z")
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:01:00Z", alerts: [delayedAlert])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        #expect(recorder.count == 1)
+
+        eventsContinuation?.yield(try Self.streamEvent(
+            3,
+            #"{"type":"agent_settled"}"#,
+            generatedAt: "2030-01-01T00:01:05Z"
+        ))
+        try await Self.waitUntil { recorder.count == 2 }
+
+        follow.cancel()
+        eventsContinuation?.finish()
+        await follow.value
+    }
+
     // MARK: User-facing headless runs
 
     @Test("A user-facing run plays once when its poll observes completion")
@@ -419,14 +662,16 @@ struct AgentCompletionFeedbackIntegrationTests {
     private static func streamEvent(
         _ cursor: Int,
         _ event: String,
-        sessionID: String = "s1"
+        sessionID: String = "s1",
+        generatedAt: String? = nil
     ) throws -> PiConversationStreamEvent {
         let value = try JSONDecoder().decode(PiJSONValue.self, from: Data(event.utf8))
         return .envelope(PiConversationEnvelope(
             paneID: "w1:p1",
             sessionID: sessionID,
             cursor: String(cursor),
-            event: value
+            event: value,
+            generatedAt: generatedAt
         ))
     }
 
@@ -448,8 +693,12 @@ struct AgentCompletionFeedbackIntegrationTests {
         )
     }
 
-    private static func alertJSON(id: String, status: String) -> String {
-        #"{"id":"\#(id)","workspace_id":"w1","pane_id":"w1:p1","status":"\#(status)","title":"Ready","message":"","created_at":"2030-01-01T00:00:00Z","is_read":true}"#
+    private static func alertJSON(
+        id: String,
+        status: String,
+        createdAt: String = "2030-01-01T00:00:00Z"
+    ) -> String {
+        #"{"id":"\#(id)","workspace_id":"w1","pane_id":"w1:p1","status":"\#(status)","title":"Ready","message":"","created_at":"\#(createdAt)","is_read":true}"#
     }
 
     private static func waitUntil(
@@ -536,7 +785,7 @@ private final class CompletionFleetURLProtocol: URLProtocol, @unchecked Sendable
             let alerts = served.alerts.joined(separator: ",")
             data = Data(
                 """
-                {"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Workspace","focused":true,"pane_count":1,"tab_count":0,"active_tab_id":"","agent_status":"\(served.paneStatus)","panes":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"","focused":true,"agent_status":"\(served.paneStatus)","revision":1,"last_activity_at":"\(served.lastActivityAt)"}]}],"alerts":[\(alerts)]}
+                {"ok":true,"workspaces":[{"workspace_id":"w1","number":1,"label":"Workspace","focused":true,"pane_count":1,"tab_count":0,"active_tab_id":"","agent_status":"\(served.paneStatus)","panes":[{"pane_id":"w1:p1","terminal_id":"terminal-1","workspace_id":"w1","tab_id":"","focused":true,"agent_status":"\(served.paneStatus)","revision":1,"last_activity_at":"\(served.lastActivityAt)"}]}],"alerts":[\(alerts)]}
                 """.utf8
             )
         } else {

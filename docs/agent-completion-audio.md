@@ -33,8 +33,8 @@ Evidence reaches the one owner from three observation paths:
 | Successful fleet refresh | A pane that moves from working/blocked to done, or a brand-new `.done` alert for a pane the poll did not otherwise catch working. The first successful refresh after launch or a connection identity change is a silent baseline. |
 | User-facing headless runs | A HUD-chat or Agent-window run that reaches `completed` or `promoted`, including a run that finished before its first running poll and one restored as active. Internal summary and naming runs never report. |
 
-The owner scopes receipts by real identities, never display labels, ordering,
-timestamps, or a short time window:
+The owner scopes receipts by real identities rather than display labels or
+ordering:
 
 - a machine + pane + terminal identity for pane work, with the Pi session
   recorded per work episode (`HerdrPane.episodeKey` distinguishes two done
@@ -43,7 +43,18 @@ timestamps, or a short time window:
 
 A committed Pi settlement and the fleet observation of the same run share one
 receipt: whichever arrives first plays the one cue, and the delayed duplicate is
-silent in either order. Repeated polling, replayed alerts, a later turn, and a
+silent in either order. One completion normally produces two fleet observations
+- the `working → done` transition and the server's done alert, published at
+different times - and each receipt records which channels have been
+acknowledged, so the later observation never claims a second completion and a
+delayed alert cannot complete a newer turn. A committed Pi start carries the
+committed event's server timestamp and journal cursor; a start at or before the
+receipted completion is the replay of an episode whose stream was interrupted,
+so it keeps the existing receipt instead of arming a duplicate settlement. The
+recorded completion instant decides whenever both sides have one, with the
+journal cursor as the fallback for a server that omits a comparable timestamp.
+This is evidence ordering against server-recorded evidence, not a local
+elapsed-time window. Repeated polling, replayed alerts, a later turn, and a
 different machine or run stay independently correct. Receipts are bounded and
 are dropped only at real identity boundaries, such as a changed connection
 identity, a re-created pane, or a pane that left the fleet.

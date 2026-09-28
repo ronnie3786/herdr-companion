@@ -40,9 +40,9 @@
 
 ## Sidebar and navigation
 
-- Recents uses compact single-line titles, quieter machine/workspace context, and visible Working, Done, and attention states. Full tab context stays available on hover.
-- Leaving Recents restores the ordinary grouped-row styling. Selected chats keep their background highlight without a leading vertical stripe.
-- Sidebar titles and status read live pane data so Smart Rename and agent completion stay aligned with the chat header and HUD.
+- Recents and All (including priority lists and expanded families) now separate adjacent visible chats with inset theme hairlines, without doubling the rules around headings. Chat titles wrap naturally up to two lines and omit only a conventional leading `π - ` decoration in the sidebar; the stored title stays intact. The redundant Pi/terminal header is gone.
+- Beneath the title and any family context, the metadata emphasizes the project/workspace beside the machine, optional tab, and status/age. When the rail is narrow or text is enlarged, location moves above the final status/age line. Full context remains on hover and in accessibility; selected idle and shell rows still name their status. Selected chats keep their background highlight without a leading stripe.
+- Sidebar titles, context, and status read live pane data so Smart Rename, tab/workspace changes, and agent completion stay aligned with the chat header and HUD. This Mac-only presentation needs no server update.
 - Back and Forward remember Chat/Git segment switches on the same pane, including returning to Git after visiting another pane or screen.
 - New workspace is a labeled sidebar action. Hover a machine row for a folder-plus button that opens creation directly on that machine, without another machine selection. Workspace headings in Unread and Starred expose the same right-click menu as the workspace tree, including New tab.
 - Workspace folders are easier to pick out of the sidebar: 14-point semibold titles in the brighter text color, 14-point mist folder icons, and taller folder rows while tabs, chats, machines, and group labels keep their compact styling. Long names still truncate at the tail with their counts, chevrons, tooltips, and accessibility information intact. This visibility change needs no server update and adds no new setting.
@@ -119,7 +119,7 @@ Main-workspace creation is additive and capability-gated. The companion advertis
 
 ## Quick verification
 
-1. Toggle Recents on and off; Smart Rename a chat and compare its sidebar/header title. Let a working agent finish and compare the sidebar with its HUD notification.
+1. With synthetic chats, compare Recents and All against the standalone First Mate list for text-aligned dividers; check expanded families, filtered lists, two-line titles, bottom status/age, emphasized workspace and available tab at 240/260/480pt and enlarged text. Verify VoiceOver, star/unread/disclosure, and selection; then Smart Rename a chat and compare its sidebar/header title. Let a working agent finish and compare the sidebar with its HUD notification. Record installed-app results separately from renders; unperformed checks remain pending.
 2. Switch Chat → Git → another pane; use Back twice and Forward twice.
 3. Attach multiple images, enter a draft longer than five lines, and scroll inside the editor. Confirm Return sends and modified Return inserts a newline.
 4. Open a conversation with a failed tool call: Clanking should remain collapsed and show the failure count.

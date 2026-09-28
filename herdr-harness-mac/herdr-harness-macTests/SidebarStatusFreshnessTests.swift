@@ -67,6 +67,15 @@ struct SidebarStatusFreshnessTests {
         #expect(HerdrSidebarView.statusDigest(renamed) != HerdrSidebarView.statusDigest(workspaces))
     }
 
+    @Test("Moving a live pane to another tab invalidates its resolved footer context")
+    func tabChangeChangesDigest() throws {
+        let workspaces = DemoData.workspaces.map { $0.stamped(machineID: "m1") }
+        var changed = workspaces
+        let pane = try #require(changed.first?.panes.first)
+        changed[0].panes[0] = Self.restatused(pane, as: pane.agentStatus, tabID: "another-tab")
+        #expect(HerdrSidebarView.statusDigest(changed) != HerdrSidebarView.statusDigest(workspaces))
+    }
+
     @Test("A workspace's rolled-up status change moves the cache key")
     func workspaceStatusChangeChangesDigest() throws {
         let workspaces = DemoData.workspaces.map { $0.stamped(machineID: "m1") }
@@ -113,13 +122,14 @@ struct SidebarStatusFreshnessTests {
         _ pane: HerdrPane,
         as status: AgentStatus,
         revision: Int? = nil,
-        label: String? = nil
+        label: String? = nil,
+        tabID: String? = nil
     ) -> HerdrPane {
         HerdrPane(
             paneID: pane.paneID,
             terminalID: pane.terminalID,
             workspaceID: pane.workspaceID,
-            tabID: pane.tabID,
+            tabID: tabID ?? pane.tabID,
             focused: pane.focused,
             agentStatus: status,
             revision: revision ?? pane.revision,

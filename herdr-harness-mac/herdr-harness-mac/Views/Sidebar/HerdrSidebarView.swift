@@ -189,6 +189,8 @@ struct HerdrSidebarView: View {
                 hasher.combine(pane.agentStatus)
                 // Renames update the model before the next fleet revision.
                 hasher.combine(pane.displayTitle)
+                hasher.combine(pane.workspaceID)
+                hasher.combine(pane.tabID)
                 hasher.combine(pane.workingSince)
                 hasher.combine(pane.piSemantic?.sessionID)
                 hasher.combine(pane.piSemantic?.parentSessionID)
@@ -597,11 +599,10 @@ struct HerdrSidebarView: View {
                 .accessibilityIdentifier("sidebar-unread-section")
                 .accessibilityLabel("Unread chats")
                 .accessibilityValue("\(snapshot.unreadCount)")
-            ForEach(snapshot.unreadGroups) { group in
-                ForEach(group.chats) {
-                    chatRow($0, style: .full(location: cardLocation(group.workspace)))
-                        .padding(.bottom, 2)
-                }
+            let dividers = SidebarChatPresentation.dividerFlags(groupSizes: snapshot.unreadGroups.map { $0.chats.count })
+            ForEach(Array(snapshot.unreadGroups.flatMap(\.chats).enumerated()), id: \.element.id) { index, pane in
+                chatRow(pane, showsDivider: dividers[index], showsWorkspaceAction: true)
+                    .padding(.bottom, 2)
             }
         }
     }
@@ -613,11 +614,10 @@ struct HerdrSidebarView: View {
                 .accessibilityIdentifier("sidebar-starred-section")
                 .accessibilityLabel("Starred chats")
                 .accessibilityValue("\(snapshot.starredCount)")
-            ForEach(snapshot.starredGroups) { group in
-                ForEach(group.chats) {
-                    chatRow($0, style: .full(location: cardLocation(group.workspace)))
-                        .padding(.bottom, 2)
-                }
+            let dividers = SidebarChatPresentation.dividerFlags(groupSizes: snapshot.starredGroups.map { $0.chats.count })
+            ForEach(Array(snapshot.starredGroups.flatMap(\.chats).enumerated()), id: \.element.id) { index, pane in
+                chatRow(pane, showsDivider: dividers[index], showsWorkspaceAction: true)
+                    .padding(.bottom, 2)
             }
         }
     }
@@ -663,7 +663,10 @@ struct HerdrSidebarView: View {
                 .frame(minHeight: SidebarMetrics.staleRowHeight)
                 .accessibilityElement(children: .contain)
 
-                ForEach(group.chats) { chatRow($0) }
+                let dividers = SidebarChatPresentation.dividerFlags(groupSizes: [group.chats.count])
+                ForEach(Array(group.chats.enumerated()), id: \.element.id) { index, pane in
+                    chatRow(pane, showsDivider: dividers[index])
+                }
             }
             Color.clear.frame(height: 4)
         }
@@ -674,8 +677,9 @@ struct HerdrSidebarView: View {
         if !snapshot.recentChats.isEmpty {
             sidebarSectionLabel("Recents", detail: "\(snapshot.recentChats.count)", isSubsection: true)
 
-            ForEach(snapshot.recentChats) {
-                chatRow($0, showingLastActivity: true)
+            let dividers = SidebarChatPresentation.dividerFlags(groupSizes: [snapshot.recentChats.count])
+            ForEach(Array(snapshot.recentChats.enumerated()), id: \.element.id) { index, pane in
+                chatRow(pane, showingLastActivity: true, showsDivider: dividers[index])
                     .padding(.bottom, 2)
             }
             Color.clear.frame(height: 4)
@@ -785,11 +789,17 @@ struct HerdrSidebarView: View {
                     )
                         .contextMenu { tabMenu(section.tab, in: entry.workspace) }
                     if section.isExpanded {
-                        ForEach(section.rows) { folderChatRow(chatRow($0.pane, hierarchy: $0)) }
+                        let dividers = SidebarChatPresentation.dividerFlags(groupSizes: [section.rows.count])
+                        ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                            folderChatRow(chatRow(row.pane, hierarchy: row, showsDivider: dividers[index]))
+                        }
                     }
                 }
 
-                ForEach(entry.looseRows) { folderChatRow(chatRow($0.pane, hierarchy: $0)) }
+                let dividers = SidebarChatPresentation.dividerFlags(groupSizes: [entry.looseRows.count])
+                ForEach(Array(entry.looseRows.enumerated()), id: \.element.id) { index, row in
+                    folderChatRow(chatRow(row.pane, hierarchy: row, showsDivider: dividers[index]))
+                }
 
                 if entry.sections.isEmpty && entry.looseChats.isEmpty {
                     Text("no panes yet")
@@ -985,8 +995,8 @@ struct HerdrSidebarView: View {
         ), using: model)
     }
 
-    private func statusSince(for pane: HerdrPane) -> Date? {
-        let newestMatchingAlert = model.alerts.lazy
+    static func statusSince(for pane: HerdrPane, alerts: [HerdrAlert]) -> Date? {
+        let newestMatchingAlert = alerts.lazy
             .filter {
                 $0.machineID == pane.machineID
                     && $0.paneID == pane.paneID
@@ -998,6 +1008,10 @@ struct HerdrSidebarView: View {
             return pane.workingSince ?? newestMatchingAlert
         }
         return newestMatchingAlert
+    }
+
+    static func recentSince(for pane: HerdrPane) -> Date? {
+        pane.lastActivityAt ?? pane.firstSeenAt
     }
 
     /// MonoCode's `.sec` label: sentence case, 12pt (11pt for sub-sections)
@@ -1128,13 +1142,24 @@ struct HerdrSidebarView: View {
         }
     }
 
-    private func recentContext(for pane: HerdrPane) -> SidebarChatRow.RecentContext {
-        let workspace = model.workspace(containing: pane)
+    static func chatContext(
+        for pane: HerdrPane,
+        machineName: String?,
+        workspace: HerdrWorkspace?
+    ) -> SidebarChatRow.LocationContext {
         let tab = workspace?.tabs.first { $0.tabID == pane.tabID }
         return .init(
-            machine: model.machines.first { $0.id == pane.machineID }?.name ?? "Unknown machine",
+            machine: machineName ?? "Unknown machine",
             workspace: workspace?.label ?? "Unknown workspace",
             tab: tab?.label ?? "Untitled tab"
+        )
+    }
+
+    private func locationContext(for pane: HerdrPane) -> SidebarChatRow.LocationContext {
+        Self.chatContext(
+            for: pane,
+            machineName: model.machines.first { $0.id == pane.machineID }?.name,
+            workspace: model.workspace(containing: pane)
         )
     }
 
@@ -1147,25 +1172,18 @@ struct HerdrSidebarView: View {
             .sidebarFolderStrip(.middle)
     }
 
-    /// "machine · workspace" for a full card, the way the grouped titles above
-    /// Unread and Starred used to read.
-    private func cardLocation(_ workspace: HerdrWorkspace) -> String {
-        let machine = model.machines.first { $0.id == workspace.machineID }?.name
-        guard let machine else { return workspace.label.lowercased() }
-        return "\(machine) · \(workspace.label.lowercased())"
-    }
-
     private func chatRow(
         _ pane: HerdrPane,
         showingLastActivity: Bool = false,
         hierarchy: PiSessionTree.Row? = nil,
-        style: SidebarChatRow.CardStyle = .compact
+        showsDivider: Bool = false,
+        showsWorkspaceAction: Bool = false
     ) -> some View {
         SidebarLiveChatRow(model: model, paneID: pane.id) { pane in
             SidebarChatRow(
                 pane: pane,
-                recentContext: showingLastActivity ? recentContext(for: pane) : nil,
-                style: style,
+                locationContext: locationContext(for: pane),
+                showsDivider: showsDivider,
                 tabColor: model.chatTabColors.color(for: pane.scopedTabID),
                 colorLabel: model.chatTabColors.color(for: pane.scopedTabID).map { model.chatTabColors.label(for: $0) },
                 isSelected: pane.id == model.selectedPaneID,
@@ -1175,8 +1193,8 @@ struct HerdrSidebarView: View {
                 hierarchy: hierarchy,
                 parentContext: (hierarchy?.depth ?? 0) == 0 ? parentContext(for: pane) : nil,
                 since: showingLastActivity
-                    ? (pane.lastActivityAt ?? pane.firstSeenAt)
-                    : statusSince(for: pane),
+                    ? Self.recentSince(for: pane)
+                    : Self.statusSince(for: pane, alerts: model.alerts),
                 describesLastActivity: showingLastActivity,
                 action: { open(pane) },
                 toggleStar: { model.toggleStarredChat(pane.id) },
@@ -1185,7 +1203,8 @@ struct HerdrSidebarView: View {
             )
         }
         .contextMenu {
-            if let workspace = model.workspace(containing: pane), showingLastActivity || hierarchy?.workspaceLabel != nil || style != .compact {
+            if showingLastActivity || hierarchy?.workspaceLabel != nil || showsWorkspaceAction,
+               let workspace = model.workspace(containing: pane) {
                 Button("Open \(workspace.label) workspace", systemImage: "folder") {
                     openWorkspace(workspace)
                 }

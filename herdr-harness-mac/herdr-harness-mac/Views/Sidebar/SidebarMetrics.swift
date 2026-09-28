@@ -16,6 +16,8 @@ enum SidebarMetrics {
     static let tabRowLeadingPadding: CGFloat = 10
     /// A session card's inner padding.
     static let chatRowLeadingPadding: CGFloat = 10
+    /// The standalone First Mate list uses the same hairline, without our avatar inset.
+    static let chatDividerHeight: CGFloat = 1
     static let cardVerticalPadding: CGFloat = 8
     static let compactCardVerticalPadding: CGFloat = 6
     /// Cards inside a folder group sit 4pt in from the group's edges.

@@ -54,7 +54,7 @@ struct FirstMateChatBubbleRow: View {
             .contextMenu { copyButton }
             .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("You: \(display.body)")
+            .accessibilityLabel(display.accessibilityLabel(isQueued: message.status == "queued"))
         }
     }
 

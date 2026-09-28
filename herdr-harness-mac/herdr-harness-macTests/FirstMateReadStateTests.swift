@@ -272,6 +272,138 @@ struct FirstMateFleetIndexFleetTests {
         #expect(index.hosts.first?.supportsFleet == false)
         #expect(index.hosts.first?.fleetEntries == nil)
     }
+
+    @Test("A fleet route that disappears mid-lifecycle falls back to the feature list")
+    func fleetRouteRolledBack() async throws {
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "running")],
+                                              fleet: [ChatFixtures.entry("f1", hud: .blocked)])
+        let index = FirstMateFleetIndex()
+        let time = TestClock()
+        index.clock = { time.now }
+        let lifecycle = index.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1)
+        await index.refresh(lifecycle: lifecycle)
+        #expect(index.badgeCount == 1)
+
+        client.fleet = .failure(.server(status: 404, message: "Not found"))
+        await index.refresh(lifecycle: lifecycle)
+        let host = try #require(index.hosts.first)
+        #expect(!host.supportsFleet)
+        #expect(host.fleetEntries == nil)
+        #expect(host.error == nil)
+        #expect(index.badgeCount == FirstMateAttention.count(hosts: index.hosts))
+        #expect(index.badgeCount == 0, "The running feature no longer carries the stale blocked dot")
+
+        await index.refresh(lifecycle: lifecycle)
+        #expect(client.capabilityCalls == 1, "An unsupported answer waits for the reprobe interval")
+        time.now += 301
+        await index.refresh(lifecycle: lifecycle)
+        #expect(client.capabilityCalls == 2)
+    }
+
+    @Test("A failing fleet request other than 404/501 keeps the last summary")
+    func fleetTransientFailure() async throws {
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "blocked")],
+                                              fleet: [ChatFixtures.entry("f1", hud: .blocked)])
+        let index = FirstMateFleetIndex()
+        let lifecycle = index.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1)
+        await index.refresh(lifecycle: lifecycle)
+        client.fleet = .failure(.server(status: 503, message: "Busy"))
+        await index.refresh(lifecycle: lifecycle)
+        #expect(index.hosts.first?.supportsFleet == true)
+        #expect(index.hosts.first?.fleetEntries?["f1"] != nil)
+    }
+
+    @Test("The capability probe runs alongside the feature list")
+    func probeOverlapsFeatureList() async throws {
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "blocked")],
+                                              fleet: [ChatFixtures.entry("f1", hud: .blocked)])
+        let overlap = ChatOverlapFlag()
+        client.beforeCapabilities = { [client] in
+            // A sequential refresh would never start the list while the
+            // probe waits, so this would time out.
+            for _ in 0..<400 where client.featureListCalls == 0 {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+            overlap.set(client.featureListCalls > 0)
+        }
+        let index = FirstMateFleetIndex()
+        await index.refresh(lifecycle: index.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1))
+        #expect(overlap.value)
+        #expect(index.hosts.first?.supportsFleet == true)
+        #expect(client.fleetCalls == 1)
+    }
+
+    @Test("A superseded observer returns at once, without waiting out its poll interval")
+    func supersededObserverReturnsPromptly() async throws {
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "blocked")])
+        let index = FirstMateFleetIndex()
+        index.pollingInterval = .seconds(60)
+        let observer = Task { await index.observe(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1) }
+        try await ChatFixtures.waitUntil("observing") { index.hasObserver && client.featureListCalls > 0 }
+        let firstReturned = ChatOverlapFlag()
+        Task { await observer.value; firstReturned.set(true) }
+        index.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 2)
+        try await ChatFixtures.waitUntil("superseded observer returns", timeout: .seconds(2)) { firstReturned.value }
+
+        let second = Task { await index.observe(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 3) }
+        let secondReturned = ChatOverlapFlag()
+        Task { await second.value; secondReturned.set(true) }
+        try await ChatFixtures.waitUntil("observing again") { index.hasObserver }
+        second.cancel()
+        try await ChatFixtures.waitUntil("cancelling ends the observer's sleep", timeout: .seconds(2)) { secondReturned.value }
+        #expect(!index.hasObserver)
+    }
+}
+
+@Suite("First Mate read marker backoff")
+@MainActor
+struct FirstMateReadBackoffTests {
+    @Test("A failing read is posted once per backoff window and the chat stays unread")
+    func failedReadBacksOff() async throws {
+        let client = SyntheticChatFleetClient(
+            features: [ChatFixtures.feature("waiting", status: "blocked")],
+            fleet: [ChatFixtures.entry("waiting", hud: .blocked, latestFirstMate: "fmm_1")],
+            read: { _, _ in throw APIError.server(status: 503, message: "Unavailable") }
+        )
+        let index = FirstMateFleetIndex()
+        let time = TestClock()
+        index.clock = { time.now }
+        await index.refresh(lifecycle: index.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1))
+
+        for _ in 0..<5 {
+            await index.markRead(machineID: "alpha", featureID: "waiting", throughMessageID: "fmm_1")
+        }
+        #expect(client.reads.count == 1, "The same marker is not posted again inside the backoff window")
+        #expect(index.badgeCount == 1, "The dot stays honest")
+        #expect(index.readState.overrides.isEmpty)
+
+        time.now += FirstMateFleetIndex.readRetryInitialDelay + 1
+        await index.markRead(machineID: "alpha", featureID: "waiting", throughMessageID: "fmm_1")
+        #expect(client.reads.count == 2, "It is retried once the backoff expires")
+
+        time.now += FirstMateFleetIndex.readRetryInitialDelay + 1
+        await index.markRead(machineID: "alpha", featureID: "waiting", throughMessageID: "fmm_1")
+        #expect(client.reads.count == 2, "The backoff doubles")
+
+        await index.markRead(machineID: "alpha", featureID: "waiting", throughMessageID: "fmm_2")
+        #expect(client.reads.count == 3, "A newer marker is posted at once")
+
+        client.read = { featureID, messageID in
+            FirstMateReadResponse(featureID: featureID, readThroughMessageID: messageID, unread: false)
+        }
+        time.now += FirstMateFleetIndex.readRetryInitialDelay + 1
+        await index.markRead(machineID: "alpha", featureID: "waiting", throughMessageID: "fmm_2")
+        #expect(client.reads.count == 4)
+        #expect(index.badgeCount == 0)
+    }
+}
+
+/// A flag a `@Sendable` test hook can set.
+private final class ChatOverlapFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = false
+    var value: Bool { lock.withLock { _value } }
+    func set(_ value: Bool) { lock.withLock { _value = value } }
 }
 
 @MainActor

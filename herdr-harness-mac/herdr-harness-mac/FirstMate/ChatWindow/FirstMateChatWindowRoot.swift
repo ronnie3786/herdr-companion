@@ -193,7 +193,7 @@ struct FirstMateChatWindowRoot: View {
 
     /// The sidebar ＋: My First Mate, with its composer focused.
     private func startNewFeature() {
-        session.select(.lead)
+        session.select(.lead, focusComposer: true)
         composerFocusRequest &+= 1
     }
 
@@ -272,7 +272,7 @@ extension FirstMateChatWindowSession {
               let featureID = createStore.selectedFeatureID, featureID != origin.selectedFeatureID,
               let snapshot = createStore.snapshots[featureID], !snapshot.feature.isArchived else { return nil }
         let created = FirstMateFleetFeatureID(machineID: origin.machineID, featureID: featureID)
-        select(.feature(created))
+        select(.feature(created), focusComposer: true)
         didMutate(machineID: origin.machineID)
         return created
     }
@@ -287,10 +287,11 @@ extension FirstMateChatWindowSession {
         let conversations = conversations
         if conversations.isEmpty {
             pendingOpen = request
+            wakeRefresh()
         } else if conversations.contains(where: { $0.id == request }) {
-            select(.feature(request))
+            select(.feature(request), focusComposer: true)
         } else if store(for: request.machineID) != nil {
-            select(.feature(request))
+            select(.feature(request), focusComposer: true)
             didMutate(machineID: request.machineID)
         } else {
             select(.lead)

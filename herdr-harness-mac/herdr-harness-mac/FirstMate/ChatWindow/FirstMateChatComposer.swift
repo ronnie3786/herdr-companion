@@ -44,6 +44,9 @@ struct FirstMateChatComposer: View {
     @State private var showsImporter = false
     @State private var editorTarget = ComposerEditorTarget()
     @FocusState private var focused: Bool
+    @FocusState private var micFocused: Bool
+    /// Bumped by the sidebar's ＋ to focus My First Mate's composer.
+    @Environment(\.firstMateComposerFocusRequest) private var focusRequest
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let holdDelay: Duration = .milliseconds(300)
@@ -156,11 +159,19 @@ struct FirstMateChatComposer: View {
                     .hidden()
             }
         }
-        // The composer is rebuilt per chat, so this focuses it on every chat
-        // switch; a focus request covers the sidebar's ＋ on My First Mate.
-        .onAppear { focused = true }
-        .onReceive(NotificationCenter.default.publisher(for: .firstMateChatFocusComposer)) { note in
-            guard (note.object as? FirstMateChatWindowSession) === session, !isListening else { return }
+        // The composer is rebuilt per chat. It takes focus only after a
+        // pointer choice (a row click, a capsule, the ＋) asked for it, never
+        // on a keyboard move through the list, so ↑/↓ and search typing keep
+        // their focus. A focus request covers the ＋ while already on My
+        // First Mate, where no new composer appears.
+        .onAppear {
+            guard session.pendingComposerFocus else { return }
+            session.pendingComposerFocus = false
+            focused = true
+        }
+        .onChange(of: focusRequest) {
+            session.pendingComposerFocus = false
+            guard !isListening else { return }
             focused = true
         }
         .onDisappear {
@@ -181,8 +192,8 @@ struct FirstMateChatComposer: View {
             trailingButton
         }
         .padding(5)
-        .background(HerdrTheme.inkFill(0.05), in: Capsule(style: .continuous))
-        .overlay(Capsule(style: .continuous).strokeBorder(pillStroke, lineWidth: 1))
+        .background(HerdrTheme.inkFill(0.05), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(pillStroke, lineWidth: 1))
         .shadow(color: isListening ? HerdrTheme.alert.opacity(0.30) : focused ? HerdrTheme.accent.opacity(0.20) : .black.opacity(0.18),
                 radius: isListening || focused ? 11 : 14, y: isListening || focused ? 0 : 10)
     }
@@ -267,6 +278,8 @@ struct FirstMateChatComposer: View {
             .overlay {
                 if isListening {
                     FirstMateMicPulse(reduceMotion: reduceMotion)
+                } else if micFocused {
+                    Circle().strokeBorder(HerdrTheme.accent.opacity(0.8), lineWidth: 2).padding(-3)
                 }
             }
             .contentShape(.circle)
@@ -275,12 +288,23 @@ struct FirstMateChatComposer: View {
                     .onChanged { _ in pressBegan() }
                     .onEnded { _ in pressEnded() }
             )
+            // Tab reaches the mic; holding Space talks like holding the
+            // pointer. Key repeats are ignored (only down and up phases).
+            .focusable(!isTranscribing && !isSending, interactions: .activate)
+            .focused($micFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.space, phases: [.down, .up]) { press in
+                if press.phase == .down { pressBegan() } else { pressEnded() }
+                return .handled
+            }
             .opacity(isTranscribing ? 0.5 : 1)
             .allowsHitTesting(!isTranscribing && !isSending)
             .accessibilityElement()
             .accessibilityLabel(isListening ? "Listening" : "Hold to talk")
-            .accessibilityHint("Hold to record; let go to send")
+            .accessibilityHint(isListening ? "Activate to send" : "Activate to start recording; activate again to send")
             .accessibilityAddTraits(.isButton)
+            // VoiceOver cannot hold: one activation records, the next sends.
+            .accessibilityAction { toggleListeningForAccessibility() }
             .help("Hold to talk")
     }
 
@@ -373,13 +397,19 @@ struct FirstMateChatComposer: View {
         )
         switch mode {
         case .lead:
-            session.beginCreate(goal: serialized)
+            // Keep the text when no machine can start a feature.
+            guard session.beginCreate(goal: serialized) else {
+                showError(Self.noMachineHint)
+                return
+            }
             draft = ""
             picks = []
         case .feature(let id):
             submit(serialized, sentDraft: text, voice: false, featureID: id)
         }
     }
+
+    static let noMachineHint = "Add a machine to start a feature."
 
     private func sendSuggestion(_ text: String) {
         guard case .feature(let id) = mode, !isSending else { return }
@@ -453,6 +483,15 @@ struct FirstMateChatComposer: View {
         hint = .idle
     }
 
+    private func toggleListeningForAccessibility() {
+        guard !isTranscribing, !isSending else { return }
+        if isListening {
+            finishListening()
+        } else if voice.phase == .idle {
+            startListening()
+        }
+    }
+
     /// Letting go sends, including after the recorder's own 2.65 s auto-lock:
     /// `endHold` accepts a locked recording too.
     private func finishListening() {
@@ -468,7 +507,11 @@ struct FirstMateChatComposer: View {
                 guard !text.isEmpty else { showHint(.nothingHeard); return }
                 switch mode {
                 case .lead:
-                    session.beginCreate(goal: text)
+                    if !session.beginCreate(goal: text) {
+                        // Nothing can start it: keep the words in the draft.
+                        draft = draft.isEmpty ? text : draft + " " + text
+                        showError(Self.noMachineHint)
+                    }
                 case .feature(let id):
                     submit(text, sentDraft: nil, voice: true, featureID: id)
                 }
@@ -643,11 +686,4 @@ private struct FirstMateMicPulse: View {
             .allowsHitTesting(false)
         }
     }
-}
-
-extension Notification.Name {
-    /// Focuses the chat window's composer. Post it with the window's
-    /// `FirstMateChatWindowSession` as the object, for example from the
-    /// sidebar's ＋ after selecting My First Mate.
-    static let firstMateChatFocusComposer = Notification.Name("FirstMateChatFocusComposer")
 }

@@ -153,6 +153,13 @@ enum FirstMateMention {
         return true
     }
 
+    /// Markdown links and images, autolinks, and bare URLs. Compiled once:
+    /// mention linking runs for every Markdown block a transcript shows.
+    private static let excludedExpressions: [NSRegularExpression] = [
+        #"!?\[(?:\\.|[^\]\\])*\]\([^)\s]*(?:\s+"[^"]*")?\)"#, #"<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>"#,
+        #"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>()\[\]]+"#,
+    ].compactMap { try? NSRegularExpression(pattern: $0) }
+
     /// Fenced code blocks, inline code spans, Markdown links, autolinks, and
     /// bare URLs: text that is never rewritten into a mention.
     static func excludedRanges(in text: String) -> [Range<String.Index>] {
@@ -196,9 +203,7 @@ enum FirstMateMention {
                 index = runEnd
             }
         }
-        for pattern in [#"!?\[(?:\\.|[^\]\\])*\]\([^)\s]*(?:\s+"[^"]*")?\)"#, #"<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>"#,
-                        #"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>()\[\]]+"#] {
-            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+        for expression in excludedExpressions {
             for result in expression.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 guard let range = Range(result.range, in: text) else { continue }
                 ranges.append(range)

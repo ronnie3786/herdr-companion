@@ -258,6 +258,105 @@ struct FirstMateChatWindowSessionTests {
         #expect(session.selectedStore?.selectedFeatureID == "demo-search")
         #expect(session.skimState(for: target) === session.skimState(for: target))
     }
+
+    @Test("A store rebuilt for a connection change keeps the open chat and loads it")
+    func rebuiltStoreKeepsSelection() async throws {
+        let model = ChatFixtures.model(demo: false)
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("alpha-first", status: "running"),
+                                                         ChatFixtures.feature("beta", status: "blocked")])
+        let session = FirstMateChatWindowSession(
+            model: model, shell: ChatFixtures.shell(),
+            configuration: { ServerConfiguration(urlString: "https://\($0).example.invalid", token: "t") },
+            makeClient: { _ in client }
+        )
+        let beta = FirstMateFleetFeatureID(machineID: "alpha", featureID: "beta")
+        session.select(.feature(beta))
+        let original = try #require(session.selectedStore)
+        await original.refresh()
+        #expect(session.selectedSnapshot?.feature.id == "beta")
+
+        model.connectionGeneration += 1
+        let rebuilt = try #require(session.selectedStore)
+        #expect(rebuilt !== original)
+        #expect(rebuilt.selectedFeatureID == "beta", "The rebuilt store starts on the open chat")
+        await rebuilt.refresh()
+        #expect(session.selectedStore?.selectedFeatureID == "beta")
+        #expect(session.selectedSnapshot?.feature.id == "beta")
+    }
+
+    @Test("Pointer choices focus the new chat's composer; keyboard moves never do")
+    func composerFocusFollowsPointerOnly() {
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        #expect(session.pendingComposerFocus, "The window opens with its composer focused")
+        session.pendingComposerFocus = false
+        let receipts = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+        let search = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-search")
+
+        // ↑/↓ through the list.
+        session.select(.feature(receipts))
+        #expect(!session.pendingComposerFocus)
+
+        // A row click, then a keyboard move before that composer appeared.
+        session.select(.feature(search), focusComposer: true)
+        #expect(session.pendingComposerFocus)
+        session.select(.feature(receipts))
+        #expect(!session.pendingComposerFocus, "A keyboard move cancels a pending pointer focus")
+
+        // Clicking the chat already open changes nothing to wait for.
+        session.select(.feature(receipts), focusComposer: true)
+        #expect(!session.pendingComposerFocus)
+
+        session.open(.feature(featureID: "demo-release"), machineID: "demo")
+        #expect(session.pendingComposerFocus, "A capsule is a pointer choice")
+        session.pendingComposerFocus = false
+        session.select(.lead, focusComposer: true)
+        #expect(session.pendingComposerFocus, "The ＋ focuses My First Mate's composer")
+    }
+
+    @Test("My First Mate cannot start a feature without a machine and says so")
+    func beginCreateWithoutMachine() {
+        let session = FirstMateChatWindowSession(
+            model: ChatFixtures.model(demo: false), shell: ChatFixtures.shell(),
+            configuration: { _ in nil }, makeClient: { _ in SyntheticChatFleetClient() }
+        )
+        #expect(session.createMachineIDs.isEmpty)
+        #expect(!session.beginCreate(goal: "A synthetic feature"))
+        #expect(session.createStore == nil)
+        #expect(session.createGoal.isEmpty)
+        #expect(!FirstMateChatComposer.noMachineHint.isEmpty)
+
+        let demo = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        #expect(demo.beginCreate(goal: "A synthetic feature"))
+        #expect(demo.createStore != nil)
+        demo.endCreate()
+    }
+
+    @Test("The refresh loop wakes at once on a selection change")
+    func refreshWakesOnSelection() async throws {
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "blocked"), ChatFixtures.feature("f2", status: "running")])
+        let session = FirstMateChatWindowSession(
+            model: ChatFixtures.model(demo: false), shell: ChatFixtures.shell(),
+            configuration: { ServerConfiguration(urlString: "https://\($0).example.invalid", token: "t") },
+            makeClient: { _ in client }
+        )
+        let run = Task { await session.run() }
+        defer { run.cancel() }
+        session.select(.feature(FirstMateFleetFeatureID(machineID: "alpha", featureID: "f1")))
+        try await ChatFixtures.waitUntil("first chat refreshed", timeout: .seconds(1)) { client.featureListCalls > 0 }
+        try await Task.sleep(for: .milliseconds(50))
+        let firstPass = client.featureListCalls
+        session.select(.feature(FirstMateFleetFeatureID(machineID: "alpha", featureID: "f2")))
+        try await ChatFixtures.waitUntil("second chat refreshed before the 2 s interval", timeout: .seconds(1)) {
+            client.featureListCalls > firstPass
+        }
+        session.select(.lead)
+        try await Task.sleep(for: .milliseconds(50))
+        let calls = client.featureListCalls
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(client.featureListCalls == calls, "My First Mate refreshes nothing")
+        run.cancel()
+        await run.value
+    }
 }
 
 @MainActor

@@ -72,7 +72,7 @@ struct FirstMateLeadOverviewView: View {
                                     showsMachine: session.showsMachineNames,
                                     showsDivider: index < group.conversations.count - 1
                                 ) {
-                                    session.select(.feature(conversation.id))
+                                    session.select(.feature(conversation.id), focusComposer: true)
                                 }
                             }
                         }

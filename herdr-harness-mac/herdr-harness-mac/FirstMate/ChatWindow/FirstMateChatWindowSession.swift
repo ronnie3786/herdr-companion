@@ -37,6 +37,12 @@ final class FirstMateChatWindowSession {
     var inspectorPreference: Bool? = nil
     /// A Dock-menu request that arrived before the window could apply it.
     var pendingOpen: FirstMateFleetFeatureID?
+    /// Whether the next composer to appear takes keyboard focus. Set by a
+    /// pointer choice (``select(_:focusComposer:)``) and consumed by the
+    /// composer; a keyboard move through the list clears it, so ↑/↓ and
+    /// search typing never lose focus to the chat they land on. Starts set,
+    /// so the window opens with its composer focused.
+    @ObservationIgnored var pendingComposerFocus = true
 
     private struct StoreEntry {
         let store: FirstMateStore
@@ -49,6 +55,8 @@ final class FirstMateChatWindowSession {
     @ObservationIgnored private let makeClient: @MainActor (ServerConfiguration) -> any FirstMateClient
     @ObservationIgnored private let fleetSources: @MainActor () -> [FirstMateFleetSource]
     @ObservationIgnored private var selectionGeneration = 0
+    /// The refresh loop's wait for its next pass; cancelling it wakes the loop.
+    @ObservationIgnored private var refreshSleep: Task<Void, Never>?
 
     private struct ConversationCacheKey: Equatable {
         let hosts: [FirstMateFleetHost]
@@ -150,6 +158,10 @@ final class FirstMateChatWindowSession {
         stores[Self.demoMachineID] = nil
         let store = FirstMateStore()
         store.configure(client: makeClient(configuration), demo: false)
+        // A rebuilt store keeps the open chat, so its next refresh fetches
+        // that snapshot instead of the machine's first feature. If the store
+        // rejects it, `selectionIsUnresolvable` still falls back.
+        if case .feature(let id) = selection, id.machineID == machineID { store.select(id.featureID) }
         stores[machineID] = StoreEntry(store: store, identity: identity)
         return store
     }
@@ -186,10 +198,16 @@ final class FirstMateChatWindowSession {
     /// Switches chats by selecting within the machine's store; a store is
     /// never reconfigured to switch, which would drop its drafts. Opening a
     /// different chat starts on the Overview tab.
-    func select(_ selection: Selection) {
+    ///
+    /// `focusComposer` is true for pointer choices (a row click, a capsule,
+    /// the ＋, an open request): the new chat's composer takes focus when it
+    /// appears. A keyboard move leaves it false and cancels any pending focus.
+    func select(_ selection: Selection, focusComposer: Bool = false) {
         if selection != self.selection {
+            pendingComposerFocus = focusComposer
             self.selection = selection
             selectionGeneration &+= 1
+            wakeRefresh()
         }
         guard case .feature(let id) = selection, let store = store(for: id.machineID) else { return }
         if store.selectedFeatureID != id.featureID {
@@ -201,7 +219,7 @@ final class FirstMateChatWindowSession {
     /// A capsule click: a feature opens its chat; an agent opens its feature
     /// with the inspector on Agents.
     func open(_ target: FirstMateMentionTarget, machineID: String) {
-        select(.feature(FirstMateFleetFeatureID(machineID: machineID, featureID: target.featureID)))
+        select(.feature(FirstMateFleetFeatureID(machineID: machineID, featureID: target.featureID)), focusComposer: true)
         guard case .agent = target, let store = store(for: machineID) else { return }
         store.inspector = .agents
         inspectorPreference = true
@@ -231,11 +249,14 @@ final class FirstMateChatWindowSession {
 
     /// My First Mate's composer: opens the existing new-feature flow with the
     /// text as its goal, on `machineID` or the first machine that can create.
-    func beginCreate(goal: String, machineID: String? = nil) {
-        guard let machineID = machineID ?? createMachineIDs.first, let store = store(for: machineID) else { return }
+    /// Returns false, changing nothing, when no machine can create one.
+    @discardableResult
+    func beginCreate(goal: String, machineID: String? = nil) -> Bool {
+        guard let machineID = machineID ?? createMachineIDs.first, let store = store(for: machineID) else { return false }
         createGoal = goal
         createStore = store
         store.isCreating = true
+        return true
     }
 
     /// Clears the create sheet's state once it closes.
@@ -249,7 +270,13 @@ final class FirstMateChatWindowSession {
     func applyPendingOpen() {
         guard let id = pendingOpen else { return }
         pendingOpen = nil
-        select(.feature(id))
+        select(.feature(id), focusComposer: true)
+    }
+
+    /// Wakes the refresh loop at once (a selection change or an open request).
+    func wakeRefresh() {
+        refreshSleep?.cancel()
+        refreshSleep = nil
     }
 
     // MARK: Lifecycle
@@ -272,13 +299,14 @@ final class FirstMateChatWindowSession {
         while !Task.isCancelled {
             applyPendingOpen()
             let generation = selectionGeneration
-            if let store = selectedStore {
+            let store = selectedStore
+            if let store {
                 lease.update(store: store, available: true)
                 await store.refresh()
             } else {
                 lease.release()
             }
-            await waitForNextRefresh(since: generation)
+            await waitForNextRefresh(since: generation, timed: store != nil)
         }
     }
 
@@ -299,13 +327,24 @@ final class FirstMateChatWindowSession {
         }
     }
 
-    private func waitForNextRefresh(since generation: Int) async {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: Self.refreshInterval)
-        while clock.now < deadline, generation == selectionGeneration, pendingOpen == nil {
-            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+    /// Sleeps until the next pass, or until ``wakeRefresh()``. With no chat
+    /// selected (My First Mate) nothing refreshes, so it waits only for a wake.
+    private func waitForNextRefresh(since generation: Int, timed: Bool) async {
+        guard generation == selectionGeneration, pendingOpen == nil, !Task.isCancelled else { return }
+        let interval = timed ? Self.refreshInterval : Self.idleWakeInterval
+        let sleep = Task { _ = try? await Task.sleep(for: interval) }
+        refreshSleep = sleep
+        await withTaskCancellationHandler {
+            await sleep.value
+        } onCancel: {
+            sleep.cancel()
         }
+        if refreshSleep == sleep { refreshSleep = nil }
     }
+
+    /// My First Mate's wait: long enough to be idle, short enough that a
+    /// missed wake is harmless.
+    static let idleWakeInterval: Duration = .seconds(60)
 
     /// Marks the chat read when it shows in a key window, scrolled to its
     /// newest message. The marker is the newest First Mate message the

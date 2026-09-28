@@ -174,6 +174,20 @@ struct FirstMateMessageDisplay: Equatable, Sendable {
         let name = (path as NSString).lastPathComponent
         return name.isEmpty ? path : name
     }
+
+    /// What VoiceOver reads for your bubble: the text, the attached file
+    /// names, and whether it is queued or was sent by voice, leaving out
+    /// empty parts.
+    func accessibilityLabel(isQueued: Bool) -> String {
+        var parts: [String] = []
+        if !body.isEmpty { parts.append(body) }
+        if !attachments.isEmpty {
+            parts.append("attached " + attachments.map(Self.fileName(of:)).joined(separator: ", "))
+        }
+        if isQueued { parts.append("queued") }
+        if isVoice { parts.append("sent by voice") }
+        return "You: " + parts.joined(separator: ", ")
+    }
 }
 
 // MARK: - Transcript
@@ -190,17 +204,19 @@ struct FirstMateChatTranscript: View {
     @Environment(\.controlActiveState) private var controlActiveState
     @State private var followsLatest = true
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
-    @State private var width: CGFloat = 720
+    /// Only the clamped, whole-point bubble width is state, so resize frames
+    /// that do not change it do not rebuild the transcript.
+    @State private var bubbleMaxWidth: CGFloat = Self.bubbleMaxWidth(forWidth: 720)
 
     static let endID = "first-mate-chat-window-end"
-    static let maxContentWidth: CGFloat = 720
-    static let gutter: CGFloat = 24
+    nonisolated static let maxContentWidth: CGFloat = 720
+    nonisolated static let gutter: CGFloat = 24
 
     private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
 
-    private var bubbleMaxWidth: CGFloat {
-        let content = min(max(width - Self.gutter * 2, 200), Self.maxContentWidth)
-        return min(content * 0.86, 560)
+    nonisolated static func bubbleMaxWidth(forWidth width: CGFloat) -> CGFloat {
+        let content = min(max(width - gutter * 2, 200), maxContentWidth)
+        return min(content * 0.86, 560).rounded()
     }
 
     var body: some View {
@@ -241,7 +257,7 @@ struct FirstMateChatTranscript: View {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .defaultScrollAnchor(.top, for: .alignment)
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .onGeometryChange(for: CGFloat.self) { Self.bubbleMaxWidth(forWidth: $0.size.width) } action: { bubbleMaxWidth = $0 }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 40
             } action: { _, nearBottom in

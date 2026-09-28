@@ -57,9 +57,16 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     var featureCalls: Int { lock.withLock { _featureCalls } }
     var fleetCalls: Int { lock.withLock { _fleetCalls } }
     var reads: [(featureID: String, messageID: String)] { lock.withLock { _reads } }
+    /// Runs before the capability probe answers (tests that check overlap).
+    private var _beforeCapabilities: (@Sendable () async -> Void)?
+    var beforeCapabilities: (@Sendable () async -> Void)? {
+        get { lock.withLock { _beforeCapabilities } }
+        set { lock.withLock { _beforeCapabilities = newValue } }
+    }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
-        let result = lock.withLock { _capabilityCalls += 1; return _capabilities }
+        let (result, before) = lock.withLock { _capabilityCalls += 1; return (_capabilities, _beforeCapabilities) }
+        await before?()
         return FirstMateCapabilities(ok: true, capabilities: try result.get())
     }
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {

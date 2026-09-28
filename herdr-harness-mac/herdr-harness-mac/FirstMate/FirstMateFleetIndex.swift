@@ -33,7 +33,8 @@ final class FirstMateFleetIndex {
         let features: [FirstMateFeature]?
         let error: String?
         let unsupported: Bool
-        /// The capability probe's answer, or nil when no probe ran or it failed.
+        /// The capability answer, or nil when no probe ran or it failed. A
+        /// 404 or 501 from the fleet route also reads as unsupported.
         var probedFleetSupport: Bool? = nil
         /// Fleet entries, or nil when not requested or the request failed.
         var fleet: [FirstMateFleetEntry]? = nil
@@ -71,9 +72,26 @@ final class FirstMateFleetIndex {
     /// records nothing, so the next refresh asks again.
     @ObservationIgnored private var capabilityProbes: [String: CapabilityProbe] = [:]
     @ObservationIgnored var capabilityReprobeInterval: TimeInterval = 5 * 60
-    /// How soon a sleeping observer notices it was superseded.
-    static let supersessionCheckInterval: Duration = .milliseconds(500)
+    /// Each observer's wait for its next poll, by lifecycle. A new activation
+    /// or a deactivation cancels them, so a superseded observer returns at
+    /// once instead of waking periodically to check.
+    @ObservationIgnored private var observerSleeps: [Int: Task<Void, Never>] = [:]
     @ObservationIgnored var clock: @MainActor () -> Date = { Date() }
+
+    private struct FailedRead {
+        let messageID: String
+        let retryAt: Date
+        let delay: TimeInterval
+    }
+
+    /// Read markers the companion refused or never received, by chat. The
+    /// same marker is not posted again before `retryAt`, so a failing
+    /// companion is not asked in a loop by the read hooks, which fire again
+    /// whenever a rollback makes the chat unread. A newer marker (a new
+    /// First Mate message) is posted at once.
+    @ObservationIgnored private var failedReads: [FirstMateFleetFeatureID: FailedRead] = [:]
+    static let readRetryInitialDelay: TimeInterval = 8
+    static let readRetryMaximumDelay: TimeInterval = 180
     /// Chats read on this Mac that the companion has not confirmed yet.
     private(set) var readState = FirstMateReadState()
     @ObservationIgnored private var badgeCache: (revision: Int, readState: FirstMateReadState, count: Int)?
@@ -176,6 +194,9 @@ final class FirstMateFleetIndex {
         clients = Dictionary(uniqueKeysWithValues: sources.map { ($0.machine.id, $0.client) })
         readClients = clients
         capabilityProbes = [:]
+        // New clients deserve a fresh attempt at any refused read.
+        failedReads = [:]
+        wakeObservers()
         return lifecycle
     }
 
@@ -185,6 +206,14 @@ final class FirstMateFleetIndex {
         refreshGeneration &+= 1
         clients = [:]
         for index in hosts.indices where hosts[index].isLoading { hosts[index].isLoading = false }
+        wakeObservers()
+    }
+
+    /// Ends every observer's wait; each then sees whether it is still current.
+    private func wakeObservers() {
+        let sleeps = observerSleeps
+        observerSleeps = [:]
+        for sleep in sleeps.values { sleep.cancel() }
     }
 
     func refresh(lifecycle expectedLifecycle: Int) async {
@@ -214,29 +243,28 @@ final class FirstMateFleetIndex {
         await withTaskGroup(of: FetchResult.self) { group in
             for (machineID, client, knownFleetSupport) in requests {
                 group.addTask {
+                    // The probe runs alongside the list, so an unreachable
+                    // host costs one timeout per round, not two.
+                    async let probe = FirstMateFleetIndex.probeFleetSupport(client, needed: knownFleetSupport == nil)
                     do {
-                        var probed: Bool?
-                        if knownFleetSupport == nil {
-                            do {
-                                let capabilities = try await client.fetchFirstMateCapabilities()
-                                probed = capabilities.ok && capabilities.supportsFleet
-                            } catch is CancellationError {
-                                throw CancellationError()
-                            } catch APIError.server(let status, _) where status == 404 || status == 501 {
-                                // A companion without the capability route predates the fleet.
-                                probed = false
-                            } catch {
-                                // Unknown: keep the host's last answer and ask again next time.
-                            }
-                        }
                         let response = try await client.fetchFirstMateFeatures()
                         guard response.ok else { throw APIError.invalidResponse }
+                        let probed = await probe
+                        try Task.checkCancellation()
                         var result = FetchResult(machineID: machineID, features: response.features, error: nil, unsupported: false)
                         result.probedFleetSupport = probed
                         if probed ?? knownFleetSupport ?? false {
-                            // A failed summary keeps the last one, like a failed list.
-                            if let fleet = try? await client.fetchFirstMateFleet(), fleet.ok {
-                                result.fleet = fleet.features
+                            do {
+                                let fleet = try await client.fetchFirstMateFleet()
+                                if fleet.ok { result.fleet = fleet.features }
+                            } catch is CancellationError {
+                                throw CancellationError()
+                            } catch APIError.server(let status, _) where status == 404 || status == 501 {
+                                // The companion lost the capability (for example a
+                                // rollback): fall back to the feature list at once.
+                                result.probedFleetSupport = false
+                            } catch {
+                                // A failed summary keeps the last one, like a failed list.
                             }
                         }
                         return result
@@ -326,6 +354,22 @@ final class FirstMateFleetIndex {
         }
     }
 
+    /// Whether the host advertises `first-mate-fleet-v1`: nil when not
+    /// `needed`, or when the probe failed (unknown: the host keeps its last
+    /// answer and is asked again next time). A companion without the
+    /// capability route predates the fleet.
+    nonisolated private static func probeFleetSupport(_ client: any FirstMateClient, needed: Bool) async -> Bool? {
+        guard needed else { return nil }
+        do {
+            let capabilities = try await client.fetchFirstMateCapabilities()
+            return capabilities.ok && capabilities.supportsFleet
+        } catch APIError.server(let status, _) where status == 404 || status == 501 {
+            return false
+        } catch {
+            return nil
+        }
+    }
+
     func refresh() async {
         let activeLifecycle = lifecycle
         await refresh(lifecycle: activeLifecycle)
@@ -338,23 +382,30 @@ final class FirstMateFleetIndex {
     /// without the fleet capability keeps the read on this Mac only, and a chat
     /// already read through that message posts nothing. A roster host still
     /// posts after the index stops observing, because its client is retained.
+    ///
+    /// A marker that failed is not posted again until its backoff expires
+    /// (8 s, doubling to 3 min), and the chat stays unread meanwhile, so the
+    /// dot stays honest and the read hooks do not retry in a loop.
     func markRead(machineID: String, featureID: String, throughMessageID: String) async {
         let id = FirstMateFleetFeatureID(machineID: machineID, featureID: featureID)
         let host = hosts.first { $0.machineID == machineID }
         let entry = host?.fleetEntries?[featureID]
         if readState.overrides[id] == throughMessageID { return }
         if let entry, !entry.unread, entry.readThroughMessageID == throughMessageID { return }
+        if let failed = failedReads[id], failed.messageID == throughMessageID, clock() < failed.retryAt { return }
         readState.markRead(id, messageID: throughMessageID)
         guard let host, host.supportsFleet else { return }
         guard let client = readClients[machineID] else {
             // A fleet host without a client cannot confirm the read, and a dot
             // hidden only here would disagree with every other device.
             readState.rollBack(id, messageID: throughMessageID)
+            recordFailedRead(id, messageID: throughMessageID)
             return
         }
         let expectedLifecycle = lifecycle
         do {
             let response = try await client.markFirstMateRead(featureID: featureID, throughMessageID: throughMessageID)
+            if failedReads[id]?.messageID == throughMessageID { failedReads[id] = nil }
             // The companion's answer replaces a possibly stale summary, so a
             // newer message the summary had not reported yet clears too.
             guard expectedLifecycle == lifecycle,
@@ -368,7 +419,15 @@ final class FirstMateFleetIndex {
             contentRevision &+= 1
         } catch {
             readState.rollBack(id, messageID: throughMessageID)
+            recordFailedRead(id, messageID: throughMessageID)
         }
+    }
+
+    /// Starts or doubles the marker's backoff. A different marker starts over.
+    private func recordFailedRead(_ id: FirstMateFleetFeatureID, messageID: String) {
+        let previous = failedReads[id].flatMap { $0.messageID == messageID ? $0.delay : nil }
+        let delay = previous.map { min($0 * 2, Self.readRetryMaximumDelay) } ?? Self.readRetryInitialDelay
+        failedReads[id] = FailedRead(messageID: messageID, retryAt: clock().addingTimeInterval(delay), delay: delay)
     }
 
     /// Activates the roster, refreshes it immediately, and then refreshes on
@@ -389,21 +448,27 @@ final class FirstMateFleetIndex {
         guard !sources.isEmpty else { return }
         observedLifecycle = expectedLifecycle
         await refresh(lifecycle: expectedLifecycle)
-        let clock = ContinuousClock()
         while isObserving(expectedLifecycle) {
-            // Sleep in short steps, so a superseded observer returns promptly
-            // to a caller waiting to observe again when this roster stops.
-            let deadline = clock.now.advanced(by: pollingInterval)
-            while clock.now < deadline {
-                do {
-                    try await Task.sleep(for: min(Self.supersessionCheckInterval, clock.now.duration(to: deadline)))
-                } catch {
-                    return
-                }
-                guard isObserving(expectedLifecycle) else { return }
-            }
+            await sleepUntilNextPoll(expectedLifecycle)
+            guard isObserving(expectedLifecycle) else { return }
             await refresh(lifecycle: expectedLifecycle)
         }
+    }
+
+    /// One sleep per poll. A newer activation or a deactivation cancels it
+    /// (``wakeObservers()``), so a superseded observer returns promptly to a
+    /// caller waiting to observe again, and cancelling the observing task
+    /// cancels it too.
+    private func sleepUntilNextPoll(_ expectedLifecycle: Int) async {
+        let interval = pollingInterval
+        let sleep = Task { _ = try? await Task.sleep(for: interval) }
+        observerSleeps[expectedLifecycle] = sleep
+        await withTaskCancellationHandler {
+            await sleep.value
+        } onCancel: {
+            sleep.cancel()
+        }
+        if observerSleeps[expectedLifecycle] == sleep { observerSleeps[expectedLifecycle] = nil }
     }
 
     private func isObserving(_ expectedLifecycle: Int) -> Bool {

@@ -116,6 +116,13 @@ struct FirstMateLeadBriefingTests {
         #expect(FirstMateLeadBriefing.headerSubtitle(conversations: [demo[3], demo[6]]) == "1 moving, 1 done")
         #expect(FirstMateLeadBriefing.headerSubtitle(conversations: []) == "No features yet")
     }
+
+    @Test("The sidebar subtitle agrees in number")
+    func sidebarSubtitle() {
+        #expect(FirstMateChatSidebar.subtitle(featureCount: 1, needCount: 1) == "1 feature, 1 needs you")
+        #expect(FirstMateChatSidebar.subtitle(featureCount: 7, needCount: 3) == "7 features, 3 need you")
+        #expect(FirstMateChatSidebar.subtitle(featureCount: 7, needCount: 0) == "7 features, 0 need you")
+    }
 }
 
 @Suite("First Mate chat time labels")

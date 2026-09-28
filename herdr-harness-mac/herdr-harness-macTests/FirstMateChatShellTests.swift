@@ -365,6 +365,53 @@ struct FirstMateDockBadgeTests {
         #expect(controller.menuItems(model: model, shell: shell).allSatisfy { $0.id != id })
     }
 
+    @Test("A setting turned on after starting off keeps following the fleet")
+    func turnedOnLaterKeepsTracking() async throws {
+        let model = ChatFixtures.model(demo: true)
+        let shell = ChatFixtures.shell()
+        let defaults = Self.defaults()
+        defaults.set(false, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
+        var applied: [String?] = []
+        let controller = FirstMateDockBadgeController(defaults: defaults, apply: { applied.append($0) }, isInert: false, reassertDelay: nil)
+        controller.start(model: model, shell: shell)
+        #expect(applied.isEmpty)
+
+        defaults.set(true, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
+        try await ChatFixtures.waitUntil("setting on applies") { applied == ["3"] }
+        try await markDemoRead("demo-receipts", shell: shell)
+        try await ChatFixtures.waitUntil("badge follows the fleet after turning on") { applied.last == "2" }
+    }
+
+    @Test("A fleet change while the setting is off does not end tracking")
+    func offThenOnKeepsTracking() async throws {
+        let model = ChatFixtures.model(demo: true)
+        let shell = ChatFixtures.shell()
+        let defaults = Self.defaults()
+        var applied: [String?] = []
+        let controller = FirstMateDockBadgeController(defaults: defaults, apply: { applied.append($0) }, isInert: false, reassertDelay: nil)
+        controller.start(model: model, shell: shell)
+        #expect(applied == ["3"])
+
+        defaults.set(false, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
+        try await ChatFixtures.waitUntil("setting off applies") { !controller.ownsBadge }
+        try await markDemoRead("demo-receipts", shell: shell)
+        for _ in 0..<20 { await Task.yield() }
+        #expect(applied == ["3", nil], "Nothing is written while the setting is off")
+
+        defaults.set(true, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
+        try await ChatFixtures.waitUntil("setting on applies") { applied == ["3", nil, "2"] }
+        try await markDemoRead("demo-release", shell: shell)
+        try await ChatFixtures.waitUntil("badge follows the last change") { applied.last == "1" }
+    }
+
+    private func markDemoRead(_ featureID: String, shell: HerdrShellState) async throws {
+        let entry = try #require(FirstMateDemo.chatWindowFleet().first { $0.featureID == featureID })
+        await shell.firstMateFleet.markRead(
+            machineID: "demo", featureID: featureID,
+            throughMessageID: try #require(entry.latestFirstMateMessageID)
+        )
+    }
+
     @Test("A setting that starts off never touches the badge")
     func startsOff() {
         let model = ChatFixtures.model(demo: true)

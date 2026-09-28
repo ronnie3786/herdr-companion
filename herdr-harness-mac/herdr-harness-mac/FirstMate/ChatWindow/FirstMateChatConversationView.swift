@@ -45,7 +45,7 @@ struct FirstMateChatConversationView: View {
                         .padding(.top, 4)
                         .padding(.bottom, 8)
                     FirstMateLeadSummaryCard(conversations: conversations, now: .now) { conversation in
-                        session.select(.feature(conversation.id))
+                        session.select(.feature(conversation.id), focusComposer: true)
                     }
                     .padding(.top, 6)
                     Text("Describe a new feature below, and First Mate starts it for you.")

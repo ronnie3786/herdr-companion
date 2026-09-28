@@ -77,7 +77,12 @@ struct FirstMateChatSidebar: View {
 
     private var subtitle: String {
         let count = session.conversations.count
-        return "\(count) \(count == 1 ? "feature" : "features"), \(session.badgeCount) need you"
+        return Self.subtitle(featureCount: count, needCount: session.badgeCount)
+    }
+
+    /// "7 features, 3 need you" / "1 feature, 1 needs you".
+    nonisolated static func subtitle(featureCount: Int, needCount: Int) -> String {
+        "\(featureCount) \(featureCount == 1 ? "feature" : "features"), \(needCount) \(needCount == 1 ? "needs" : "need") you"
     }
 
     private var searchField: some View {
@@ -226,9 +231,11 @@ struct FirstMateChatSidebar: View {
         session.selection == selection || hovered == selection
     }
 
+    /// A row click. The keyboard keeps sidebar focus; a click hands focus
+    /// to the chosen chat's composer when it appears.
     private func choose(_ selection: FirstMateChatWindowSession.Selection) {
-        session.select(selection)
-        if focus != .search { focus = .list }
+        session.select(selection, focusComposer: true)
+        if !session.pendingComposerFocus, focus != .search { focus = .list }
     }
 
     /// ↑/↓ from search or the list: moves the selection through the visible

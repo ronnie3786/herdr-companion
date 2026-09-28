@@ -160,8 +160,13 @@ final class FirstMateDockBadgeController {
 
     /// Updates now and again whenever the fleet, the read markers, or demo
     /// mode change.
+    ///
+    /// The count is read inside the tracking scope whatever the setting, so
+    /// the registration survives while the setting is off: `update()` alone
+    /// reads nothing observable then, and tracking would lapse for good.
     private func track() {
         withObservationTracking {
+            if let model, let shell { _ = count(model: model, shell: shell) }
             update()
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.track() }

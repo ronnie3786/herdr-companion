@@ -14,6 +14,9 @@ struct FirstMateCapsuleView: View {
     @State private var readoutHovered = false
     @State private var hoverTask: Task<Void, Never>?
     @FocusState private var focused: Bool
+    /// Whether focus moved into the readout (with Full Keyboard Access the
+    /// popover can take it), which must not close the readout.
+    @FocusState private var readoutFocused: Bool
 
     static let height: CGFloat = 21
     static let hoverDelay: Duration = .milliseconds(200)
@@ -56,16 +59,26 @@ struct FirstMateCapsuleView: View {
         .animation(.easeOut(duration: 0.12), value: isActive)
         .onHover(perform: hoverChanged)
         .onChange(of: focused) { _, isFocused in
-            // A focused capsule shows its readout at once.
-            if isFocused { readoutShown = true } else if !hovering { readoutShown = false }
+            // A focused capsule shows its readout at once. Losing focus hides
+            // it only after a beat, and not when the readout took the focus.
+            if isFocused {
+                hoverTask?.cancel()
+                readoutShown = true
+            } else {
+                scheduleHide()
+            }
         }
         .popover(isPresented: $readoutShown, arrowEdge: .bottom) {
             FirstMateCapsuleReadout(conversation: conversation, isCurrent: isCurrent, showsChrome: false) {
                 readoutShown = false
                 open()
             }
+            .focused($readoutFocused)
             .onHover { inside in
                 readoutHovered = inside
+                if !inside { scheduleHide() }
+            }
+            .onChange(of: readoutFocused) { _, inside in
                 if !inside { scheduleHide() }
             }
         }
@@ -91,7 +104,7 @@ struct FirstMateCapsuleView: View {
         hoverTask?.cancel()
         hoverTask = Task {
             try? await Task.sleep(for: Self.hideDelay)
-            guard !Task.isCancelled, !hovering, !readoutHovered, !focused else { return }
+            guard !Task.isCancelled, !hovering, !readoutHovered, !focused, !readoutFocused else { return }
             readoutShown = false
         }
     }

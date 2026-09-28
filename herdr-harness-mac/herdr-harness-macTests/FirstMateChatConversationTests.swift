@@ -98,6 +98,15 @@ struct FirstMateChatConversationTests {
         #expect(FirstMateMessageDisplay.attachmentPath(in: "See Attachment: `x`") == nil)
     }
 
+    @Test("VoiceOver reads your bubble's text, files, queued state, and voice note")
+    func userBubbleAccessibilityLabel() {
+        let voice = FirstMateMessageDisplay.parse("Ship it\n\n" + FirstMateMessageDisplay.dictationSuffix)
+        #expect(voice.accessibilityLabel(isQueued: false) == "You: Ship it, sent by voice")
+        let filesOnly = FirstMateMessageDisplay.parse("Attachment: `/tmp/synthetic/one.png`\nAttachment: `/tmp/synthetic/two.log`")
+        #expect(filesOnly.accessibilityLabel(isQueued: true) == "You: attached one.png, two.log, queued")
+        #expect(FirstMateMessageDisplay.parse("Hello").accessibilityLabel(isQueued: false) == "You: Hello")
+    }
+
     // MARK: File cards
 
     @Test("A document's card shows once, on the earliest reply naming it as whole words")

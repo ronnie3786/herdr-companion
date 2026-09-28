@@ -1924,16 +1924,22 @@ class FirstMateRuntime:
     def reconcile(self) -> None:
         """One deterministic pass, also callable in integration tests."""
         with self._mutex:
-            self._recover_claim_gaps()
+            failed_features = self._recover_claim_gaps()
+            gap_failed_features = set(failed_features)
             jobs = self._jobs()
-            active_features = set()
+            active_features = set(failed_features)
             worker_count = 0
-            failed_features = set()
             global_error = False
             for job in jobs:
                 directory = self._job_dir(job)
                 if (directory / "finalized.json").exists():
                     continue
+                if job["feature_id"] in gap_failed_features:
+                    # A failed claim reconstruction also fences this feature's
+                    # existing spools. Retain capacity for uncertain workers.
+                    worker_count += job["kind"] == "worker"
+                    continue
+                worker_reserved = False
                 try:
                     self._observe(job)
                     self._requests(job)
@@ -1982,7 +1988,9 @@ class FirstMateRuntime:
                             active_features.add(job["feature_id"])
                         if job["kind"] == "worker":
                             worker_count += 1
-                        if not (directory / "started.json").exists() and self.capabilities()["available"]:
+                            worker_reserved = True
+                        if (not global_error and job["feature_id"] not in failed_features
+                                and not (directory / "started.json").exists() and self.capabilities()["available"]):
                             self._launch(job)
                 except Exception as exc:
                     failed_features.add(job["feature_id"])
@@ -1990,17 +1998,9 @@ class FirstMateRuntime:
                     # Reserve the uncertain writer's capacity, but isolate a
                     # bad dispatch from unrelated features. Storage failure
                     # still defers all launches because durable writes are global.
-                    if job.get("kind") == "worker":
+                    if job.get("kind") == "worker" and not worker_reserved:
                         worker_count += 1
-                    global_error |= (getattr(exc, "errno", None) in {errno.ENOSPC, errno.EDQUOT, errno.EROFS}
-                                     or isinstance(exc, sqlite3.Error))
-                    error = str(exc)[:1000]
-                    self._record_runtime_error(exc, directory / "reconcile-error.json")
-                    try:
-                        self._event(job["feature_id"], "runtime.error", "Execution needs attention: " + error,
-                                    {"job_id": job["id"]}, "runtime-error:" + job["id"] + ":" + hashlib.sha256(error.encode()).hexdigest()[:16])
-                    except Exception:
-                        pass
+                    global_error |= self._record_feature_failure(job["feature_id"], exc, job["id"], job=job)
             if global_error:
                 return
             self._actions()
@@ -2018,41 +2018,66 @@ class FirstMateRuntime:
             for feature in self.store.list_features("all", include_lead=True):
                 if feature["status"] in {"cancelled", "completed"} or feature["id"] in failed_features:
                     continue
-                if feature["id"] not in active_features:
-                    claim = self.store.claim_message(feature["id"], self.owner)
-                    if claim:
-                        snapshot = self.store.snapshot(feature["id"])
-                        prompt = self._coordinator_input(snapshot, claim)
-                        job = self._new_job(feature, kind="coordinator", prompt=prompt, claim=claim)
-                        self._launch(job)
-                if feature["status"] in {"paused", "blocked", "awaiting_direction", "recovering"}:
-                    continue
-                for assignment in self.store.snapshot(feature["id"])["assignments"]:
-                    if worker_count >= self.max_workers:
-                        break
-                    if assignment["status"] == "queued":
-                        try:
-                            self._policy(feature, kind="worker", claim=assignment)
-                        except ArchitectConfigurationError as exc:
-                            self._block_assignment_configuration(
-                                assignment, exc,
-                                request_id="queued-configuration:" + assignment["id"] + ":" + str(assignment["generation"]),
-                            )
-                            continue
-                        claim = self.store.claim_assignment(assignment["id"], self.owner)
+                try:
+                    if feature["id"] not in active_features:
+                        claim = self.store.claim_message(feature["id"], self.owner)
                         if claim:
+                            snapshot = self.store.snapshot(feature["id"])
+                            prompt = self._coordinator_input(snapshot, claim)
+                            job = self._new_job(feature, kind="coordinator", prompt=prompt, claim=claim)
+                            self._launch(job)
+                    if feature["status"] in {"paused", "blocked", "awaiting_direction", "recovering"}:
+                        continue
+                    for assignment in self.store.snapshot(feature["id"])["assignments"]:
+                        if worker_count >= self.max_workers:
+                            break
+                        if assignment["status"] == "queued":
                             try:
-                                prompt = self._worker_input(feature, claim)
-                                job = self._new_job(feature, kind="worker", prompt=prompt, claim=claim,
-                                                    handoff_id=claim.get("handoff_id"))
+                                self._policy(feature, kind="worker", claim=assignment)
                             except ArchitectConfigurationError as exc:
                                 self._block_assignment_configuration(
-                                    claim, exc,
-                                    request_id="claimed-configuration:" + claim["dispatch_id"],
+                                    assignment, exc,
+                                    request_id="queued-configuration:" + assignment["id"] + ":" + str(assignment["generation"]),
                                 )
                                 continue
-                            self._launch(job)
-                            worker_count += 1
+                            claim = self.store.claim_assignment(assignment["id"], self.owner)
+                            if claim:
+                                try:
+                                    prompt = self._worker_input(feature, claim)
+                                    job = self._new_job(feature, kind="worker", prompt=prompt, claim=claim,
+                                                        handoff_id=claim.get("handoff_id"))
+                                except ArchitectConfigurationError as exc:
+                                    self._block_assignment_configuration(
+                                        claim, exc,
+                                        request_id="claimed-configuration:" + claim["dispatch_id"],
+                                    )
+                                    continue
+                                # A launch may start its writer before raising.
+                                # Reserve exactly one slot before attempting it.
+                                worker_count += 1
+                                self._launch(job)
+                except Exception as exc:
+                    failed_features.add(feature["id"])
+                    if self._record_feature_failure(feature["id"], exc, "dispatch:" + feature["id"]):
+                        return
+
+    def _record_feature_failure(self, feature_id: str, exc: Exception, identity: str,
+                                *, job: dict | None = None) -> bool:
+        """Retain a local fault; return whether shared durability is unsafe."""
+        global_error = (getattr(exc, "errno", None) in {errno.ENOSPC, errno.EDQUOT, errno.EROFS}
+                        or isinstance(exc, sqlite3.Error))
+        path = (self._job_dir(job) / "reconcile-error.json" if job else
+                self.root / "feature-errors" / (feature_id + ".json"))
+        error = str(exc)[:1000]
+        self._record_runtime_error(exc, path)
+        try:
+            self._event(feature_id, "runtime.error", "Execution needs attention: " + error,
+                        {"job_id": job["id"]} if job else {"source_id": identity},
+                        "runtime-error:" + identity + ":" + hashlib.sha256(error.encode()).hexdigest()[:16])
+        except Exception as recording_error:
+            global_error |= (getattr(recording_error, "errno", None) in {errno.ENOSPC, errno.EDQUOT, errno.EROFS}
+                             or isinstance(recording_error, sqlite3.Error))
+        return global_error
 
     def _discover_links(self) -> None:
         """Bounded automatic PR capture; storage faults never replay or drop saved links."""
@@ -2061,32 +2086,48 @@ class FirstMateRuntime:
         except Exception as exc:
             self._record_runtime_error(exc, self.root / "link-discovery-error.json")
 
-    def _recover_claim_gaps(self) -> None:
+    def _recover_claim_gaps(self) -> set[str]:
         """Complete DB-claim-to-spool creation after a crash, using the same ID.
 
         Pi is never launched until job.json exists. Reconstructing a missing
         spool for an existing claim therefore cannot repeat an execution.
         """
         jobs = self._jobs()
+        failed_features: set[str] = set()
         assignment_dispatches = {j["claim"].get("dispatch_id") for j in jobs if j["kind"] == "worker"}
         message_claims = {(j["claim"]["id"], j["owner"]) for j in jobs if j["kind"] == "coordinator"
                           and not (self._job_dir(j) / "finalized.json").exists()}
         for assignment in self.store.list_assignments(statuses=["dispatching"]):
+            if assignment["feature_id"] in failed_features:
+                continue
             if assignment["dispatch_id"] not in assignment_dispatches:
-                feature = self.store.get_feature(assignment["feature_id"])
                 try:
-                    self._new_job(feature, kind="worker", claim=assignment,
-                                  prompt=self._worker_input(feature, assignment))
-                except ArchitectConfigurationError as exc:
-                    self._block_assignment_configuration(
-                        assignment, exc,
-                        request_id="recovered-configuration:" + assignment["dispatch_id"],
-                    )
+                    feature = self.store.get_feature(assignment["feature_id"])
+                    try:
+                        self._new_job(feature, kind="worker", claim=assignment,
+                                      prompt=self._worker_input(feature, assignment))
+                    except ArchitectConfigurationError as exc:
+                        self._block_assignment_configuration(
+                            assignment, exc,
+                            request_id="recovered-configuration:" + assignment["dispatch_id"],
+                        )
+                except Exception as exc:
+                    failed_features.add(assignment["feature_id"])
+                    if self._record_feature_failure(assignment["feature_id"], exc, "claim:" + assignment["dispatch_id"]):
+                        raise
         for message in self.store.pending_messages():
+            if message["feature_id"] in failed_features:
+                continue
             if message["status"] == "processing" and (message["id"], message["owner"]) not in message_claims:
-                snapshot = self.store.snapshot(message["feature_id"])
-                self._new_job(snapshot["feature"], kind="coordinator", claim=message,
-                              prompt=self._coordinator_input(snapshot, message))
+                try:
+                    snapshot = self.store.snapshot(message["feature_id"])
+                    self._new_job(snapshot["feature"], kind="coordinator", claim=message,
+                                  prompt=self._coordinator_input(snapshot, message))
+                except Exception as exc:
+                    failed_features.add(message["feature_id"])
+                    if self._record_feature_failure(message["feature_id"], exc, "claim:" + message["id"]):
+                        raise
+        return failed_features
 
     def _coordinator_input(self, snapshot: dict, claim: dict) -> str:
         if snapshot["feature"].get("kind") == LEAD_KIND:

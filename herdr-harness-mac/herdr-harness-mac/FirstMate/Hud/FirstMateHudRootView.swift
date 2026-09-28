@@ -55,7 +55,7 @@ struct FirstMateHudRootView: View {
                     FirstMateHudMoreOrb(tucked: collapsed.tucked)
                         .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .onHover { controller.hover(.tucked, isInside: $0) }
                 .accessibilityLabel("\(collapsed.tucked.count) more features. Opens the list.")
                 .position(x: face.x + center.x, y: face.y + center.y)
@@ -72,7 +72,7 @@ struct FirstMateHudRootView: View {
             FirstMateHudHaloOrb(item: item)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .onHover { controller.hover(.readout(item.id), isInside: $0) }
         .contextMenu { FirstMateHudItemMenu(controller: controller, item: item) }
         .accessibilityLabel(FirstMateHudSpeech.accessibilityLabel(item, opensMessage: true))
@@ -191,7 +191,7 @@ struct FirstMateHudChevron: View {
                 .overlay { Circle().strokeBorder(HerdrTheme.outline, lineWidth: 1) }
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityLabel(isExpanded ? "Collapse the list" : "Show the list")
     }
 }
@@ -229,7 +229,7 @@ struct FirstMateHudRow: View {
                 .frame(width: FirstMateHudGeometry.nodeLane)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityHidden(true)
     }
 
@@ -243,7 +243,7 @@ struct FirstMateHudRow: View {
             .firstMateHudCard(cornerRadius: compact ? 7 : 9, tint: item.needsYou ? FirstMateChatStatusStyle.dotColor(for: item.hudStatus) : nil)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .contextMenu { FirstMateHudItemMenu(controller: controller, item: item) }
         .accessibilityLabel(FirstMateHudSpeech.accessibilityLabel(item))
         .onKeyPress("e") {
@@ -308,7 +308,7 @@ struct FirstMateHudRow: View {
                     .scaleEffect(x: side == .trailing ? 1 : -1)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityLabel("Read the message from \(item.label)")
         } else if !compact {
             Color.clear.frame(width: FirstMateHudGeometry.bubbleSize.width, height: 1)
@@ -384,7 +384,7 @@ struct FirstMateHudSummaryRow: View {
             .firstMateHudCard(cornerRadius: 9)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityLabel(summary.isShowingAll ? "Show fewer moving features" : "\(summary.count) more moving features. Shows them all.")
     }
 }

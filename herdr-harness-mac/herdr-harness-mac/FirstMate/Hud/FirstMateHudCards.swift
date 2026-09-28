@@ -228,7 +228,7 @@ struct FirstMateHudMessageCard: View {
                         .background(Circle().fill(controller.replyDraft.trimmingCharacters(in: .whitespaces).isEmpty
                                                   ? HerdrTheme.primaryDisabled : HerdrTheme.primaryAction))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(controller.replyDraft.trimmingCharacters(in: .whitespaces).isEmpty || controller.isThinking)
                 .accessibilityLabel("Send reply")
             }
@@ -331,7 +331,7 @@ struct FirstMateHudEditorCard: View {
                         Text(emoji).font(.system(size: 14)).frame(width: 24, height: 24)
                             .background(RoundedRectangle(cornerRadius: 5).fill(controller.editorEmoji == emoji ? HerdrTheme.selectedFill : .clear))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                 }
             }
             HStack {
@@ -409,7 +409,7 @@ struct FirstMateHudChatCard: View {
                         .background(Circle().fill(controller.chatDraft.trimmingCharacters(in: .whitespaces).isEmpty
                                                   ? HerdrTheme.primaryDisabled : HerdrTheme.primaryAction))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .disabled(controller.chatDraft.trimmingCharacters(in: .whitespaces).isEmpty || controller.isThinking)
                 .accessibilityLabel("Send")
             }
@@ -530,7 +530,7 @@ private struct FirstMateHudCloseButton: View {
                 .frame(width: size, height: size)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.herdrPlain)
         .accessibilityLabel("Close")
     }
 }

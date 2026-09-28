@@ -12,9 +12,60 @@ import SwiftUI
 /// Reduce Transparency is off, and the window is dark. First Mate's light
 /// appearance stays opaque.
 enum HerdrGlass {
+    /// Herdr's one background-brightness factor. Every background the purple
+    /// glass and haze theme draws — the cached dusk artwork, the cached Haze
+    /// artwork, and the `base` color of an active `HerdrGlassBackground` — is
+    /// multiplied by this once, in encoded sRGB. That deepens the purple about
+    /// 20% while preserving hue, alpha, the gradient geometry, blur,
+    /// saturation, cropping, glass levels, and the opaque Glass-off, First Mate
+    /// light, and Reduce Transparency branches. Foreground text, icons, and
+    /// status colors are untouched, so reading text gains contrast.
+    static let backgroundBrightness = 0.80
+
     static func isActive(enabled: Bool, reduceTransparency: Bool, colorScheme: ColorScheme) -> Bool {
         enabled && !reduceTransparency && colorScheme == .dark
     }
+
+    /// `color` with every sRGB channel multiplied once by `brightness`, keeping
+    /// its alpha. Only an active `HerdrGlassBackground` composes its base this
+    /// way; foreground tokens and the opaque Glass-off branch use `color`
+    /// unchanged.
+    static func darkened(_ color: Color, scheme: ColorScheme, brightness: Double = backgroundBrightness) -> Color {
+        let value = HerdrTheme.resolved(color, scheme: scheme)
+        return Color(
+            .sRGB,
+            red: value.redComponent * brightness,
+            green: value.greenComponent * brightness,
+            blue: value.blueComponent * brightness,
+            opacity: value.alphaComponent
+        )
+    }
+}
+
+/// Multiplies an opaque sRGB bitmap's channels by `factor` once, in encoded
+/// sRGB, and preserves alpha. The authored gradient inputs never change: the
+/// study's colors and geometry render exactly as before, then the cached
+/// artwork itself carries the deeper shade. Applied to whichever bitmap a
+/// render ends with, so image-rendering fallback paths darken too.
+private func herdrDarkened(_ image: CGImage, by factor: Double) -> CGImage {
+    let width = image.width, height = image.height
+    guard factor != 1,
+          let space = CGColorSpace(name: CGColorSpace.sRGB),
+          let context = CGContext(
+              data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+              space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          )
+    else { return image }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    guard let data = context.data else { return image }
+    let buffer = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+    for index in stride(from: 0, to: width * height * 4, by: 4) {
+        buffer[index] = UInt8((Double(buffer[index]) * factor).rounded())
+        buffer[index + 1] = UInt8((Double(buffer[index + 1]) * factor).rounded())
+        buffer[index + 2] = UInt8((Double(buffer[index + 2]) * factor).rounded())
+        // Alpha stays: the factor darkens color only.
+    }
+    return context.makeImage() ?? image
 }
 
 extension EnvironmentValues {
@@ -36,13 +87,18 @@ struct HerdrGlassBackground: View {
     /// the sidebar and pane share a single continuous backdrop.
     var drawsDusk = false
     var duskRegion: HerdrDuskBackdrop.Region = .whole
+    /// Internal rendering seam for deterministic tests: `1` composes the
+    /// authored baseline. Production always uses
+    /// ``HerdrGlass/backgroundBrightness``.
+    var brightness: Double = HerdrGlass.backgroundBrightness
     @Environment(\.herdrGlassActive) private var isActive
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if isActive {
             ZStack {
-                if drawsDusk { HerdrDuskBackdrop(region: duskRegion) }
-                base.opacity(level)
+                if drawsDusk { HerdrDuskBackdrop(region: duskRegion, brightness: brightness) }
+                HerdrGlass.darkened(base, scheme: colorScheme, brightness: brightness).opacity(level)
             }
             .clipShape(.rect(cornerRadius: cornerRadius))
         } else {
@@ -85,29 +141,62 @@ struct HerdrDuskBackdrop: View {
     }
 
     var region: Region = .whole
+    /// Internal rendering seam for deterministic tests: `1` draws the unscaled
+    /// baseline. Production always draws the cached darkened artwork.
+    var brightness: Double = HerdrGlass.backgroundBrightness
 
     var body: some View {
-        Image(nsImage: region == .whole ? HerdrDusk.image : HerdrDusk.trailingHalf)
+        Image(nsImage: artwork)
             .resizable()
             .interpolation(.high)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
+
+    private var artwork: NSImage {
+        let baseline = brightness == 1
+        switch region {
+        case .whole: return baseline ? HerdrDusk.baselineImage : HerdrDusk.image
+        case .trailingHalf: return baseline ? HerdrDusk.baselineTrailingHalf : HerdrDusk.trailingHalf
+        }
+    }
 }
 
 enum HerdrDusk {
+    static let size = CGSize(width: 640, height: 400)
+
+    /// The study's sky, top to bottom: #2a1d4a, #171a36 at 55%, #0f1226.
+    /// Kept as authored; the brightness factor applies after drawing.
+    struct SkyStop {
+        var location: CGFloat
+        var red: Double, green: Double, blue: Double
+    }
+
+    static let sky: [SkyStop] = [
+        SkyStop(location: 0, red: 42, green: 29, blue: 74),
+        SkyStop(location: 0.55, red: 23, green: 26, blue: 54),
+        SkyStop(location: 1, red: 15, green: 18, blue: 38),
+    ]
+
+    /// The study's blur: 24pt across a 1336pt window, and its 110% saturation.
+    static let blurSigma: CGFloat = 24
+    static let blurReferenceWidth: CGFloat = 1336
+    static let saturation: CGFloat = 1.1
+
     /// The study's desktop art (`DESK` in theme-study-v2), blurred the way
     /// the study blurs it (24pt across a 1336pt window) and saturated 110%.
     /// The violet glow is at 80% rather than the study's 95%, so tertiary text
     /// on a selected card at its center still reads at 4.5:1.
-    @MainActor static let image: NSImage = render(size: CGSize(width: 640, height: 400))
-    @MainActor static let trailingHalf: NSImage = {
-        let size = image.size
-        guard let whole = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let half = whole.cropping(to: CGRect(x: whole.width / 2, y: 0, width: whole.width / 2, height: whole.height))
-        else { return image }
-        return NSImage(cgImage: half, size: CGSize(width: size.width / 2, height: size.height))
-    }()
+    ///
+    /// Tests pin ``baselineImage`` and compare the cached ``image``, which is
+    /// the baseline with ``HerdrGlass/backgroundBrightness`` applied once.
+    @MainActor static let baselineImage: NSImage = artwork(brightness: 1)
+    @MainActor static let image: NSImage = artwork(brightness: HerdrGlass.backgroundBrightness)
+
+    /// The right half of the same artwork, for the HUD, which sits at the top
+    /// right of the screen.
+    @MainActor static let trailingHalf: NSImage = cropped(image)
+    @MainActor static let baselineTrailingHalf: NSImage = cropped(baselineImage)
 
     /// A CSS `radial-gradient(rx% ry% at x% y%, color, transparent stop%)`.
     struct Glow {
@@ -130,21 +219,34 @@ enum HerdrDusk {
              red: 132, green: 98, blue: 222, alpha: 0.80),
     ]
 
-    private static func render(size: CGSize) -> NSImage {
+    @MainActor private static let drawnArtwork: CGImage? = render(size: size)
+
+    @MainActor private static func artwork(brightness: Double) -> NSImage {
+        guard let drawnArtwork else { return NSImage(size: size) }
+        let image = brightness == 1 ? drawnArtwork : herdrDarkened(drawnArtwork, by: brightness)
+        return NSImage(cgImage: image, size: size)
+    }
+
+    @MainActor private static func cropped(_ image: NSImage) -> NSImage {
+        let size = image.size
+        guard let whole = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let half = whole.cropping(to: CGRect(x: whole.width / 2, y: 0, width: whole.width / 2, height: whole.height))
+        else { return image }
+        return NSImage(cgImage: half, size: CGSize(width: size.width / 2, height: size.height))
+    }
+
+    private static func render(size: CGSize) -> CGImage? {
         let width = Int(size.width), height = Int(size.height)
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return NSImage(size: size) }
+        ) else { return nil }
 
-        // #2a1d4a at the top, #171a36 at 55%, #0f1226 at the bottom.
-        let sky = [
-            CGColor(srgbRed: 42 / 255, green: 29 / 255, blue: 74 / 255, alpha: 1),
-            CGColor(srgbRed: 23 / 255, green: 26 / 255, blue: 54 / 255, alpha: 1),
-            CGColor(srgbRed: 15 / 255, green: 18 / 255, blue: 38 / 255, alpha: 1),
-        ]
-        if let gradient = CGGradient(colorsSpace: space, colors: sky as CFArray, locations: [0, 0.55, 1]) {
+        let skyColors = sky.map {
+            CGColor(srgbRed: $0.red / 255, green: $0.green / 255, blue: $0.blue / 255, alpha: 1)
+        }
+        if let gradient = CGGradient(colorsSpace: space, colors: skyColors as CFArray, locations: sky.map(\.location)) {
             context.drawLinearGradient(gradient, start: CGPoint(x: 0, y: size.height), end: .zero, options: [])
         }
         for glow in glows {
@@ -162,18 +264,18 @@ enum HerdrDusk {
                                        endCenter: .zero, endRadius: radiusX * glow.stop, options: [])
             context.restoreGState()
         }
-        guard let drawn = context.makeImage() else { return NSImage(size: size) }
+        guard let drawn = context.makeImage() else { return nil }
 
         let input = CIImage(cgImage: drawn)
         let blurred = input.clampedToExtent()
-            .applyingGaussianBlur(sigma: 24 * size.width / 1336)
-            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.1])
+            .applyingGaussianBlur(sigma: blurSigma * size.width / blurReferenceWidth)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: saturation])
             .cropped(to: input.extent)
         let ciContext = CIContext(options: [.useSoftwareRenderer: false])
         guard let output = ciContext.createCGImage(blurred, from: input.extent, format: .RGBA8, colorSpace: space) else {
-            return NSImage(cgImage: drawn, size: size)
+            return drawn
         }
-        return NSImage(cgImage: output, size: size)
+        return output
     }
 }
 
@@ -185,11 +287,14 @@ struct HerdrHazeBand: View {
     /// violet lands on the dusk's own. The contrast tests hold it to 4.5:1.
     static let opacity = 0.06
     var height: CGFloat = 280
+    /// Internal rendering seam for deterministic tests: `1` draws the unscaled
+    /// baseline. Production always draws the cached darkened artwork.
+    var brightness: Double = HerdrGlass.backgroundBrightness
     @Environment(\.herdrHazeActive) private var isActive
 
     var body: some View {
         if isActive {
-            Image(nsImage: HerdrHaze.image)
+            Image(nsImage: brightness == 1 ? HerdrHaze.baselineImage : HerdrHaze.image)
                 .resizable()
                 .interpolation(.medium)
                 .frame(height: height)
@@ -205,40 +310,67 @@ struct HerdrHazeBand: View {
 }
 
 enum HerdrHaze {
-    /// A 480×180 dusk gradient (violet, magenta, indigo), blurred once.
-    @MainActor static let image: NSImage = render(size: CGSize(width: 480, height: 180))
+    static let size = CGSize(width: 480, height: 180)
 
-    private static func render(size: CGSize) -> NSImage {
+    /// The gradient's flat base color. Kept as authored; the brightness factor
+    /// applies after drawing.
+    static let base = (red: 0.16, green: 0.11, blue: 0.29)
+
+    /// A radial blob: center and radius as fractions of the artwork size, from
+    /// the bottom left, with its color.
+    struct Blob {
+        var x: CGFloat, y: CGFloat, radiusFraction: CGFloat
+        var red: Double, green: Double, blue: Double
+    }
+
+    static let blobs: [Blob] = [
+        Blob(x: 0.18, y: 0.85, radiusFraction: 0.45, red: 0.52, green: 0.38, blue: 0.87),
+        Blob(x: 0.82, y: 0.90, radiusFraction: 0.40, red: 0.56, green: 0.30, blue: 0.55),
+        Blob(x: 0.50, y: 0.10, radiusFraction: 0.50, red: 0.14, green: 0.18, blue: 0.42),
+    ]
+
+    static let blurSigma: CGFloat = 18
+
+    /// A 480×180 dusk gradient (violet, magenta, indigo), blurred once. Tests
+    /// pin ``baselineImage`` and compare the cached ``image``, which is the
+    /// baseline with ``HerdrGlass/backgroundBrightness`` applied once.
+    @MainActor static let baselineImage: NSImage = artwork(brightness: 1)
+    @MainActor static let image: NSImage = artwork(brightness: HerdrGlass.backgroundBrightness)
+
+    @MainActor private static let drawnArtwork: CGImage? = render(size: size)
+
+    @MainActor private static func artwork(brightness: Double) -> NSImage {
+        guard let drawnArtwork else { return NSImage(size: size) }
+        let image = brightness == 1 ? drawnArtwork : herdrDarkened(drawnArtwork, by: brightness)
+        return NSImage(cgImage: image, size: size)
+    }
+
+    private static func render(size: CGSize) -> CGImage? {
         let width = Int(size.width), height = Int(size.height)
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return NSImage(size: size) }
-        context.setFillColor(CGColor(srgbRed: 0.16, green: 0.11, blue: 0.29, alpha: 1))
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.setFillColor(CGColor(srgbRed: base.red, green: base.green, blue: base.blue, alpha: 1))
         context.fill(CGRect(origin: .zero, size: size))
-        let blobs: [(CGPoint, CGFloat, CGColor)] = [
-            (CGPoint(x: size.width * 0.18, y: size.height * 0.85), size.width * 0.45,
-             CGColor(srgbRed: 0.52, green: 0.38, blue: 0.87, alpha: 1)),
-            (CGPoint(x: size.width * 0.82, y: size.height * 0.9), size.width * 0.4,
-             CGColor(srgbRed: 0.56, green: 0.30, blue: 0.55, alpha: 1)),
-            (CGPoint(x: size.width * 0.5, y: size.height * 0.1), size.width * 0.5,
-             CGColor(srgbRed: 0.14, green: 0.18, blue: 0.42, alpha: 1)),
-        ]
-        let space = CGColorSpace(name: CGColorSpace.sRGB)!
-        for (center, radius, color) in blobs {
+        for blob in blobs {
+            let center = CGPoint(x: size.width * blob.x, y: size.height * blob.y)
+            let radius = size.width * blob.radiusFraction
+            let color = CGColor(srgbRed: blob.red, green: blob.green, blue: blob.blue, alpha: 1)
             let clear = color.copy(alpha: 0) ?? color
             guard let gradient = CGGradient(colorsSpace: space, colors: [color, clear] as CFArray, locations: [0, 1]) else { continue }
             context.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: radius, options: [])
         }
-        guard let drawn = context.makeImage() else { return NSImage(size: size) }
+        guard let drawn = context.makeImage() else { return nil }
         let input = CIImage(cgImage: drawn)
         let blurred = input.clampedToExtent()
-            .applyingGaussianBlur(sigma: 18)
+            .applyingGaussianBlur(sigma: blurSigma)
             .cropped(to: input.extent)
         let ciContext = CIContext(options: [.useSoftwareRenderer: false])
         guard let output = ciContext.createCGImage(blurred, from: input.extent) else {
-            return NSImage(cgImage: drawn, size: size)
+            return drawn
         }
-        return NSImage(cgImage: output, size: size)
+        return output
     }
 }

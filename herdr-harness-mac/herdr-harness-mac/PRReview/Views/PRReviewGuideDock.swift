@@ -8,74 +8,78 @@ struct PRReviewGuideDock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 10) {
-                Image(systemName: "waveform")
-                    .foregroundStyle(HerdrTheme.accent)
-                    .frame(width: 30, height: 30)
-                    .background(HerdrTheme.selection, in: .rect(cornerRadius: 9))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(session.chapter?.title ?? "Your review buddy")
-                        .herdrFont(.subheadline, weight: .semibold).lineLimit(1)
-                    Text(session.status).herdrFont(.caption2).foregroundStyle(HerdrTheme.mist).lineLimit(2)
-                }
-                Spacer(minLength: 4)
-                if session.isBusy { ProgressView().controlSize(.small) }
-                if session.isDetour && session.plan != nil {
-                    Button("Back to walkthrough", systemImage: "arrow.uturn.backward") { session.returnToWalkthrough() }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("pr-review-guide-return")
-                } else if session.plan == nil || session.isStale {
-                    Button(session.isStale ? "New walkthrough" : "Start walkthrough") { session.start() }
-                        .herdrProminentButton()
-                        .disabled(!session.isAvailable || session.isBusy)
-                        .accessibilityIdentifier("pr-review-guide-start")
-                } else {
-                    Button(session.chapterIndex + 1 < session.chapters.count ? "Next" : "Finish", systemImage: "arrow.right") { session.advance() }
-                        .herdrProminentButton().disabled(!session.canAdvance)
-                        .accessibilityIdentifier("pr-review-guide-next")
-                }
-            }
-            HStack(spacing: 12) {
-                if session.chapter != nil {
-                    Button { session.togglePlayback() } label: {
-                        Image(systemName: session.isPlaying ? "pause.fill" : "play.fill")
-                            .frame(width: 22, height: 20)
+            if isInitialPresentation {
+                initialControls
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: "waveform")
+                        .foregroundStyle(HerdrTheme.accent)
+                        .frame(width: 30, height: 30)
+                        .background(HerdrTheme.selection, in: .rect(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(session.chapter?.title ?? "Your review buddy")
+                            .herdrFont(.subheadline, weight: .semibold).lineLimit(1)
+                        Text(session.status).herdrFont(.caption2).foregroundStyle(HerdrTheme.mist).lineLimit(2)
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(session.isBusy || session.isStale || session.isLoadingAudio)
-                    .help(session.isPlaying ? "Pause narration" : "Listen to this explanation")
-                    .accessibilityLabel(session.isPlaying ? "Pause narration" : "Play narration")
-                    Slider(value: Binding(get: { session.player.progressTime }, set: { session.seek(to: $0) }), in: 0...max(1, session.player.duration))
-                        .disabled(session.player.duration <= 0)
-                        .accessibilityLabel("Narration position")
-                    Text(time(session.player.progressTime)).herdrFont(.caption2, monospacedDigit: true).foregroundStyle(HerdrTheme.mist)
-                    Menu {
-                        ForEach([Float(0.75), 1, 1.25, 1.5, 2], id: \.self) { rate in
-                            Button("\(rate.formatted())×") { session.setRate(rate) }
-                        }
-                        Divider()
-                        ForEach(session.voices, id: \.self) { voice in
-                            Button(voiceLabel(voice)) { session.chooseVoice(voice) }
-                        }
-                        Divider()
-                        Button("Replay explanation") { session.replay() }
-                        Button(session.marksEnabled ? "Hide drawings" : "Show drawings") { session.toggleMarks() }
-                    } label: { Text("\(session.player.rate.formatted())×").herdrFont(.caption) }
-                    .menuStyle(.borderlessButton).fixedSize()
-                    .help("Playback speed, voice, and drawings")
-                } else {
-                    Text(session.isAvailable ? "At your pace. You decide when to move on." : "Update the companion to use guided review.")
-                        .herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 4)
+                    if session.isBusy { ProgressView().controlSize(.small) }
+                    if session.isDetour && session.plan != nil {
+                        Button("Back to walkthrough", systemImage: "arrow.uturn.backward") { session.returnToWalkthrough() }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("pr-review-guide-return")
+                    } else if session.plan == nil || session.isStale {
+                        Button(session.isStale ? "New walkthrough" : "Start walkthrough") { session.start() }
+                            .herdrProminentButton()
+                            .disabled(!session.isAvailable || session.isBusy)
+                            .accessibilityIdentifier("pr-review-guide-start")
+                    } else {
+                        Button(session.chapterIndex + 1 < session.chapters.count ? "Next" : "Finish", systemImage: "arrow.right") { session.advance() }
+                            .herdrProminentButton().disabled(!session.canAdvance)
+                            .accessibilityIdentifier("pr-review-guide-next")
+                    }
                 }
-                Button("Ask", systemImage: "text.bubble") {
-                    session.beginQuestion(); questionFocused = true
-                }.disabled(!session.canAsk)
-                Button(session.isExpanded ? "Collapse" : "Expand", systemImage: "sidebar.right") {
-                    session.isExpanded.toggle()
-                }.disabled(session.chapter == nil && session.transcript.isEmpty)
+                HStack(spacing: 12) {
+                    if session.chapter != nil {
+                        Button { session.togglePlayback() } label: {
+                            Image(systemName: session.isPlaying ? "pause.fill" : "play.fill")
+                                .frame(width: 22, height: 20)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(session.isBusy || session.isStale || session.isLoadingAudio)
+                        .help(session.isPlaying ? "Pause narration" : "Listen to this explanation")
+                        .accessibilityLabel(session.isPlaying ? "Pause narration" : "Play narration")
+                        Slider(value: Binding(get: { session.player.progressTime }, set: { session.seek(to: $0) }), in: 0...max(1, session.player.duration))
+                            .disabled(session.player.duration <= 0)
+                            .accessibilityLabel("Narration position")
+                        Text(time(session.player.progressTime)).herdrFont(.caption2, monospacedDigit: true).foregroundStyle(HerdrTheme.mist)
+                        Menu {
+                            ForEach([Float(0.75), 1, 1.25, 1.5, 2], id: \.self) { rate in
+                                Button("\(rate.formatted())×") { session.setRate(rate) }
+                            }
+                            Divider()
+                            ForEach(session.voices, id: \.self) { voice in
+                                Button(voiceLabel(voice)) { session.chooseVoice(voice) }
+                            }
+                            Divider()
+                            Button("Replay explanation") { session.replay() }
+                            Button(session.marksEnabled ? "Hide drawings" : "Show drawings") { session.toggleMarks() }
+                        } label: { Text("\(session.player.rate.formatted())×").herdrFont(.caption) }
+                        .menuStyle(.borderlessButton).fixedSize()
+                        .help("Playback speed, voice, and drawings")
+                    } else {
+                        Text(session.isAvailable ? "At your pace. You decide when to move on." : "Update the companion to use guided review.")
+                            .herdrFont(.caption).foregroundStyle(HerdrTheme.mist)
+                        Spacer(minLength: 0)
+                    }
+                    Button("Ask", systemImage: "text.bubble") {
+                        session.beginQuestion(); questionFocused = true
+                    }.disabled(!session.canAsk)
+                    Button(session.isExpanded ? "Collapse" : "Expand", systemImage: "sidebar.right") {
+                        session.isExpanded.toggle()
+                    }.disabled(session.chapter == nil && session.transcript.isEmpty)
+                }
+                .buttonStyle(.herdrPlain)
             }
-            .buttonStyle(.plain)
             if let error = session.error {
                 Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.alert).textSelection(.enabled)
             }
@@ -90,7 +94,8 @@ struct PRReviewGuideDock: View {
             }
             if session.isAsking { composer }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, isInitialPresentation ? 2 : 12)
         .background(HerdrTheme.elevated)
         .overlay(alignment: .top) { Rectangle().fill(HerdrTheme.separator).frame(height: 1) }
         .sheet(isPresented: $recording) {
@@ -99,6 +104,35 @@ struct PRReviewGuideDock: View {
                 session.draft += transcript.text
                 questionFocused = true
             }, cancel: {}, allowsRawSave: false)
+        }
+    }
+
+    /// Before a walkthrough exists, keep its invitation to one compact toolbar row.
+    /// Playback and expansion controls appear when there is an explanation.
+    private var isInitialPresentation: Bool {
+        session.chapter == nil && session.plan == nil && session.transcript.isEmpty
+    }
+
+    private var initialControls: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "waveform")
+                .foregroundStyle(HerdrTheme.accent)
+                .frame(width: 20, height: 20)
+            Text(session.isAvailable ? "Review buddy" : "Update companion for walkthrough")
+                .herdrFont(.caption, weight: .semibold)
+                .lineLimit(1)
+                .help(session.isAvailable ? session.status : "Update the companion to use guided review.")
+            Spacer(minLength: 4)
+            if session.isBusy { ProgressView().controlSize(.small) }
+            Button("Ask", systemImage: "text.bubble") {
+                session.beginQuestion(); questionFocused = true
+            }
+            .buttonStyle(HerdrButtonStyle(kind: .ghost, height: HerdrTheme.ControlHeight.small))
+            .disabled(!session.canAsk)
+            Button(session.isBusy ? "Preparing…" : "Start walkthrough") { session.start() }
+                .buttonStyle(HerdrButtonStyle(kind: .primary, height: HerdrTheme.ControlHeight.small))
+                .disabled(!session.isAvailable || session.isBusy)
+                .accessibilityIdentifier("pr-review-guide-start")
         }
     }
 
@@ -168,7 +202,7 @@ struct PRReviewGuideDetails: View {
                                             .herdrFont(.caption2).foregroundStyle(HerdrTheme.mist)
                                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                                         .background(HerdrTheme.elevated, in: .rect(cornerRadius: 8))
-                                }.buttonStyle(.plain)
+                                }.buttonStyle(.herdrPlain)
                             }
                         }
                     }
@@ -204,7 +238,7 @@ struct PRReviewGuideDetails: View {
                                 Text(chapter.title).herdrFont(.caption).multilineTextAlignment(.leading)
                                 Spacer(minLength: 0)
                             }
-                        }.buttonStyle(.plain).disabled(session.isBusy || session.isStale)
+                        }.buttonStyle(.herdrPlain).disabled(session.isBusy || session.isStale)
                     }
                 }
                 if !session.transcript.isEmpty {

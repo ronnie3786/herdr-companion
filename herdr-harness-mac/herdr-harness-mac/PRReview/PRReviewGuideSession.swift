@@ -56,9 +56,21 @@ final class PRReviewGuideSession {
     @ObservationIgnored private var currentPath: (() -> String?)?
     @ObservationIgnored private var isDemo = false
     @ObservationIgnored private let persistenceURL: URL?
+    @ObservationIgnored private let allowsDemoPersistence: Bool
 
-    init(persistenceURL: URL? = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Herdr/Assistant/pr-review-guides.json")) {
+    /// Demo runs and hosted tests must not restore or overwrite operator progress.
+    /// Persistence tests opt into their own temporary URL through the designated initializer.
+    convenience init() {
+        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Herdr/Assistant/pr-review-guides.json")
+        self.init(persistenceURL: isTesting ? nil : url, allowsDemoPersistence: false)
+    }
+
+    init(persistenceURL: URL?, allowsDemoPersistence: Bool = true) {
         self.persistenceURL = persistenceURL
+        self.allowsDemoPersistence = allowsDemoPersistence
         player.onFrame = { [weak self] frame in
             guard let self, !self.isStale else { return }
             self.annotations.update(frame)
@@ -420,7 +432,8 @@ final class PRReviewGuideSession {
         audioCache = [:]
     }
     private func persist() {
-        guard let persistenceURL, let scope, !isStale, plan != nil || !transcript.isEmpty else { return }
+        guard !isDemo || allowsDemoPersistence,
+              let persistenceURL, let scope, !isStale, plan != nil || !transcript.isEmpty else { return }
         var saved: [Saved] = []
         if FileManager.default.fileExists(atPath: persistenceURL.path) {
             do { saved = try JSONDecoder().decode([Saved].self, from: Data(contentsOf: persistenceURL)) }
@@ -439,7 +452,8 @@ final class PRReviewGuideSession {
         } catch { self.error = "Progress could not be saved on this Mac. You can continue this walkthrough." }
     }
     private func restore() {
-        guard let persistenceURL, let scope,
+        guard !isDemo || allowsDemoPersistence,
+              let persistenceURL, let scope,
               let saved = try? JSONDecoder().decode([Saved].self, from: Data(contentsOf: persistenceURL)),
               let value = saved.last(where: { $0.scope == scope }) else { return }
         plan = value.plan; transcript = value.transcript

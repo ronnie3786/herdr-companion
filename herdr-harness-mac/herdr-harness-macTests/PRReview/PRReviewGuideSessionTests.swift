@@ -141,6 +141,25 @@ struct PRReviewGuideSessionTests {
         #expect(!restored.isDetour)
     }
 
+    @Test("Demo isolation neither restores nor overwrites persisted operator progress")
+    func demoPersistenceIsolation() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("guide-isolation-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let (store, savedSession) = configured(persistenceURL: url)
+        savedSession.start(); await settle(savedSession); savedSession.advance()
+        let savedBytes = try Data(contentsOf: url)
+
+        let demo = PRReviewGuideSession(persistenceURL: url, allowsDemoPersistence: false)
+        demo.configure(store: store)
+        #expect(demo.plan == nil)
+        demo.start(); await settle(demo); demo.advance(); demo.advance(); demo.pause()
+        #expect(try Data(contentsOf: url) == savedBytes)
+
+        let explicitlyRestored = PRReviewGuideSession(persistenceURL: url)
+        explicitlyRestored.configure(store: store)
+        #expect(explicitlyRestored.chapterIndex == 1)
+    }
+
     @Test("Guide selections retain mixed before and after spans in request JSON")
     func selectionWireContract() throws {
         let request = PRReviewGuideRequest(requestID: "synthetic-request", baseSHA: "base", headSHA: "head", kind: "answer", question: "Why?", path: "Sources/Catalog.swift", chapterID: nil, continueFromGuideID: nil, selection: .init(text: "old\nnew", spans: [.init(side: "old", startLine: 4, endLine: 5), .init(side: "new", startLine: 4, endLine: 7)]))

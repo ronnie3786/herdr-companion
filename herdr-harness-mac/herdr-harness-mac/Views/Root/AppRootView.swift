@@ -147,6 +147,9 @@ final class HerdrShellState {
     /// starts them; they keep running with every window closed.
     @ObservationIgnored private(set) var firstMateFleetDriver: FirstMateFleetDriver?
     @ObservationIgnored private(set) var firstMateDockBadge: FirstMateDockBadgeController?
+    /// The First Mate HUD, separate from the agent HUD. Process-owned like
+    /// the fleet driver; it shows only while its setting is on.
+    @ObservationIgnored let firstMateHud = FirstMateHudController()
     @ObservationIgnored private var firstMateChatDemoStorage: FirstMateChatDemoSource?
     /// The chat window's demo, shared with the Dock badge and menu. Created on
     /// first use.
@@ -271,6 +274,7 @@ final class HerdrShellState {
         let badge = firstMateDockBadge ?? FirstMateDockBadgeController()
         firstMateDockBadge = badge
         badge.start(model: model, shell: self)
+        firstMateHud.start(model: model, shell: self)
     }
 
     func reconcileFirstMateStores(

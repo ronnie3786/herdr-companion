@@ -1,0 +1,2562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First Mate HUD Reference</title>
+<meta name="description" content="Design reference for the chosen First Mate HUD: the holographic list with a row of halo orbs when collapsed, on the Mono × Herdr theme tokens.">
+<style>
+:root {
+  /* Mono × Herdr (feature/mono-ui-20260926, HerdrTheme.swift): two-color generator + lavender + Herdr pastels. */
+  --base: #151519;
+  --rail: #131317;
+  --ink: #E9E9EC;
+  --prose: #BABABE;   /* ink 78% */
+  --ink-2: #A9A9AD;   /* ink 70% */
+  --ink-3: #9D9DA0;   /* ink 64% */
+  --icon: #7F7F82;    /* ink 50% */
+  --f3: rgba(233, 233, 236, 0.03);
+  --f5: rgba(233, 233, 236, 0.05);
+  --f8: rgba(233, 233, 236, 0.08);
+  --f10: rgba(233, 233, 236, 0.10);
+  --f15: rgba(233, 233, 236, 0.15);
+  --hair: rgba(233, 233, 236, 0.07);
+  --accent: #AAA6F4;
+  --on-accent: #151519;
+  --control: #5E59A8;
+  --signal: #9CCDB9;
+  --working: #E4C386;
+  --alert: #E2A7B6;
+  --attention: #FF9F0A;
+  --glass: rgba(21, 21, 25, 0.78);  /* HerdrTheme.Glass.hud */
+  --desk:
+    radial-gradient(70% 60% at 12% 8%, rgba(132, 98, 222, 0.95), transparent 62%),
+    radial-gradient(55% 50% at 88% 6%, rgba(214, 120, 178, 0.6), transparent 60%),
+    radial-gradient(80% 70% at 70% 100%, rgba(52, 70, 168, 0.8), transparent 65%),
+    radial-gradient(60% 60% at 20% 95%, rgba(96, 58, 160, 0.65), transparent 60%),
+    linear-gradient(180deg, #2A1D4A 0%, #171A36 55%, #0F1226 100%);
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  min-height: 100vh; background: #0C0C0E; color: var(--ink);
+  font: 13px/1.5 var(--sans); -webkit-font-smoothing: antialiased;
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.micro { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+
+/* ---------- Page ---------- */
+.page { display: grid; grid-template-columns: minmax(0, 1fr) 316px; min-height: 100vh; }
+.stage-wrap { height: 100vh; display: grid; place-items: center; padding: 16px; overflow: hidden; }
+.stage-box { position: relative; }
+.stage {
+  position: absolute; left: 0; top: 0; width: 1000px; height: 680px; transform-origin: 0 0;
+  border-radius: 14px; overflow: hidden; isolation: isolate; background: #1A1830;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 30px 80px rgba(0, 0, 0, 0.55);
+  user-select: none; -webkit-user-select: none;
+}
+.desk { position: absolute; inset: -28px; background: var(--desk); will-change: transform; }
+
+/* A Herdr window in Mono, so the HUD reads as floating over work. */
+.appwin {
+  position: absolute; left: 30px; top: 36px; width: 452px; height: 600px; border-radius: 12px; overflow: hidden;
+  display: grid; grid-template-columns: 128px 1fr; background: rgba(21, 21, 25, 0.75);
+  box-shadow: inset 0 0 0 1px var(--f10), 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+.appwin .rail { background: rgba(19, 19, 23, 0.55); border-right: 1px solid var(--hair); padding: 13px 12px; }
+.appwin .lights { display: flex; gap: 7px; margin-bottom: 22px; }
+.appwin .lights i { width: 11px; height: 11px; border-radius: 50%; background: rgba(233, 233, 236, 0.16); }
+.appwin b { display: block; height: 6px; border-radius: 3px; background: rgba(233, 233, 236, 0.08); margin: 0 0 13px; }
+.appwin b.acc { background: rgba(170, 166, 244, 0.2); }
+.appwin .pane { padding: 54px 24px 0; }
+
+/* ---------- Field: halo, the line, signals ---------- */
+.field { position: absolute; left: 0; top: 0; width: 1000px; height: 680px; z-index: 2; pointer-events: none; overflow: visible; }
+.spine-glow { fill: none; stroke: #AAA6F4; stroke-width: 7; stroke-linecap: round; opacity: 0.12; transition: opacity 0.3s; }
+.spine { fill: none; stroke: url(#spineGrad); stroke-width: 1.5; stroke-linecap: round; transition: stroke-width 0.2s; }
+.spine.live { stroke-width: 2.2; }
+.spine-glow.live { opacity: 0.3; }
+.junction { fill: #16161B; stroke: rgba(170, 166, 244, 0.8); stroke-width: 1.2; }
+.ghost { fill: rgba(170, 166, 244, 0.04); stroke: rgba(170, 166, 244, 0.5); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0; transition: opacity 0.2s; }
+.ghost.on { opacity: 1; }
+.tether { fill: none; stroke: url(#tetherGrad); stroke-width: 1.6; stroke-linecap: round; }
+.leader { fill: none; stroke: rgba(170, 166, 244, 0.65); stroke-width: 1; }
+.leader-dot { fill: var(--accent); }
+
+/* The scan: a beam that runs down the list when First Mate checks everyone. */
+.scan-pos { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 5; pointer-events: none; }
+.scan {
+  position: absolute; left: -44px; top: 0; width: 330px; height: 42px; opacity: 0;
+  background: linear-gradient(180deg, rgba(170, 166, 244, 0) 0%, rgba(170, 166, 244, 0.06) 50%, rgba(170, 166, 244, 0.2) 90%, rgba(226, 224, 255, 0.95) 96%, rgba(226, 224, 255, 0) 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+}
+
+/* ---------- Second mates: one row each, strung on the line ---------- */
+.rows { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 4; }
+.row { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.row.dragging { z-index: 3; }
+.row-hit {
+  position: absolute; left: -19px; top: -19px; width: 38px; height: 38px; padding: 0; border: 0;
+  background: none; color: inherit; text-align: left; touch-action: none;
+}
+.row-hit:focus-visible { outline: none; }
+.row-hit:focus-visible .slat { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row.leaving .row-hit { pointer-events: none; }
+.node { position: absolute; left: 0; top: 0; width: 38px; height: 38px; }
+.node .ring { position: absolute; left: -1px; top: -1px; width: 40px; height: 40px; overflow: visible; transition: opacity 0.2s; }
+.disc {
+  position: absolute; left: 6px; top: 6px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background-color: rgba(21, 21, 25, 0.86);
+  background-image: radial-gradient(circle at 50% 28%, rgba(233, 233, 236, 0.09), transparent 66%);
+  box-shadow: inset 0 0 0 1px rgba(233, 233, 236, 0.12), 0 0 16px -4px var(--c), 0 6px 14px rgba(0, 0, 0, 0.4);
+  transition: box-shadow 0.25s, transform 0.25s, background-color 0.3s;
+}
+.disc .emoji { font-size: 14px; line-height: 1; }
+.badge {
+  position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--c); color: #151519;
+  box-shadow: 0 0 0 2px rgba(21, 21, 25, 0.92), 0 0 10px var(--c);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s;
+}
+.badge svg { width: 9px; height: 9px; }
+.badge:empty { transform: scale(0); opacity: 0; }
+.row.consulting .disc { box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.95), 0 0 20px rgba(170, 166, 244, 0.75), 0 6px 14px rgba(0, 0, 0, 0.4); }
+.row.opening .disc { transform: scale(0.88); }
+
+/* Collapsed: each feature docks as a small holographic orb. Three styles to compare:
+   halo (glowing progress ring), hex (a tile whose edge fills with progress), target (corner brackets and a bar).
+   A dashed lavender ring turning slowly means a message is waiting. */
+.row.docked .row-hit { transform: scale(0.74); }
+.row.docked.hot .row-hit { transform: scale(0.92); }
+.row.docked .badge { opacity: 0; }
+.row.docked .disc .emoji { font-size: 13px; }
+.shape { position: absolute; left: -1px; top: -1px; width: 40px; height: 40px; overflow: visible; pointer-events: none; }
+.shape > * { opacity: 0; transition: opacity 0.25s; fill: none; }
+.shape .hex-base { fill: var(--c); fill-opacity: 0.12; stroke: var(--c); stroke-opacity: 0.28; stroke-width: 1.2; }
+.shape .hex-fill { stroke: var(--c); stroke-width: 1.8; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: calc(1 - var(--p, 0)); filter: drop-shadow(0 0 2.5px var(--c)); }
+.shape .tgt { stroke: var(--c); stroke-width: 1.6; stroke-linecap: round; filter: drop-shadow(0 0 2.5px var(--c)); }
+.shape .tgt-base { stroke: rgba(233, 233, 236, 0.16); stroke-width: 2; stroke-linecap: round; }
+.shape .tgt-bar { stroke: var(--c); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: calc(1 - var(--p, 0)); }
+.shape .ping, .shape .ping-hex {
+  stroke: #BDB9FF; stroke-width: 1.3; stroke-dasharray: 2.6 3.2; filter: drop-shadow(0 0 3px rgba(170, 166, 244, 0.9));
+  transform-box: fill-box; transform-origin: center; animation: spin 7s linear infinite;
+}
+/* Halo: the six-step ring glows in its status color around a dark glass core. */
+.stage.orbs-halo .row.docked .ring { filter: drop-shadow(0 0 2.5px var(--c)); }
+/* Hex and target drop the ring and the disc, and draw their own frame. */
+.stage.orbs-hex .row.docked .ring, .stage.orbs-target .row.docked .ring { opacity: 0; }
+.stage.orbs-hex .row.docked .disc, .stage.orbs-target .row.docked .disc { background-color: transparent; background-image: none; box-shadow: none; }
+.stage.orbs-hex .row.docked .hex-base, .stage.orbs-hex .row.docked .hex-fill { opacity: 1; }
+.stage.orbs-target .row.docked .tgt, .stage.orbs-target .row.docked .tgt-base, .stage.orbs-target .row.docked .tgt-bar { opacity: 1; }
+.stage.orbs-halo .row.docked.has-unread .ping, .stage.orbs-target .row.docked.has-unread .ping, .stage.orbs-hex .row.docked.has-unread .ping-hex { opacity: 1; }
+.row.docked.consulting .node { filter: drop-shadow(0 0 7px rgba(170, 166, 244, 0.95)); }
+.row.docked.opening .row-hit { transform: scale(0.64); }
+
+.slat {
+  position: absolute; left: 45px; top: 0; width: 236px; height: 38px; padding: 5px 10px 0 11px; border-radius: 8px;
+  display: grid; grid-template-rows: 17px 12px; row-gap: 3px;
+  background: rgba(21, 21, 25, 0.76);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: inset 0 0 0 1px var(--f10), 0 10px 26px rgba(0, 0, 0, 0.32);
+  opacity: 0; transform: scaleX(0.2); transform-origin: -26px 50%; pointer-events: none;
+  transition: opacity 0.18s, transform 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.05), box-shadow 0.25s, background 0.2s;
+}
+.row.out .slat { opacity: 1; transform: none; pointer-events: auto; }
+.row.needs .slat { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 42%, transparent), 0 0 22px -12px var(--c), 0 10px 26px rgba(0, 0, 0, 0.32); }
+.row.consulting .slat { box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.9), 0 0 24px -6px rgba(170, 166, 244, 0.7), 0 10px 26px rgba(0, 0, 0, 0.32); }
+.row.hot .slat { background: rgba(30, 30, 37, 0.84); }
+.slat > .br { opacity: 0; transition: opacity 0.14s; }
+.row.hot .slat > .br { opacity: 1; }
+.l1 { display: flex; align-items: baseline; gap: 8px; min-width: 0; line-height: 17px; }
+.name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.state { margin-left: auto; flex: none; font-size: 11px; color: var(--ink-3); }
+.row.needs .state { color: var(--c); }
+.l2 { display: flex; align-items: center; gap: 8px; }
+.segs { flex: 1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; }
+.segs i { display: block; height: 3px; border-radius: 2px; background: var(--f10); overflow: hidden; }
+.segs b { display: block; height: 100%; background: var(--c); box-shadow: 0 0 6px var(--c); transition: width 0.6s; }
+.pct { flex: none; min-width: 27px; text-align: right; font: 500 10.5px/12px var(--mono); color: var(--ink-2); }
+
+.unread {
+  position: absolute; left: 269px; top: -11px; height: 22px; padding: 0 8px; border: 0; border-radius: 11px;
+  display: flex; align-items: center; gap: 3px; background: var(--accent);
+  box-shadow: 0 0 18px rgba(170, 166, 244, 0.55), 0 6px 14px rgba(0, 0, 0, 0.35);
+  transform-origin: -4px 50%;
+}
+.unread::after {
+  content: ""; position: absolute; left: -3px; top: 7px; width: 8px; height: 8px;
+  background: var(--accent); border-radius: 2px; transform: rotate(45deg);
+}
+.unread i { position: relative; z-index: 1; width: 4px; height: 4px; border-radius: 50%; background: #1D1C33; }
+/* The bubble pops once its row has opened, and again whenever a new message lands. */
+.row.out .unread { animation: pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both; }
+.row:not(.out) .unread { opacity: 0; pointer-events: none; }
+@keyframes pop { from { transform: scale(0.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ---------- Overflow: compact rows, tucked rows, and the "+N" summary ---------- */
+.row-hit { transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1), opacity 0.2s; }
+.node .ring { transition: opacity 0.2s, transform 0.25s; }
+.row.compact:not(.docked) .ring, .row.compact:not(.docked) .disc { transform: scale(0.72); }
+.row.compact:not(.docked) .badge { opacity: 0; }
+.row.compact:not(.docked) .slat { top: 7px; height: 24px; padding: 3px 10px 0 11px; grid-template-rows: 16px; }
+.row.compact:not(.docked) .l1 { line-height: 16px; }
+.row.compact:not(.docked) .name { font-size: 12px; }
+.row.compact:not(.docked) .l2 { position: absolute; left: 11px; right: 10px; bottom: 3px; }
+.row.compact:not(.docked) .pct { display: none; }
+.row.compact:not(.docked) .segs i { height: 2px; }
+.row.tucked .row-hit { opacity: 0; transform: scale(0.4); pointer-events: none; }
+.row.tucked .unread { display: none; }
+.row.more { transition: opacity 0.25s; }
+.row.more.gone { opacity: 0; pointer-events: none; }
+.row.more .disc { background-color: rgba(26, 26, 32, 0.92); }
+.more-n { font: 600 11px/1 var(--mono); color: var(--ink); letter-spacing: -0.02em; }
+.row.more .slat { background: rgba(21, 21, 25, 0.6); box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.26), 0 10px 26px rgba(0, 0, 0, 0.28); }
+.row.more .name { color: var(--ink-2); }
+.row.more .state { color: var(--accent); }
+.minis { flex: 1; display: flex; gap: 4px; font-size: 11px; line-height: 12px; }
+.more-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 1px; max-height: 260px; overflow-y: auto; }
+.more-list button {
+  width: 100%; display: grid; grid-template-columns: 20px 1fr auto 32px; column-gap: 8px; row-gap: 4px; align-items: center;
+  padding: 6px 8px; border: 0; border-radius: 6px; background: none; text-align: left;
+}
+.more-list button:hover { background: var(--f8); }
+.ml-emoji { grid-row: 1 / 3; font-size: 14px; }
+.ml-name { font-size: 12px; font-weight: 600; }
+.ml-state { font-size: 11px; color: var(--ink-3); }
+.more-list .is-needs .ml-state { color: var(--c); }
+.ml-pct { font: 500 10.5px/1 var(--mono); color: var(--ink-2); text-align: right; }
+.ml-bar { grid-column: 2 / 5; height: 2px; border-radius: 1px; background: var(--f10); overflow: hidden; }
+.ml-bar b { display: block; height: 100%; background: var(--c); }
+.more-emoji { font: 600 12px/1 var(--mono); color: var(--ink); }
+.note { margin: 0; font-size: 12px; line-height: 18px; color: var(--ink-2); }
+.row.leaving { opacity: 0; transition: opacity 1.2s ease-in; }
+.row.leaving .slat { transform: translateX(28px); }
+.burst { position: absolute; left: -19px; top: -19px; width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid var(--c); pointer-events: none; animation: burst 0.9s ease-out forwards; }
+@keyframes burst { from { transform: scale(0.8); opacity: 0.9; } to { transform: scale(2.6); opacity: 0; } }
+
+/* ---------- First Mate core ---------- */
+.core-wrap { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 6; }
+/* First Mate's circle is 90% of the earlier size. The mark sits high to leave room for the talk button. */
+.core {
+  position: absolute; left: -43px; top: -43px; width: 86px; height: 86px; padding: 0; border: 0;
+  border-radius: 50%; background: none; cursor: grab; touch-action: none; transition: transform 0.12s;
+}
+.core-wrap.dragging .core { cursor: grabbing; }
+.core-wrap.is-listening .core { transform: scale(var(--lvl, 1)); }
+.core-svg { position: absolute; left: -11px; top: -11px; width: 108px; height: 108px; overflow: visible; pointer-events: none; }
+.core-disc {
+  position: absolute; left: 10px; top: 10px; width: 66px; height: 66px; border-radius: 50%;
+  display: grid; place-items: center; color: var(--accent);
+  background: radial-gradient(circle at 50% 34%, rgba(170, 166, 244, 0.18), transparent 62%), rgba(21, 21, 25, 0.82);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px rgba(233, 233, 236, 0.12), 0 16px 36px rgba(0, 0, 0, 0.5), 0 0 54px rgba(170, 166, 244, 0.22);
+  transition: box-shadow 0.2s;
+}
+.core-disc > svg { width: 24px; height: 24px; filter: drop-shadow(0 0 6px rgba(170, 166, 244, 0.6)); }
+.core-disc .emoji { font-size: 21px; line-height: 24px; }
+.core:hover .core-disc { box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.45), 0 16px 36px rgba(0, 0, 0, 0.5), 0 0 60px rgba(170, 166, 244, 0.32); }
+/* First Mate's face: two light-panel eyes and a mouth. It blinks, follows your pointer, glances side to side
+   while thinking, and turns its mouth into a level meter while listening or talking. */
+.core-disc > svg.face { width: 46px; height: 46px; overflow: visible; filter: drop-shadow(0 0 5px rgba(170, 166, 244, 0.8)); }
+.f-eye { fill: #D9D6FF; transition: fill 0.2s; }
+.f-mouth { fill: none; stroke: #D9D6FF; stroke-width: 2; stroke-linecap: round; transition: opacity 0.15s; }
+.f-bars rect { fill: #D9D6FF; opacity: 0; transform-box: fill-box; transform-origin: center; transition: opacity 0.15s, fill 0.2s; }
+.f-blink, .f-think, .f-wide { transform-box: fill-box; transform-origin: center; }
+.f-blink { animation: lid 5.2s infinite; }
+.f-wide { transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes lid { 0%, 93%, 100% { transform: scaleY(1); } 95.5% { transform: scaleY(0.1); } }
+.core-wrap.is-thinking .f-think { animation: glance 1.5s ease-in-out infinite; }
+@keyframes glance { 0%, 100% { transform: translateX(-2.6px); } 50% { transform: translateX(2.6px); } }
+.core-wrap.is-listening .f-wide, .core-wrap.drop-ready .f-wide { transform: scale(1.16); }
+.f-o { fill: #D9D6FF; opacity: 0; transform-box: fill-box; transform-origin: center; transition: opacity 0.15s; }
+.core-wrap.is-listening .f-mouth, .core-wrap.is-speaking .f-mouth { opacity: 0; }
+.core-wrap.is-listening .f-bars rect { opacity: 1; }
+.core-wrap.is-speaking:not(.is-listening) .f-o { opacity: 1; animation: talk 0.22s ease-in-out infinite alternate; }
+@keyframes talk { from { transform: scaleY(0.45) scaleX(1.15); } to { transform: scaleY(1.2) scaleX(0.9); } }
+.core-wrap.is-listening .f-eye, .core-wrap.is-listening .f-bars rect { fill: #F2C9D3; }
+.core-wrap.is-listening .core-disc > svg.face { filter: drop-shadow(0 0 5px rgba(226, 167, 182, 0.85)); }
+/* Press and hold: a rose ring fills around First Mate, then it starts listening. */
+.c-hold {
+  fill: none; stroke: var(--alert); stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100;
+  transform-box: fill-box; transform-origin: center; transform: rotate(-90deg); opacity: 0;
+}
+.core-wrap.holding .c-hold { opacity: 1; stroke-dashoffset: 0; transition: stroke-dashoffset 0.36s linear 0.06s, opacity 0.1s 0.06s; }
+.c-ring { fill: none; stroke: var(--accent); stroke-width: 1.6; opacity: 0.8; transition: stroke 0.2s, stroke-width 0.2s, opacity 0.2s; }
+.c-inner { fill: none; stroke: rgba(233, 233, 236, 0.1); stroke-width: 1; }
+.c-ticks { stroke: rgba(233, 233, 236, 0.24); stroke-width: 1; }
+.c-think { opacity: 0; transition: opacity 0.2s; }
+.c-think circle { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; transform-box: fill-box; transform-origin: center; }
+.c-think .a1 { stroke-dasharray: 42 16 10 16; animation: spin 1.6s linear infinite; }
+.c-think .a2 { stroke-dasharray: 5 9; opacity: 0.6; animation: spin 2.6s linear infinite reverse; }
+.core-wrap.is-thinking .c-think { opacity: 1; }
+.spectrum { opacity: 0; transition: opacity 0.2s; }
+.spectrum line { stroke: var(--alert); stroke-width: 2; stroke-linecap: round; }
+.core-wrap.is-listening .spectrum { opacity: 1; }
+.core-wrap.is-listening .c-ring { stroke: var(--alert); opacity: 1; }
+.core-wrap.drop-near .c-ring { stroke-width: 2.2; opacity: 1; }
+.core-wrap.drop-ready .c-ring { stroke-width: 3; }
+.core-wrap.drop-ready .core-disc { box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.8), 0 18px 40px rgba(0, 0, 0, 0.5), 0 0 90px rgba(170, 166, 244, 0.6); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.core-hint {
+  position: absolute; left: 0; top: -86px; transform: translateX(-50%); height: 22px; padding: 0 9px; border-radius: 6px;
+  display: flex; align-items: center; white-space: nowrap; pointer-events: none;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent);
+  background: rgba(21, 21, 25, 0.82); box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.45), 0 0 16px rgba(170, 166, 244, 0.35);
+  opacity: 0; transition: opacity 0.15s;
+}
+.core-wrap.drop-near .core-hint { opacity: 1; }
+.core-count {
+  position: absolute; left: 19px; top: -46px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px;
+  background: var(--c, var(--attention)); color: #151519; font-size: 11px; font-weight: 700; line-height: 20px; text-align: center;
+  box-shadow: 0 0 0 3px rgba(21, 21, 25, 0.9), 0 0 14px var(--c, var(--attention)); pointer-events: none;
+  animation: pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); transition: opacity 0.2s;
+}
+/* In the orbit, the colored circles already give the count. */
+.stage.folded.dock-orbit .core-count { opacity: 0; }
+
+/* The chevron on the line folds the list into the collapsed view; the handle brings it back. */
+.fold, .unfold {
+  position: absolute; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; color: var(--accent);
+  background: rgba(22, 22, 27, 0.92); box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.42), 0 0 12px rgba(170, 166, 244, 0.22);
+  transition: opacity 0.2s, transform 0.25s, background 0.15s;
+}
+.fold { left: -11px; top: 51px; }
+.fold:hover, .unfold:hover { background: rgba(44, 43, 60, 0.95); }
+.stage.folded .fold { opacity: 0; transform: scale(0.6); pointer-events: none; }
+.unfold { left: -11px; top: 80px; opacity: 0; transform: scale(0.6); pointer-events: none; }
+.stage.folded .unfold { opacity: 1; transform: none; pointer-events: auto; transition-delay: 0.25s; }
+
+/* Optional glass backing behind the collapsed circles, for contrast on busy wallpapers. */
+.dock-pos { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 3; pointer-events: none; }
+.dock-bg {
+  position: absolute; left: 0; top: 0; opacity: 0;
+  transition: opacity 0.2s, left 0.35s, top 0.35s, width 0.35s, height 0.35s, border-radius 0.35s;
+  background: rgba(21, 21, 25, 0.66);
+  -webkit-backdrop-filter: blur(22px) saturate(1.5); backdrop-filter: blur(22px) saturate(1.5);
+  box-shadow: inset 0 0 0 1px var(--f10), inset 0 1px 0 rgba(233, 233, 236, 0.05), 0 18px 44px rgba(0, 0, 0, 0.45);
+}
+.dock-bg.on { opacity: 1; transition-delay: 0.2s, 0s, 0s, 0s, 0s, 0s; }
+
+/* ---------- Glass panels (Legible glass, 78%) ---------- */
+.glass {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6); backdrop-filter: blur(28px) saturate(1.6);
+  box-shadow: inset 0 0 0 1px var(--f10), inset 0 1px 0 rgba(233, 233, 236, 0.05), 0 26px 70px rgba(0, 0, 0, 0.55);
+}
+.frame > .br { position: absolute; width: 10px; height: 10px; border: 1.5px solid rgba(170, 166, 244, 0.85); pointer-events: none; filter: drop-shadow(0 0 4px rgba(170, 166, 244, 0.6)); }
+.frame > .br.tl { left: -5px; top: -5px; border-right: 0; border-bottom: 0; border-top-left-radius: 3px; }
+.frame > .br.tr { right: -5px; top: -5px; border-left: 0; border-bottom: 0; border-top-right-radius: 3px; }
+.frame > .br.bl { left: -5px; bottom: -5px; border-right: 0; border-top: 0; border-bottom-left-radius: 3px; }
+.frame > .br.bt { right: -5px; bottom: -5px; border-left: 0; border-top: 0; border-bottom-right-radius: 3px; }
+@keyframes materialize { from { opacity: 0; transform: scale(0.97); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ---------- Chat (comms) ---------- */
+.chat { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 8; }
+.preview {
+  position: absolute; left: var(--pv-x, 58px); top: -54px; width: max-content; max-width: 276px; padding: 9px 12px 10px; border-radius: 12px;
+  text-align: left; cursor: pointer; animation: materialize 0.3s ease-out;
+}
+/* The tail is only the half outside the bubble, in the same glass, so it reads as one shape. */
+.preview::after {
+  content: ""; position: absolute; top: 20px; left: -5px; width: 10px; height: 10px;
+  background: rgba(21, 21, 25, 0.78); transform: rotate(45deg); clip-path: polygon(0 0, 0 100%, 100% 100%);
+}
+.chat.pv-left .preview { left: auto; right: var(--pv-x, 58px); }
+/* Live caption: what you're saying while you hold First Mate, beside it where its latest line usually sits. */
+.live { position: absolute; left: var(--pv-x, 58px); top: -44px; width: 250px; padding: 10px 12px 9px; border-radius: 12px; animation: materialize 0.2s ease-out; }
+.chat.pv-left .live { left: auto; right: var(--pv-x, 58px); }
+.live:not(.is-listening) { display: none; }
+.live .wave { height: 18px; }
+.live .heard { margin: 6px 0 2px; font-size: 13px; line-height: 20px; }
+.chat:has(.live.is-listening) .preview { opacity: 0; pointer-events: none; }
+.chat.pv-left .preview::after { left: auto; right: -5px; clip-path: polygon(0 0, 100% 0, 100% 100%); }
+.who { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-3); margin-bottom: 3px; }
+.who svg { width: 12px; height: 12px; color: var(--accent); }
+.preview .pv-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; line-height: 1.45; color: var(--prose); }
+.comms {
+  position: absolute; left: 0; top: 0; width: 352px; height: 420px; display: flex; flex-direction: column; border-radius: 16px; overflow: hidden;
+  animation: materialize 0.26s ease-out;
+}
+.comms::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 110px; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(21, 21, 25, 0.36) 0 1px, transparent 1px 3px), linear-gradient(180deg, rgba(170, 166, 244, 0.14), transparent);
+  -webkit-mask-image: linear-gradient(#000, transparent); mask-image: linear-gradient(#000, transparent);
+}
+.comms-head { position: relative; display: flex; align-items: center; gap: 7px; height: 40px; flex: none; padding: 0 6px 0 14px; border-bottom: 1px solid var(--hair); }
+.comms-head > span > svg { width: 15px; height: 15px; color: var(--accent); filter: drop-shadow(0 0 5px rgba(170, 166, 244, 0.6)); display: block; }
+.comms-title { font-size: 13px; font-weight: 600; }
+.comms-sub { font-size: 12px; color: var(--ink-3); }
+.icon-btn {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px;
+  background: none; color: var(--icon);
+}
+.icon-btn:hover { background: var(--f10); color: var(--ink-2); }
+.comms-head .icon-btn { margin-left: auto; }
+.log {
+  position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 14px;
+  scrollbar-width: thin; scrollbar-color: rgba(233, 233, 236, 0.15) transparent; user-select: text; -webkit-user-select: text;
+}
+.msg { animation: rise 0.28s ease-out; }
+.msg.lead { font-size: 14px; line-height: 22px; color: var(--prose); }
+.msg.lead p { margin: 0 0 6px; }
+.msg.lead p:last-child { margin-bottom: 0; }
+.msg.lead .quiet { color: var(--ink-3); font-size: 13px; line-height: 20px; }
+.msg.lead ul { list-style: none; margin: 6px 0 8px; padding: 0; display: grid; gap: 8px; }
+.msg.lead li { display: grid; grid-template-columns: 7px 1fr; gap: 9px; align-items: baseline; }
+.msg.lead li .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); transform: translateY(-1px); }
+.msg.you {
+  align-self: flex-end; max-width: 86%; padding: 7px 12px; border-radius: 14px; background: var(--f10);
+  font-size: 13px; line-height: 20px; color: var(--ink);
+}
+.msg.you .via { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 2px; font-size: 11px; color: var(--ink-3); }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px 0 5px; border: 0; border-radius: 6px;
+  background: var(--f8); color: var(--ink); font-size: 12px; font-weight: 500; vertical-align: 1px; white-space: nowrap;
+}
+.chip:hover { background: rgba(170, 166, 244, 0.2); }
+.replies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.reply {
+  height: 26px; padding: 0 10px; border: 0; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--accent);
+  background: rgba(170, 166, 244, 0.12); box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.36);
+}
+.reply:hover { background: rgba(170, 166, 244, 0.22); }
+.reply:disabled { opacity: 0.35; cursor: default; }
+.log-thinking { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); animation: rise 0.2s ease-out; }
+.pings { display: inline-flex; gap: 3px; }
+.pings span { font-size: 14px; opacity: 0.3; filter: grayscale(1); transition: opacity 0.2s, filter 0.2s, transform 0.2s; }
+.pings span.active { opacity: 0.85; filter: none; transform: translateY(-2px); }
+.pings span.done { opacity: 1; filter: none; }
+.dots3 { display: inline-flex; gap: 3px; }
+.dots3 i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); animation: blink 1s infinite; }
+.dots3 i:nth-child(2) { animation-delay: 0.15s; }
+.dots3 i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+/* Composer: MonoCode box, 8px radius, 26px toolbar */
+.composer { flex: none; margin: 0 8px 8px; border-radius: 8px; background: var(--f3); box-shadow: inset 0 0 0 1px var(--f10); }
+.composer:focus-within { box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.5); }
+.form input {
+  width: 100%; height: 38px; padding: 0 12px; border: 0; outline: none; background: none; color: var(--ink); font-size: 14px;
+}
+.form input::placeholder { color: var(--ink-3); }
+.toolbar { display: flex; align-items: center; gap: 2px; padding: 0 6px 6px; }
+.send {
+  width: 26px; height: 26px; margin-left: auto; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px;
+  background: var(--accent); color: var(--on-accent);
+}
+.send:hover { background: #BCB8FB; }
+.composer.is-listening .form { display: none; }
+.listen { padding: 10px 10px 8px 12px; }
+.listen-row { display: flex; align-items: center; gap: 10px; }
+.wave { flex: 1; display: flex; align-items: center; gap: 2px; height: 26px; }
+.wave i { flex: 1; max-width: 3px; height: 3px; border-radius: 2px; background: var(--alert); transition: height 0.09s linear; }
+.stop { background: var(--alert); color: #151519; }
+.stop:hover { background: #EDB9C6; color: #151519; }
+.heard { margin: 8px 0 2px; min-height: 22px; font-size: 14px; line-height: 22px; color: var(--ink); }
+.heard .tent { color: var(--ink-3); }
+.heard:empty::before { content: "Listening…"; color: var(--ink-3); }
+.listen-note { font-size: 11px; color: var(--ink-3); }
+
+/* ---------- Readout (hover card), message card, editor ---------- */
+.readout, .editor { position: absolute; left: 0; top: 0; z-index: 12; width: 300px; padding: 14px; border-radius: 12px; animation: materialize 0.22s ease-out; }
+.ro-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding-right: 24px; }
+.ro-emoji {
+  width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 50%; font-size: 16px;
+  background: rgba(21, 21, 25, 0.8); box-shadow: inset 0 0 0 1.5px var(--c), 0 0 14px -2px var(--c);
+}
+.ro-title { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.st { display: inline-flex; align-items: center; gap: 4px; margin-top: 1px; font-size: 11px; color: var(--c); }
+.st svg { width: 11px; height: 11px; }
+.ro-now { margin: 0 0 12px; font-size: 13px; line-height: 20px; color: var(--prose); }
+.ro-steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; margin-bottom: 12px; }
+.ro-steps .s { display: grid; gap: 5px; }
+.ro-steps .bar { height: 3px; border-radius: 2px; background: var(--f10); overflow: hidden; }
+.ro-steps .bar b { display: block; height: 100%; background: var(--c); box-shadow: 0 0 6px var(--c); }
+.ro-steps .lbl { font-size: 9.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3); text-align: center; }
+.ro-steps .s.cur .lbl { color: var(--ink); }
+.ro-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; margin: 0 0 13px; padding: 10px 0 0; border-top: 1px solid var(--hair); }
+.ro-stats div { display: grid; gap: 1px; }
+.ro-stats dd { margin: 0; font-size: 12px; color: var(--ink); }
+.ro-stats dd.num { font-family: var(--mono); }
+.ro-actions, .ro-foot { display: flex; align-items: center; gap: 6px; }
+.ro-foot { margin-top: 10px; }
+.btn { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--f10); color: var(--ink); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.btn:hover { background: var(--f15); }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: #BCB8FB; }
+.ro-close { position: absolute; top: 9px; right: 8px; }
+.msg-body { margin: 0; font-size: 14px; line-height: 22px; color: var(--prose); user-select: text; -webkit-user-select: text; }
+.readout .composer { margin: 12px 0 0; }
+.ro-meta { margin-left: auto; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.editor h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-bottom: 12px; }
+.emoji-grid button {
+  height: 30px; padding: 0; border: 0; border-radius: 6px; background: var(--f5); font-size: 16px; display: grid; place-items: center; color: var(--accent);
+}
+.emoji-grid button svg { width: 16px; height: 16px; }
+.emoji-grid button:hover { background: var(--f10); }
+.emoji-grid button[aria-pressed="true"] { background: rgba(170, 166, 244, 0.18); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.field-row { display: grid; gap: 5px; margin-bottom: 12px; }
+.field-row input {
+  height: 32px; padding: 0 10px; border: 0; border-radius: 6px; outline: none; background: var(--f5);
+  box-shadow: inset 0 0 0 1px var(--f10); color: var(--ink); font-size: 13px;
+}
+.field-row input:focus { box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.55); }
+.editor-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+.toast {
+  position: absolute; left: 50%; bottom: 20px; z-index: 20; padding: 8px 13px; border-radius: 8px; font-size: 12px; white-space: nowrap;
+  background: var(--glass); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  box-shadow: inset 0 0 0 1px var(--f10), 0 12px 30px rgba(0, 0, 0, 0.4);
+  opacity: 0; transform: translate(-50%, 10px); transition: opacity 0.2s, transform 0.2s; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- Side panel (prototype controls, in the same tokens) ---------- */
+.panel {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 22px 20px 40px;
+  background: var(--rail); border-left: 1px solid var(--hair);
+}
+.panel h1 { margin: 0 0 6px; font-size: 18px; font-weight: 600; letter-spacing: -0.005em; }
+.lede { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.panel .micro { margin: 24px 0 8px; }
+.try { display: grid; gap: 6px; }
+.try button {
+  display: block; width: 100%; padding: 9px 11px; border: 0; border-radius: 8px; text-align: left;
+  background: var(--f3); box-shadow: inset 0 0 0 1px var(--f10);
+}
+.try button:hover { background: var(--f5); box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.35); }
+.try b { display: block; font-size: 13px; font-weight: 600; }
+.try span { display: block; margin-top: 1px; font-size: 12px; line-height: 18px; color: var(--ink-3); }
+.try .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+.seg.three { grid-template-columns: 1fr 1fr 1fr; }
+.seg button {
+  display: block; padding: 9px 11px; border: 0; border-radius: 8px; text-align: left;
+  background: var(--f3); box-shadow: inset 0 0 0 1px var(--f10);
+}
+.seg button:hover { background: var(--f5); }
+.seg button[aria-checked="true"] { background: rgba(170, 166, 244, 0.12); box-shadow: inset 0 0 0 1px rgba(170, 166, 244, 0.6); }
+.seg b { display: block; font-size: 13px; font-weight: 600; }
+.seg span { display: block; margin-top: 1px; font-size: 12px; line-height: 17px; color: var(--ink-3); }
+kbd {
+  font-family: var(--mono); font-size: 11px; padding: 1px 5px; border-radius: 4px; background: var(--f8);
+  box-shadow: inset 0 -1px 0 var(--f10); color: var(--ink);
+}
+.tips { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 12px; line-height: 18px; color: var(--ink-2); }
+.tips b { color: var(--ink); font-weight: 600; }
+.legend { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; font-size: 12px; }
+.legend li { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 11px; }
+.legend small { display: block; font-size: 11px; color: var(--ink-3); }
+.ico { position: relative; width: 28px; height: 28px; --c: var(--accent); }
+.ico svg { position: absolute; left: 0; top: 0; width: 28px; height: 28px; overflow: visible; }
+.ico-core { position: absolute; left: 6px; top: 6px; width: 16px; height: 16px; border-radius: 50%; background: rgba(21, 21, 25, 0.9); box-shadow: inset 0 0 0 1px var(--f15), 0 0 10px -2px var(--c); }
+.ico-badge {
+  position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--c); color: #151519; box-shadow: 0 0 0 2px var(--rail);
+}
+.ico-badge svg { position: static; width: 8px; height: 8px; }
+.ico-bubble {
+  position: absolute; left: 1px; top: 6px; width: 26px; height: 16px; border-radius: 8px; background: var(--accent);
+  display: flex; align-items: center; justify-content: center; gap: 2.5px; box-shadow: 0 0 10px rgba(170, 166, 244, 0.5);
+}
+.ico-bubble i { width: 3px; height: 3px; border-radius: 50%; background: #1D1C33; }
+.toggles { display: grid; gap: 12px; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 14px; font-size: 12px; cursor: pointer; }
+.toggle small { display: block; font-size: 11px; color: var(--ink-3); }
+.switch {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 32px; height: 18px; margin: 0;
+  border-radius: 9px; background: var(--f15); cursor: pointer; transition: background 0.2s;
+}
+.switch::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #E9E9EC; transition: transform 0.2s; }
+.switch:checked { background: var(--control); }
+.switch:checked::after { transform: translateX(14px); }
+details.how { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--hair); }
+details.how summary { list-style: none; cursor: pointer; font-size: 13px; font-weight: 600; }
+details.how summary::-webkit-details-marker { display: none; }
+details.how summary::after { content: "+"; float: right; color: var(--ink-3); }
+details.how[open] summary::after { content: "−"; }
+.how ul { margin: 10px 0 0; padding-left: 16px; display: grid; gap: 8px; font-size: 12px; line-height: 18px; color: var(--ink-2); }
+.how b { color: var(--ink); font-weight: 600; }
+.foot { margin-top: 22px; font-size: 12px; line-height: 18px; color: var(--ink-3); }
+.foot a { color: var(--accent); text-decoration: none; }
+.foot a:hover { text-decoration: underline; }
+
+@media (max-width: 1100px) {
+  .page { grid-template-columns: 1fr; }
+  .stage-wrap { height: auto; }
+  .panel { position: static; height: auto; border-left: 0; border-top: 1px solid var(--hair); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  .c-think circle, .f-blink, .f-think, .f-o, .shape .ping, .shape .ping-hex { animation: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <main class="stage-wrap" id="stageWrap">
+    <div class="stage-box" id="stageBox">
+      <div class="stage folded orbs-halo" id="stage">
+        <div class="desk" id="desk" aria-hidden="true"></div>
+        <div class="appwin" aria-hidden="true">
+          <div class="rail"><div class="lights"><i></i><i></i><i></i></div><b style="width:70%"></b><b class="acc" style="width:86%"></b><b style="width:62%"></b><b style="width:78%"></b><b style="width:54%"></b><b style="width:70%"></b></div>
+          <div class="pane"><b style="width:44%"></b><b style="width:92%"></b><b style="width:86%"></b><b style="width:64%"></b><b style="width:0;height:10px"></b><b class="acc" style="width:38%"></b><b style="width:90%"></b><b style="width:80%"></b><b style="width:72%"></b><b style="width:84%"></b><b style="width:0;height:10px"></b><b style="width:52%"></b><b style="width:88%"></b><b style="width:66%"></b></div>
+        </div>
+
+        <svg class="field" viewBox="0 0 1000 680" aria-hidden="true">
+          <defs>
+            <radialGradient id="fieldGlow">
+              <stop offset="0" stop-color="#AAA6F4" stop-opacity=".2"/>
+              <stop offset=".45" stop-color="#AAA6F4" stop-opacity=".07"/>
+              <stop offset="1" stop-color="#AAA6F4" stop-opacity="0"/>
+            </radialGradient>
+            <radialGradient id="scanFade">
+              <stop offset="0" stop-color="#fff" stop-opacity="1"/>
+              <stop offset=".7" stop-color="#fff" stop-opacity=".45"/>
+              <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+            </radialGradient>
+            <pattern id="scanLines" width="8" height="3" patternUnits="userSpaceOnUse"><rect width="8" height="1" fill="#E9E9EC" fill-opacity=".05"/></pattern>
+            <mask id="scanMask" maskUnits="userSpaceOnUse" x="-200" y="-200" width="400" height="400"><circle r="96" fill="url(#scanFade)"/></mask>
+            <linearGradient id="spineGrad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#AAA6F4" stop-opacity=".9"/>
+              <stop offset="1" stop-color="#AAA6F4" stop-opacity=".28"/>
+            </linearGradient>
+            <linearGradient id="tetherGrad" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#AAA6F4" stop-opacity=".8"/>
+              <stop id="tetherStop" offset="1" stop-color="#AAA6F4" stop-opacity=".9"/>
+            </linearGradient>
+            <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="2.4" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g id="haloG">
+            <circle r="130" fill="url(#fieldGlow)"/>
+            <circle r="96" fill="url(#scanLines)" mask="url(#scanMask)"/>
+          </g>
+          <path id="spineGlow" class="spine-glow"/>
+          <path id="spine" class="spine"/>
+          <path id="junction" class="junction"/>
+          <rect id="ghost" class="ghost" width="281" height="38" rx="9"/>
+          <path id="tether" class="tether"/>
+          <path id="leader" class="leader"/>
+          <circle id="leaderDot" class="leader-dot" r="0"/>
+          <g id="signals" filter="url(#glow)"></g>
+        </svg>
+
+        <div class="dock-pos" id="dockPos"><div class="dock-bg" id="dockBg"></div></div>
+        <div class="rows" id="rows"></div>
+        <div class="scan-pos" id="scanPos"><div class="scan" id="scan"></div></div>
+
+        <div class="core-wrap" id="fmWrap">
+          <button class="core" id="fm" type="button" aria-label="First Mate. Click to type, or press and hold to talk." title="Click to type. Press and hold to talk.">
+            <svg class="core-svg" viewBox="-60 -60 120 120" aria-hidden="true">
+              <g class="spectrum" id="spectrum"></g>
+              <circle class="c-ring" r="44"/>
+              <g class="c-ticks" id="coreTicks"></g>
+              <circle class="c-inner" r="31"/>
+              <g class="c-think"><circle class="a1" r="49"/><circle class="a2" r="53"/></g>
+              <circle class="c-hold" r="44" pathLength="100"/>
+            </svg>
+            <span class="core-disc" id="fmMark"></span>
+          </button>
+          <span class="core-count" id="fmCount" hidden></span>
+          <button class="fold" id="fold" type="button" aria-label="Collapse the list" title="Collapse">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
+          </button>
+          <button class="unfold" id="unfold" type="button" aria-label="Show the list" title="Show the list">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="core-hint" id="coreHint">Drop to ask</div>
+        </div>
+
+        <section class="chat" id="chat" aria-label="First Mate chat">
+          <div class="live glass" id="live" aria-live="polite">
+            <div class="listen" hidden>
+              <div class="listen-row"><span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
+              <p class="heard"></p>
+              <div class="listen-note">Release to send. Esc cancels.</div>
+            </div>
+          </div>
+          <div class="preview glass" id="preview" role="button" tabindex="0" hidden>
+            <span class="who" id="previewWho"></span><span class="pv-text" id="previewText"></span>
+          </div>
+          <div class="comms glass" id="chatPanel" hidden>
+            <header class="comms-head">
+              <span id="commsMark"></span>
+              <span class="comms-title" id="chatTitle">First Mate</span>
+              <span class="comms-sub" id="chatSub"></span>
+              <button class="icon-btn" id="chatClose" type="button" aria-label="Close chat">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </header>
+            <div class="log" id="log" aria-live="polite"></div>
+            <div class="composer" id="chatComposer"></div>
+          </div>
+        </section>
+
+        <div class="readout glass frame" id="card" hidden></div>
+        <div class="editor glass frame" id="editor" hidden></div>
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="panel">
+    <h1>First Mate HUD</h1>
+    <p class="lede">Design reference for the chosen First Mate HUD. Collapsed, a row of halo orbs sits under First Mate; expanded, the features hang on one lit line as rows. The features are made up, and nothing here connects to Herdr.</p>
+    <div class="micro">How many features</div>
+    <div class="seg three" role="radiogroup" aria-label="How many features" id="fleetSeg">
+      <button type="button" role="radio" aria-checked="false" data-fleet="6"><b>6</b><span>Everything fits</span></button>
+      <button type="button" role="radio" aria-checked="true" data-fleet="10"><b>10</b><span>Some tuck away</span></button>
+      <button type="button" role="radio" aria-checked="false" data-fleet="14"><b>14</b><span>A busy day</span></button>
+    </div>
+    <p class="note">Anything that needs you gets its own orb and row first. The row shows six orbs at most, the last becoming "+N". The list shows three moving rows plus a summary row you can open.</p>
+
+    <div class="micro">Try it</div>
+    <div class="try">
+      <button type="button" id="foldToggle"><b>Show list</b><span>The circles drop down the line into rows.</span></button>
+      <button type="button" id="tryVoice"><b>Talk to First Mate</b><span>Press and hold First Mate, or hold <kbd>Space</kbd>. Let go to send.</span></button>
+      <button type="button" id="tryAsk"><b>Ask about Receipt export</b><span>First Mate checks with it. In the list, a signal runs down the line and back.</span></button>
+      <button type="button" id="tryFinish"><b>Finish a feature</b><span>It turns green, gets a message, and moves up with what needs you.</span></button>
+      <button type="button" id="tryBlock"><b>Block a feature</b><span>It turns red and moves up with what needs you.</span></button>
+      <button type="button" id="tryReset"><b>Start over</b></button>
+    </div>
+
+    <div class="micro">Gestures</div>
+    <ul class="tips">
+      <li><b>Click First Mate</b> to type. <b>Press and hold</b> it to talk, and let go to send. Dragging it still moves it.</li>
+      <li><b>Hover</b> a circle or row for details. <b>Click</b> to open its session.</li>
+      <li><b>A dashed lavender ring or a bubble</b> means a message is waiting. Click it to read and reply in place.</li>
+      <li><b>Drag a feature onto First Mate</b> to ask about it.</li>
+      <li><b>Drag First Mate.</b> Everything follows.</li>
+      <li><b>Right-click</b> a feature, or First Mate, to change its emoji and label.</li>
+      <li><kbd>Esc</kbd> closes things and cancels listening.</li>
+    </ul>
+
+    <div class="micro">Reading it</div>
+    <ul class="legend" id="legend"></ul>
+
+    <div class="micro">Motion</div>
+    <div class="toggles">
+      <label class="toggle"><span>Signals and scan<small>Version 2. Questions travel down the line, and answers come back up.</small></span><input class="switch" type="checkbox" id="optSignals"></label>
+      <label class="toggle"><span>Spring and depth<small>The list trails First Mate a little, and the desktop shifts with your pointer.</small></span><input class="switch" type="checkbox" id="optMotion"></label>
+    </div>
+
+    <details class="how">
+      <summary>How it could work</summary>
+      <ul>
+        <li><b>One lead.</b> First Mate becomes a new agent above each feature's mate. It reads their boards and passes your words to the right one. It can't approve a stage on its own; your decisions go through as your messages.</li>
+        <li><b>A steady order.</b> Anything that needs you sits on top. Everything else keeps the order it started in, so a row only moves when its status changes.</li>
+        <li><b>Overflow never hides what needs you.</b> Collapsed, at most six orbs show, and the sixth becomes a "+N" orb when there are more. Expanded, three moving rows show, then a summary row. Opening it makes the moving rows compact, so fourteen features still fit.</li>
+        <li><b>A glance when collapsed.</b> One circle per feature keeps its emoji and status color, and a ring shows a waiting message, so you can tell who needs you without opening the list.</li>
+        <li><b>Small, fast data.</b> The HUD polls one compact fleet summary (status, step, a one-line "now", unread count), never full snapshots.</li>
+        <li><b>Read state lives on the server</b>, so the Mac, iPhone, and web agree on what's unread.</li>
+        <li><b>Voice</b> reuses the HUD's recorder and transcription, then sends straight to First Mate.</li>
+        <li><b>Theme tokens only.</b> HUD glass at 78%, lavender for First Mate and its signals, Herdr's pastel statuses, and First Mate's attention orange for "your turn".</li>
+        <li><b>Cheap to draw.</b> The rows are plain views. The line, signals, and scan share one Canvas layer, and nothing moves while idle.</li>
+        <li><b>Version 1:</b> core, list, rings, badges, readouts, speech bubbles, text and voice. <b>Version 2:</b> signals and scan, drag-to-ask, one-tap replies.</li>
+      </ul>
+    </details>
+    <details class="how" open>
+      <summary>Spec</summary>
+      <ul>
+        <li><b>First Mate:</b> 86 px circle, a glass disc with a light-panel face. Click to type, press and hold 0.4 s to talk, drag to move. A count badge shows how many features need you.</li>
+        <li><b>Collapsed:</b> one row of halo orbs 34 px apart, 30 px each, no backing, 23 px under First Mate. Six orbs at most; the sixth becomes "+N" with one ring segment per tucked feature. A chevron under the row opens the list.</li>
+        <li><b>Halo orb:</b> dark glass core with the emoji, and the six-step progress ring in its status color with a soft glow. A dashed lavender ring turning slowly means a message is waiting.</li>
+        <li><b>Expanded:</b> rows on one lit line, 38 px tall, 46 px apart, 236 px glass slats. Needs-you rows first, a small diamond, then moving rows in start order. Three moving rows, then a summary row; opening it turns moving rows into 24 px compact rows.</li>
+        <li><b>Status:</b> blocked #E2A7B6, your turn #FF9F0A, ready #9CCDB9, working #E4C386, First Mate and messages #AAA6F4. Glass at 78% on #151519.</li>
+        <li><b>Names:</b> a short label up to 24 characters in the row, ending with an ellipsis if it runs long. The hover card shows the full feature title.</li>
+      </ul>
+    </details>
+    <p class="foot">Explorations: <a href="list.html">holographic list</a>, <a href="list-v3.html">third</a>, <a href="list-v2.html">second</a> and <a href="list-v1.html">first</a> list versions, <a href="index.html">holographic</a>, <a href="jarvis.html">compact Jarvis</a>, <a href="jarvis-full.html">full-screen Jarvis</a> and <a href="v1.html">ropes</a>.</p>  </aside>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- Constants ----------
+  const W = 1000, H = 680;
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const STEPS = ['Plan', 'Build', 'Review', 'QA', 'PR', 'Merge'];
+  const STATUS = {
+    blocked: { label: 'Blocked', glyph: 'bang', rank: 0, hex: '#E2A7B6' },
+    turn: { label: 'Your turn', glyph: 'ask', rank: 1, hex: '#FF9F0A' },
+    ready: { label: 'Ready for review', glyph: 'check', rank: 2, hex: '#9CCDB9' },
+    working: { label: 'Working', glyph: '', rank: 3, hex: '#E4C386' },
+    done: { label: 'Merged', glyph: 'check', rank: 4, hex: '#9CCDB9' },
+  };
+  const NEEDS_YOU = new Set(['blocked', 'turn', 'ready']);
+  const GLYPH = {
+    check: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.6 6.3l2.3 2.2 4.6-4.9"/></svg>',
+    bang: '<svg viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="5" y="1.6" width="2" height="5.8" rx="1"/><circle cx="6" cy="9.7" r="1.15"/></svg>',
+    ask: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.1 4.3C4.1 3.1 5 2.3 6.1 2.3s2 .8 2 1.8c0 .9-.6 1.3-1.2 1.7-.5.3-.8.7-.8 1.3v.3"/><circle cx="6.1" cy="9.8" r=".5" fill="currentColor"/></svg>',
+    dashed: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2 1.7" aria-hidden="true"><circle cx="6" cy="6" r="4.2"/></svg>',
+  };
+  const SAIL = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.1 2.4v14.4H4.2z" opacity=".95"/><path d="M12.9 6.3v10.5h6.1z" opacity=".62"/><path d="M3 18.6h18l-2.4 2.9H5.4z"/></svg>';
+  // First Mate's face: the live one lives in the orb; the small one labels its messages.
+  const FACE = '<svg class="face" viewBox="-24 -24 48 48" aria-hidden="true"><g id="faceLook"><g class="f-think"><g class="f-wide"><g class="f-blink"><rect class="f-eye" x="-12.5" y="-10" width="8" height="12" rx="4"/><rect class="f-eye" x="4.5" y="-10" width="8" height="12" rx="4"/></g></g></g><path class="f-mouth" d="M-5.5 9.5q5.5 4 11 0"/><ellipse class="f-o" cx="0" cy="11" rx="3.4" ry="2.4"/><g class="f-bars"><rect x="-8.2" y="10" width="2.4" height="2" rx="1.2"/><rect x="-4.7" y="10" width="2.4" height="2" rx="1.2"/><rect x="-1.2" y="10" width="2.4" height="2" rx="1.2"/><rect x="2.3" y="10" width="2.4" height="2" rx="1.2"/><rect x="5.8" y="10" width="2.4" height="2" rx="1.2"/></g></g></svg>';
+  const FACE_SMALL = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5.5" y="6" width="4.4" height="7" rx="2.2"/><rect x="14.1" y="6" width="4.4" height="7" rx="2.2"/><path d="M8.6 16.6q3.4 2.6 6.8 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  const MARKS = { face: FACE_SMALL, sail: SAIL };
+  const markHTML = mark => MARKS[mark] || `<span class="emoji">${mark}</span>`;
+  const ICON = {
+    mic: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>',
+    micSmall: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>',
+    plus: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+    send: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>',
+    stop: '<svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2" fill="currentColor"/></svg>',
+    close: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  };
+  const EMOJI = ['🔔', '🧾', '🔍', '🎨', '📦', '🌍', '🚀', '🧪', '🛠️', '🐛', '⚡️', '🔐', '💬', '📱', '🗂️', '🧩', '🛰️', '🎯', '📈', '🌙', '🧹', '🧭', '⚓️', '🦜'];
+  const BRACKETS = '<i class="br tl"></i><i class="br tr"></i><i class="br bl"></i><i class="br bt"></i>';
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const settings = { signals: !reduceMotion, motion: !reduceMotion };
+
+  // The list hangs from a line under First Mate. Offsets are from the core's center.
+  const G = { spineTop: 45, listTop: 97, pitch: 46, groupGap: 14, right: 262, bubble: 306 };
+  // Collapsed, each feature docks as a circle: in a row under First Mate, or in an orbit around it.
+  const DOCK = { rowY: 66, rowPitch: 34, orbitR: 62, r: 14 };
+  const HOLD_MS = 420;   // press and hold First Mate this long to start talking
+  // Overflow: at most this many orbs when collapsed (the last becomes "+N"), and this many moving rows in the list.
+  const DOCK_MAX = 6, MOVING_SHOWN = 3;
+  G.cpitch = 30;   // compact row pitch
+  const BIG_RING = { c: 30, r: 26, sw: 3, gap: 12, t0: 29.5, t1: 32.5 };
+  const NODE_RING = { c: 20, r: 17, sw: 2.4, gap: 16, t0: 19.4, t1: 21.6 };
+
+  // ---------- Helpers ----------
+  const $ = (s, root = document) => root.querySelector(s);
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const later = (ms, fn) => setTimeout(fn, ms);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const NUM = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+  const num = n => NUM[n] ?? String(n);
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const joinList = a => a.length <= 1 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+  const easeInOut = t => 0.5 - 0.5 * Math.cos(Math.PI * t);
+  const svgEl = (tag, attrs = {}) => { const el = document.createElementNS(SVGNS, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); return el; };
+  const f1 = v => v.toFixed(1);
+
+  // ---------- Elements ----------
+  const stage = $('#stage'), stageBox = $('#stageBox'), stageWrap = $('#stageWrap'), desk = $('#desk');
+  const haloG = $('#haloG'), spineEl = $('#spine'), spineGlow = $('#spineGlow'), spineGrad = $('#spineGrad');
+  const junctionEl = $('#junction'), ghostEl = $('#ghost'), tetherEl = $('#tether'), tetherGrad = $('#tetherGrad'), tetherStop = $('#tetherStop');
+  const sigLayer = $('#signals'), leaderEl = $('#leader'), leaderDot = $('#leaderDot');
+  const scanPos = $('#scanPos'), scanEl = $('#scan');
+  const rowsLayer = $('#rows');
+  const fmWrap = $('#fmWrap'), fmBtn = $('#fm'), fmMark = $('#fmMark'), fmCount = $('#fmCount'), liveHost = $('#live'), coreHint = $('#coreHint');
+  const foldBtn = $('#fold'), unfoldBtn = $('#unfold'), foldToggle = $('#foldToggle'), dockPos = $('#dockPos'), dockBg = $('#dockBg');
+  const chat = $('#chat'), preview = $('#preview'), previewText = $('#previewText'), previewWho = $('#previewWho');
+  const chatPanel = $('#chatPanel'), chatTitle = $('#chatTitle'), chatSub = $('#chatSub'), chatClose = $('#chatClose'), commsMark = $('#commsMark');
+  const log = $('#log'), chatComposer = $('#chatComposer');
+  const card = $('#card'), editor = $('#editor'), toastEl = $('#toast');
+
+  // ---------- State ----------
+  const F = { x: 680, y: 104 };   // where you put First Mate
+  const E = { x: 680, y: 104 };   // where it's drawn, nudged so the list stays on screen
+  const fm = { mark: 'face', name: 'First Mate', unread: false, soft: false, preview: '' };
+  let mates = [];
+  let folded = true, chatOpen = false;
+  let dockStyle = 'row', orbStyle = 'halo';
+  let faceLook = null, faceBars = [];
+  const look = { x: 0, y: 0, tx: 0, ty: 0 };
+  const dockBgOn = { row: false, orbit: false };
+  let T = 0, scale = 1, busy = 0;
+  let listBottom = G.listTop, junctionPair = null;
+  let chatBox = { x: 0, y: 0, w: 0, h: 0 };
+  const par = { x: 0, y: 0, tx: 0, ty: 0 };
+
+  // ---------- Fake fleet ----------
+  function initialFleet() {
+    return [
+      { id: 'push', emoji: '🔔', label: 'Push alert settings', title: 'Push alert preferences', aliases: ['push', 'notification', '/notify'],
+        status: 'turn', step: 0, within: 0.92, mins: 6, agents: 'Planner and architect done', pr: 'Not opened',
+        now: 'The plan is ready. It needs one decision from you.',
+        brief: 'has its plan ready and one question for you.',
+        detail: 'The plan is ready, and the architect signed off.',
+        ask: 'Its question: keep the old /notify endpoint for one more release so older app versions keep working, or remove it now?',
+        message: { text: 'The plan is ready. One question before I build: keep the old /notify endpoint for one more release so older app versions keep working, or remove it now?', replies: ['keep', 'remove'] },
+        unread: true },
+      { id: 'receipts', emoji: '🧾', label: 'Receipt export', title: 'Receipt export', aliases: ['receipt', 'export'],
+        status: 'blocked', step: 3, within: 0.45, mins: 18, agents: '1 stopped', pr: 'Not opened',
+        now: 'QA failed twice. The export sheet never appears on iPad.',
+        brief: 'is blocked in QA. The export sheet never appears on iPad.',
+        detail: 'QA failed twice on iPad: the UI test times out waiting for the export sheet. iPhone passes, so it stopped instead of trying a third time.',
+        ask: 'Ship iPhone-only now and file the iPad bug, or investigate iPad first? It guesses about 30 minutes.',
+        message: { text: 'I stopped QA after two failures. On iPad the export sheet never appears, so the UI test times out. iPhone passes. Ship iPhone-only now and file the iPad bug, or should I investigate iPad first?', replies: ['iphone', 'ipad'] },
+        unread: false },
+      { id: 'search', emoji: '🔍', label: 'Review search', title: 'Searchable review evidence', aliases: ['search'],
+        status: 'working', step: 4, within: 0.35, mins: 25, agents: '7 reviewers passed', pr: '#214, CI running',
+        now: 'PR #214 is open. CI is running.', brief: 'has PR #214 open, and CI is running.',
+        detail: 'PR #214 is open, and all seven reviewers passed. CI is about two-thirds done.' },
+      { id: 'theme', emoji: '🎨', label: 'Theme tokens', title: 'Theme role tokens', aliases: ['theme', 'token', 'color'],
+        status: 'working', step: 1, within: 0.62, mins: 70, agents: '1 building', pr: 'Not opened',
+        now: 'Swapping color literals for role tokens: 140 of 221 files.', brief: 'is building: 140 of 221 files.',
+        detail: 'It is swapping color literals for role tokens. 140 of 221 files are done, and the focused tests pass so far.' },
+      { id: 'offline', emoji: '📦', label: 'Offline sync', title: 'Offline sync', aliases: ['offline', 'sync'],
+        status: 'working', step: 2, within: 0.55, mins: 22, agents: '3 reviewers running', pr: 'Not opened',
+        now: 'Seven reviewers are checking revision 3. Four have reported.', brief: 'is in review: four of seven reviewers have reported.',
+        detail: 'Seven reviewers are checking revision 3. Four reported, all passing. Three are still working.' },
+      { id: 'lang', emoji: '🌍', label: 'Localization', title: 'App localization', aliases: ['language', 'locale', 'locali', 'translation'],
+        status: 'working', step: 3, within: 0.3, mins: 14, agents: '1 testing', pr: 'Not opened',
+        now: 'Running QA on 12 locales in the simulator.', brief: 'is in QA: 7 of 12 locales checked.',
+        detail: 'QA is running on 12 locales in the simulator. Seven are done with no clipped text.' },
+      { id: 'billing', emoji: '💳', label: 'Billing retries', title: 'Billing retry flow', aliases: ['billing', 'payment', 'retry'],
+        status: 'working', step: 1, within: 0.4, mins: 31, agents: '1 building', pr: 'Not opened',
+        now: 'Adding retry backoff to the payment sheet.', brief: 'is building retry backoff.',
+        detail: 'It is adding backoff to failed payments. The first two cases are done.' },
+      { id: 'widgets', emoji: '🧩', label: 'Home screen widgets', title: 'Home screen widgets', aliases: ['widget'],
+        status: 'working', step: 2, within: 0.2, mins: 9, agents: '5 reviewers running', pr: 'Not opened',
+        now: 'Five reviewers are checking the widget timeline.', brief: 'is in review.',
+        detail: 'Five reviewers are checking the widget timeline code. None have reported yet.' },
+      { id: 'onboard', emoji: '🚀', label: 'Onboarding flow', title: 'New onboarding flow', aliases: ['onboard', 'welcome'],
+        status: 'working', step: 0, within: 0.7, mins: 12, agents: 'Planner working', pr: 'Not opened',
+        now: 'Drafting the plan for three welcome screens.', brief: 'is planning.',
+        detail: 'The planner is drafting three welcome screens and the events they log.' },
+      { id: 'crash', emoji: '🐛', label: 'Photo picker crash', title: 'Photo picker crash', aliases: ['crash', 'picker', 'photo'],
+        status: 'working', step: 3, within: 0.6, mins: 8, agents: '1 testing', pr: 'Not opened',
+        now: 'Checking the picker crash fix on four devices.', brief: 'is in QA.',
+        detail: 'QA reproduced the crash before the fix and not after. Two more devices to go.' },
+      { id: 'links', emoji: '🔗', label: 'Deep links', title: 'Universal deep links', aliases: ['deep link', 'link', 'url'],
+        status: 'working', step: 1, within: 0.15, mins: 4, agents: '1 building', pr: 'Not opened',
+        now: 'Mapping 14 link routes to screens.', brief: 'is building link routes.',
+        detail: 'It is mapping 14 link routes to screens. Three are done.' },
+      { id: 'perf', emoji: '⚡️', label: 'Faster cold launch', title: 'Faster cold launch', aliases: ['launch', 'speed', 'perf'],
+        status: 'turn', step: 1, within: 0.85, mins: 3, agents: '1 waiting', pr: 'Not opened',
+        now: 'Launch is 0.4 s faster. It wants a call on one trade-off.', brief: 'wants a call on loading fonts lazily.',
+        detail: 'Cold launch is 0.4 seconds faster with fonts loaded lazily, but the first screen can flash a fallback font.',
+        ask: 'Accept a brief font flash for a faster launch?',
+        message: { text: 'Cold launch is 0.4 s faster if fonts load lazily, but the first screen can flash a fallback font for one frame. Accept that, or keep fonts loading up front?', replies: ['opensession'] },
+        unread: true },
+      { id: 'cache', emoji: '🗂️', label: 'Image cache cleanup', title: 'Image cache cleanup', aliases: ['cache', 'image'],
+        status: 'working', step: 4, within: 0.5, mins: 16, agents: 'All reviewers passed', pr: '#227, CI running',
+        now: 'PR #227 is open. CI is running.', brief: 'has PR #227 open.', detail: 'PR #227 is open, and CI is about half done.' },
+      { id: 'share', emoji: '📤', label: 'Share sheet redesign', title: 'Share sheet redesign', aliases: ['share'],
+        status: 'blocked', step: 2, within: 0.3, mins: 21, agents: 'Paused', pr: 'Not opened',
+        now: 'Stuck: the branch conflicts with main in ShareView.swift.', brief: 'is blocked by a merge conflict.',
+        detail: 'The branch conflicts with main in ShareView.swift, from a change that landed this morning.',
+        ask: 'Rebase on main and keep going?',
+        message: { text: "I'm stuck: the branch conflicts with main in ShareView.swift. Should I rebase on main and keep going?", replies: ['rebase', 'opensession'] },
+        unread: true },
+    ];
+  }
+
+  function readyPatch(pr, text) {
+    return { status: 'ready', step: 4, within: 0.6, mins: 0, agents: 'All passed', pr: `#${pr}, CI passed`,
+      now: `PR #${pr} passed CI. Ready for your review.`, brief: `has PR #${pr} ready. CI passed.`, detail: text,
+      ask: 'Approve and merge, or open the PR first?', message: { text, replies: ['merge', 'openpr'] }, unread: true };
+  }
+
+  // Replies a feature can accept right now. Each is relayed as your message.
+  const DECISIONS = {
+    keep: { label: 'Keep it one release', match: /\bkeep\b|one (more )?release|deprecat/,
+      run: m => update(m, { status: 'working', step: 1, within: 0.04, mins: 0, agents: '1 building', message: null, unread: false,
+        now: 'Building. /notify stays for one release with a deprecation warning.', brief: 'is building and keeping /notify for one release.',
+        detail: 'It is building now. /notify stays for one more release with a deprecation warning.' }),
+      reply: m => `Sent. ${chip(m)} is building, and /notify stays for one more release.` },
+    remove: { label: 'Remove it now', match: /remov|drop|delete|get rid/,
+      run: m => update(m, { status: 'working', step: 1, within: 0.04, mins: 0, agents: '1 building', message: null, unread: false,
+        now: 'Building. Removing /notify and its three callers.', brief: 'is building without /notify.',
+        detail: 'It is building now and removing /notify along with its three callers.' }),
+      reply: m => `Sent. ${chip(m)} is building without /notify.` },
+    iphone: { label: 'Ship iPhone-only', match: /iphone|ship it|skip (the )?ipad/,
+      run: m => {
+        update(m, { status: 'working', within: 0.72, mins: 0, agents: '1 testing', message: null, unread: false,
+          now: 'Finishing QA on iPhone. Filing the iPad bug as a follow-up.', brief: 'is finishing QA on iPhone.',
+          detail: 'It is finishing QA on iPhone and filing the iPad bug as a follow-up.' });
+        later(14000, () => m.alive && m.status === 'working' &&
+          update(m, readyPatch(219, 'PR #219 is open for iPhone, and CI passed. The iPad bug is filed as a follow-up. Ready for your review.')));
+      },
+      reply: m => `Sent. ${chip(m)} will ship iPhone-only and file the iPad bug.` },
+    ipad: { label: 'Investigate iPad', match: /investigat|dig|look into|debug|figure out|ipad first/,
+      run: m => {
+        update(m, { status: 'working', within: 0.5, mins: 0, agents: '1 investigating', message: null, unread: false,
+          now: 'Investigating how the export sheet opens on iPad.', brief: 'is investigating the iPad export sheet.',
+          detail: 'It is investigating how the export sheet is presented on iPad.' });
+        later(15000, () => m.alive && m.status === 'working' && update(m, { status: 'turn', mins: 0, agents: '1 waiting',
+          now: 'Found the iPad bug. It wants your go-ahead on a 4-line fix.', brief: 'found the iPad bug and wants a go-ahead on a 4-line fix.',
+          detail: 'Found it: on iPad the export sheet needs an anchor view, so it never appears.', ask: 'Apply the 4-line fix and rerun QA?',
+          message: { text: 'Found it. On iPad the export sheet needs an anchor view, so it never appears. The fix is 4 lines. Apply it and rerun QA?', replies: ['applyfix', 'iphone'] },
+          unread: true }));
+      },
+      reply: m => `Sent. ${chip(m)} is investigating the iPad export sheet. I'll tell you what it finds.` },
+    applyfix: { label: 'Apply the fix', match: /apply|fix it|go ahead|do it|\byes\b/,
+      run: m => {
+        update(m, { status: 'working', within: 0.82, mins: 0, agents: '1 testing', message: null, unread: false,
+          now: 'Applying the fix and rerunning QA on iPad and iPhone.', brief: 'is rerunning QA with the iPad fix.',
+          detail: 'It applied the fix and is rerunning QA on iPad and iPhone.' });
+        later(14000, () => m.alive && m.status === 'working' &&
+          update(m, readyPatch(219, 'QA passed on iPad and iPhone. PR #219 is open, and CI passed. Ready for your review.')));
+      },
+      reply: m => `Sent. ${chip(m)} is applying the fix and rerunning QA.` },
+    merge: { label: 'Approve and merge', match: /approve|merge|lgtm|looks good/,
+      run: m => mergeMate(m), reply: m => `Approved. ${chip(m)} is merging.` },
+    openpr: { label: 'Open the PR', match: /open (the )?pr|show (me )?the pr/,
+      run: m => toast(`In the app, this opens PR ${m.pr.split(',')[0]} in your browser.`), reply: null },
+    rebase: { label: 'Rebase on main', match: /rebase|conflict/,
+      run: m => update(m, { status: 'working', within: 0.2, mins: 0, agents: '1 rebasing', message: null, unread: false,
+        now: 'Rebasing on main, then picking up where it left off.', brief: 'is rebasing on main.',
+        detail: 'It is rebasing on main, then it picks up where it left off.' }),
+      reply: m => `Sent. ${chip(m)} is rebasing on main, then it picks up where it left off.` },
+    opensession: { label: 'Open session', match: /open (the )?session/, run: m => openSession(m), reply: null },
+  };
+
+  // ---------- The "+N" summary ----------
+  const more = { id: 'more', x: 0, y: 0, vx: 0, vy: 0, home: { x: 0, y: G.listTop }, dock: { x: 0, y: DOCK.rowY },
+    list: [], extra: [], dockList: [], visibleList: false, visibleDock: false, out: false, docked: false, unread: false };
+  more.el = document.createElement('div');
+  more.el.className = 'row more gone';
+  more.el.innerHTML = `
+    <button class="row-hit" type="button">
+      <span class="node">
+        <svg class="ring" viewBox="0 0 40 40" aria-hidden="true"></svg>
+        <svg class="shape" viewBox="0 0 40 40" aria-hidden="true"><circle class="ping" cx="20" cy="20" r="22"/></svg>
+        <span class="disc"><span class="more-n"></span></span>
+      </span>
+      <span class="slat frame" aria-hidden="true">${BRACKETS}
+        <span class="l1"><span class="name"></span><span class="state"></span></span>
+        <span class="l2"><span class="minis"></span><span class="pct"></span></span>
+      </span>
+    </button>`;
+  more.hit = $('.row-hit', more.el);
+
+  // One arc per tucked feature, in its status color.
+  function moreRing(items, c = 20, r = 17, sw = 2.4) {
+    const n = Math.max(1, items.length), gap = n > 1 ? 10 : 0, span = 360 / n - gap;
+    return items.map((m, i) => {
+      const a0 = -90 + i * 360 / n + gap / 2;
+      return `<path d="${arcPath(c, c, r, a0, a0 + span)}" fill="none" stroke="${STATUS[m.status].hex}" stroke-width="${sw}"/>`;
+    }).join('');
+  }
+
+  function renderMore() {
+    if (!more.el.isConnected) return;
+    const hidden = folded ? more.dockList : more.list;
+    const openAll = !folded && showAllMoving && more.visibleList;
+    const shown = openAll ? more.extra : hidden;
+    more.el.style.setProperty('--c', STATUS.working.hex);
+    more.el.classList.toggle('compact', openAll);
+    $('.ring', more.el).innerHTML = moreRing(shown);
+    $('.more-n', more.el).textContent = openAll ? '−' : `+${hidden.length}`;
+    $('.name', more.el).textContent = openAll ? 'Show fewer' : `${hidden.length} more moving`;
+    $('.state', more.el).textContent = openAll ? '' : 'Show all';
+    $('.minis', more.el).textContent = openAll ? '' : hidden.slice(0, 6).map(m => m.emoji).join(' ');
+    const avg = shown.length ? Math.round(shown.reduce((t, m) => t + percent(m), 0) / shown.length) : 0;
+    $('.pct', more.el).textContent = openAll ? '' : `${avg}%`;
+    more.unread = false;
+    more.el.classList.toggle('has-unread', hidden.some(m => m.unread));
+    more.hit.setAttribute('aria-label', openAll ? 'Show fewer moving features' : `${hidden.length} more features: ${hidden.map(m => m.label).join(', ')}. Shows them all.`);
+  }
+
+  function renderMoreFrame() {
+    const mv = folded ? more.visibleDock : more.visibleList;
+    more.el.classList.toggle('gone', !mv);
+    more.el.style.transform = `translate3d(${more.x.toFixed(2)}px, ${more.y.toFixed(2)}px, 0)`;
+    if (more.docked !== folded) { more.docked = folded; more.el.classList.toggle('docked', folded); }
+    let out = more.out;
+    if (folded || !mv) out = false;
+    else if (!more.out && Math.hypot(more.x - (E.x + more.home.x), more.y - (E.y + more.home.y)) < 44) out = true;
+    if (out !== more.out) { more.out = out; more.el.classList.toggle('out', out); }
+  }
+
+  // Collapsed, "+N" opens the list with everything showing. In the list, it opens or closes the compact rows.
+  function moreClick() {
+    hideCard(true);
+    if (folded) { showAllMoving = true; layout(); setFolded(false); }
+    else { showAllMoving = !showAllMoving; layout(); }
+  }
+  more.hit.addEventListener('pointerenter', () => {
+    if (drag) return;
+    setHot(more, true);
+    clearTimeout(hideTimer);
+    if (cardState && cardState.pinned) return;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => showCard(more, 'more', false), 220);
+  });
+  more.hit.addEventListener('pointerleave', () => { clearTimeout(hoverTimer); if (!cardState || cardState.m !== more) setHot(more, false); scheduleHide(); });
+  more.hit.addEventListener('click', moreClick);
+
+  // ---------- Rows ----------
+  let seq = 0;
+  function makeRow(data) {
+    const m = Object.assign({ alive: true, leaving: false, unread: false, message: null, msgV: 1,
+      x: E.x, y: E.y, vx: 0, vy: 0, home: { x: 0, y: G.listTop }, dock: { x: 0, y: DOCK.rowY }, wait: null,
+      gate: 0, vis: -1, out: false, docked: false, moving: false, order: seq++ }, data);
+    const el = document.createElement('div');
+    el.className = 'row';
+    el.dataset.id = m.id;
+    el.innerHTML = `
+      <button class="row-hit" type="button">
+        <span class="node">
+          <svg class="ring" viewBox="0 0 40 40" aria-hidden="true"></svg>
+          <svg class="shape" viewBox="0 0 40 40" aria-hidden="true">
+            <polygon class="hex-base" points="20,3 34.7,11.5 34.7,28.5 20,37 5.3,28.5 5.3,11.5"/>
+            <polygon class="hex-fill" points="20,3 34.7,11.5 34.7,28.5 20,37 5.3,28.5 5.3,11.5" pathLength="1"/>
+            <path class="tgt" d="M7 13V7h6M27 7h6v6M33 27v6h-6M13 33H7v-6"/>
+            <line class="tgt-base" x1="11" y1="38.5" x2="29" y2="38.5"/>
+            <line class="tgt-bar" x1="11" y1="38.5" x2="29" y2="38.5" pathLength="1"/>
+            <circle class="ping" cx="20" cy="20" r="22"/>
+            <polygon class="ping-hex" points="20,-1.5 38.6,9.3 38.6,30.8 20,41.5 1.4,30.8 1.4,9.3"/>
+          </svg>
+          <span class="disc"><span class="emoji"></span></span>
+          <span class="badge" aria-hidden="true"></span>
+        </span>
+        <span class="slat frame" aria-hidden="true">${BRACKETS}
+          <span class="l1"><span class="name"></span><span class="state"></span></span>
+          <span class="l2"><span class="segs">${'<i><b></b></i>'.repeat(6)}</span><span class="pct"></span></span>
+        </span>
+      </button>
+      <button class="unread" type="button" hidden><i></i><i></i><i></i></button>`;
+    rowsLayer.appendChild(el);
+    m.el = el;
+    m.hit = $('.row-hit', el);
+    m.node = $('.node', el);
+    m.ringEl = $('.ring', el);
+    m.bubble = $('.unread', el);
+    m.segs = [...el.querySelectorAll('.segs b')];
+    wireRow(m);
+    renderRow(m);
+    return m;
+  }
+
+  const byId = id => mates.find(m => m.id === id && m.alive);
+  const alive = () => mates.filter(m => m.alive && !m.leaving);
+  const percent = m => m.status === 'done' ? 100 : Math.round((m.step + m.within) / 6 * 100);
+  const stepFill = (m, i) => m.status === 'done' ? 1 : i < m.step ? 1 : i === m.step ? m.within : 0;
+
+  function arcPath(cx, cy, r, a0, a1) {
+    const pt = a => [cx + r * Math.cos(a * Math.PI / 180), cy + r * Math.sin(a * Math.PI / 180)];
+    const [x0, y0] = pt(a0), [x1, y1] = pt(a1);
+    return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+  }
+
+  // Six segments (Plan, Build, Review, QA, PR, Merge) with tick marks between them.
+  function ringMarkup(m, color, g = BIG_RING) {
+    const span = 60 - g.gap, col = color || STATUS[m.status].hex;
+    let out = '';
+    for (let i = 0; i < 6; i++) {
+      const a0 = -90 + i * 60 + g.gap / 2;
+      out += `<path d="${arcPath(g.c, g.c, g.r, a0, a0 + span)}" fill="none" stroke="rgba(233,233,236,0.14)" stroke-width="${g.sw}"/>`;
+      const f = stepFill(m, i);
+      if (f > 0.02) out += `<path d="${arcPath(g.c, g.c, g.r, a0, a0 + span * Math.min(1, f))}" fill="none" stroke="${col}" stroke-width="${g.sw}"/>`;
+      const t = (-90 + i * 60) * Math.PI / 180;
+      out += `<line x1="${f1(g.c + g.t0 * Math.cos(t))}" y1="${f1(g.c + g.t0 * Math.sin(t))}" x2="${f1(g.c + g.t1 * Math.cos(t))}" y2="${f1(g.c + g.t1 * Math.sin(t))}" stroke="rgba(233,233,236,0.32)" stroke-width="1"/>`;
+    }
+    return out;
+  }
+
+  // Needs-you rows say why; working rows say which step they're on.
+  function stateWord(m) {
+    if (m.status === 'working') return STEPS[m.step];
+    if (m.status === 'ready') return 'Ready';
+    return STATUS[m.status].label;
+  }
+
+  function renderRow(m) {
+    const s = STATUS[m.status];
+    m.el.dataset.status = m.status;
+    m.el.style.setProperty('--c', s.hex);
+    m.el.classList.toggle('needs', NEEDS_YOU.has(m.status));
+    m.ringEl.innerHTML = ringMarkup(m, null, NODE_RING);
+    $('.emoji', m.el).textContent = m.emoji;
+    $('.badge', m.el).innerHTML = s.glyph ? GLYPH[s.glyph] : '';
+    $('.name', m.el).textContent = m.label;
+    $('.state', m.el).textContent = m.compact ? `${stateWord(m)}  ${percent(m)}%` : stateWord(m);
+    m.segs.forEach((b, i) => { b.style.width = Math.round(stepFill(m, i) * 100) + '%'; });
+    $('.pct', m.el).textContent = percent(m) + '%';
+    m.hit.setAttribute('aria-label', `${m.label}: ${s.label}, ${m.status === 'done' ? 'merged' : STEPS[m.step]}, ${percent(m)} percent done.${m.unread ? ' Unread message.' : ''} Opens the session.`);
+    m.bubble.setAttribute('aria-label', `Read the new message from ${m.label}`);
+    m.bubble.hidden = !m.unread;
+    m.el.classList.toggle('has-unread', !!m.unread);
+    m.el.style.setProperty('--p', (percent(m) / 100).toFixed(3));
+  }
+
+  function update(m, patch) {
+    if ('message' in patch) m.msgV += 1;
+    const before = m.status;
+    Object.assign(m, patch);
+    renderRow(m);
+    refreshBadge();
+    // A merged row keeps its slot until it leaves.
+    if (m.status !== before && m.status !== 'done') layout();
+    log.querySelectorAll(`.reply[data-mate="${m.id}"]`).forEach(b => { if (+b.dataset.v !== m.msgV) b.disabled = true; });
+    if (cardState && cardState.m === m) { renderCard(); positionCard(); }
+  }
+
+  function setHot(m, on) { m.el.classList.toggle('hot', on); }
+
+  function refreshBadge() {
+    const list = alive();
+    const need = list.filter(m => NEEDS_YOU.has(m.status)).sort((a, b) => STATUS[a.status].rank - STATUS[b.status].rank);
+    fmCount.hidden = !need.length;
+    if (need.length) {
+      if (fmCount.textContent !== String(need.length)) {
+        fmCount.textContent = need.length;
+        fmCount.style.animation = 'none'; void fmCount.offsetWidth; fmCount.style.animation = '';
+      }
+      fmCount.style.setProperty('--c', STATUS[need[0].status].hex);
+    }
+    fmBtn.setAttribute('aria-label', `${fm.name}. ${need.length ? `${cap(num(need.length))} feature${need.length === 1 ? ' needs' : 's need'} you. ` : ''}Opens the chat to type.`);
+    chatSub.textContent = `${list.length} feature${list.length === 1 ? '' : 's'}`;
+  }
+
+  function renderIdentity() {
+    const who = `${markHTML(fm.mark)}<span>${esc(fm.name)}</span>`;
+    fmMark.innerHTML = fm.mark === 'face' ? FACE : markHTML(fm.mark);
+    faceLook = $('#faceLook');
+    faceBars = faceLook ? [...faceLook.querySelectorAll('.f-bars rect')] : [];
+    commsMark.innerHTML = markHTML(fm.mark);
+    chatTitle.textContent = fm.name;
+    previewWho.innerHTML = who;
+    log.querySelectorAll('.who').forEach(w => { w.innerHTML = who; });
+  }
+
+  function mergeMate(m) {
+    update(m, { status: 'done', step: 5, within: 1, message: null, unread: false, now: 'Merged.', agents: 'Done',
+      pr: m.pr.split(',')[0] + ', merged', brief: 'is merged.', detail: 'It is merged.' });
+    later(1800, () => cutLoose(m));
+  }
+
+  function cutLoose(m) {
+    if (!m.alive || m.leaving) return;
+    if (cardState && cardState.m === m) hideCard(true);
+    const burst = document.createElement('span');
+    burst.className = 'burst';
+    m.el.appendChild(burst);
+    m.leaving = true;
+    m.el.classList.add('leaving');
+    later(1300, () => {
+      m.alive = false;
+      m.el.remove();
+      mates = mates.filter(x => x !== m);
+      layout();
+      refreshBadge();
+      fmSay(`<p>${m.emoji} ${esc(m.label)} is merged and off the list. ${countsSentence()}</p>`, { soft: true });
+    });
+  }
+
+  // ---------- Layout: the order of the list ----------
+  const groupOf = m => (m.status === 'working' ? 1 : 0);
+  function sorted() {
+    return alive().sort((a, b) => groupOf(a) - groupOf(b)
+      || (groupOf(a) === 0 ? STATUS[a.status].rank - STATUS[b.status].rank : 0)
+      || a.order - b.order);
+  }
+
+  // What needs you always gets a full row. Past a few moving rows, the rest tuck into a summary row;
+  // opening it shows them all as compact rows.
+  let showAllMoving = false, fleetSize = 10;
+  function layout() {
+    const list = sorted();
+    const moving = list.filter(m => groupOf(m) === 1);
+    const overflow = moving.length > MOVING_SHOWN + 1;
+    more.extra = overflow ? moving.slice(MOVING_SHOWN) : [];
+    more.list = overflow && !showAllMoving ? more.extra : [];
+    more.visibleList = overflow;
+    let top = G.listTop - 19;
+    junctionPair = null;
+    list.forEach((m, i) => {
+      if (i > 0 && groupOf(m) !== groupOf(list[i - 1])) { junctionPair = [list[i - 1], m]; top += G.groupGap; }
+      m.tuckList = more.list.includes(m);
+      const compact = overflow && showAllMoving && groupOf(m) === 1;
+      if (compact !== !!m.compact) { m.compact = compact; m.el.classList.toggle('compact', compact); renderRow(m); }
+      if (m.tuckList) return;
+      const y = top + (compact ? 12 : 19);
+      // A row that jumps several places folds to its emoji and swings out to the side
+      // instead of sliding through the others. It opens again in its new slot.
+      if (m.out && settings.motion && Math.abs(m.home.y - y) > G.pitch * 1.5) { m.vx -= 300; m.moving = true; }
+      m.home = { x: 0, y };
+      top += compact ? G.cpitch : G.pitch;
+    });
+    if (overflow) {
+      const small = showAllMoving;
+      more.home = { x: 0, y: top + (small ? 12 : 19) };
+      top += small ? G.cpitch : G.pitch;
+    }
+    for (const m of more.list) m.home = more.home;
+    listBottom = list.length ? top - 8 : G.spineTop;
+    layoutDock(list);
+    renderMore();
+    if (cardState && cardState.m === more) { if (folded ? more.visibleDock : more.visibleList) renderCard(); else hideCard(true); }
+  }
+
+  // Collapsed: where each circle docks, where the handle that opens the list sits, and the backing behind them.
+  let dockGeo = { handle: { x: 0, y: DOCK.rowY + DOCK.r + 8 }, bg: { x: -44, y: DOCK.rowY - DOCK.r - 8, w: 88, h: 2 * (DOCK.r + 8), radius: DOCK.r + 8 } };
+  function layoutDock(list) {
+    const overflow = list.length > DOCK_MAX;
+    const shown = overflow ? list.slice(0, DOCK_MAX - 1) : list;
+    more.dockList = overflow ? list.slice(DOCK_MAX - 1) : [];
+    more.visibleDock = overflow;
+    const items = overflow ? [...shown, more] : shown;
+    const n = items.length;
+    if (dockStyle === 'orbit') {
+      // The circles and the handle share n + 1 slots around First Mate. The handle takes the bottom,
+      // and the circles read clockwise from the top in list order.
+      const step = 360 / (n + 1), angles = [];
+      for (let k = 1; k <= n; k++) angles.push((180 + k * step) % 360);
+      angles.sort((a, b) => a - b);
+      items.forEach((m, i) => {
+        const t = angles[i] * Math.PI / 180;
+        m.dock = { x: DOCK.orbitR * Math.sin(t), y: -DOCK.orbitR * Math.cos(t) };
+      });
+      const r = DOCK.orbitR + DOCK.r + 10;
+      dockGeo = { handle: { x: 0, y: DOCK.orbitR }, bg: { x: -r, y: -r, w: 2 * r, h: 2 * r, radius: r } };
+    } else {
+      items.forEach((m, i) => {
+        const d = { x: (i - (n - 1) / 2) * DOCK.rowPitch, y: DOCK.rowY };
+        // A circle that jumps several places dips under the row instead of sliding through the others.
+        if (m.docked && settings.motion && Math.abs(d.x - m.dock.x) > DOCK.rowPitch * 1.5) m.vy += 240;
+        m.dock = d;
+      });
+      const half = Math.max(0, (n - 1) / 2) * DOCK.rowPitch + DOCK.r + 8, pad = DOCK.r + 8;
+      dockGeo = { handle: { x: 0, y: DOCK.rowY + 30 }, bg: { x: -half, y: DOCK.rowY - pad, w: 2 * half, h: 2 * pad, radius: pad } };
+    }
+    for (const m of list) m.tuckDock = more.dockList.includes(m);
+    for (const m of more.dockList) m.dock = more.dock;
+    unfoldBtn.style.left = f1(dockGeo.handle.x - 11) + 'px';
+    unfoldBtn.style.top = f1(dockGeo.handle.y - 11) + 'px';
+    const b = dockGeo.bg;
+    Object.assign(dockBg.style, { left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px', borderRadius: b.radius + 'px' });
+    dockBg.classList.toggle('on', folded && dockBgOn[dockStyle]);
+    stage.classList.toggle('dock-orbit', dockStyle === 'orbit');
+  }
+
+  // How far the HUD reaches from First Mate's center, for what's showing right now.
+  function extents() {
+    if (!folded) return { l: 44, r: G.bubble + 10, t: 48, b: listBottom + 14 };
+    if (dockStyle === 'orbit') { const r = DOCK.orbitR + DOCK.r + (dockBgOn.orbit ? 10 : 3); return { l: r, r, t: r, b: r }; }
+    const half = Math.max(44, -dockGeo.bg.x);
+    return { l: half, r: half, t: 48, b: dockGeo.handle.y + 12 };
+  }
+
+  // Keep First Mate and whatever is open around it on screen.
+  function anchor() {
+    const ext = extents();
+    return { x: clamp(F.x, ext.l + 12, W - 12 - ext.r), y: clamp(F.y, ext.t + 12, H - 12 - ext.b) };
+  }
+
+  function setFolded(v) {
+    if (folded === v) return;
+    folded = v;
+    stage.classList.toggle('folded', v);
+    foldToggle.querySelector('b').textContent = v ? 'Show list' : 'Collapse list';
+    foldToggle.querySelector('span').textContent = v ? 'The circles drop down the line into rows.' : 'The rows fold back into circles.';
+    dockBg.classList.toggle('on', v && dockBgOn[dockStyle]);
+    if (v) { hideCard(true); hideEditor(); }
+    // One after another, top first: circles drop down the line into rows, and rows fold back into circles.
+    sorted().forEach((m, i) => { m.wait = null; m.gate = T + (v ? 0.16 + i * 0.035 : 0.04 + i * 0.05); });
+    renderMore();
+  }
+
+  // ---------- Physics: rows spring to their slots ----------
+  const K = 130, C = 16, CENTER = { x: 0, y: 0 };
+  function stepPhysics(h) {
+    T += h;
+    if (!(drag && drag.kind === 'fm' && drag.moved)) {
+      const a = anchor();
+      E.x += (a.x - E.x) * Math.min(1, h * 10);
+      E.y += (a.y - E.y) * Math.min(1, h * 10);
+    }
+    for (const m of mates) {
+      if (!m.alive || m.leaving) continue;
+      if (drag && drag.m === m && drag.moved) continue;
+      // Until its turn, a row waits where it was: in its slot while collapsing, in its circle while opening.
+      const waiting = T < m.gate;
+      const p = folded ? (waiting ? (m.wait === 'core' ? CENTER : m.home) : m.dock) : (waiting ? m.dock : m.home);
+      const tx = E.x + p.x, ty = E.y + p.y;
+      if (!settings.motion) { m.x = tx; m.y = ty; m.vx = 0; m.vy = 0; continue; }
+      m.vx += (K * (tx - m.x) - C * m.vx) * h;
+      m.vy += (K * (ty - m.y) - C * m.vy) * h;
+      m.x += m.vx * h;
+      m.y += m.vy * h;
+    }
+    // The "+N" summary: an orb in the collapsed view, a row at the bottom of the list.
+    const mv = folded ? more.visibleDock : more.visibleList;
+    {
+      // While hidden it waits in place, so it appears where it belongs.
+      const p = folded ? more.dock : more.home, tx = E.x + p.x, ty = E.y + p.y;
+      if (!mv || !settings.motion) { more.x = tx; more.y = ty; more.vx = 0; more.vy = 0; }
+      else {
+        more.vx += (K * (tx - more.x) - C * more.vx) * h;
+        more.vy += (K * (ty - more.y) - C * more.vy) * h;
+        more.x += more.vx * h; more.y += more.vy * h;
+      }
+    }
+    stepSignals(h);
+  }
+
+  function smoothPath(p) {
+    let d = `M${f1(p[0].x)} ${f1(p[0].y)}`;
+    for (let i = 0; i < p.length - 1; i++) {
+      const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p2;
+      d += `C${f1(p1.x + (p2.x - p0.x) / 6)} ${f1(p1.y + (p2.y - p0.y) / 6)} ${f1(p2.x - (p3.x - p1.x) / 6)} ${f1(p2.y - (p3.y - p1.y) / 6)} ${f1(p2.x)} ${f1(p2.y)}`;
+    }
+    return d;
+  }
+  function pointAt(p, u) {
+    let total = 0;
+    const acc = [0];
+    for (let i = 1; i < p.length; i++) { total += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y); acc.push(total); }
+    const target = u * total;
+    let i = 1;
+    while (i < p.length - 1 && acc[i] < target) i++;
+    const t = (target - acc[i - 1]) / ((acc[i] - acc[i - 1]) || 1);
+    return { x: p[i - 1].x + (p[i].x - p[i - 1].x) * t, y: p[i - 1].y + (p[i].y - p[i - 1].y) * t };
+  }
+
+  // The line runs from First Mate through every row that is out of the core, top to bottom.
+  // Collapsed, there is no line. Opening, a row joins the line once it has left its circle and reached it.
+  function spinePoints(upTo) {
+    const top = { x: E.x, y: E.y + G.spineTop };
+    const pts = [top];
+    if (folded) return pts;
+    const list = mates.filter(m => m.alive && !m.leaving && !m.tucked && !(drag && drag.m === m && drag.moved) && m.y > top.y + 4
+      && (m.out || (T >= m.gate && Math.abs(m.x - E.x) < 24))).concat(more.out ? [more] : []).sort((a, b) => a.y - b.y);
+    for (const m of list) {
+      if (m === upTo) { pts.push({ x: m.x, y: m.y - 18 }); return pts; }
+      pts.push({ x: m.x, y: m.y });
+    }
+    if (upTo) pts.push({ x: upTo.x, y: upTo.y - 18 });
+    return pts;
+  }
+
+  function renderSpine() {
+    const pts = spinePoints(null);
+    if (pts.length < 2) { spineEl.setAttribute('d', ''); spineGlow.setAttribute('d', ''); junctionEl.setAttribute('d', ''); return; }
+    const d = smoothPath(pts);
+    spineEl.setAttribute('d', d);
+    spineGlow.setAttribute('d', d);
+    spineGrad.setAttribute('x1', f1(E.x)); spineGrad.setAttribute('x2', f1(E.x));
+    spineGrad.setAttribute('y1', f1(pts[0].y)); spineGrad.setAttribute('y2', f1(Math.max(pts[0].y + 1, pts[pts.length - 1].y)));
+    // A small diamond on the line splits what needs you from everything else.
+    const pair = junctionPair;
+    if (pair && !folded && pair.every(m => m.alive && !m.leaving && m.out)) {
+      const jx = (pair[0].x + pair[1].x) / 2, jy = (pair[0].y + pair[1].y) / 2;
+      junctionEl.setAttribute('d', `M${f1(jx)} ${f1(jy - 4.2)}L${f1(jx + 4.2)} ${f1(jy)}L${f1(jx)} ${f1(jy + 4.2)}L${f1(jx - 4.2)} ${f1(jy)}Z`);
+    } else {
+      junctionEl.setAttribute('d', '');
+    }
+  }
+
+  // ---------- Signals and scan (version 2) ----------
+  const signals = [];
+  function signal(m, dir) {
+    const dur = 0.35 + Math.max(60, m.y - (E.y + G.spineTop)) / 700;
+    return new Promise(res => {
+      if (!settings.signals || folded || !m.alive) { setTimeout(res, dur * 1000); return; }
+      const g = svgEl('g');
+      const color = dir === 'out' ? '#DCDAFF' : STATUS[m.status].hex;
+      for (let k = 0; k < 7; k++) g.appendChild(svgEl('circle', { r: (3.6 - k * 0.42).toFixed(2), fill: color, opacity: (1 - k * 0.14).toFixed(2) }));
+      sigLayer.appendChild(g);
+      spineEl.classList.add('live');
+      spineGlow.classList.add('live');
+      signals.push({ m, dir, t: 0, dur, g, res });
+    });
+  }
+  function stepSignals(h) {
+    for (let i = signals.length - 1; i >= 0; i--) {
+      const s = signals[i];
+      s.t += h / s.dur;
+      if (s.t >= 1 || !s.m.alive) {
+        s.g.remove();
+        signals.splice(i, 1);
+        if (!signals.length) { spineEl.classList.remove('live'); spineGlow.classList.remove('live'); }
+        s.res();
+      }
+    }
+  }
+  function renderSignals() {
+    for (const s of signals) {
+      const e = easeInOut(Math.min(1, s.t));
+      const u = s.dir === 'out' ? e : 1 - e;
+      const back = s.dir === 'out' ? -1 : 1;
+      const pts = spinePoints(s.m);
+      [...s.g.children].forEach((c, k) => {
+        const pt = pointAt(pts, clamp(u + back * k * 0.028, 0, 1));
+        c.setAttribute('cx', f1(pt.x));
+        c.setAttribute('cy', f1(pt.y));
+      });
+    }
+  }
+
+  // The scan runs down the list. It returns when it reaches a given row.
+  let scanAnim = null;
+  function runScan(ms) {
+    if (!settings.signals || folded) return null;
+    const from = G.spineTop - 40, to = listBottom - 18;
+    if (scanAnim) scanAnim.cancel();
+    scanAnim = scanEl.animate([
+      { transform: `translateY(${from}px)`, opacity: 0 },
+      { opacity: 1, offset: 0.06 },
+      { opacity: 1, offset: 0.9 },
+      { transform: `translateY(${to}px)`, opacity: 0 },
+    ], { duration: ms, easing: 'linear' });
+    return y => clamp((y - (from + 40)) / (to - from), 0, 1) * ms;
+  }
+
+  // ---------- Render loop ----------
+  let lastTs = performance.now(), acc = 0;
+  function frame(ts) {
+    const dt = Math.min(0.05, (ts - lastTs) / 1000);
+    lastTs = ts;
+    acc += dt;
+    const h = 1 / 120;
+    let steps = 0;
+    while (acc >= h && steps < 10) { stepPhysics(h); acc -= h; steps++; }
+    if (steps === 10) acc = 0;
+    render();
+    requestAnimationFrame(frame);
+  }
+  function render() {
+    if (!settings.motion) { par.tx = 0; par.ty = 0; }
+    par.x += (par.tx - par.x) * 0.06;
+    par.y += (par.ty - par.y) * 0.06;
+    desk.style.transform = `translate3d(${f1(-par.x * 20)}px, ${f1(-par.y * 16)}px, 0)`;
+    const tf = `translate3d(${E.x.toFixed(2)}px, ${E.y.toFixed(2)}px, 0)`;
+    fmWrap.style.transform = tf;
+    chat.style.transform = tf;
+    scanPos.style.transform = tf;
+    dockPos.style.transform = tf;
+    haloG.setAttribute('transform', `translate(${f1(E.x)} ${f1(E.y)})`);
+    if (faceLook) {
+      look.x += (look.tx - look.x) * 0.12;
+      look.y += (look.ty - look.y) * 0.12;
+      faceLook.setAttribute('transform', `translate(${look.x.toFixed(2)} ${look.y.toFixed(2)})`);
+    }
+    placeChat();
+    for (const m of mates) {
+      if (!m.alive) continue;
+      m.el.style.transform = `translate3d(${m.x.toFixed(2)}px, ${m.y.toFixed(2)}px, 0)`;
+      // A circle fades only while it passes behind First Mate.
+      const vis = clamp((Math.hypot(m.x - E.x, m.y - E.y) - 16) / 26, 0, 1);
+      if (Math.abs(vis - m.vis) > 0.01) {
+        m.vis = vis;
+        m.node.style.opacity = vis.toFixed(2);
+        m.node.style.transform = `scale(${(0.45 + 0.55 * vis).toFixed(3)})`;
+      }
+      // Circle styling holds until the row actually leaves the circle, and starts as soon as it heads for one.
+      const docked = folded ? T >= m.gate : T < m.gate;
+      if (docked !== m.docked) { m.docked = docked; m.el.classList.toggle('docked', docked); }
+      const tucked = docked ? !!m.tuckDock : !!m.tuckList;
+      if (tucked !== m.tucked) { m.tucked = tucked; m.el.classList.toggle('tucked', tucked); }
+      const held = drag && drag.m === m && drag.moved;
+      const fromHome = Math.hypot(m.x - (E.x + m.home.x), m.y - (E.y + m.home.y));
+      if (m.moving && fromHome < 16) m.moving = false;
+      let out = m.out;
+      if (folded || m.leaving || held || m.moving || m.tucked) out = false;
+      else if (!m.out && T >= m.gate && fromHome < 44) out = true;
+      if (out !== m.out) { m.out = out; m.el.classList.toggle('out', out); }
+    }
+    renderMoreFrame();
+    renderSpine();
+    renderSignals();
+    renderDrag();
+    if (cardState) {
+      const m = cardState.m;
+      if (!cardState.anchor || Math.hypot(m.x - cardState.anchor.x, m.y - cardState.anchor.y) > 26) positionCard();
+      drawLeader();
+    }
+  }
+
+  // ---------- Where the panels go ----------
+  let chatKey = '', previewLeft = false, previewMax = 0, previewX = 0;
+  function placeChat() {
+    const w = 352, h = 420, ext = extents();
+    const leftX = -(ext.l + 16) - w, rightX = ext.r + 16;
+    const side = E.x + leftX >= 12 ? 'left' : E.x + rightX + w <= W - 12 ? 'right' : 'left';
+    const x = clamp(side === 'left' ? leftX : rightX, 12 - E.x, W - 12 - w - E.x);
+    const y = clamp(-48, 12 - E.y, H - 12 - h - E.y);
+    chatBox = { x: E.x + x, y: E.y + y, w, h };
+    const key = `${Math.round(x)},${Math.round(y)}`;
+    if (chatOpen && key !== chatKey) { chatKey = key; chatPanel.style.left = Math.round(x) + 'px'; chatPanel.style.top = Math.round(y) + 'px'; }
+    // First Mate's latest line sits to its right, clear of the orbit, or to its left near the edge.
+    const pvx = folded && dockStyle === 'orbit' ? ext.r + 10 : 58;
+    if (pvx !== previewX) { previewX = pvx; chat.style.setProperty('--pv-x', pvx + 'px'); }
+    const roomRight = W - 12 - (E.x + pvx);
+    const pvLeft = roomRight < 190;
+    if (pvLeft !== previewLeft) { previewLeft = pvLeft; chat.classList.toggle('pv-left', pvLeft); }
+    const maxW = Math.round(clamp(pvLeft ? E.x - pvx - 12 : roomRight, 160, 276));
+    if (maxW !== previewMax) { previewMax = maxW; preview.style.maxWidth = maxW + 'px'; }
+  }
+
+  // Beside the row or the circle; pick the spot that hides the least.
+  function placeBeside(m, w, h) {
+    const overlap = (x, y, X, Y, WW, HH) => Math.max(0, Math.min(x + w, X + WW) - Math.max(x, X)) * Math.max(0, Math.min(y + h, Y + HH) - Math.max(y, Y)) / 100;
+    let spots, blockers;
+    if (folded) {
+      const r = DOCK.r + 26, ext = extents();
+      spots = [{ x: m.x + r, y: m.y - 40 }, { x: m.x - r - w, y: m.y - 40 }, { x: m.x - w / 2, y: m.y + r }, { x: m.x - w / 2, y: m.y - r - h }];
+      blockers = [[E.x - ext.l, E.y - ext.t, ext.l + ext.r, ext.t + ext.b, 3]];
+    } else {
+      const reach = alive().some(r => r.unread) ? G.bubble : G.right;
+      spots = [{ x: m.x + reach + 24, y: m.y - 46 }, { x: m.x - 46 - w, y: m.y - 46 }];
+      blockers = [[E.x - 24, E.y + G.listTop - 24, reach + 24, listBottom - G.listTop + 48, 3], [E.x - 52, E.y - 52, 104, 104, 2]];
+    }
+    if (chatOpen) blockers.push([chatBox.x, chatBox.y, chatBox.w, chatBox.h, 2]);
+    return spots.map(s => {
+      const cx = clamp(s.x, 12, W - w - 12), cy = clamp(s.y, 12, H - h - 12);
+      let cost = Math.abs(cx - s.x) + Math.abs(cy - s.y);
+      for (const [X, Y, WW, HH, k] of blockers) cost += overlap(cx, cy, X, Y, WW, HH) * k;
+      return { x: cx, y: cy, cost };
+    }).reduce((best, s) => (s.cost < best.cost ? s : best));
+  }
+
+  // ---------- Dragging, and drag-to-ask ----------
+  let drag = null;
+  function toStage(e) {
+    const r = stage.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale };
+  }
+  function beginDrag(e, kind, m) {
+    if (e.button !== 0) return;
+    const p = toStage(e);
+    const ox = kind === 'fm' ? p.x - E.x : p.x - m.x, oy = kind === 'fm' ? p.y - E.y : p.y - m.y;
+    drag = { kind, m, sx: p.x, sy: p.y, ox, oy, moved: false, lx: p.x, ly: p.y, lt: performance.now(), vx: 0, vy: 0, id: e.pointerId, drop: false };
+    e.preventDefault();
+    // First Mate does three things: click to type, drag to move, press and hold to talk.
+    if (kind === 'fm' && !listening) {
+      fmWrap.classList.add('holding');
+      const d = drag;
+      d.holdTimer = setTimeout(() => {
+        if (drag !== d || d.moved) return;
+        d.hold = true;
+        fmWrap.classList.remove('holding');
+        startListening({ host: liveHost, ptt: true, stay: true });
+      }, HOLD_MS);
+    }
+  }
+  function stopHold(d) { clearTimeout(d.holdTimer); fmWrap.classList.remove('holding'); }
+  stage.addEventListener('pointermove', e => {
+    const p = toStage(e);
+    par.tx = p.x / W - 0.5;
+    par.ty = p.y / H - 0.5;
+    // The face looks toward your pointer.
+    look.tx = clamp((p.x - E.x) / 140, -1, 1) * 2.4;
+    look.ty = clamp((p.y - E.y) / 140, -1, 1) * 2;
+  });
+  stage.addEventListener('pointerleave', () => { par.tx = 0; par.ty = 0; look.tx = 0; look.ty = 0; });
+  window.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id || drag.hold) return;
+    const p = toStage(e);
+    if (!drag.moved) {
+      if (Math.hypot(p.x - drag.sx, p.y - drag.sy) < 5) return;
+      drag.moved = true;
+      stopHold(drag);
+      clearTimeout(hoverTimer);
+      hideCard(true);
+      hideEditor();
+      (drag.kind === 'fm' ? fmWrap : drag.m.el).classList.add('dragging');
+    }
+    const now = performance.now(), dts = Math.max(1, now - drag.lt) / 1000;
+    drag.vx = drag.vx * 0.6 + ((p.x - drag.lx) / dts) * 0.4;
+    drag.vy = drag.vy * 0.6 + ((p.y - drag.ly) / dts) * 0.4;
+    drag.lx = p.x; drag.ly = p.y; drag.lt = now;
+    if (drag.kind === 'fm') {
+      F.x = clamp(p.x - drag.ox, 20, W - 20);
+      F.y = clamp(p.y - drag.oy, 20, H - 20);
+      const a = anchor();
+      E.x = a.x; E.y = a.y;
+    } else {
+      // The row folds down to its emoji and comes to your pointer.
+      const m = drag.m;
+      drag.ox *= 0.82; drag.oy *= 0.82;
+      m.x = clamp(p.x - drag.ox, 24, W - 24);
+      m.y = clamp(p.y - drag.oy, 24, H - 24);
+      m.vx = 0; m.vy = 0;
+      const dist = Math.min(Math.hypot(m.x - E.x, m.y - E.y), Math.hypot(p.x - E.x, p.y - E.y));
+      // A collapsed circle already sits near First Mate, so it has to reach the circle itself.
+      drag.drop = dist < (m.docked ? 40 : 56);
+      fmWrap.classList.toggle('drop-near', dist < 170);
+      fmWrap.classList.toggle('drop-ready', drag.drop);
+      coreHint.textContent = drag.drop ? `Release to ask about ${m.label}` : 'Drop to ask';
+    }
+  });
+  function endDrag(e, cancelled) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
+    drag = null;
+    stopHold(d);
+    fmWrap.classList.remove('drop-near', 'drop-ready');
+    if (d.hold) { finishListening(!cancelled); return; }
+    if (!d.moved) {
+      if (cancelled) return;
+      if (d.kind === 'fm') toggleChat(); else clickRow(d.m);
+      return;
+    }
+    (d.kind === 'fm' ? fmWrap : d.m.el).classList.remove('dragging');
+    if (d.kind === 'fm') return;
+    if (d.drop && !cancelled) {
+      d.m.vx = 0; d.m.vy = 0;
+      send(`How's ${d.m.label} doing?`, { forced: d.m });
+      return;
+    }
+    d.m.vx = clamp(d.vx, -1400, 1400);
+    d.m.vy = clamp(d.vy, -1400, 1400);
+  }
+  window.addEventListener('pointerup', e => endDrag(e, false));
+  window.addEventListener('pointercancel', e => endDrag(e, true));
+
+  // While a row is out of the list, its slot waits and a tether keeps it on the line.
+  let dragShown = false;
+  function renderDrag() {
+    const m = drag && drag.kind === 'row' && drag.moved ? drag.m : null;
+    if (!m) {
+      if (dragShown) { dragShown = false; tetherEl.setAttribute('d', ''); ghostEl.classList.remove('on'); }
+      return;
+    }
+    dragShown = true;
+    const sx = E.x, sy = E.y + m.home.y;
+    ghostEl.setAttribute('x', f1(sx - 19));
+    ghostEl.setAttribute('y', f1(sy - 19));
+    ghostEl.classList.add('on');
+    const cx = (sx + m.x) / 2, cy = (sy + m.y) / 2 + 40;
+    tetherEl.setAttribute('d', `M${f1(sx)} ${f1(sy)}Q${f1(cx)} ${f1(cy)} ${f1(m.x)} ${f1(m.y)}`);
+    tetherGrad.setAttribute('x1', f1(sx)); tetherGrad.setAttribute('y1', f1(sy));
+    tetherGrad.setAttribute('x2', f1(m.x)); tetherGrad.setAttribute('y2', f1(m.y));
+    tetherStop.setAttribute('stop-color', STATUS[m.status].hex);
+  }
+
+  // ---------- Readout (hover), message card, leader line ----------
+  let cardState = null, hoverTimer = 0, hideTimer = 0;
+
+  function wireRow(m) {
+    m.hit.addEventListener('pointerenter', () => {
+      if (drag) return;
+      setHot(m, true);
+      clearTimeout(hideTimer);
+      if (cardState && cardState.pinned) return;
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => showCard(m, 'info', false), 220);
+    });
+    m.hit.addEventListener('pointerleave', () => {
+      clearTimeout(hoverTimer);
+      if (!cardState || cardState.m !== m) setHot(m, false);
+      scheduleHide();
+    });
+    m.hit.addEventListener('focus', () => { if (!(cardState && cardState.pinned) && !drag) showCard(m, 'info', false); });
+    m.hit.addEventListener('blur', () => scheduleHide());
+    m.hit.addEventListener('pointerdown', e => beginDrag(e, 'row', m));
+    m.hit.addEventListener('click', e => { if (e.detail === 0) clickRow(m); });
+    m.hit.addEventListener('keydown', e => { if (e.key === 'e' || e.key === 'E') { e.preventDefault(); openEditor(m); } });
+    m.hit.addEventListener('contextmenu', e => { e.preventDefault(); openEditor(m); });
+    m.bubble.addEventListener('click', e => { e.stopPropagation(); showCard(m, 'message', true); });
+  }
+
+  function scheduleHide() {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (cardState && !cardState.pinned && !card.matches(':hover') && !card.contains(document.activeElement)) hideCard();
+    }, 240);
+  }
+  card.addEventListener('pointerenter', () => clearTimeout(hideTimer));
+  card.addEventListener('pointerleave', () => scheduleHide());
+
+  function showCard(m, mode, pinned) {
+    if (!m || !(m.alive || m === more)) return;
+    // A feature tucked into the summary row comes out first.
+    if (m.tuckList && !folded) { showAllMoving = true; layout(); }
+    clearTimeout(hideTimer);
+    clearTimeout(hoverTimer);
+    if (cardState && cardState.m !== m) setHot(cardState.m, false);
+    if (listening && card.contains(listening.host)) finishListening(false);
+    const fresh = !cardState || cardState.m !== m || cardState.mode !== mode;
+    cardState = { m, mode: mode === 'message' && !m.message ? 'info' : mode, pinned };
+    card.hidden = false;
+    if (fresh) { card.style.animation = 'none'; void card.offsetWidth; card.style.animation = ''; }
+    setHot(m, true);
+    renderCard();
+    positionCard();
+    if (cardState.mode === 'message' && m.unread) { m.unread = false; renderRow(m); }
+  }
+
+  function hideCard(force) {
+    if (!cardState) return;
+    if (cardState.pinned && !force) return;
+    if (listening && card.contains(listening.host)) finishListening(false);
+    setHot(cardState.m, false);
+    cardState = null;
+    card.hidden = true;
+    card.innerHTML = '';
+    leaderEl.setAttribute('d', '');
+    leaderDot.setAttribute('r', '0');
+  }
+
+  function statusWord(s) {
+    return `<span class="st">${s.glyph ? GLYPH[s.glyph] : GLYPH.dashed}${s.label}</span>`;
+  }
+
+  function renderCard() {
+    const { m, mode, pinned } = cardState;
+    if (mode === 'more') {
+      const items = folded ? more.dockList : more.extra;
+      card.style.setProperty('--c', STATUS.working.hex);
+      card.innerHTML = `${BRACKETS}
+        <div class="ro-head">
+          <span class="ro-emoji more-emoji">+${items.length}</span>
+          <div><div class="ro-title">${items.length} more ${folded ? 'features' : 'moving'}</div><span class="st">Tucked away to keep this short</span></div>
+        </div>
+        <ul class="more-list">${items.map(x => `<li><button type="button" class="${NEEDS_YOU.has(x.status) ? 'is-needs' : ''}" data-open="${x.id}" style="--c:${STATUS[x.status].hex}"><span class="ml-emoji">${x.emoji}</span><span class="ml-name">${esc(x.label)}</span><span class="ml-state">${stateWord(x)}</span><span class="ml-pct">${percent(x)}%</span><i class="ml-bar"><b style="width:${percent(x)}%"></b></i></button></li>`).join('')}</ul>
+        <div class="ro-actions"><button class="btn primary" type="button" data-act="showall">${!folded && showAllMoving ? 'Show fewer' : 'Show all in the list'}</button><span class="ro-meta">Click one to open it</span></div>`;
+      return;
+    }
+    const s = STATUS[m.status];
+    card.style.setProperty('--c', s.hex);
+    const head = `${BRACKETS}
+      <div class="ro-head">
+        <span class="ro-emoji">${m.emoji}</span>
+        <div><div class="ro-title">${esc(m.title)}</div>${statusWord(s)}</div>
+      </div>
+      ${pinned ? `<button class="icon-btn ro-close" type="button" data-act="close" aria-label="Close">${ICON.close}</button>` : ''}`;
+    if (mode === 'message' && m.message) {
+      card.innerHTML = head + `
+        <p class="msg-body">${esc(m.message.text)}</p>
+        ${repliesHTML(m)}
+        <div class="composer">${composerInner(`Reply to ${m.label}`)}</div>
+        <div class="ro-foot"><button class="btn" type="button" data-act="open">Open session</button><span class="ro-meta">Marked as read</span></div>`;
+      return;
+    }
+    const steps = STEPS.map((name, i) => {
+      const f = stepFill(m, i);
+      return `<div class="s${i === m.step && m.status !== 'done' ? ' cur' : ''}"><span class="bar"><b style="width:${Math.round(f * 100)}%"></b></span><span class="lbl">${name}</span></div>`;
+    }).join('');
+    card.innerHTML = head + `
+      <p class="ro-now">${esc(m.now)}</p>
+      <div class="ro-steps" aria-label="${percent(m)} percent done">${steps}</div>
+      <dl class="ro-stats">
+        <div><dt class="micro">Progress</dt><dd class="num">${percent(m)}%</dd></div>
+        <div><dt class="micro">${m.status === 'done' ? 'Finished' : `In ${STEPS[m.step]}`}</dt><dd class="num">${m.status === 'done' ? 'now' : fmtMins(m.mins)}</dd></div>
+        <div><dt class="micro">Agents</dt><dd>${esc(m.agents)}</dd></div>
+        <div><dt class="micro">Pull request</dt><dd>${esc(m.pr)}</dd></div>
+      </dl>
+      <div class="ro-actions">
+        <button class="btn primary" type="button" data-act="open">Open session</button>
+        ${m.message ? '<button class="btn" type="button" data-act="read">Read message</button>' : '<button class="btn" type="button" data-act="ask">Ask First Mate</button>'}
+      </div>`;
+  }
+
+  function positionCard() {
+    if (!cardState) return;
+    const { m } = cardState;
+    const w = card.offsetWidth || 300, h = card.offsetHeight || 240;
+    const spot = placeBeside(m, w, h);
+    card.style.left = spot.x + 'px';
+    card.style.top = spot.y + 'px';
+    cardState.anchor = { x: m.x, y: m.y };
+    cardState.box = { x: spot.x, y: spot.y, w, h };
+  }
+
+  // A leader line from the row, or the circle, to its readout.
+  function drawLeader() {
+    const b = cardState && cardState.box;
+    if (!b) return;
+    const m = cardState.m;
+    const right = m.docked ? DOCK.r + 4 : (m.unread ? G.bubble : G.right) + 3;
+    const left = m.docked ? DOCK.r + 4 : 23;
+    let sx = m.x, sy = m.y, d = '';
+    if (b.x >= m.x + right - 2 || b.x + b.w <= m.x - left + 2) {
+      const onRight = b.x > m.x;
+      sx = onRight ? m.x + right : m.x - left;
+      const ex = onRight ? b.x : b.x + b.w, ey = clamp(sy, b.y + 16, b.y + b.h - 16);
+      if (Math.abs(ex - sx) >= 10) d = `M${f1(sx)} ${f1(sy)}L${f1(ex - Math.sign(ex - sx) * 12)} ${f1(sy)}L${f1(ex)} ${f1(ey)}`;
+    } else {
+      // Above or below the circle.
+      const below = b.y > m.y;
+      sy = m.y + (below ? 1 : -1) * (DOCK.r + 4);
+      const ex = clamp(sx, b.x + 16, b.x + b.w - 16), ey = below ? b.y : b.y + b.h;
+      if (Math.abs(ey - sy) >= 10) d = `M${f1(sx)} ${f1(sy)}L${f1(sx)} ${f1(ey - Math.sign(ey - sy) * 12)}L${f1(ex)} ${f1(ey)}`;
+    }
+    leaderEl.setAttribute('d', d);
+    leaderDot.setAttribute('cx', f1(sx));
+    leaderDot.setAttribute('cy', f1(sy));
+    leaderDot.setAttribute('r', d ? '2.6' : '0');
+  }
+
+  const fmtMins = n => n < 1 ? 'just now' : n < 60 ? `${n} min` : `${Math.floor(n / 60)} h${n % 60 ? ` ${n % 60} min` : ''}`;
+
+  card.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || !cardState) return;
+    if (b.dataset.open) { const x = byId(b.dataset.open); if (x) openSession(x); return; }
+    if (b.dataset.act === 'showall') { moreClick(); return; }
+    const m = cardState.m;
+    if (b.classList.contains('reply')) return onReply(b, true);
+    const act = b.dataset.act;
+    if (act === 'close') hideCard(true);
+    else if (act === 'open') openSession(m);
+    else if (act === 'read') showCard(m, 'message', true);
+    else if (act === 'ask') { hideCard(true); send(`How's ${m.label} doing?`, { forced: m }); }
+    else if (act === 'mic') startListening({ host: b.closest('.composer'), forced: m, quiet: true });
+    else if (act === 'stop') finishListening(true);
+    else if (act === 'plus') toast('Attachments open the full First Mate view.');
+  });
+  card.addEventListener('submit', e => {
+    e.preventDefault();
+    if (!cardState) return;
+    const input = $('input', e.target), text = input.value.trim();
+    if (!text) return;
+    const m = cardState.m;
+    input.value = '';
+    hideCard(true);
+    send(text, { forced: m, quiet: true });
+  });
+
+  // A circle with a waiting message opens that message. Otherwise a click opens the feature's session.
+  function clickRow(m) {
+    if (m.docked && m.unread && m.message) showCard(m, 'message', true);
+    else openSession(m);
+  }
+
+  function openSession(m) {
+    hideCard(true);
+    if (m.unread) { m.unread = false; renderRow(m); }
+    m.el.classList.add('opening');
+    later(220, () => m.el.classList.remove('opening'));
+    toast(`In the app, this opens the ${m.title} session.`);
+  }
+
+  // ---------- Emoji and label editor ----------
+  function openEditor(target) {
+    hideCard(true);
+    const isFM = target === 'fm';
+    let chosen = isFM ? fm.mark : target.emoji;
+    const options = isFM ? ['face', 'sail', ...EMOJI.slice(0, 22)] : EMOJI;
+    editor.innerHTML = `${BRACKETS}
+      <h3>${isFM ? 'First Mate' : `Edit ${esc(target.label)}`}</h3>
+      <div class="emoji-grid" role="group" aria-label="Emoji">${options.map(e => `<button type="button" data-e="${e}" aria-pressed="${e === chosen}" aria-label="${MARKS[e] ? `${cap(e)} mark` : e}">${MARKS[e] || e}</button>`).join('')}</div>
+      <label class="field-row"><span class="micro">${isFM ? 'Name' : 'Short label'}</span><input type="text" maxlength="${isFM ? 16 : 24}" value="${esc(isFM ? fm.name : target.label)}"></label>
+      <div class="editor-actions"><button class="btn" type="button" data-act="cancel">Cancel</button><button class="btn primary" type="button" data-act="save">Save</button></div>`;
+    editor.hidden = false;
+    editor.style.animation = 'none'; void editor.offsetWidth; editor.style.animation = '';
+    const w = editor.offsetWidth, hgt = editor.offsetHeight;
+    if (isFM) {
+      const x = E.x - 96 - w >= 12 ? E.x - 96 - w : E.x + 62;
+      editor.style.left = clamp(x, 12, W - w - 12) + 'px';
+      editor.style.top = clamp(E.y - 50, 12, H - hgt - 12) + 'px';
+    } else {
+      const spot = placeBeside(target, w, hgt);
+      editor.style.left = spot.x + 'px';
+      editor.style.top = spot.y + 'px';
+    }
+    const input = $('input', editor);
+    const save = () => {
+      const val = input.value.trim();
+      if (isFM) { fm.mark = chosen; if (val) fm.name = val; renderIdentity(); refreshBadge(); }
+      else { target.emoji = chosen; if (val) target.label = val; renderRow(target); }
+      hideEditor();
+      toast('Saved.');
+    };
+    editor.onclick = e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.e) {
+        chosen = b.dataset.e;
+        editor.querySelectorAll('[data-e]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.e === chosen)));
+      } else if (b.dataset.act === 'cancel') hideEditor();
+      else if (b.dataset.act === 'save') save();
+    };
+    input.onkeydown = e => { if (e.key === 'Enter') save(); };
+    setTimeout(() => input.focus({ preventScroll: true }), 20);
+  }
+  function hideEditor() {
+    if (editor.hidden) return;
+    editor.hidden = true;
+    editor.innerHTML = '';
+  }
+
+  // ---------- First Mate chat ----------
+  function chip(m) { return `<button class="chip" type="button" data-mate="${m.id}">${m.emoji} ${esc(m.label)}</button>`; }
+  function repliesHTML(m) {
+    const ids = (m.message && m.message.replies) || [];
+    if (!ids.length) return '';
+    return `<div class="replies">${ids.map(id => `<button class="reply" type="button" data-mate="${m.id}" data-decision="${id}" data-v="${m.msgV}">${DECISIONS[id].label}</button>`).join('')}</div>`;
+  }
+  function composerInner(placeholder) {
+    return `
+      <div class="listen" hidden>
+        <div class="listen-row"><span class="wave">${'<i></i>'.repeat(26)}</span><button class="icon-btn stop" type="button" data-act="stop" aria-label="Send now" title="Send now">${ICON.stop}</button></div>
+        <p class="heard"></p>
+        <div class="listen-note">Sends when you pause. Esc cancels.</div>
+      </div>
+      <form class="form">
+        <input type="text" autocomplete="off" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}">
+        <div class="toolbar">
+          <button class="icon-btn" type="button" data-act="plus" aria-label="Attach" title="Attach">${ICON.plus}</button>
+          <button class="icon-btn" type="button" data-act="mic" aria-label="Talk" title="Talk (or hold Space)">${ICON.mic}</button>
+          <button class="send" type="submit" aria-label="Send" title="Send">${ICON.send}</button>
+        </div>
+      </form>`;
+  }
+
+  function tally() {
+    const list = alive();
+    const by = s => list.filter(m => m.status === s).length;
+    return { alive: list.length, need: by('blocked') + by('turn'), ready: by('ready'), working: by('working') };
+  }
+  function countsSentence() {
+    const t = tally();
+    if (!t.alive) return 'The list is empty.';
+    const parts = [];
+    if (t.need) parts.push(`${num(t.need)} need${t.need === 1 ? 's' : ''} you`);
+    if (t.ready) parts.push(`${num(t.ready)} ${t.ready === 1 ? 'is' : 'are'} ready for review`);
+    if (t.working) parts.push(`${num(t.working)} ${t.working === 1 ? 'is' : 'are'} working`);
+    return parts.length ? cap(joinList(parts)) + '.' : 'Everything is quiet.';
+  }
+
+  function scrollLog() { log.scrollTop = log.scrollHeight; }
+
+  function addYou(text, voice) {
+    const el = document.createElement('div');
+    el.className = 'msg you';
+    el.innerHTML = esc(text) + (voice ? `<span class="via">${ICON.micSmall} Sent by voice</span>` : '');
+    log.appendChild(el);
+    scrollLog();
+  }
+
+  let softTimer = 0, speakTimer = 0;
+  function fmSay(html, { soft = false, previewText: pv = null } = {}) {
+    // The face talks for a moment when a reply lands.
+    fmWrap.classList.add('is-speaking');
+    clearTimeout(speakTimer);
+    speakTimer = setTimeout(() => fmWrap.classList.remove('is-speaking'), 1300);
+    const el = document.createElement('div');
+    el.className = 'msg lead';
+    el.innerHTML = `<div class="who">${markHTML(fm.mark)}<span>${esc(fm.name)}</span></div>${html}`;
+    log.appendChild(el);
+    // Long answers start at their first line; short ones just land at the bottom.
+    log.scrollTop = Math.min(el.offsetTop - 10, log.scrollHeight - log.clientHeight);
+    const firstP = el.querySelector('p');
+    fm.preview = pv || (firstP ? firstP.textContent : el.textContent).trim();
+    if (!chatOpen) {
+      if (soft) {
+        fm.soft = true;
+        clearTimeout(softTimer);
+        softTimer = setTimeout(() => { fm.soft = false; renderPreview(); }, 5500);
+      } else {
+        fm.unread = true;
+      }
+    }
+    renderPreview();
+  }
+
+  function renderPreview() {
+    const show = !chatOpen && (fm.unread || fm.soft) && !!fm.preview;
+    if (show && previewText.textContent !== fm.preview) {
+      previewText.textContent = fm.preview;
+      if (!preview.hidden) { preview.style.animation = 'none'; void preview.offsetWidth; preview.style.animation = ''; }
+    }
+    preview.hidden = !show;
+  }
+
+  function addThinking(targets, label) {
+    const el = document.createElement('div');
+    el.className = 'log-thinking';
+    el.innerHTML = `<span class="dots3"><i></i><i></i><i></i></span><span>${esc(label)}</span><span class="pings">${targets.map(m => `<span data-id="${m.id}">${m.emoji}</span>`).join('')}</span>`;
+    log.appendChild(el);
+    scrollLog();
+    return {
+      remove: () => el.remove(),
+      mark: (m, s) => { const p = el.querySelector(`[data-id="${m.id}"]`); if (p) { p.classList.remove('active'); p.classList.add(s); } },
+    };
+  }
+
+  function openChat({ focus = true } = {}) {
+    if (!chatOpen) {
+      const hadUnread = fm.unread;
+      chatOpen = true;
+      hideCard(true);
+      chatKey = '';
+      chatPanel.hidden = false;
+      placeChat();
+      fm.unread = false;
+      fm.soft = false;
+      renderPreview();
+      const last = [...log.querySelectorAll('.msg.lead')].pop();
+      if (hadUnread && last) log.scrollTop = Math.min(last.offsetTop - 10, log.scrollHeight - log.clientHeight);
+      else scrollLog();
+    }
+    if (focus) setTimeout(() => $('input', chatComposer).focus({ preventScroll: true }), 30);
+  }
+  function closeChat() {
+    if (!chatOpen) return;
+    if (listening && chatComposer.contains(listening.host)) finishListening(false);
+    chatOpen = false;
+    chatPanel.hidden = true;
+    renderPreview();
+  }
+  const toggleChat = () => (chatOpen ? closeChat() : openChat());
+
+  function refreshFMState() {
+    fmWrap.classList.toggle('is-listening', !!listening);
+    fmWrap.classList.toggle('is-thinking', !listening && busy > 0);
+  }
+
+  // ---------- Routing: what First Mate does with what you said ----------
+  function mentions(m, t) {
+    return t.includes(m.label.toLowerCase()) || (m.aliases || []).some(a => t.includes(a)) || t.includes(m.emoji);
+  }
+  function route(text, opts) {
+    if (opts.decision && opts.forced) return { kind: 'decision', m: opts.forced, d: DECISIONS[opts.decision] };
+    const t = text.toLowerCase();
+    const list = alive();
+    const named = opts.forced ? [opts.forced] : list.filter(m => mentions(m, t));
+    const pool = named.length ? named : list;
+    const hits = [];
+    for (const m of pool) {
+      for (const id of (m.message && m.message.replies) || []) {
+        if (DECISIONS[id].match.test(t)) { hits.push({ m, d: DECISIONS[id], id }); break; }
+      }
+    }
+    if (hits.length === 1) return { kind: 'decision', m: hits[0].m, d: hits[0].d };
+    if (hits.length > 1) return { kind: 'which', hits };
+    if (named.length) {
+      const question = /\?|\b(how|why|what|status|check|doing|going|update|where)\b/.test(t);
+      return opts.forced && !question ? { kind: 'relay', m: named[0], targets: named } : { kind: 'check', targets: named };
+    }
+    if (/\b(status|how|going|everything|update|need|needs|summary|anything|blocked|progress|overview|rundown|morning|working on)\b|what'?s up/.test(t)) {
+      return { kind: 'sweep', targets: list };
+    }
+    return { kind: 'chat' };
+  }
+
+  let chain = Promise.resolve();
+  function send(text, opts = {}) {
+    text = String(text).trim();
+    if (!text) return;
+    if (!opts.quiet) openChat({ focus: false });
+    else if (opts.decision) toast(`Sent to ${opts.forced.label}: ${DECISIONS[opts.decision].label}.`);
+    else toast(`Sent to ${opts.forced ? opts.forced.label : fm.name}: “${text.length > 46 ? text.slice(0, 44) + '…' : text}”`);
+    addYou(text, opts.voice);
+    chain = chain.then(() => handle(text, opts)).catch(err => console.error(err));
+  }
+
+  async function handle(text, opts) {
+    const plan = route(text, opts);
+    busy++;
+    refreshFMState();
+    try {
+      if (plan.kind === 'chat') {
+        await wait(650);
+        fmSay(`<p>I'm watching ${num(tally().alive)} features. ${countsSentence()}</p><p class="quiet">Ask “what needs me?” or name a feature, like “how's Offline?”</p>`);
+        return;
+      }
+      if (plan.kind === 'which') {
+        await wait(500);
+        fmSay(`<p>Which one?</p>${plan.hits.map(h => `<p>${chip(h.m)}</p><div class="replies"><button class="reply" type="button" data-mate="${h.m.id}" data-decision="${h.id}" data-v="${h.m.msgV}">${h.d.label}</button></div>`).join('')}`);
+        return;
+      }
+      const targets = plan.kind === 'decision' || plan.kind === 'relay' ? [plan.m] : plan.targets;
+      const label = plan.kind === 'sweep' ? `Checking ${num(targets.length)} features`
+        : plan.kind === 'check' ? `Checking with ${joinList(targets.map(m => m.label))}`
+        : `Passing it to ${plan.m.label}`;
+      const row = addThinking(targets, label);
+      let delays = null;
+      if (plan.kind === 'sweep') {
+        const ms = 1900, reach = runScan(ms);
+        if (reach) delays = new Map(targets.map(m => [m, reach(m.home.y)]));
+      }
+      await consult(targets, row, plan.kind === 'decision' ? m => plan.d.run(m) : null, delays);
+      row.remove();
+      if (plan.kind === 'decision') {
+        const reply = plan.d.reply && plan.d.reply(plan.m);
+        if (reply) fmSay(`<p>${reply}</p>`, { soft: true });
+      } else if (plan.kind === 'relay') {
+        fmSay(`<p>Passed to ${chip(plan.m)}: “${esc(text)}”. It will pick that up.</p>`, { soft: true });
+      } else if (plan.kind === 'check') {
+        fmSay(targets.map(checkReply).join(''));
+      } else {
+        fmSay(sweepReply());
+      }
+    } finally {
+      busy--;
+      refreshFMState();
+    }
+  }
+
+  // With the scan running, the beam is the question; each row answers back up the line.
+  async function consult(targets, row, onArrive, delays) {
+    await Promise.all(targets.map(async (m, i) => {
+      await wait(delays ? delays.get(m) : i * 170);
+      row.mark(m, 'active');
+      if (!delays) await signal(m, 'out');
+      if (!m.alive) return;
+      m.el.classList.add('consulting');
+      if (onArrive) onArrive(m);
+      await wait(380 + Math.random() * 520);
+      await signal(m, 'in');
+      m.el.classList.remove('consulting');
+      row.mark(m, 'done');
+    }));
+    await wait(180);
+  }
+
+  function checkReply(m) {
+    if (!m.alive) return '';
+    // First Mate just relayed the feature's latest message, so it counts as read.
+    if (m.unread) { m.unread = false; renderRow(m); }
+    return `<p>I checked with ${chip(m)}. ${esc(m.detail)}</p>${m.message && m.ask ? `<p>${esc(m.ask)}</p>${repliesHTML(m)}` : ''}`;
+  }
+
+  function sweepReply() {
+    const list = alive();
+    const byRank = (a, b) => STATUS[a.status].rank - STATUS[b.status].rank;
+    const attention = list.filter(m => NEEDS_YOU.has(m.status)).sort(byRank);
+    const working = list.filter(m => m.status === 'working');
+    let html = `<p>${countsSentence()}</p>`;
+    if (attention.length) {
+      html += `<ul>${attention.map(m => `<li style="--c:${STATUS[m.status].hex}"><span class="dot"></span><div>${chip(m)} ${esc(m.brief)}${repliesHTML(m)}</div></li>`).join('')}</ul>`;
+    } else {
+      html += '<p>Nothing needs you. I\'ll speak up when something does.</p>';
+    }
+    if (working.length) html += `<p class="quiet">Moving along: ${working.map(chip).join(' ')}</p>`;
+    return html;
+  }
+
+  function onReply(b, fromCard) {
+    const m = mates.find(x => x.id === b.dataset.mate && x.alive);
+    const id = b.dataset.decision;
+    if (!m || +b.dataset.v !== m.msgV || !(m.message && m.message.replies.includes(id))) {
+      b.disabled = true;
+      toast('That one is already handled.');
+      return;
+    }
+    if (fromCard) hideCard(true);
+    log.querySelectorAll(`.reply[data-mate="${m.id}"]`).forEach(x => { x.disabled = true; });
+    const label = DECISIONS[id].label;
+    send(`${m.label}: ${label.charAt(0).toLowerCase()}${label.slice(1)}.`, { forced: m, decision: id, quiet: fromCard });
+  }
+
+  // ---------- Voice (simulated transcription) ----------
+  let listening = null;
+  const voiceUsed = new Set();
+  const spectrum = [];
+  function pickScript(forced) {
+    if (forced) {
+      const ids = (forced.message && forced.message.replies) || [];
+      if (ids.includes('keep')) return 'Keep it for one more release.';
+      if (ids.includes('applyfix')) return 'Yes, apply the fix and rerun QA.';
+      if (ids.includes('iphone')) return 'Ship it iPhone-only and file the iPad bug.';
+      if (ids.includes('merge')) return 'Looks good. Approve and merge.';
+      if (ids.includes('rebase')) return 'Yes, rebase on main and keep going.';
+      return `How's it going with ${forced.label}?`;
+    }
+    const r = byId('receipts'), p = byId('push'), ready = alive().find(m => m.status === 'ready');
+    const options = [
+      ['sweep', "How's everything going? What needs me?", true],
+      ['receipts', 'Why is Receipt export blocked?', r && r.status === 'blocked'],
+      ['push', 'Tell Push alert settings to keep the old endpoint for one more release.', p && p.message && p.message.replies.includes('keep')],
+      ['ready', ready ? `Approve ${ready.label} and merge it.` : '', !!ready],
+    ];
+    const pick = options.find(([k, , ok]) => ok && !voiceUsed.has(k));
+    if (pick) { voiceUsed.add(pick[0]); return pick[1]; }
+    voiceUsed.clear();
+    return "What's everyone working on?";
+  }
+
+  function startListening({ host = chatComposer, forced = null, quiet = false, ptt = false, stay = false } = {}) {
+    if (listening) { finishListening(true); return; }
+    if (!quiet && !stay) openChat({ focus: false });
+    const words = pickScript(forced).split(' ');
+    const ui = $('.listen', host), heardEl = $('.heard', host), bars = [...$('.wave', host).children];
+    host.classList.add('is-listening');
+    ui.hidden = false;
+    heardEl.innerHTML = '';
+    const L = { host, forced, quiet, ptt, words, shown: 0, started: false, heardEl, bars, timers: [] };
+    listening = L;
+    refreshFMState();
+    L.levelTimer = setInterval(() => {
+      const speaking = L.started && L.shown < words.length;
+      let sum = 0;
+      bars.forEach(b => {
+        const v = speaking ? 0.25 + Math.random() * 0.75 : Math.random() * 0.15;
+        b.style.height = (3 + v * 20).toFixed(1) + 'px';
+        sum += v;
+      });
+      spectrum.forEach((line, i) => {
+        const v = speaking ? 0.2 + Math.random() * 0.8 * (0.55 + 0.45 * Math.sin(i * 0.9 + T * 6)) : Math.random() * 0.12;
+        const a = i / spectrum.length * Math.PI * 2, r0 = 47, r1 = 47 + 2 + v * 11;
+        line.setAttribute('x1', f1(r0 * Math.sin(a))); line.setAttribute('y1', f1(-r0 * Math.cos(a)));
+        line.setAttribute('x2', f1(r1 * Math.sin(a))); line.setAttribute('y2', f1(-r1 * Math.cos(a)));
+      });
+      fmWrap.style.setProperty('--lvl', (1 + (sum / bars.length) * 0.06).toFixed(3));
+      // The face's mouth becomes a level meter.
+      faceBars.forEach(b => {
+        const h = 2 + (speaking ? 0.3 + Math.random() * 0.7 : Math.random() * 0.15) * 10;
+        b.setAttribute('y', f1(11 - h / 2));
+        b.setAttribute('height', f1(h));
+      });
+    }, 80);
+    const next = () => {
+      if (listening !== L) return;
+      if (L.shown < words.length) {
+        L.shown++;
+        const settled = words.slice(0, L.shown - 1).join(' ');
+        heardEl.innerHTML = esc(settled) + (settled ? ' ' : '') + `<span class="tent">${esc(words[L.shown - 1])}</span>`;
+        L.timers.push(setTimeout(next, 150 + Math.random() * 150));
+      } else {
+        heardEl.textContent = words.join(' ');
+        // Held (First Mate or Space): wait for you to let go. Otherwise send after a short pause.
+        if (!L.ptt) L.timers.push(setTimeout(() => finishListening(true), 850));
+      }
+    };
+    L.timers.push(setTimeout(() => { L.started = true; next(); }, 650));
+  }
+
+  function finishListening(sendIt) {
+    const L = listening;
+    if (!L) return;
+    listening = null;
+    L.timers.forEach(clearTimeout);
+    clearInterval(L.levelTimer);
+    L.host.classList.remove('is-listening');
+    $('.listen', L.host).hidden = true;
+    fmWrap.style.removeProperty('--lvl');
+    refreshFMState();
+    const text = L.words.slice(0, L.shown).join(' ');
+    if (!sendIt) return;
+    if (L.shown < 2) { toast('Nothing heard, so nothing was sent.'); return; }
+    if (card.contains(L.host)) hideCard(true);
+    send(text, { voice: true, forced: L.forced, quiet: L.quiet });
+  }
+
+  // ---------- Toast ----------
+  let toastTimer = 0;
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2800);
+  }
+
+  // ---------- Scenarios ----------
+  async function askAboutReceipts() {
+    const r = byId('receipts');
+    const text = r ? (r.status === 'blocked' ? 'Why is Receipt export blocked?' : "How's Receipt export doing?") : "How's everything going?";
+    openChat({ focus: false });
+    const input = $('input', chatComposer);
+    input.value = '';
+    for (const ch of text) { input.value += ch; await wait(26); }
+    await wait(260);
+    input.value = '';
+    send(text);
+  }
+
+  function finishOne() {
+    const m = ['lang', 'theme', 'offline', 'search'].map(byId).find(x => x && !x.leaving && x.status === 'working');
+    if (!m) { toast('Nothing is working right now.'); return; }
+    const pr = 220 + Math.floor(Math.random() * 9);
+    const text = m.id === 'lang'
+      ? `QA passed on all 12 locales. PR #${pr} is open, and CI passed. Ready for your review.`
+      : `${m.title} is done. PR #${pr} is open, and CI passed. Ready for your review.`;
+    update(m, readyPatch(pr, text));
+  }
+
+  function blockOne() {
+    const m = ['offline', 'theme', 'lang', 'search'].map(byId).find(x => x && !x.leaving && x.status === 'working');
+    if (!m) { toast('Nothing is working right now.'); return; }
+    const file = { offline: 'SyncEngine.swift', theme: 'ThemeTokens.swift', lang: 'Localizable.xcstrings' }[m.id] || 'AppModel.swift';
+    update(m, { status: 'blocked', mins: 0, agents: 'Paused',
+      now: `Stuck: the branch conflicts with main in ${file}.`,
+      brief: `is blocked. The branch conflicts with main in ${file}.`,
+      detail: `The branch no longer merges cleanly. ${file} conflicts with a change that landed on main an hour ago.`,
+      ask: 'Rebase on main and keep going?',
+      message: { text: `I'm stuck: the branch conflicts with main in ${file}, from a change that landed an hour ago. Should I rebase on main and keep going?`, replies: ['rebase', 'opensession'] },
+      unread: true });
+  }
+
+  // ---------- Wiring ----------
+  chatComposer.innerHTML = composerInner('Ask First Mate');
+  chatComposer.addEventListener('submit', e => {
+    e.preventDefault();
+    const input = $('input', chatComposer), text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    send(text);
+  });
+  chatComposer.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.act === 'mic') startListening({ host: chatComposer });
+    else if (b.dataset.act === 'stop') finishListening(true);
+    else if (b.dataset.act === 'plus') toast('Attachments open the full First Mate view.');
+  });
+  log.addEventListener('click', e => {
+    const r = e.target.closest('.reply');
+    if (r) { onReply(r, false); return; }
+    const c = e.target.closest('.chip');
+    if (c) { const m = byId(c.dataset.mate); if (m) showCard(m, m.message ? 'message' : 'info', true); }
+  });
+  log.addEventListener('pointerover', e => {
+    const c = e.target.closest('.chip');
+    if (c) { const m = byId(c.dataset.mate); if (m) setHot(m, true); }
+  });
+  log.addEventListener('pointerout', e => {
+    const c = e.target.closest('.chip');
+    if (c) { const m = byId(c.dataset.mate); if (m && !(cardState && cardState.m === m)) setHot(m, false); }
+  });
+
+  fmBtn.addEventListener('pointerdown', e => beginDrag(e, 'fm'));
+  fmBtn.addEventListener('click', e => { if (e.detail === 0) toggleChat(); });
+  fmBtn.addEventListener('contextmenu', e => { e.preventDefault(); openEditor('fm'); });
+  foldBtn.addEventListener('click', () => setFolded(true));
+  unfoldBtn.addEventListener('click', () => setFolded(false));
+  preview.addEventListener('click', () => openChat());
+  preview.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openChat(); } });
+  chatClose.addEventListener('click', closeChat);
+
+  stage.addEventListener('pointerdown', e => {
+    if (cardState && cardState.pinned && !card.contains(e.target) && !e.target.closest('.row')) hideCard(true);
+    if (!editor.hidden && !editor.contains(e.target)) hideEditor();
+  }, true);
+
+  const typing = t => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (!editor.hidden) hideEditor();
+      else if (listening) finishListening(false);
+      else if (cardState) hideCard(true);
+      else if (chatOpen) closeChat();
+      return;
+    }
+    // Hold Space to talk, whenever you're not typing or on a button.
+    if (e.code === 'Space' && !e.repeat && !typing(e.target) && !(e.target && e.target.closest && e.target.closest('button, summary, a, [role="button"]'))) {
+      e.preventDefault();
+      if (!listening) startListening({ host: liveHost, ptt: true, stay: true });
+    }
+  });
+  document.addEventListener('keyup', e => {
+    if (e.code === 'Space' && listening && listening.ptt) finishListening(true);
+  });
+
+  $('#tryVoice').addEventListener('click', () => startListening({ host: liveHost, stay: true }));
+  $('#tryAsk').addEventListener('click', askAboutReceipts);
+  $('#tryFinish').addEventListener('click', finishOne);
+  $('#tryBlock').addEventListener('click', blockOne);
+  foldToggle.addEventListener('click', () => setFolded(!folded));
+  $('#tryReset').addEventListener('click', () => location.reload());
+  const optSignals = $('#optSignals'), optMotion = $('#optMotion');
+  optSignals.checked = settings.signals;
+  optMotion.checked = settings.motion;
+  optSignals.addEventListener('change', () => { settings.signals = optSignals.checked; });
+  optMotion.addEventListener('change', () => { settings.motion = optMotion.checked; });
+
+  // Collapsed view: row or orbit, each with its own background setting. A change collapses the list so you see it.
+  // How many features: add or remove made-up ones to see the overflow rules.
+  const fleetSeg = $('#fleetSeg');
+  function setFleetSize(n) {
+    fleetSize = n;
+    const want = initialFleet().slice(0, n), ids = new Set(want.map(d => d.id));
+    for (const m of mates) {
+      if (ids.has(m.id)) continue;
+      if (cardState && cardState.m === m) hideCard(true);
+      m.alive = false;
+      m.el.remove();
+    }
+    mates = mates.filter(m => m.alive);
+    for (const d of want) {
+      if (mates.some(m => m.id === d.id)) continue;
+      const m = makeRow(d);
+      m.x = E.x; m.y = E.y; m.gate = T;
+      mates.push(m);
+    }
+    showAllMoving = false;
+    layout();
+    refreshBadge();
+    fleetSeg.querySelectorAll('[data-fleet]').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.fleet === n)));
+  }
+  fleetSeg.addEventListener('click', e => { const b = e.target.closest('[data-fleet]'); if (b) setFleetSize(+b.dataset.fleet); });
+  // ---------- Fit the stage to the window ----------
+  function fit() {
+    const r = stageWrap.getBoundingClientRect();
+    const narrow = matchMedia('(max-width: 1100px)').matches;
+    const availW = r.width - 32, availH = narrow ? Infinity : r.height - 32;
+    scale = Math.max(0.3, Math.min(availW / W, availH / H, 1.2));
+    stage.style.transform = `scale(${scale})`;
+    stageBox.style.width = W * scale + 'px';
+    stageBox.style.height = H * scale + 'px';
+  }
+  new ResizeObserver(fit).observe(stageWrap);
+  addEventListener('resize', fit);
+  fit();
+
+  // ---------- Core ticks, voice spectrum, legend ----------
+  (() => {
+    const ticks = $('#coreTicks');
+    for (let i = 0; i < 60; i++) {
+      const a = i * 6 * Math.PI / 180, major = i % 5 === 0, r0 = major ? 36 : 37.5, r1 = 40;
+      ticks.appendChild(svgEl('line', { x1: f1(r0 * Math.sin(a)), y1: f1(-r0 * Math.cos(a)), x2: f1(r1 * Math.sin(a)), y2: f1(-r1 * Math.cos(a)) }));
+    }
+    const spec = $('#spectrum');
+    for (let i = 0; i < 48; i++) {
+      const line = svgEl('line', { x1: 0, y1: -47, x2: 0, y2: -49 });
+      spec.appendChild(line);
+      spectrum.push(line);
+    }
+    const rows = [
+      ['working', 1, 0.6, 'Working', 'No badge. The ring and bar fill as it moves.'],
+      ['ready', 4, 0.6, 'Ready for your review', 'A PR or result is waiting on you.'],
+      ['turn', 0, 0.9, 'Your turn', "It asked you something. First Mate's attention orange."],
+      ['blocked', 3, 0.45, 'Blocked', "It stopped and can't go on alone."],
+    ];
+    const order = `<svg viewBox="0 0 28 28" aria-hidden="true">
+        <path d="M6 1v26" stroke="rgba(170,166,244,.6)" stroke-width="1.2"/>
+        <circle cx="6" cy="5" r="2.6" fill="#E2A7B6"/><rect x="11" y="3.6" width="15" height="2.8" rx="1.4" fill="rgba(233,233,236,.3)"/>
+        <circle cx="6" cy="11.5" r="2.6" fill="#FF9F0A"/><rect x="11" y="10.1" width="11" height="2.8" rx="1.4" fill="rgba(233,233,236,.3)"/>
+        <path d="M6 15.4l2.3 2.3L6 20l-2.3-2.3z" fill="#131317" stroke="#AAA6F4" stroke-width="1"/>
+        <circle cx="6" cy="24" r="2.6" fill="#E4C386"/><rect x="11" y="22.6" width="13" height="2.8" rx="1.4" fill="rgba(233,233,236,.3)"/>
+      </svg>`;
+    $('#legend').innerHTML = rows.map(([s, step, within, title, note]) => `
+      <li><span class="ico" style="--c:${STATUS[s].hex}"><svg viewBox="0 0 60 60">${ringMarkup({ status: s, step, within })}</svg><span class="ico-core"></span>${STATUS[s].glyph ? `<span class="ico-badge">${GLYPH[STATUS[s].glyph]}</span>` : ''}</span><span>${title}<small>${note}</small></span></li>`).join('') + `
+      <li><span class="ico" style="--c:${STATUS.turn.hex}"><svg viewBox="0 0 60 60">${ringMarkup({ status: 'turn', step: 0, within: 0.9 })}<circle cx="30" cy="30" r="36" fill="none" stroke="#BDB9FF" stroke-width="2.2" stroke-dasharray="4 5"/></svg><span class="ico-core"></span></span><span>Collapsed orb<small>Its ring or frame shows status and progress. A dashed lavender ring means a message is waiting.</small></span></li>
+      <li><span class="ico"><span class="ico-bubble"><i></i><i></i><i></i></span></span><span>New message<small>In the list, click the bubble to read and reply in place.</small></span></li>
+      <li><span class="ico"><svg viewBox="0 0 60 60">${ringMarkup({ status: 'working', step: 3, within: 0 }, '#A9A9AD')}</svg><span class="ico-core"></span></span><span>Ring and bar<small>Six steps: Plan, Build, Review, QA, PR, Merge.</small></span></li>
+      <li><span class="ico"><svg viewBox="0 0 60 60">${moreRing([{ status: 'working' }, { status: 'working' }, { status: 'working' }, { status: 'ready' }], 30, 26, 3)}</svg><span class="ico-core" style="display:grid;place-items:center;font:600 7px/1 var(--mono);color:var(--ink)">+4</span></span><span>Tucked away<small>Features that are just moving. Hover to see them, click to show them all.</small></span></li>
+      <li><span class="ico">${order}</span><span>Order<small>What needs you sits above the diamond. The rest keep the order they started in.</small></span></li>`;
+  })();
+
+  // ---------- Start ----------
+  renderIdentity();
+  rowsLayer.appendChild(more.el);
+  mates = initialFleet().slice(0, fleetSize).map(makeRow);
+  layout();
+  const a0 = anchor();
+  E.x = a0.x; E.y = a0.y;
+  refreshBadge();
+  const r0 = byId('receipts'), p0 = byId('push');
+  const needs0 = sorted().filter(m => groupOf(m) === 0);
+  fmSay(`<p>Morning. ${countsSentence()}</p><ul>${needs0.map(m => `<li style="--c:${STATUS[m.status].hex}"><span class="dot"></span><div>${chip(m)} ${esc(m.brief)}</div></li>`).join('')}</ul><p class="quiet">Ask me anything, or drop a feature on me.</p>`,
+    { previewText: 'Morning. Receipt export is blocked, and Push alert settings has a question.' });
+  requestAnimationFrame(frame);
+
+  // The one orchestrated moment: the circles come out of First Mate one at a time and settle into the collapsed view.
+  sorted().forEach((m, i) => { m.x = E.x; m.y = E.y; m.wait = 'core'; m.gate = 0.5 + i * 0.07; });
+  // A little later, Search finishes CI and has something for you to read.
+  later(8500, () => {
+    const s = byId('search');
+    if (s && s.status === 'working') update(s, readyPatch(214, 'PR #214 passed CI and all seven reviewers. One note: the first launch after updating rebuilds the search index, about 2 seconds. Ready for your review.'));
+  });
+  // Working features inch forward.
+  setInterval(() => {
+    for (const m of alive()) {
+      if (m.status !== 'working' || m.within >= 0.94) continue;
+      m.within = Math.min(0.94, m.within + 0.012);
+      m.mins += 1;
+      renderRow(m);
+    }
+    renderMore();
+  }, 5000);
+})();
+</script>
+</body>
+</html>

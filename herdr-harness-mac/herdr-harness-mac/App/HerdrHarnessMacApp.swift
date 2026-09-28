@@ -244,6 +244,8 @@ struct HerdrMacCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(FirstMateChatPreferences.windowEnabledKey)
     private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
+    @AppStorage(FirstMateHudPreferences.enabledKey)
+    private var firstMateHudEnabled = FirstMateHudPreferences.defaultEnabled
 
     var body: some Commands {
         // On macOS ⌘B/⌘I/⌘U are Format ▸ Font key equivalents, not text-view
@@ -338,6 +340,12 @@ struct HerdrMacCommands: Commands {
                 hudController.setNotesVisible(!hudController.areNotesVisible)
             }
             .disabled(!hudController.isEnabled)
+
+            // The First Mate HUD is its own panel with its own switch.
+            Button(firstMateHudEnabled ? "Hide First Mate HUD" : "Show First Mate HUD") {
+                firstMateHudEnabled.toggle()
+            }
+            .accessibilityIdentifier("menu-first-mate-hud")
 
             Button("Go to Attention") {
                 shell.show(.attention, model: model)

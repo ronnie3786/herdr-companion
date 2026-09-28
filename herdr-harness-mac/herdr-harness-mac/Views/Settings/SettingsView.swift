@@ -20,6 +20,8 @@ struct SettingsView: View {
     private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
     @AppStorage(FirstMateChatPreferences.dockBadgeEnabledKey)
     private var firstMateDockBadgeEnabled = FirstMateChatPreferences.defaultDockBadgeEnabled
+    @AppStorage(FirstMateHudPreferences.enabledKey)
+    private var firstMateHudEnabled = FirstMateHudPreferences.defaultEnabled
     @AppStorage(MobileAppHubSettings.dashboardBundleIDsKey) private var buildsDashboardApps = ""
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
@@ -350,13 +352,17 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings-hud-visible-agents")
 
             LabeledContent("Summon", value: "⌃⌥Space")
+
+            Toggle("First Mate HUD", systemImage: "face.smiling", isOn: $firstMateHudEnabled)
+                .tint(HerdrTheme.controlAccent)
+                .accessibilityIdentifier("settings-first-mate-hud")
         } header: {
             SettingsSectionHeader {
                 Text("HUD")
             }
         } footer: {
             SettingsSectionFooter {
-                Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine.")
+                Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine. The First Mate HUD is a separate floating panel: First Mate's face with your First Mate features under it. Click it to type, hold it to talk, drag it to move it.")
             }
         }
     }

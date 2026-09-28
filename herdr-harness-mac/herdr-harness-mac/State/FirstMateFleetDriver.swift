@@ -205,9 +205,36 @@ final class FirstMateFleetDriver {
     /// refreshes at once, because a 30 s wait already running is not cut short.
     func applicationActivityChanged(isActive: Bool, refresh: Bool = true) {
         isApplicationActive = isActive
-        fleet.pollingInterval = isActive ? activeInterval : backgroundInterval
+        applyPollingInterval()
         guard isActive, refresh, observeTask != nil else { return }
         let fleet = fleet
         Task { await fleet.refresh() }
+    }
+
+    /// The First Mate HUD's faster interval while it shows (nil when hidden).
+    /// It floats over other apps, so it must not slow to the background rate.
+    private(set) var hudInterval: Duration?
+
+    /// Sets or clears the HUD's interval. Showing the HUD also refreshes at
+    /// once, so it never opens on a list up to 30 s old.
+    func setHudPolling(_ interval: Duration?) {
+        guard hudInterval != interval else { return }
+        hudInterval = interval
+        applyPollingInterval()
+        guard interval != nil, observeTask != nil else { return }
+        let fleet = fleet
+        Task { await fleet.refresh() }
+    }
+
+    /// The shortest interval anything asks for.
+    static func pollingInterval(isActive: Bool, hud: Duration?, active: Duration, background: Duration) -> Duration {
+        let base = isActive ? active : background
+        guard let hud else { return base }
+        return min(base, hud)
+    }
+
+    private func applyPollingInterval() {
+        fleet.pollingInterval = Self.pollingInterval(
+            isActive: isApplicationActive, hud: hudInterval, active: activeInterval, background: backgroundInterval)
     }
 }

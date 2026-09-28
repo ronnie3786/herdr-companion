@@ -25,6 +25,11 @@ struct FirstMateAppServicesModifier: ViewModifier {
                 guard let model, let shell else { return }
                 FirstMateChatWindowOpening.open(id, model: model, shell: shell, openWindow: openWindow)
             }
+            // The First Mate HUD opens sessions the same way as the Dock menu.
+            shell.firstMateHud.openConversation = { [weak model, weak shell] id in
+                guard let model, let shell else { return }
+                FirstMateChatWindowOpening.open(id, model: model, shell: shell, openWindow: openWindow)
+            }
         }
     }
 }

@@ -591,8 +591,15 @@ struct PromptComposerView: View {
         .padding(.bottom, 7)
     }
 
+    /// First Mate frees the input at reservation; the outgoing request still
+    /// blocks another Send but must not block preparing the next draft.
+    var blocksEditingWhileSubmitting: Bool {
+        if case .optimistic = destination.submissionPolicy { return false }
+        return isSubmitting
+    }
+
     private var canPasteCode: Bool {
-        !isSubmitting && canControl && !isPiCompacting
+        !blocksEditingWhileSubmitting && canControl && !isPiCompacting
     }
 
     /// `+`: Attach and Paste code, with their hints, in a small popover.
@@ -915,7 +922,7 @@ struct PromptComposerView: View {
                     .padding(.top, hasContextLine ? 4 : 10)
                     .padding(.bottom, 6)
                     .frame(minHeight: 46 * fontScale.rawValue, alignment: .topLeading)
-                    .disabled(isSubmitting || !canControl || isPiCompacting)
+                    .disabled(blocksEditingWhileSubmitting || !canControl || isPiCompacting)
             }
         }
         .frame(minHeight: 46 * fontScale.rawValue)
@@ -1205,10 +1212,10 @@ struct PromptComposerView: View {
     }
 
     private func pasteCodeBlock() {
-        guard !isSubmitting, canControl, !isPiCompacting else { return }
+        guard !blocksEditingWhileSubmitting, canControl, !isPiCompacting else { return }
         let selection = editorTarget.captureSelection(for: draft)
         Task {
-            guard !isSubmitting, canControl, !isPiCompacting else { return }
+            guard !blocksEditingWhileSubmitting, canControl, !isPiCompacting else { return }
             if await ComposerCodeBlockPaste.paste(into: $draft, pasteboard: codePasteboard, selection: selection) {
                 isFocused = true
             } else {
@@ -1469,22 +1476,29 @@ struct PromptComposerView: View {
     }
 
     private func send() {
-        Task { _ = await dispatchSubmission() }
+        // Reserve and clear on this key event, not on the next task turn.
+        guard let operation = beginSubmission() else { return }
+        Task { _ = await operation() }
     }
 
-    /// The composer's one submission path, shared by the Send button, Return,
-    /// and a completed First Mate dictation. It serializes the staged payload,
-    /// awaits the destination, and consumes only the accepted identities.
-    /// Returns whether the destination accepted the submission.
     @discardableResult
-    private func dispatchSubmission() async -> Bool {
+    func dispatchSubmission() async -> Bool {
+        guard let operation = beginSubmission() else { return false }
+        return await operation()
+    }
+
+    /// Serializes once and captures the destination before the first await.
+    /// The optimistic policy reserves the outgoing row synchronously, then
+    /// detaches only the material that was submitted. Pane Chat remains on its
+    /// acknowledgement-time path.
+    private func beginSubmission() -> (@MainActor () async -> Bool)? {
         // A recording or transcription must never race a submission; the
         // dictation completion itself runs after its capture is idle.
-        guard quickVoiceCapture.phase == .idle else { return false }
+        guard quickVoiceCapture.phase == .idle else { return nil }
         // Re-read readiness from the destination instead of `canSend`: this
         // method also runs when a dictation completion resumes long after the
         // view value that recorded the explicit Stop was rendered.
-        guard destination.isCurrent(), isReadyToSubmitLive() else { return false }
+        guard destination.isCurrent(), isReadyToSubmitLive() else { return nil }
         let destinationID = destination.id
         let draftToSend = draft
         let attachmentsToSend = attachments.filter { $0.status == .uploaded && $0.uploadedPath != nil }
@@ -1500,42 +1514,75 @@ struct PromptComposerView: View {
         )
         let piConfiguration = self.piConfiguration
         let disposition = effectiveDisposition
-
-        let didSend = if let piConfiguration {
-            await piConfiguration.submit(message, disposition)
-        } else {
-            await destination.submit(message)
-        }
-        guard destination.id == destinationID, destination.acceptsCompletion() else { return didSend }
-
-        if didSend {
-            var currentDraft = draft
-            var currentAttachments = attachments
-            var currentQuotes = quotes
-            var currentContainsDictation = draftContainsDictation
-            PromptComposerSubmission.consumeAccepted(
-                sentDraft: draftToSend,
-                sentAttachmentIDs: Set(attachmentsToSend.map(\.id)),
-                sentQuoteIDs: Set(quotesToSend.map(\.id)),
-                sentContainsDictation: sentDictation,
-                draft: &currentDraft,
-                attachments: &currentAttachments,
-                quotes: &currentQuotes,
-                containsDictation: &currentContainsDictation
+        let destination = self.destination
+        let optimistic: (handle: FirstMateOutgoingMessage.Handle,
+                         complete: @MainActor (FirstMateOutgoingMessage.Handle) async -> Bool,
+                         settle: @MainActor (FirstMateOutgoingMessage.Handle, Bool) -> Void)?
+        if case let .optimistic(reserve, didDetach, complete, settle) = destination.submissionPolicy {
+            let submission = FirstMateOutgoingMessage.Submission(
+                draft: draftToSend,
+                attachmentIDs: Set(attachmentsToSend.map(\.id)),
+                quoteIDs: Set(quotesToSend.map(\.id)),
+                containsDictation: sentDictation
             )
-            draft = currentDraft
-            attachments = currentAttachments
-            quotes = currentQuotes
-            setDraftContainsDictation(currentContainsDictation)
-            if let pane {
-                let sentReferenceIDs = Set(referencesToSend.map(\.id))
-                model.removeConversationReferences(sentReferenceIDs, from: pane.id)
-            }
-            hapticPulse.fire(.promptSent)
+            guard let handle = reserve(message, submission, attachmentsToSend, quotesToSend) else { return nil }
+            detachSubmitted(draft: draftToSend, attachments: attachmentsToSend, quotes: quotesToSend,
+                            containsDictation: sentDictation)
+            didDetach(handle)
+            optimistic = (handle, complete, settle)
         } else {
-            hapticPulse.fire(.failed)
+            optimistic = nil
         }
-        return didSend
+        return {
+            let didSend: Bool
+            if let optimistic {
+                didSend = await optimistic.complete(optimistic.handle)
+                optimistic.settle(optimistic.handle, didSend)
+            } else if let piConfiguration {
+                didSend = await piConfiguration.submit(message, disposition)
+            } else {
+                didSend = await destination.submit(message)
+            }
+            guard destination.id == destinationID, destination.acceptsCompletion() else { return didSend }
+            if didSend && optimistic == nil {
+                var currentDraft = draft
+                var currentAttachments = attachments
+                var currentQuotes = quotes
+                var currentContainsDictation = draftContainsDictation
+                PromptComposerSubmission.consumeAccepted(
+                    sentDraft: draftToSend,
+                    sentAttachmentIDs: Set(attachmentsToSend.map(\.id)),
+                    sentQuoteIDs: Set(quotesToSend.map(\.id)),
+                    sentContainsDictation: sentDictation,
+                    draft: &currentDraft,
+                    attachments: &currentAttachments,
+                    quotes: &currentQuotes,
+                    containsDictation: &currentContainsDictation
+                )
+                draft = currentDraft
+                attachments = currentAttachments
+                quotes = currentQuotes
+                setDraftContainsDictation(currentContainsDictation)
+                if let pane {
+                    let sentReferenceIDs = Set(referencesToSend.map(\.id))
+                    model.removeConversationReferences(sentReferenceIDs, from: pane.id)
+                }
+            }
+            hapticPulse.fire(didSend ? .promptSent : .failed)
+            return didSend
+        }
+    }
+
+    private func detachSubmitted(draft sentDraft: String, attachments sentAttachments: [TerminalAttachment],
+                                 quotes sentQuotes: [ChatQuote], containsDictation: Bool) {
+        // No equality check at completion: a newly typed identical draft is
+        // a different edit and must survive this request's acknowledgement.
+        if draft == sentDraft { draft = "" }
+        let attachmentIDs = Set(sentAttachments.map(\.id))
+        let quoteIDs = Set(sentQuotes.map(\.id))
+        attachments.removeAll { attachmentIDs.contains($0.id) }
+        quotes.removeAll { quoteIDs.contains($0.id) }
+        if containsDictation { setDraftContainsDictation(false) }
     }
 
     private func selectDisposition(_ selection: PiPromptDisposition) {

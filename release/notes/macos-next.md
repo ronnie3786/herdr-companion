@@ -7,6 +7,12 @@
 - Smart-input text and recordings are sent only to the selected companion's configured Pi and transcription services and are not published. Only **File report** files the reviewed title and description word for word; a submission is never started automatically and **File report** is unavailable while a draft or transcription is in progress. Missing Pi or transcription configuration reports an actionable error without losing typed text. AI drafting requires a companion advertising `issue-report-draft-v1`; an older companion disables only that optional action with upgrade guidance, while manual reporting, attachments, recording, and transcription keep working. See docs/issue-report-smart-input.md.
 - **Start the automated fix pipeline** labels the issue for the optional Code Factory daemon. Requires a companion server advertising `issue-reports-v1`; older servers show an update message.
 
+## First Mate optimistic chat
+
+- Enter, Send, and First Mate dictation Stop now clear a sendable prompt immediately in the main Mac screen, standalone feature/lead window, and shared HUD lead conversation. Your outgoing bubble says **Sending…** before First Mate's working animation, then reconciles to the saved message without a duplicate or a disappearing accepted prompt.
+- A rejected or unconfirmed send stops speculative working and keeps a red error with explicit retry and copy recovery. Untouched composer content returns; a newer draft, including the same text typed again, is not overwritten or cleared by a late response. Retry reuses the original payload, request identity, and lead context; it never happens automatically. Refresh notices remain separate.
+- This is an app-only presentation fix using the existing authenticated First Mate API, including older response envelopes. No companion update is required; pane Chat, iOS, and web submission paths are unchanged. The Mac updater does not install companion packages.
+
 ## First Mate dictation
 
 - In Mac First Mate, the microphone beside **+** now starts click-to-stop dictation. Clicking **Stop** finishes the recording, waits for a nonempty transcript, appends it to the prompt, and automatically submits the fully composed message exactly once — no extra Send click. The three-dot menu's former dictation entry becomes **Record a voice note** and opens the unchanged recorder for recording, previewing, attaching the raw audio, or transcribing into the draft without sending.

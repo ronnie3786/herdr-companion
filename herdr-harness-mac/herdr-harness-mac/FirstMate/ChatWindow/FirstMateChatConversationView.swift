@@ -168,14 +168,14 @@ private struct FirstMateFeatureChat: View {
 
     @State private var focusRequest = 0
 
-    private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
+    private var messages: [FirstMateMessage] { FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot) }
     private var conversation: FirstMateConversation? { session.conversations.first { $0.id == id } }
     private var isClosed: Bool { ["completed", "cancelled"].contains(snapshot.feature.status) }
 
     private var isTyping: Bool {
         FirstMateTranscriptLayout.isTyping(
             messages: messages,
-            isSending: store.isSending && store.selectedFeatureID == id.featureID,
+            isSending: FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot),
             isWorkingOnReply: conversation?.isWorkingOnReply ?? false
         )
     }
@@ -193,6 +193,7 @@ private struct FirstMateFeatureChat: View {
                     Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(id) }
                 }
             FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
+            FirstMateSendErrorView(store: store, featureID: id.featureID)
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .herdrFont(size: HerdrTheme.TextSize.small)
@@ -256,7 +257,7 @@ private struct FirstMateLeadChat: View {
 
     @State private var focusRequest = 0
 
-    private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
+    private var messages: [FirstMateMessage] { FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot) }
     private var id: FirstMateFleetFeatureID { FirstMateFleetFeatureID(machineID: machineID, featureID: snapshot.feature.id) }
 
     /// From the snapshot, which refreshes every 2 s here, rather than the
@@ -264,7 +265,7 @@ private struct FirstMateLeadChat: View {
     private var isTyping: Bool {
         FirstMateTranscriptLayout.isTyping(
             messages: messages,
-            isSending: store.isSending && store.selectedFeatureID == snapshot.feature.id,
+            isSending: FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot),
             isWorkingOnReply: snapshot.feature.coordinatorOwner != nil
         )
     }
@@ -279,6 +280,7 @@ private struct FirstMateLeadChat: View {
                     .id(id)
             }
             FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
+            FirstMateSendErrorView(store: store, featureID: snapshot.feature.id)
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .herdrFont(size: HerdrTheme.TextSize.small)
@@ -356,9 +358,13 @@ private struct FirstMateSuggestionRow: View {
 
     private func send(_ text: String) {
         let context = store.operationContext
-        guard context.matchesFeature(featureID), !store.isSending else { return }
+        guard context.matchesFeature(featureID), !store.isSending,
+              store.sendFailure(for: featureID)?.text != text,
+              let handle = store.beginOutgoingMessage(text, expectedContext: context) else { return }
         Task {
-            if await store.sendPreparedMessage(text, expectedContext: context) { didSend() }
+            guard let state = await store.completeOutgoingMessage(handle), state.isAcceptedAwaitingSnapshot else { return }
+            didSend()
+            await store.refreshFeature(context)
         }
     }
 }

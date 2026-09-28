@@ -54,7 +54,8 @@ struct FirstMateChatBubbleRow: View {
             .contextMenu { copyButton }
             .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(display.accessibilityLabel(isQueued: message.status == "queued"))
+            .accessibilityLabel(display.accessibilityLabel(isQueued: message.status == "queued")
+                + (message.status == "sending" ? ", Sending" : message.status == "failed" ? ", Not sent" : message.status == "unconfirmed" ? ", Delivery unconfirmed" : ""))
         }
     }
 
@@ -167,8 +168,10 @@ struct FirstMateChatBubbleRow: View {
     private func meta(isVoice: Bool) -> some View {
         HStack(spacing: 6) {
             SkimPendingLabel(skim: message.skim)
-            if message.status == "queued" {
-                Text("Queued")
+            if ["queued", "sending", "failed", "unconfirmed"].contains(message.status) {
+                Text(message.status == "sending" ? "Sending…" : message.status == "queued" ? "Queued" : message.status == "failed" ? "Not sent" : "Delivery unconfirmed")
+                    .foregroundStyle(["failed", "unconfirmed"].contains(message.status) ? HerdrTheme.alert : HerdrTheme.tertiaryText)
+                    .accessibilityIdentifier("first-mate-send-status-\(message.id)")
             }
             if isVoice {
                 Text("Sent by voice")

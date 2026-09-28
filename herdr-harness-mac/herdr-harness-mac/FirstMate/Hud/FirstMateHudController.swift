@@ -1059,6 +1059,7 @@ extension FirstMateHudController {
     var isLeadWorking: Bool {
         if explicitCard == .chat, let snapshot = leadStore?.leadSnapshot {
             return snapshot.feature.coordinatorOwner != nil
+                || leadStore.map { FirstMateTranscriptLayout.isAwaitingReply(store: $0, snapshot: snapshot) } == true
                 || snapshot.messages.contains { $0.role == "user" && ($0.status == "queued" || $0.status == "processing") }
         }
         return leadSummary?.workingOnReply ?? false
@@ -1155,11 +1156,18 @@ extension FirstMateHudController {
                 return false
             }
         }
-        guard await store.sendPreparedMessage(text, expectedContext: store.operationContext) else {
-            showNotice(store.error ?? "I couldn't send that. Check the connection and try again.")
+        let context = store.operationContext
+        guard let handle = store.beginOutgoingMessage(text, expectedContext: context) else {
+            showNotice("First Mate isn't ready to send this message.")
+            return false
+        }
+        guard let state = await store.completeOutgoingMessage(handle), state.isAcceptedAwaitingSnapshot else {
+            showNotice(store.sendFailure(for: handle.featureID)?.failureMessage
+                ?? "Delivery could not be confirmed. Check the connection before retrying.")
             return false
         }
         leadMessageSent()
+        Task { await store.refreshFeature(context) }
         return true
     }
 

@@ -47,6 +47,7 @@ struct FirstMateChatView: View {
 
             transcript
                 .modifier(FirstMateArchiveContextMenu(store: store, feature: snapshot.feature, canControl: canControl))
+            FirstMateSendErrorView(store: store, featureID: snapshot.feature.id)
             featureStatus
             feedbackNotices
 
@@ -161,7 +162,9 @@ struct FirstMateChatView: View {
     }
 
     private var transcript: some View {
-        let entries = snapshot.conversationEntries
+        let entries = FirstMateConversationEntry.make(
+            messages: FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot)
+        )
         let eligibleQuoteIDs = FirstMateQuoteEligibility.messageIDs(in: snapshot.messages)
         let pendingDecisionID = snapshot.pendingDecisionMessageID
         return ScrollViewReader { proxy in
@@ -181,6 +184,21 @@ struct FirstMateChatView: View {
                             .padding(.bottom, 12)
                             .accessibilityIdentifier("first-mate-additional-replies-\(entry.id)")
                         }
+                    }
+                    if FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sailboat.fill")
+                                .foregroundStyle(HerdrTheme.accent)
+                                .accessibilityHidden(true)
+                            ProgressView().controlSize(.small)
+                            Text("First Mate is working…")
+                                .herdrFont(size: HerdrTheme.TextSize.small)
+                                .foregroundStyle(HerdrTheme.secondaryText)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("first-mate-working-after-send")
                     }
                     Color.clear.frame(height: 1).id("first-mate-chat-end")
                 }
@@ -377,10 +395,34 @@ extension PromptComposerDestination {
         let isLead = snapshot.feature.isLead
         return PromptComposerDestination(
             voicePolicy: .firstMateStopToSend,
+            submissionPolicy: .optimistic(
+                reserve: { message, submission, attachments, quotes in
+                    // A restored failed payload must use the visible explicit
+                    // retry, never a fresh request identity from Return.
+                    guard store.sendFailure(for: featureID)?.text != message,
+                          let handle = store.beginOutgoingMessage(message, expectedContext: context, submission: submission) else { return nil }
+                    store.composerDrafts.freeze(handle, submission: submission, attachments: attachments, quotes: quotes)
+                    return handle
+                },
+                didDetach: { store.composerDrafts.didDetach($0) },
+                complete: { handle in
+                    guard let state = await store.completeOutgoingMessage(handle) else { return false }
+                    if state.isAcceptedAwaitingSnapshot {
+                        didSubmit?()
+                        // Acceptance is independent of this best-effort poll.
+                        Task { await store.refreshFeature(context) }
+                        return true
+                    }
+                    return false
+                },
+                settle: { handle, accepted in
+                    store.composerDrafts.settle(handle, accepted: accepted, store: store)
+                }
+            ),
             id: context.destinationID(for: featureID)
                 ?? "first-mate:invalid:\(context.lifecycleIdentity.opaqueID)",
             canControl: canControl && !featureIsClosed,
-            isSubmitting: store.isSending,
+            isSubmitting: store.isSending || store.isSubmitting(featureID: featureID),
             isBusy: false,
             placeholder: placeholder ?? (isLead
                 ? "Ask First Mate about any feature, or tell it what to pass on…"
@@ -402,6 +444,7 @@ extension PromptComposerDestination {
                 // re-renders while transcription runs.
                 store.controlAvailable
                     && !store.isSending
+                    && !store.isSubmitting(featureID: featureID)
                     && store.isDestinationAlive(context)
                     && !(store.snapshot(for: context).map {
                         ["completed", "cancelled"].contains($0.feature.status)

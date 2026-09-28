@@ -46,6 +46,18 @@ extension PromptComposerVoicePolicy {
     }
 }
 
+/// First Mate reserves its outgoing row before the transport suspends. Other
+/// destinations keep their acknowledgement-time cleanup.
+enum PromptComposerSubmissionPolicy {
+    case onAcceptance
+    case optimistic(
+        reserve: @MainActor (String, FirstMateOutgoingMessage.Submission, [TerminalAttachment], [ChatQuote]) -> FirstMateOutgoingMessage.Handle?,
+        didDetach: @MainActor (FirstMateOutgoingMessage.Handle) -> Void,
+        complete: @MainActor (FirstMateOutgoingMessage.Handle) async -> Bool,
+        settle: @MainActor (FirstMateOutgoingMessage.Handle, Bool) -> Void
+    )
+}
+
 /// Destination-neutral operations for the shared Mac prompt composer.
 ///
 /// The identity is captured before every suspension. A completion may mutate
@@ -54,6 +66,7 @@ struct PromptComposerDestination: Equatable {
     /// Default-preserving so every existing destination keeps the behavior it
     /// had before First Mate opted into dictation Stop-to-send.
     var voicePolicy: PromptComposerVoicePolicy = .legacy
+    var submissionPolicy: PromptComposerSubmissionPolicy = .onAcceptance
     let id: String
     let canControl: Bool
     let isSubmitting: Bool

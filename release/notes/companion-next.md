@@ -1,5 +1,34 @@
 # Next companion update, unreleased
 
+## First Mate fleet summary and read markers
+
+- Adds `first-mate-fleet-v1` as an additive authenticated API capability,
+  advertised by `GET /api/v1` and `GET /api/v1/first-mate/capabilities`. It
+  backs the Mac First Mate chat window and its Dock badge.
+- `GET /api/v1/first-mate/fleet?view=active|archived|all` returns one small
+  entry per feature: label, emoji, a HUD status that separates **Your turn**
+  from **Ready for review**, the Plan/Build/Review/QA/PR/Merge step from the
+  current stage, a one-line "now", the latest message (with its skim sentence
+  when one is ready), the read marker, unread, and whether First Mate is
+  working on a reply. It is one SQLite query and never scans job files or
+  session usage, so polling it is cheap.
+- `POST /api/v1/first-mate/features/{featureId}/read` stores a per-feature read
+  marker so every client agrees on what is unread. It only moves forward, so
+  replays and racing windows are harmless.
+- `POST /api/v1/first-mate/features/{featureId}/hud` sets or resets a feature's
+  short label (24 characters) and emoji. Without one, the server picks a stable
+  default emoji from the feature ID with the same rule the Mac app uses.
+- These are presentation writes: they never wake First Mate, enqueue work,
+  append events, change status or revision, reorder the list, or change the
+  Agent view board version.
+- Existing databases migrate additively (a new `fm_feature_presentation` table,
+  schema version 15); no existing row changes. Older clients ignore the new
+  routes. A Mac app that needs the capability falls back to the existing
+  feature list against an older companion, where the unread dot equals the
+  attention badge and labels and emoji are the client defaults.
+- Install and restart the companion package separately from the Mac app. The
+  Mac updater does not install or restart companion server packages.
+
 ## Quick-session launch options
 
 - Adds `quick-session-launch-options-v1` as an additive authenticated API

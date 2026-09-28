@@ -28,6 +28,15 @@ protocol FirstMateClient: Sendable {
     ) async throws -> FirstMateFeedbackMutationResponse
     func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse
     func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse
+    /// The per-feature fleet summary (`first-mate-fleet-v1`). Named apart from
+    /// the managed-machine `fetchFleet()`.
+    func fetchFirstMateFleet() async throws -> FirstMateFleetResponse
+    /// Moves the feature's read marker forward to `throughMessageID`. The
+    /// companion never moves it backward.
+    func markFirstMateRead(featureID: String, throughMessageID: String) async throws -> FirstMateReadResponse
+    /// Sets the HUD label and emoji. `nil` leaves a field unchanged; an empty
+    /// string resets it to the companion's default.
+    func updateFirstMateHud(featureID: String, label: String?, emoji: String?) async throws -> FirstMateFleetEntry
 }
 
 struct FirstMateFeatureList: Decodable, Sendable {
@@ -51,6 +60,7 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsJournalEventSnapshots: Bool { capabilities.contains("first-mate-journal-events-v1") }
     var supportsFeedback: Bool { capabilities.contains("first-mate-feedback-v1") }
     var supportsLinks: Bool { capabilities.contains("first-mate-links-v1") }
+    var supportsFleet: Bool { capabilities.contains("first-mate-fleet-v1") }
 }
 
 /// A link save or visibility response: the affected link plus the same full
@@ -184,6 +194,13 @@ extension FirstMateClient {
         throw APIError.invalidResponse
     }
     func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        throw APIError.invalidResponse
+    }
+    func fetchFirstMateFleet() async throws -> FirstMateFleetResponse { throw APIError.invalidResponse }
+    func markFirstMateRead(featureID: String, throughMessageID: String) async throws -> FirstMateReadResponse {
+        throw APIError.invalidResponse
+    }
+    func updateFirstMateHud(featureID: String, label: String?, emoji: String?) async throws -> FirstMateFleetEntry {
         throw APIError.invalidResponse
     }
 }

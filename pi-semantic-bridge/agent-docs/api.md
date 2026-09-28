@@ -42,6 +42,11 @@ the running server and are the API-root discovery response.
   `POST /api/v1/first-mate/features/{featureId}/actions`,
   `POST /api/v1/first-mate/features/{featureId}/model-settings`,
   `GET /api/v1/first-mate/features/{featureId}/events`,
+  `GET /api/v1/first-mate/fleet?view=active|archived|all`,
+  `POST /api/v1/first-mate/features/{featureId}/read`,
+  `POST /api/v1/first-mate/features/{featureId}/hud` (fleet summary, read
+  markers, and label/emoji with `first-mate-fleet-v1`; presentation only, never
+  a coordinator turn),
   `GET /api/v1/first-mate/documents/{documentId}`, and
   `GET /api/v1/first-mate/sessions/{sessionId}`; see the
   [First Mate reference](first-mate.md)

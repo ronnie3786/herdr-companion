@@ -195,6 +195,57 @@ struct FirstMateHTTPTests {
     }
     #endif
 
+    @Test("Fleet summary, read markers, and HUD edits use authenticated additive routes")
+    func fleetRoutes() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        let fleet = try await client.fetchFirstMateFleet()
+        let read = try await client.markFirstMateRead(featureID: "feature:123", throughMessageID: "fmm_9")
+        let hud = try await client.updateFirstMateHud(featureID: "feature:123", label: "Receipts", emoji: nil)
+        let reset = try await client.updateFirstMateHud(featureID: "feature:123", label: "", emoji: "🧾")
+
+        #expect(fleet.features.map(\.featureID) == ["feature:123"])
+        #expect(fleet.features.first?.hudStatus == .turn)
+        #expect(read.readThroughMessageID == "fmm_9")
+        #expect(!read.unread)
+        #expect(hud.label == "Receipts")
+        #expect(reset.featureID == "feature:123")
+
+        let requests = FirstMateURLProtocol.recorder.requests()
+        #expect(requests.map(\.httpMethod) == ["GET", "POST", "POST", "POST"])
+        #expect(requests.compactMap { $0.url?.path } == [
+            "/api/v1/first-mate/fleet",
+            "/api/v1/first-mate/features/feature:123/read",
+            "/api/v1/first-mate/features/feature:123/hud",
+            "/api/v1/first-mate/features/feature:123/hud",
+        ])
+        for request in requests {
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer first-mate-test-token")
+        }
+        #expect(requests[0].httpBody == nil)
+        #expect(requests[0].url?.query == nil)
+        let bodies = try requests.dropFirst().map { request -> [String: String] in
+            #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+            return try JSONDecoder().decode([String: String].self, from: try #require(request.httpBody))
+        }
+        #expect(bodies[0] == ["through_message_id": "fmm_9"])
+        #expect(bodies[1] == ["label": "Receipts"], "An unchanged field is omitted")
+        #expect(bodies[2] == ["label": "", "emoji": "🧾"], "An empty string asks for the default")
+    }
+
+    @Test("Fleet routes validate the feature path and refuse an empty HUD edit before sending")
+    func fleetRouteValidation() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        await #expect(throws: APIError.self) {
+            _ = try await client.markFirstMateRead(featureID: "../notes", throughMessageID: "fmm_1")
+        }
+        await #expect(throws: APIError.self) {
+            _ = try await client.updateFirstMateHud(featureID: "feature:123", label: nil, emoji: nil)
+        }
+        #expect(FirstMateURLProtocol.recorder.requests().isEmpty)
+    }
+
     @Test("Authentication failures remain visible instead of appearing as an unsupported server")
     @MainActor
     func authenticationFailure() async throws {
@@ -247,6 +298,12 @@ private final class FirstMateURLProtocol: URLProtocol {
             let data: Data
             if status != 200 {
                 data = Data(#"{"ok":false,"error":{"code":"unauthorized","message":"Authentication required"}}"#.utf8)
+            } else if url.path == "/api/v1/first-mate/fleet" {
+                data = Data(#"{"ok":true,"generated_at":"2030-01-01T12:00:00Z","features":[{"feature_id":"feature:123","title":"Sample","status":"awaiting_direction","hud_status":"turn","unread":true}]}"#.utf8)
+            } else if url.path.hasSuffix("/read") {
+                data = Data(#"{"ok":true,"feature_id":"feature:123","read_through_message_id":"fmm_9","unread":false}"#.utf8)
+            } else if url.path.hasSuffix("/hud") {
+                data = Data(#"{"ok":true,"feature":{"feature_id":"feature:123","title":"Sample","label":"Receipts","emoji":"🧾","emoji_source":"user","status":"ready","hud_status":"idle"}}"#.utf8)
             } else if url.path == "/api/v1/first-mate/capabilities" {
                 data = Data(#"{"ok":true,"capabilities":["first-mate-v1","first-mate-archive-v1","first-mate-links-v1"]}"#.utf8)
             } else if url.path.contains("/links") {

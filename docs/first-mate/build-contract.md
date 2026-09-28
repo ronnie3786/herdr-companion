@@ -416,6 +416,99 @@ bounds, and validation are in [Dashboard companion data](../dashboard-api.md#age
 Older clients ignore these additions; newer clients must accept their absence on
 older servers.
 
+## Fleet summary API
+
+Capability `first-mate-fleet-v1`, advertised by both `GET /api/v1` and
+`/first-mate/capabilities`, adds a small per-feature summary for the Mac First
+Mate chat window, its Dock badge, and the HUD, plus server-side read markers and
+a user label and emoji. Clients use these routes only when the capability is
+advertised; without it they fall back to `GET /features` (see the chat window
+build spec).
+
+GET `/fleet?view=active|archived|all` (default `active`, not archived; any other
+query field is `invalid_request`) returns `{ok:true,generated_at,features:[entry]}`
+sorted by `activity_at` descending, then `feature_id`. It is built from one
+SQLite query with no per-feature follow-up and never scans runtime job files,
+session usage, or verification, so it is safe to poll every 10 seconds per
+host. It returns every feature in the view, including completed ones; the HUD
+filters for itself. Each entry has:
+
+- `feature_id`, `title`, raw `status`, `updated_at`, `activity_at` (the Agent
+  view's telemetry-free activity time), and nullable `archived_at`.
+- `label`: the user's label, or the title on one line cut to 24 characters.
+  `emoji`: the user's emoji, or a default; `emoji_source` is `user` or
+  `default`. The default is `EMOJI_PALETTE[((h >> 16) ^ (h & 0xffff)) % 16]`
+  where `h` is 32-bit FNV-1a over the UTF-8 feature ID and the palette is
+  `🧭 📦 🧪 🔍 🧾 📋 🧩 🚀 🔔 🎨 📚 🌱 💡 🔧 🧰 🪁` in that order. Clients that fall
+  back must use the identical rule; shared vectors are in
+  `tests/test_first_mate_fleet.py`.
+- `hud_status`, one of `blocked`, `turn`, `ready`, `working`, `idle`, `done`
+  (needs-you is `blocked`, `turn`, `ready`):
+
+  | Feature status | `hud_status` |
+  |---|---|
+  | `blocked` | `blocked` |
+  | `recovering` | `working` with automatic recovery on, else `blocked` |
+  | `awaiting_direction` | `ready` when the latest attention event is `visit.awaiting_direction`, the current visit is completed, and the step is Review, PR, or Merge, or when the feature has a visible pull request link; else `turn` |
+  | `running`, `coordinating` | `turn` when the summary's `awaiting_turn` holds, else `working` |
+  | `ready`, `paused` | `idle` |
+  | `completed` | `done` |
+  | `cancelled`, other | `idle` |
+
+  The ready/turn split lives in one function,
+  `first_mate_fleet.awaiting_direction_is_ready`.
+- `step_index` (0 Plan, 1 Build, 2 Review, 3 QA, 4 PR, 5 Merge),
+  `step_fraction` (1.0 once the current visit is completed, else 0.0), and
+  `percent` (`round((step_index + step_fraction) / 6 * 100)`). All three are
+  null when the step is unknown. The step comes from the current visit's
+  free-form `stage_key` only: split on `-`, `_`, and whitespace, lowercase, and
+  check `merge`, then `pr`, then `proof`/`qa`/`test`, then `review`, then
+  `implement`/`build`, then `plan`; the first step with a matching token wins.
+  Keywords match a token prefix (`planning` is Plan, `implementation` is Build)
+  except the two-letter `pr` and `qa`, which must be the whole token, so
+  `proof` is QA and `prepare` is unknown. `code-review-pre-pr` is PR. Active
+  Work stages are not consulted (First Mate never syncs them).
+- `now`: one line of at most 120 characters, whitespace collapsed and cut at a
+  word boundary with `…`. Needs-you features use the question
+  (`needs_user_prompt`); working features use the newest progress summary of a
+  running current-visit assignment; otherwise the latest First Mate message's
+  skim `say` text, else that message's text. Null when there is nothing to say.
+- `latest_message`: the newest conversation row of role `user`, `human`, or
+  `assistant`, as `{id,role,text,created_at,skim_say?}` with `text` on one line
+  cut to 200 characters, or null. `skim_say` is present only on an assistant
+  row whose skim is ready: the plain text of its first `say` block. `text`
+  stays the source of truth.
+- `latest_first_mate_message_id`: the newest assistant conversation row, or null.
+- `read_through_message_id`: the feature's read marker, or null. `unread` is
+  true when a First Mate message exists and is newer than the marker by
+  `(created_at, id)`, or when there is no marker. The human's own messages
+  never make a feature unread.
+- `working_on_reply`: a human message is queued or processing, or a
+  coordinator turn owns the feature.
+
+POST `/features/{id}/read` requires exactly `through_message_id` and no query
+fields. The message must exist (`not_found`, 404) and belong to the feature
+(`message_feature_mismatch`, 409). Any row of the feature is accepted, since a
+client posts the newest visible message, which may be the human's own. The
+marker only moves forward by `(created_at, id)`, so replays and an older id
+from a racing window are no-ops and no `request_id` is needed. The response is
+`{ok:true,feature_id,read_through_message_id,unread}` with the effective
+marker.
+
+POST `/features/{id}/hud` accepts `label` and/or `emoji` (at least one; no other
+fields), each a string or null. `label` is at most 24 code points after
+trimming, on one line. `emoji` is at most 16 code points with no whitespace or
+control characters (a bound, not an emoji check). Null or empty resets that
+field to its default. The response is `{ok:true,feature:<fleet entry>}`.
+
+Read markers, labels, and emoji are presentation only. They live in the
+additive `fm_feature_presentation` table (schema version 15), never in
+`fm_features`, and these routes must not call `first_mate_changed`, append
+events, change feature status, revision, `updated_at`, or activity, or move the
+board version. Older clients ignore the new routes and fields; newer clients
+must accept a server without the capability. The companion package ships
+separately from the Mac app.
+
 ## Implementation layers
 
 - `first_mate_store.py`: SQLite transactions, deduplication, event ledger, assignments, attempts, message queue, handoffs and human gates.

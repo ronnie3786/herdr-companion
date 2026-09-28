@@ -107,6 +107,8 @@ enum HerdrTheme {
     /// The First Mate row's attention badge.
     static let attentionBadge = color(0xFF9F0A)
     static let onAttentionBadge = color(0x1A1A1A)
+    /// The dark violet disc behind First Mate chat avatars and the face.
+    static let firstMateAvatarFill = color(0x2A2244)
     /// Folder glyphs in the sidebar.
     static let folder = color(0xB9A7DF)
     /// The first bar of the brand mark and the blue note color.

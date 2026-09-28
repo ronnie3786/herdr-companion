@@ -12,6 +12,7 @@ enum HerdrWindowID {
     static let workspaceGit = "herdr-workspace-git"
     static let firstMateGit = "herdr-first-mate-git"
     static let prReview = "herdr-pr-review"
+    static let firstMateChat = "herdr-first-mate-chat"
 }
 
 enum HerdrExternalEvent {

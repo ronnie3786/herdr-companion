@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from . import first_mate_fleet as fleet_format
 from . import skim as skim_format
 from .first_mate_links import (
     LinkValidationError,
@@ -163,6 +164,14 @@ CREATE TABLE IF NOT EXISTS fm_message_skims(
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS fm_message_skims_feature ON fm_message_skims(feature_id,updated_at);
 """
+# Per-feature presentation (first-mate-fleet-v1): a user label and emoji and the
+# read marker. It is a separate table so presentation writes never touch
+# fm_features, whose row feeds every feature projection and the board version.
+_PRESENTATION_SCHEMA = """CREATE TABLE IF NOT EXISTS fm_feature_presentation(
+ feature_id TEXT PRIMARY KEY REFERENCES fm_features(id),
+ label TEXT, emoji TEXT,
+ read_through_message_id TEXT, read_through_created_at TEXT,
+ updated_at TEXT NOT NULL)"""
 # The three requested starting reasons. Stable IDs keep saved selections valid
 # if a later release adjusts a label's wording.
 DEFAULT_FEEDBACK_CATEGORIES = (
@@ -413,6 +422,14 @@ class FirstMateStore:
                 self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(13,?)", (_now(),))
         # Version 14 adds only fm_message_skims (in SCHEMA). Message rows are never touched.
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(14,?)", (_now(),))
+        if not self._has_table("fm_feature_presentation"):
+            with self._transaction():
+                # Another process may have migrated between the check and the lock.
+                if not self._has_table("fm_feature_presentation"):
+                    self._db.execute(_PRESENTATION_SCHEMA)
+                self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(15,?)", (_now(),))
+        # Version 15 adds only fm_feature_presentation. Existing rows are never touched.
+        self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(15,?)", (_now(),))
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
 
@@ -464,6 +481,9 @@ class FirstMateStore:
         hidden.extend(run)
         self._db.executemany("UPDATE fm_messages SET visibility=? WHERE id=?",
                              [(BACKGROUND, message_id) for message_id in hidden])
+
+    def _has_table(self, name: str) -> bool:
+        return self._db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
 
     def _seed_feedback_categories(self) -> None:
         """Install the stable starting reasons once; custom categories append."""
@@ -822,16 +842,163 @@ class FirstMateStore:
             # First Mate finished its turn with no running agent and is parked
             # until a human replies. This is not a workflow gate; needs_user and
             # status keep their meaning.
-            summary['awaiting_turn'] = (feature['status'] in {'coordinating', 'running'}
-                                        and not feature['coordinator_owner']
-                                        and summary['running_assignment_count'] == 0
-                                        and not pending_human and bool(assistant_last))
+            summary['awaiting_turn'] = self._awaiting_turn(feature['status'], feature['coordinator_owner'],
+                                                           summary['running_assignment_count'],
+                                                           pending_human, assistant_last)
             if not summary['needs_user']:
                 summary['needs_user_prompt'] = summary['latest_message'][:600] if summary['awaiting_turn'] else None
             elif not summary['needs_user_prompt']:
                 summary['needs_user_prompt'] = 'Needs your direction' if feature['status'] == 'awaiting_direction' else 'Recovery needs your direction'
             feature['dashboard_summary'] = summary
         return features
+
+    @staticmethod
+    def _awaiting_turn(status: str, coordinator_owner: Any, running_assignments: int,
+                       pending_human: Any, assistant_spoke_last: Any) -> bool:
+        return (status in {'coordinating', 'running'} and not coordinator_owner
+                and running_assignments == 0 and not pending_human and bool(assistant_spoke_last))
+
+    # -- fleet (first-mate-fleet-v1) --------------------------------------------
+
+    def fleet_rows(self, view: str = "active", *, feature_id: str | None = None) -> list[dict]:
+        """One row per feature for first_mate_fleet.entry, newest activity first.
+
+        One SQL query shaped like _feature_summaries, with no per-feature
+        follow-up: the latest conversation row of any role, the latest First
+        Mate row and its ready skim's first say block, the current visit's
+        stage, the latest attention event, the running progress summary, and
+        the presentation row.
+        """
+        if view not in fleet_format.FLEET_VIEWS:
+            raise FirstMateError("Invalid feature view", code="invalid_request", status=400)
+        clauses, args = [], []
+        if view == "active":
+            clauses.append("f.archived_at IS NULL")
+        elif view == "archived":
+            clauses.append("f.archived_at IS NOT NULL")
+        if feature_id is not None:
+            clauses.append("f.id=?")
+            args.append(feature_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._read():
+            rows = self._db.execute(f"""SELECT f.id,f.title,f.status,f.coordinator_owner,f.archived_at,f.updated_at,
+                v.stage_key,v.status AS visit_status,e.type AS attention_type,
+                substr(CASE WHEN e.created_at>=COALESCE(v.created_at,f.created_at) THEN
+                    CASE WHEN e.type='visit.awaiting_direction' THEN COALESCE(NULLIF(v.recommendation,''),e.summary) ELSE e.summary END
+                    ELSE v.recommendation END,1,600) AS needs_user_prompt,
+                l.id AS latest_id,l.role AS latest_role,substr(l.text,1,1200) AS latest_text,l.created_at AS latest_created_at,
+                m.id AS first_mate_id,substr(m.text,1,1200) AS first_mate_text,m.created_at AS first_mate_created_at,
+                CASE WHEN k.message_id IS NOT NULL AND json_valid(k.document_json) THEN
+                    (SELECT json_extract(value,'$.tokens') FROM json_each(k.document_json,'$.blocks')
+                     WHERE type='object' AND json_extract(value,'$.kind')='say' LIMIT 1) END AS skim_say_tokens,
+                p.label,p.emoji,p.read_through_message_id,p.read_through_created_at,
+                max(f.created_at,
+                    COALESCE((SELECT created_at FROM fm_events WHERE sequence=(SELECT max(sequence) FROM fm_events
+                        WHERE feature_id=f.id AND {JOURNAL_EVENT_SQL})),f.created_at),
+                    COALESCE((SELECT max(created_at) FROM fm_messages WHERE feature_id=f.id),f.created_at)) AS activity_at,
+                EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
+                    AND status IN ('queued','processing')) AS pending_human_message,
+                m.id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
+                    AND (created_at>m.created_at OR (created_at=m.created_at AND id>m.id))) AS assistant_spoke_last,
+                (SELECT count(*) FROM fm_assignment_memberships x JOIN fm_assignments a ON a.id=x.assignment_id
+                    WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision
+                    AND a.status IN ('dispatching','running','waiting_children','handoff_pending','awaiting_ack','recovering')) AS running_assignment_count,
+                (SELECT json_extract(a.metadata_json,'$.progress.summary') FROM fm_assignment_memberships x
+                    JOIN fm_assignments a ON a.id=x.assignment_id
+                    WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision AND a.status='running'
+                    AND json_valid(a.metadata_json) AND json_extract(a.metadata_json,'$.progress.summary') IS NOT NULL
+                    ORDER BY json_extract(a.metadata_json,'$.progress.recorded_at') DESC,a.id LIMIT 1) AS progress_summary,
+                EXISTS(SELECT 1 FROM fm_links WHERE feature_id=f.id AND kind='pull_request' AND hidden=0
+                    AND NOT (source='discovery' AND discovery_state='unverified')) AS has_pull_request
+                FROM fm_features f LEFT JOIN fm_visits v ON v.id=f.current_visit_id
+                LEFT JOIN fm_messages l ON l.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
+                    AND role IN ('user','human','assistant') AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
+                LEFT JOIN fm_messages m ON m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
+                    AND role='assistant' AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
+                LEFT JOIN fm_message_skims k ON k.message_id=m.id AND k.status='ready'
+                LEFT JOIN fm_events e ON e.sequence=(SELECT max(sequence) FROM fm_events WHERE feature_id=f.id
+                    AND {JOURNAL_EVENT_SQL} AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
+                LEFT JOIN fm_feature_presentation p ON p.feature_id=f.id
+                {where} ORDER BY activity_at DESC,f.id""", args).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["awaiting_turn"] = self._awaiting_turn(item["status"], item["coordinator_owner"],
+                                                        item.pop("running_assignment_count"),
+                                                        item["pending_human_message"], item.pop("assistant_spoke_last"))
+            if item["skim_say_tokens"] is not None:
+                try:
+                    item["skim_say_tokens"] = json.loads(item["skim_say_tokens"])
+                except ValueError:
+                    item["skim_say_tokens"] = None
+            result.append(item)
+        return result
+
+    def fleet_row(self, feature_id: str) -> dict:
+        rows = self.fleet_rows("all", feature_id=feature_id)
+        if not rows:
+            raise FirstMateError("First Mate record not found", code="not_found", status=404)
+        return rows[0]
+
+    def _latest_first_mate_message(self, feature_id: str):
+        return self._db.execute(
+            "SELECT id,created_at FROM fm_messages WHERE feature_id=? AND role='assistant' AND visibility=? "
+            "ORDER BY created_at DESC,id DESC LIMIT 1", (feature_id, CONVERSATION)).fetchone()
+
+    def mark_read(self, feature_id: str, through_message_id: str) -> dict:
+        """Move the feature's read marker forward to a message; never backward.
+
+        Presentation only: no event, and fm_features (so updated_at, revision,
+        activity, and the board version) never changes. Replays and older
+        markers from a racing window are no-ops, so no request_id is needed.
+        """
+        _text(through_message_id, "through_message_id", 200)
+        with self._transaction():
+            self._one("fm_features", feature_id)
+            message = self._db.execute("SELECT id,feature_id,created_at FROM fm_messages WHERE id=?",
+                                       (through_message_id,)).fetchone()
+            if message is None:
+                raise FirstMateError("First Mate message not found", code="not_found", status=404)
+            if message["feature_id"] != feature_id:
+                raise FirstMateError("Message belongs to another feature", code="message_feature_mismatch")
+            marker = self._db.execute("SELECT read_through_message_id,read_through_created_at "
+                                      "FROM fm_feature_presentation WHERE feature_id=?", (feature_id,)).fetchone()
+            marker_id = marker["read_through_message_id"] if marker else None
+            marker_at = marker["read_through_created_at"] if marker else None
+            if fleet_format.is_after(message["created_at"], message["id"], marker_at, marker_id):
+                marker_id, marker_at = message["id"], message["created_at"]
+                self._db.execute(
+                    "INSERT INTO fm_feature_presentation(feature_id,read_through_message_id,read_through_created_at,updated_at) "
+                    "VALUES(?,?,?,?) ON CONFLICT(feature_id) DO UPDATE SET read_through_message_id=excluded.read_through_message_id,"
+                    "read_through_created_at=excluded.read_through_created_at,updated_at=excluded.updated_at",
+                    (feature_id, marker_id, marker_at, _now()))
+            latest = self._latest_first_mate_message(feature_id)
+            unread = latest is not None and fleet_format.is_after(latest["created_at"], latest["id"], marker_at, marker_id)
+            return {"feature_id": feature_id, "read_through_message_id": marker_id, "unread": unread}
+
+    def set_presentation(self, feature_id: str, payload: Mapping[str, Any]) -> dict:
+        """Set or reset a feature's label and emoji. Null or empty resets to the default.
+
+        Presentation only, with the same rules as mark_read.
+        """
+        body = dict(payload)
+        if not body or set(body) - {"label", "emoji"}:
+            raise FirstMateError("Presentation must contain label, emoji, or both", code="invalid_request", status=400)
+        try:
+            values = {key: (fleet_format.normalize_label if key == "label" else fleet_format.normalize_emoji)(value)
+                      for key, value in body.items()}
+        except fleet_format.PresentationError as error:
+            raise FirstMateError(str(error), code="invalid_request", status=400) from error
+        columns = sorted(values)
+        with self._transaction():
+            self._one("fm_features", feature_id)
+            updates = ",".join(f"{column}=excluded.{column}" for column in columns)
+            self._db.execute(
+                f"INSERT INTO fm_feature_presentation(feature_id,{','.join(columns)},updated_at) "
+                f"VALUES(?,{','.join('?' for _ in columns)},?) "
+                f"ON CONFLICT(feature_id) DO UPDATE SET {updates},updated_at=excluded.updated_at",
+                (feature_id, *(values[column] for column in columns), _now()))
+        return self.fleet_row(feature_id)
 
     def set_archived(self, feature_id: str, archived: bool, payload: Mapping[str, Any]) -> dict:
         body = dict(payload)

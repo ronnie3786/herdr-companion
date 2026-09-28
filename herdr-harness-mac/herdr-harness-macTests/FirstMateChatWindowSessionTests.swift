@@ -1,0 +1,267 @@
+import Foundation
+import Testing
+@testable import herdr_harness_mac
+
+@Suite("First Mate chat window session", .serialized)
+@MainActor
+struct FirstMateChatWindowSessionTests {
+    @Test("Demo mode shows one synthetic host with the seven-feature chat demo")
+    func demoHost() throws {
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        #expect(session.isDemo)
+        let host = try #require(session.hosts.first)
+        #expect(session.hosts.count == 1)
+        #expect(host.machineID == "demo")
+        #expect(host.machineName == "This Mac")
+        #expect(host.supportsFleet)
+        #expect(host.features.count == 7)
+        #expect(session.conversations.count == 7)
+        #expect(session.badgeCount == 3)
+        #expect(!session.showsMachineNames)
+        #expect(session.conversations.filter(\.showsDot).map(\.featureID).sorted() == ["demo-receipts", "demo-release", "demo-search"])
+        #expect(session.store(for: "demo") === session.store(for: "demo"))
+        #expect(session.store(for: "demo")?.features.count == 7)
+        #expect(session.store(for: "elsewhere") == nil)
+    }
+
+    @Test("Selecting in the window never moves the main window's selection, and the reverse")
+    func selectionIndependence() throws {
+        let model = ChatFixtures.model(demo: true)
+        let shell = ChatFixtures.shell()
+        shell.configureFirstMateIfNeeded(configuration: nil, connectionGeneration: model.connectionGeneration, isDemo: true)
+        let mainSelection = try #require(shell.firstMate.selectedFeatureID)
+        let mainInspector = shell.firstMate.inspector
+
+        let session = FirstMateChatWindowSession(model: model, shell: shell)
+        let receipts = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+        session.select(.feature(receipts))
+        let store = try #require(session.selectedStore)
+        #expect(store !== shell.firstMate)
+        #expect(store.selectedFeatureID == "demo-receipts")
+        #expect(session.selectedConversation?.title == "Receipt export")
+        #expect(session.selectedSnapshot?.feature.id == "demo-receipts")
+        #expect(shell.firstMate.selectedFeatureID == mainSelection)
+
+        session.open(.agent(featureID: "demo-release", assignmentID: "demo-release-crew-2"), machineID: "demo")
+        #expect(store.selectedFeatureID == "demo-release")
+        #expect(store.inspector == .agents)
+        #expect(session.inspectorPreference == true)
+        #expect(shell.firstMate.selectedFeatureID == mainSelection)
+        #expect(shell.firstMate.inspector == mainInspector)
+
+        shell.firstMate.select("demo-search")
+        shell.firstMate.inspector = .workflow
+        #expect(store.selectedFeatureID == "demo-release")
+        #expect(store.inspector == .agents)
+
+        session.open(.feature(featureID: "demo-receipts"), machineID: "demo")
+        #expect(store.inspector == .overview, "Opening another chat starts on Overview")
+        session.select(.lead)
+        #expect(session.selectedStore == nil)
+        #expect(store.selectedFeatureID == "demo-receipts", "The lead leaves the store's chat alone")
+    }
+
+    @Test("Each machine gets its own store, rebuilt only when its connection changes")
+    func storePerMachine() throws {
+        let model = ChatFixtures.model(demo: false)
+        let state = StoreTestState()
+        let session = FirstMateChatWindowSession(
+            model: model,
+            shell: ChatFixtures.shell(),
+            configuration: { machineID in
+                state.tokens[machineID].flatMap { ServerConfiguration(urlString: "https://\(machineID).example.invalid", token: $0) }
+            },
+            makeClient: { _ in
+                state.clientsMade += 1
+                return SyntheticChatFleetClient()
+            }
+        )
+        let alpha = try #require(session.store(for: "alpha"))
+        let beta = try #require(session.store(for: "beta"))
+        #expect(alpha !== beta)
+        #expect(session.store(for: "alpha") === alpha)
+        #expect(session.store(for: "gamma") == nil)
+        #expect(state.clientsMade == 2)
+
+        alpha.select("synthetic")
+        state.tokens["alpha"] = "rotated-token"
+        let rebuilt = try #require(session.store(for: "alpha"))
+        #expect(rebuilt !== alpha)
+        #expect(rebuilt.selectedFeatureID == nil)
+        #expect(session.store(for: "beta") === beta)
+        #expect(state.clientsMade == 3)
+    }
+
+    @Test("The conversation list and badge come from the shared fleet index, filtered locally")
+    func liveHostsAndSearch() async throws {
+        let shell = ChatFixtures.shell()
+        let alpha = SyntheticChatFleetClient(
+            features: [ChatFixtures.feature("f1", title: "Receipt export", status: "blocked")],
+            fleet: [FirstMateFleetEntry(featureID: "f1", title: "Receipt export", status: "blocked", latestFirstMateMessageID: "fmm_1",
+                                        unread: true, activityAt: "2030-01-01T10:00:00Z")]
+        )
+        let beta = SyntheticChatFleetClient(capabilities: .success(["first-mate-v1"]),
+                                            features: [ChatFixtures.feature("f2", title: "Offline sync", status: "running")])
+        let lifecycle = shell.firstMateFleet.activate(sources: [ChatFixtures.source("alpha", client: alpha),
+                                                               ChatFixtures.source("beta", client: beta)], connectionGeneration: 1)
+        await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: false), shell: shell,
+                                                 configuration: { _ in nil }, makeClient: { _ in SyntheticChatFleetClient() })
+        #expect(session.conversations.count == 2)
+        #expect(session.badgeCount == 1)
+        #expect(session.badgeCount == shell.firstMateFleet.badgeCount)
+        #expect(session.showsMachineNames)
+
+        session.search = "beta mac"
+        #expect(session.filteredConversations.map(\.featureID) == ["f2"])
+        session.search = "receipt"
+        #expect(session.filteredConversations.map(\.featureID) == ["f1"])
+        #expect(shell.firstMateFleet.search.isEmpty, "The main window's fleet search is untouched")
+    }
+
+    @Test("A demo chat read in a key window at the bottom clears its dot locally")
+    func demoMarkRead() async throws {
+        let shell = ChatFixtures.shell()
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: shell)
+        let receipts = try #require(session.conversations.first { $0.featureID == "demo-receipts" })
+        let newest = try #require(session.store(for: "demo")?.snapshots["demo-receipts"]?.messages.last?.id)
+
+        session.markReadIfNeeded(featureID: "demo-receipts", machineID: "demo", newestMessageID: newest, isKeyWindow: false, isAtBottom: true)
+        session.markReadIfNeeded(featureID: "demo-receipts", machineID: "demo", newestMessageID: newest, isKeyWindow: true, isAtBottom: false)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(session.badgeCount == 3)
+
+        session.markReadIfNeeded(featureID: "demo-receipts", machineID: "demo", newestMessageID: newest, isKeyWindow: true, isAtBottom: true)
+        try await ChatFixtures.waitUntil("demo read applied") { session.badgeCount == 2 }
+        #expect(shell.firstMateFleet.readState.overrides[receipts.id] == receipts.latestFirstMateMessageID)
+        #expect(session.conversations.first { $0.featureID == "demo-receipts" }?.showsDot == false)
+    }
+
+    @Test("While running, only the selected store refreshes and holds the control lease")
+    func runRefreshesSelectedStore() async throws {
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "blocked"), ChatFixtures.feature("f2", status: "running")])
+        let other = SyntheticChatFleetClient(features: [ChatFixtures.feature("g1", status: "running")])
+        let session = FirstMateChatWindowSession(
+            model: ChatFixtures.model(demo: false),
+            shell: ChatFixtures.shell(),
+            configuration: { ServerConfiguration(urlString: "https://\($0).example.invalid", token: "t") },
+            makeClient: { $0.baseURL.host == "alpha.example.invalid" ? client : other }
+        )
+        _ = session.store(for: "beta")
+        let task = Task { await session.run() }
+        defer { task.cancel() }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(client.featureListCalls == 0, "Nothing refreshes while the lead is selected")
+
+        session.select(.feature(FirstMateFleetFeatureID(machineID: "alpha", featureID: "f2")))
+        try await ChatFixtures.waitUntil("selected store refreshed") { client.featureCalls > 0 }
+        let store = try #require(session.store(for: "alpha"))
+        #expect(store.selectedFeatureID == "f2")
+        #expect(store.controlAvailable)
+        #expect(other.featureListCalls == 0)
+        task.cancel()
+        await task.value
+        #expect(!store.controlAvailable, "Stopping releases the lease")
+    }
+
+    @Test("A mutation refreshes the main window's store for that machine and the fleet index")
+    func didMutateRefreshesMainWindow() async throws {
+        let model = ChatFixtures.model(demo: false)
+        let shell = ChatFixtures.shell()
+        let mainClient = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "blocked")])
+        shell.configureFirstMateIfNeeded(
+            machineID: "alpha",
+            configuration: ServerConfiguration(urlString: "https://alpha.example.invalid", token: "t"),
+            connectionGeneration: model.connectionGeneration,
+            isDemo: false,
+            client: mainClient
+        )
+        let fleetClient = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1", status: "blocked")])
+        let lifecycle = shell.firstMateFleet.activate(sources: [ChatFixtures.source("alpha", client: fleetClient)], connectionGeneration: 1)
+        _ = lifecycle
+        let session = FirstMateChatWindowSession(model: model, shell: shell, configuration: { _ in nil },
+                                                 makeClient: { _ in SyntheticChatFleetClient() })
+        session.didMutate(machineID: "alpha")
+        try await ChatFixtures.waitUntil("main store refreshed") { mainClient.featureListCalls > 0 }
+        try await ChatFixtures.waitUntil("fleet refreshed") { fleetClient.featureListCalls > 0 }
+        #expect(shell.firstMate.features.map(\.id) == ["f1"])
+    }
+
+    @Test("A running window observes the fleet only while no other window does")
+    func keepsFleetObserved() async throws {
+        let shell = ChatFixtures.shell()
+        let fleet = shell.firstMateFleet
+        func client() -> SyntheticChatFleetClient {
+            SyntheticChatFleetClient(
+                features: [ChatFixtures.feature("f1", title: "Receipt export", status: "blocked")],
+                fleet: [ChatFixtures.entry("f1", hud: .blocked, latestFirstMate: "fmm_1")]
+            )
+        }
+        let windowClient = client()
+        let session = FirstMateChatWindowSession(
+            model: ChatFixtures.model(demo: false), shell: shell,
+            configuration: { _ in nil }, makeClient: { _ in SyntheticChatFleetClient() },
+            fleetSources: { [ChatFixtures.source("alpha", client: windowClient)] }
+        )
+        #expect(!fleet.hasObserver)
+        let run = Task { await session.run() }
+        defer { run.cancel() }
+        try await ChatFixtures.waitUntil("window observes the fleet") { fleet.hasObserver && session.badgeCount == 1 }
+
+        // The main window's observer takes over and the window leaves it alone.
+        let mainClient = client()
+        let main = Task { await fleet.observe(sources: [ChatFixtures.source("alpha", client: mainClient)], connectionGeneration: 1) }
+        try await ChatFixtures.waitUntil("main window observes") { mainClient.featureListCalls > 0 && fleet.hasObserver }
+        #expect(session.badgeCount == 1, "The hosts survive the hand-over")
+
+        // Closing the main window hands observation back to the chat window.
+        let windowCalls = windowClient.featureListCalls
+        main.cancel()
+        await main.value
+        try await ChatFixtures.waitUntil("window observes again") { fleet.hasObserver && windowClient.featureListCalls > windowCalls }
+
+        run.cancel()
+        await run.value
+        #expect(!fleet.hasObserver, "Closing the window stops its own observer")
+    }
+
+    @Test("Demo sends are stamped after the chat's newest message and move the chat to the top")
+    func demoSendMovesChat() async throws {
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        let store = try #require(session.store(for: "demo"))
+        let first = try #require(session.conversations.first)
+        let last = try #require(session.conversations.last)
+        #expect(first.id != last.id)
+        let seededNewest = try #require(store.snapshots[last.featureID]?.messages.last?.createdAt)
+
+        session.select(.feature(last.id))
+        store.draft = "Synthetic follow-up"
+        await store.send()
+
+        let messages = try #require(store.snapshots[last.featureID]?.messages)
+        #expect(messages.suffix(2).map(\.role) == ["user", "assistant"])
+        let sent = try #require(messages.last.flatMap { HerdrTimestamp.date(from: $0.createdAt) })
+        let seeded = try #require(HerdrTimestamp.date(from: seededNewest))
+        #expect(sent > seeded)
+        #expect(messages.last?.createdAt != FirstMateDemo.timestamp)
+        #expect(session.conversations.first?.id == last.id)
+    }
+
+    @Test("A Dock request waiting for the window opens its chat")
+    func pendingOpen() {
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        let target = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-search")
+        session.pendingOpen = target
+        session.applyPendingOpen()
+        #expect(session.selection == .feature(target))
+        #expect(session.pendingOpen == nil)
+        #expect(session.selectedStore?.selectedFeatureID == "demo-search")
+        #expect(session.skimState(for: target) === session.skimState(for: target))
+    }
+}
+
+@MainActor
+private final class StoreTestState {
+    var tokens = ["alpha": "alpha-token", "beta": "beta-token"]
+    var clientsMade = 0
+}

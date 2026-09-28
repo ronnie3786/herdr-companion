@@ -7,6 +7,14 @@ struct FirstMateCreateSheet: View {
     @State private var cwd = ""
     @State private var requestID = UUID().uuidString
     @Environment(\.dismiss) private var dismiss
+
+    /// `initialGoal` prefills the goal, as the First Mate chat window's
+    /// "Describe a new feature" composer does.
+    init(store: FirstMateStore, initialGoal: String = "") {
+        self.store = store
+        _goal = State(initialValue: initialGoal)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Label("Start a feature", systemImage: "sailboat").herdrFont(size: 15, weight: .semibold)

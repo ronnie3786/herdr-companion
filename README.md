@@ -370,6 +370,11 @@ Completed Mac responses can be rated
 thumbs up or thumbs down; that feedback surface needs a companion advertising
 `first-mate-feedback-v1` (installed separately) and is documented in
 [response feedback](docs/first-mate/response-feedback.md).
+Per-feature labels, emoji, read markers, and the light fleet summary behind the
+Mac First Mate chat window and Dock badge need a companion advertising
+`first-mate-fleet-v1` (see the
+[fleet summary API](docs/first-mate/build-contract.md#fleet-summary-api)); older
+companions fall back to the feature list.
 
 On Mac, saved links live with their feature. **Overview** leads with **Pull
 requests**, and the **Documents** inspector adds **Documents** and **Links**

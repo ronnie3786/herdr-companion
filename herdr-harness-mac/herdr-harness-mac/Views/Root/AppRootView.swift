@@ -140,6 +140,9 @@ final class HerdrShellState {
     var piSessionSummaryRequest: PiSessionSummaryRequest?
     var pendingFirstMateControlTarget: (machineID: String, featureID: String, inspector: FirstMateInspector)?
     var pendingFirstMateCreateMachineID: String?
+    /// A request to show a feature in the First Mate chat window (Dock menu,
+    /// "Open in window"). The window applies it and sets it back to nil.
+    var firstMateChatOpenRequest: FirstMateFleetFeatureID?
     var isCreatingWorkspace = false
     var isCreatingPRReview = false
     var isAddingPRReviewSkill = false
@@ -226,6 +229,15 @@ final class HerdrShellState {
         firstMate = store
         activeFirstMateMachineID = machineID ?? (isDemo ? "demo" : nil)
         return true
+    }
+
+    /// Refreshes the main window's cached store for one machine (`"demo"` in
+    /// demo mode), so a change made in the First Mate chat window shows here
+    /// without waiting for this screen's poll. Does nothing when that machine
+    /// has no store yet.
+    func refreshFirstMateStore(machineID: String) async {
+        guard let store = firstMateStores[machineID] else { return }
+        await store.refresh()
     }
 
     func reconcileFirstMateStores(

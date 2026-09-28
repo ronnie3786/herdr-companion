@@ -126,6 +126,10 @@ final class FirstMateStore {
     private var pendingLinkSaves: [String: (draft: FirstMateLinkDraft, requestID: String)] = [:]
     private var pendingLinkVisibility: [String: String] = [:]
     private var demoStep = 0
+    /// Set for a custom demo (the chat window's, timed around today), whose
+    /// sends are stamped with the wall clock. The default demo keeps its fixed
+    /// timestamp.
+    private var demoUsesWallClock = false
     @ObservationIgnored private var client: (any FirstMateClient)?
     @ObservationIgnored private var journalEventSnapshotsSupported = false
     #if os(macOS)
@@ -160,7 +164,9 @@ final class FirstMateStore {
     var activeFeatures: [FirstMateFeature] { filteredFeatures.filter { !$0.isArchived } }
     var archivedFeatures: [FirstMateFeature] { filteredFeatures.filter(\.isArchived) }
 
-    func configure(client: (any FirstMateClient)?, demo: Bool) {
+    /// `demoFeatures` replaces the default demo (`FirstMateDemo.features(step: 0)`)
+    /// for a demo store; it is ignored otherwise.
+    func configure(client: (any FirstMateClient)?, demo: Bool, demoFeatures: [FirstMateSnapshot]? = nil) {
         generation += 1
         lifecycleIdentity = LifecycleIdentity(value: UUID())
         resourceGeneration += 1
@@ -223,9 +229,10 @@ final class FirstMateStore {
         composerDrafts.discardAll()
         #endif
         runtimeHealth = nil
+        demoUsesWallClock = demo && demoFeatures != nil
         if demo {
             demoStep = 0
-            for value in FirstMateDemo.features(step: 0) { receive(value) }
+            for value in demoFeatures ?? FirstMateDemo.features(step: 0) { receive(value) }
             selectedFeatureID = features.first?.id
             hasLoaded = true
         }
@@ -1466,10 +1473,21 @@ final class FirstMateStore {
 
     private func sendDemo(_ text: String, featureID: String) {
         guard var value = snapshot else { return }
-        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "user", text: text, status: "delivered", createdAt: FirstMateDemo.timestamp))
-        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant", text: "Your direction is recorded in this synthetic demo. Use Next scenario to inspect the planned implementation, review, checkpoint, and handoff states.", status: "delivered", createdAt: FirstMateDemo.timestamp))
+        let createdAt = demoSendTimestamp(after: value.messages.last?.createdAt)
+        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "user", text: text, status: "delivered", createdAt: createdAt))
+        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant", text: "Your direction is recorded in this synthetic demo. Use Next scenario to inspect the planned implementation, review, checkpoint, and handoff states.", status: "delivered", createdAt: createdAt))
         value.feature.revision += 1
         receive(value)
+    }
+
+    /// A wall-clock demo stamps now, but never before the chat's newest
+    /// message: seeded messages sit at fixed clock times today, which can be
+    /// later than now.
+    private func demoSendTimestamp(after latest: String?) -> String {
+        guard demoUsesWallClock else { return FirstMateDemo.timestamp }
+        let now = Date()
+        let floor = latest.flatMap(HerdrTimestamp.date(from:))?.addingTimeInterval(60) ?? now
+        return HerdrTimestamp.string(from: max(now, floor))
     }
 
     private func record(_ failure: Error) {

@@ -10,6 +10,7 @@ struct FirstMateAppServicesModifier: ViewModifier {
     let appDelegate: HerdrMacAppDelegate
     let model: HerdrAppModel
     let shell: HerdrShellState
+    let modelFavorites: ModelFavoritesStore
     @Environment(\.openWindow) private var openWindow
 
     func body(content: Content) -> some View {
@@ -30,6 +31,11 @@ struct FirstMateAppServicesModifier: ViewModifier {
                 guard let model, let shell else { return }
                 FirstMateChatWindowOpening.open(id, model: model, shell: shell, openWindow: openWindow)
             }
+            shell.firstMateHud.openLeadInWindow = { [weak shell] in
+                guard let shell else { return }
+                FirstMateChatWindowOpening.openLead(shell: shell, openWindow: openWindow)
+            }
+            shell.firstMateHud.modelFavorites = modelFavorites
         }
     }
 }
@@ -53,6 +59,19 @@ enum FirstMateChatWindowOpening {
         chatWindowEnabled: Bool = isChatWindowEnabled
     ) {
         route(id, model: model, shell: shell, chatWindowEnabled: chatWindowEnabled, openWindow: { openWindow(id: $0) })
+    }
+
+    /// My First Mate in the chat window. The main window has no lead chat, so
+    /// this does nothing while the chat window preview is off.
+    static func openLead(
+        shell: HerdrShellState,
+        openWindow: OpenWindowAction,
+        chatWindowEnabled: Bool = isChatWindowEnabled
+    ) {
+        guard chatWindowEnabled else { return }
+        shell.firstMateChatOpenLeadRequest &+= 1
+        NSApp.activate()
+        openWindow(id: HerdrWindowID.firstMateChat)
     }
 
     /// ``open(_:model:shell:openWindow:chatWindowEnabled:)`` with the window

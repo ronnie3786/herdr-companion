@@ -137,6 +137,36 @@ test("coordinator exposes evidence and orchestration while normal tools remain u
   } finally { f.cleanup(); }
 });
 
+test("the lead First Mate gets fleet tools only, keeps normal tools, and may compact", async () => {
+  const f = fixture("coordinator", {lead: true, feature_id: "fmf_synthetic-lead", claim: {id: "fmm_synthetic-turn", role: "user"}});
+  try {
+    assert.deepEqual([...f.tools.keys()].sort(), ["fm_create_feature", "fm_feature_status", "fm_fleet", "fm_mark_read", "fm_read_document", "fm_relay"]);
+    for (const toolName of ["fm_status", "fm_delegate", "fm_begin_stage", "fm_complete_stage", "fm_resolve_gate", "fm_notify_human", "fm_save_link", "fm_read_session"]) {
+      assert.equal(f.handlers.get("tool_call")({toolName}).block, true, toolName);
+    }
+    for (const toolName of ["read", "bash", "edit", "grep", "fm_fleet", "fm_relay"]) assert.equal(f.handlers.get("tool_call")({toolName}), undefined);
+    assert.match(f.tools.get("fm_relay").description, /never your own suggestion/);
+    assert.deepEqual(Object.keys(f.tools.get("fm_relay").parameters.properties), ["feature_id", "text"]);
+    const awareness = f.handlers.get("before_agent_start")({systemPrompt: "lead charter"});
+    assert.match(awareness.systemPrompt, /role=lead/);
+    // A turn that would overflow may compact; the lead still hands off after it.
+    assert.equal(f.handlers.get("session_before_compact")({}, f.ctx), undefined);
+    await f.handlers.get("turn_end")({}, f.ctx);
+    assert.equal(f.messages.length, 0);
+    const pending = f.tools.get("fm_relay").execute("relay-call", {feature_id: "fmf_synthetic-feature", text: "Use the second option."}, undefined, undefined, f.ctx);
+    let requests = [];
+    for (let attempt = 0; attempt < 50 && !requests.length; attempt++) {
+      requests = readdirSync(join(f.root, "requests"));
+      if (!requests.length) await new Promise((done) => setTimeout(done, 10));
+    }
+    const request = JSON.parse(readFileSync(join(f.root, "requests", requests[0]), "utf8"));
+    assert.equal(request.action, "fm_relay");
+    assert.deepEqual(request.params, {feature_id: "fmf_synthetic-feature", text: "Use the second option."});
+    writeFileSync(join(f.root, "responses", requests[0]), JSON.stringify({ok: true, result: {relayed: true}}));
+    assert.deepEqual((await pending).details, {relayed: true});
+  } finally { f.cleanup(); }
+});
+
 test("only the coordinator can report to the human from a background turn", async () => {
   const f = fixture("coordinator");
   try {

@@ -143,6 +143,8 @@ final class HerdrShellState {
     /// A request to show a feature in the First Mate chat window (Dock menu,
     /// "Open in window"). The window applies it and sets it back to nil.
     var firstMateChatOpenRequest: FirstMateFleetFeatureID?
+    /// Bumped to show My First Mate (the lead) in the chat window.
+    var firstMateChatOpenLeadRequest = 0
     /// Process-owned First Mate observation and the Dock badge. Either window
     /// starts them; they keep running with every window closed.
     @ObservationIgnored private(set) var firstMateFleetDriver: FirstMateFleetDriver?

@@ -144,6 +144,7 @@ struct FirstMateChatSidebar: View {
             if showsLead {
                 FirstMateLeadRow(
                     conversations: session.conversations,
+                    lead: session.leadSummary,
                     isSelected: session.selection == .lead,
                     isHovered: hovered == .lead
                 ) { choose(.lead) }
@@ -181,7 +182,7 @@ struct FirstMateChatSidebar: View {
             FirstMateRailItem(
                 title: "My First Mate",
                 accessibilityLabel: "My First Mate, \(FirstMateLeadBriefing.leadRowPreview(conversations: session.conversations))",
-                dotColor: nil,
+                dotColor: session.leadSummary?.unread == true ? HerdrTheme.accent : nil,
                 isSelected: session.selection == .lead,
                 isHovered: hovered == .lead
             ) {
@@ -432,19 +433,27 @@ private struct FirstMateRowStatusWord: View {
 /// features need you.
 private struct FirstMateLeadRow: View {
     let conversations: [FirstMateConversation]
+    /// The lead First Mate's summary, when the machine has one: the preview
+    /// is then its newest message, with an accent dot while a reply is unread.
+    let lead: FirstMateLeadSummary?
     let isSelected: Bool
     let isHovered: Bool
     let action: () -> Void
 
     var body: some View {
         let status = FirstMateLeadBriefing.leadRowPreview(conversations: conversations)
+        let latest = lead?.latestMessage
         Button(action: action) {
-            FirstMateSidebarRowChrome(dotColor: nil, isSelected: isSelected, isHovered: isHovered, showsDivider: false) {
+            FirstMateSidebarRowChrome(dotColor: lead?.unread == true ? HerdrTheme.accent : nil,
+                                      isSelected: isSelected, isHovered: isHovered, showsDivider: false) {
                 FirstMateFaceOrb(size: 48)
             } text: {
                 VStack(alignment: .leading, spacing: 0) {
-                    FirstMateRowTopLine(name: "My First Mate", date: conversations.compactMap(\.activityAt).max())
-                    Text(Self.preview(conversations: conversations))
+                    FirstMateRowTopLine(
+                        name: "My First Mate",
+                        date: latest?.createdAt.flatMap(HerdrTimestamp.date(from:)) ?? conversations.compactMap(\.activityAt).max()
+                    )
+                    Text(latest.map { ($0.role == "user" ? "You: " : "") + $0.text } ?? Self.preview(conversations: conversations))
                         .herdrFont(size: HerdrTheme.TextSize.small)
                         .foregroundStyle(HerdrTheme.tertiaryText)
                         .lineLimit(1)
@@ -461,7 +470,7 @@ private struct FirstMateLeadRow: View {
         }
         .buttonStyle(.herdrPlain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("My First Mate, \(status)")
+        .accessibilityLabel("My First Mate, \(lead?.unread == true ? "unread reply, " : "")\(status)")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityIdentifier("first-mate-chat-row-lead")
     }

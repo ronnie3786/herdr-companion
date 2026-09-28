@@ -29,6 +29,10 @@ human instructions remain authoritative.
   occurred. The next prompt includes completed operations and current state.
   Posted checkpoints, newer human direction, and unresolved effects prevent a
   duplicate continuation. Exhaustion produces one visible failure report.
+- The lead's relay and feature-creation receipts are tied to the original human
+  turn and exact normalized action payload. Retrying with a different process or
+  tool-call identifier returns the existing result for the same action. Completed
+  action references remain in the retry context.
 - Worker status is a bounded index of current assignments, verification results,
   and document references. It does not embed historical document bodies. Use
   `fm_status(assignment_id=...)`, `fm_read_document`, and `fm_read_session` for

@@ -116,7 +116,7 @@ struct FirstMateHudRootView: View {
         let expanded = controller.expanded
         let height = FirstMateHudGeometry.listContentHeight(expanded)
         guard height > 0 else { return 0 }
-        let lastIsCompact = expanded.summary == nil && expanded.movingAreCompact && !expanded.moving.isEmpty
+        let lastIsCompact = expanded.summary == nil && expanded.rowsAreCompact
         let lastPitch = lastIsCompact ? FirstMateHudGeometry.compactPitch : FirstMateHudGeometry.rowPitch
         let lastHeight = lastIsCompact ? FirstMateHudGeometry.compactHeight : FirstMateHudGeometry.slatHeight
         return height - lastPitch + lastHeight / 2
@@ -126,16 +126,17 @@ struct FirstMateHudRootView: View {
         let expanded = controller.expanded
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(expanded.needsYou) { item in
-                FirstMateHudRow(controller: controller, item: item, side: side, compact: false)
-                    .frame(height: FirstMateHudGeometry.rowPitch, alignment: .top)
+                FirstMateHudRow(controller: controller, item: item, side: side, compact: expanded.rowsAreCompact)
+                    .frame(height: expanded.rowsAreCompact ? FirstMateHudGeometry.compactPitch : FirstMateHudGeometry.rowPitch,
+                           alignment: .top)
             }
             if !expanded.needsYou.isEmpty, !expanded.moving.isEmpty || expanded.summary != nil {
                 FirstMateHudDiamond(side: side)
                     .frame(height: FirstMateHudGeometry.groupGap)
             }
             ForEach(expanded.moving) { item in
-                FirstMateHudRow(controller: controller, item: item, side: side, compact: expanded.movingAreCompact)
-                    .frame(height: expanded.movingAreCompact ? FirstMateHudGeometry.compactPitch : FirstMateHudGeometry.rowPitch,
+                FirstMateHudRow(controller: controller, item: item, side: side, compact: expanded.rowsAreCompact)
+                    .frame(height: expanded.rowsAreCompact ? FirstMateHudGeometry.compactPitch : FirstMateHudGeometry.rowPitch,
                            alignment: .top)
             }
             if let summary = expanded.summary {
@@ -316,8 +317,8 @@ struct FirstMateHudRow: View {
     }
 }
 
-/// "N more moving" with their emoji and average progress; clicking shows
-/// every moving row, compact, and the row then reads "Show fewer".
+/// "N more" with their emoji and average progress; clicking shows every row,
+/// compact, and the row then reads "Show fewer".
 struct FirstMateHudSummaryRow: View {
     let controller: FirstMateHudController
     let summary: FirstMateHudOverflow.Summary
@@ -356,10 +357,10 @@ struct FirstMateHudSummaryRow: View {
     }
 
     private var slat: some View {
-        Button(action: controller.toggleShowAllMoving) {
+        Button(action: controller.toggleShowAllRows) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(summary.isShowingAll ? "All moving features" : "\(summary.count) more moving")
+                    Text(summary.isShowingAll ? "All features" : summaryTitle)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(HerdrTheme.secondaryText)
                     Spacer(minLength: 4)
@@ -385,7 +386,13 @@ struct FirstMateHudSummaryRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.herdrPlain)
-        .accessibilityLabel(summary.isShowingAll ? "Show fewer moving features" : "\(summary.count) more moving features. Shows them all.")
+        .accessibilityLabel(summary.isShowingAll ? "Show fewer features" : "\(summaryTitle). Shows them all.")
+    }
+
+    /// "4 more", or "4 more · 2 need you" when some of them need you.
+    private var summaryTitle: String {
+        let needs = summary.needsYouCount
+        return needs > 0 ? "\(summary.count) more · \(needs) need you" : "\(summary.count) more"
     }
 }
 

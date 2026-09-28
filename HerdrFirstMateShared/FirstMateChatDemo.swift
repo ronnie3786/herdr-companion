@@ -13,6 +13,66 @@ extension FirstMateDemo {
         chatDemoFeatures.map { snapshot(for: $0, now: now, calendar: calendar) }
     }
 
+    /// The demo's model list: two made-up models, the first the host default.
+    static let modelCatalog = FirstMateModelCatalog(
+        ok: true,
+        models: [
+            FirstMateModelOption(id: "synthetic/sample-reasoner", name: "Sample Reasoner", provider: "synthetic", reasoning: true),
+            FirstMateModelOption(id: "synthetic/sample-fast", name: "Sample Fast", provider: "synthetic", reasoning: true),
+        ],
+        defaultModel: "synthetic/sample-reasoner",
+        thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+    )
+
+    /// The demo's lead First Mate: a short conversation across the demo
+    /// features, with a ready skim on its long answer and a measured context.
+    static func chatWindowLead(now: Date = Date(), calendar: Calendar = .current) -> FirstMateSnapshot {
+        let id = "demo-lead"
+        let createdAt = chatTimestamp(daysAgo: 1, hour: 8, minute: 30, now: now, calendar: calendar)
+        let answer = [
+            "Three features need you. Receipt export is blocked in QA: both iPad runs failed because the share sheet has no anchor, and it's waiting on your call to ship iPhone-only or investigate iPad first.",
+            "Release checklist refresh finished its review and is ready for you to approve the pull request. Review search has a question about whether results should include archived reviews.",
+            "Quiet notifications and Offline sync are moving on their own. Nothing else is waiting on you.",
+            "Want me to pass a decision to Receipt export?",
+        ]
+        let reply = answer.joined(separator: "\n\n")
+        let messages = [
+            FirstMateMessage(id: "\(id)-message-1", featureID: id, role: "user", text: "What needs me this morning?",
+                             status: "done", createdAt: chatTimestamp(daysAgo: 0, hour: 11, minute: 22, now: now, calendar: calendar),
+                             visibility: "conversation"),
+            FirstMateMessage(id: "\(id)-message-2", featureID: id, role: "assistant", text: reply, status: "done",
+                             createdAt: chatTimestamp(daysAgo: 0, hour: 11, minute: 23, now: now, calendar: calendar),
+                             visibility: "conversation",
+                             skim: skim(reply: reply, paragraphs: answer, plan: ChatDemoSkim(
+                                say: [.text("Three need you: "), .link("Receipt export is blocked on iPad", paragraphs: [0]),
+                                      .text(", and "), .link("two more want a decision", paragraphs: [1]), .text(".")],
+                                ask: [.text("Pass a decision to Receipt export?")],
+                                replies: []
+                             ))),
+        ]
+        var feature = FirstMateFeature(
+            id: id, title: "First Mate", goal: "Lead First Mate for every feature on this machine.",
+            cwd: "/Users/demo", status: "ready", currentVisitID: nil, revision: 1,
+            createdAt: createdAt, updatedAt: messages.last?.createdAt ?? createdAt
+        )
+        feature.kind = "lead"
+        feature.nativeSessionID = "\(id)-session"
+        feature.modelSettingsRevision = 0
+        feature.coordinatorModel = "synthetic/sample-reasoner"
+        feature.coordinatorThinking = "high"
+        feature.modelSelection = FirstMateModelSelection(
+            profile: "coordinator", requestedModel: "synthetic/sample-reasoner", requestedThinking: "high",
+            actualModel: "synthetic/sample-reasoner", actualThinking: "high", source: "host_policy"
+        )
+        feature.coordinatorContext = FirstMateCoordinatorContext(
+            nativeSessionID: "\(id)-session", status: .measured, tokens: 38_400, contextWindow: 1_000_000,
+            handoffTargetTokens: 150_000, observedAt: messages.last?.createdAt
+        )
+        feature.usage = chatDemoUsage(tokens: 38_400, sessions: 1)
+        return FirstMateSnapshot(feature: feature, visits: [], assignments: [], documents: [], messages: messages,
+                                 events: [], links: [])
+    }
+
     /// Fleet entries matching ``chatWindowFeatures(now:calendar:)``. Receipt
     /// export, Release checklist refresh, and Review search need you and are
     /// unread, so the demo Dock badge shows 3.
@@ -198,6 +258,8 @@ extension FirstMateDemo {
             currentVisitID: visits.last?.id, revision: demo.revision, createdAt: createdAt, updatedAt: updatedAt
         )
         feature.usage = chatDemoUsage(tokens: 1_200 * (demo.step + 1) + 300 * demo.crew.count, sessions: demo.crew.count + 1)
+        // Like a companion's row, so the shared composer's model pill shows.
+        feature.modelSettingsRevision = 0
         var value = FirstMateSnapshot(feature: feature, visits: visits, assignments: assignments, documents: documents,
                                       messages: messages, events: events, links: links)
         var summary = FirstMateDashboardSummary.from(value)

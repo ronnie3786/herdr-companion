@@ -452,6 +452,7 @@ def api_description() -> dict:
             "first-mate-links-v1",
             "first-mate-quiet-chat-v1",
             "first-mate-skim-v1",
+            "first-mate-lead-v1",
             first_mate_fleet.CAPABILITY,
             VERIFICATION_CAPABILITY,
             "pr-review-v1",
@@ -481,6 +482,7 @@ def api_description() -> dict:
             "firstMateFleet": "/api/v1/first-mate/fleet",
             "firstMateRead": "/api/v1/first-mate/features/{featureId}/read",
             "firstMateHud": "/api/v1/first-mate/features/{featureId}/hud",
+            "firstMateLead": "/api/v1/first-mate/lead",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -559,6 +561,7 @@ def api_description() -> dict:
             "POST /api/v1/first-mate/features/{featureId}/links",
             "POST /api/v1/first-mate/features/{featureId}/links/{linkId}/visibility",
             "POST /api/v1/first-mate/features/{featureId}/read|hud",
+            "POST /api/v1/first-mate/lead",
             "PATCH|DELETE /api/v1/notes/{noteId}",
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
@@ -1128,6 +1131,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-links-v1",
                     "first-mate-quiet-chat-v1",
                     "first-mate-skim-v1",
+                    "first-mate-lead-v1",
                     first_mate_fleet.CAPABILITY,
                     VERIFICATION_CAPABILITY,
                 ], **runtime.capabilities(),
@@ -1143,6 +1147,22 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     label = _string(body.get("label"), "label", maximum=80)
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
                     return {"ok": True, "category": store.create_feedback_category(label, request_id)}
+            if tail == ["lead"]:
+                # The machine's lead First Mate (first-mate-lead-v1): one
+                # conversation across every feature. POST creates it on first
+                # use; everything else uses the ordinary feature routes with
+                # its feature ID (board, messages, attachments, model settings).
+                if query:
+                    raise HTTPValidationError("Lead request does not accept query fields")
+                if method == "GET":
+                    return {"ok": True, "lead": runtime.lead() if hasattr(runtime, "lead") else None}
+                if method == "POST":
+                    if set(body) - {"request_id"}:
+                        raise HTTPValidationError("Lead request contains an unsupported field")
+                    if "request_id" in body:
+                        _string(body.get("request_id"), "request_id", maximum=200)
+                    existed = store.lead() is not None
+                    return {"ok": True, "lead": runtime.ensure_lead()}, (200 if existed else 201)
             if method == "GET" and tail == ["fleet"]:
                 # Store SQL only: never the runtime's per-feature job and usage scan.
                 if set(query) - {"view"} or any(len(values) != 1 for values in query.values()):
@@ -1342,11 +1362,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     automatic_recovery = getattr(getattr(runtime, "reliability", None), "enabled", True)
                     return {"ok": True, "feature": first_mate_fleet.entry(row, automatic_recovery=automatic_recovery)}
                 if tail[2:] == ["messages"] and method == "POST":
-                    if set(body) - {"text", "request_id"}:
+                    if set(body) - {"text", "request_id", "context"}:
                         raise HTTPValidationError("Message contains an unsupported field")
                     text = _string(body.get("text"), "text", maximum=200000)
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
-                    message = store.append_human_message(feature_id, text, request_id)
+                    # Only the lead accepts a snapshot of the human's other machines.
+                    message = store.append_human_message(feature_id, text, request_id,
+                                                         context=body.get("context") if "context" in body else None)
                     service.first_mate_changed(feature_id)
                     return {"ok": True, "message": message, "feature": feature_view(feature_id)}, 202
                 if tail[2:] == ["actions"] and method == "POST":

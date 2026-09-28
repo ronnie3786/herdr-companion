@@ -46,6 +46,12 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
     /// Distinguishes a response that omitted `verification` (an older
     /// companion) from one that explicitly reported an empty assessment.
     var includesVerification = true
+    /// "lead" for the machine's lead First Mate (`first-mate-lead-v1`), else a
+    /// feature. Older companions omit it.
+    var kind: String? = nil
+
+    /// The machine's one lead First Mate conversation, never a feature.
+    var isLead: Bool { kind == "lead" }
 
     var modelDisplayName: String {
         guard let model = coordinatorModel, !model.isEmpty else { return "Host default" }
@@ -63,7 +69,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
         case coordinatorContext = "coordinator_context"
         case usage, modelSelection = "model_selection"
         case dashboardSummary = "dashboard_summary"
-        case verification
+        case verification, kind
     }
     var isArchived: Bool { archivedAt != nil }
 
@@ -90,6 +96,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
             && lhs.modelSelection == rhs.modelSelection
             && lhs.dashboardSummary == rhs.dashboardSummary
             && lhs.verification == rhs.verification
+            && lhs.kind == rhs.kind
     }
 }
 
@@ -118,6 +125,7 @@ extension FirstMateFeature {
         usage = try container.decodeIfPresent(FirstMateUsage.self, forKey: .usage)
         modelSelection = try container.decodeIfPresent(FirstMateModelSelection.self, forKey: .modelSelection)
         dashboardSummary = try container.decodeIfPresent(FirstMateDashboardSummary.self, forKey: .dashboardSummary)
+        kind = try? container.decodeIfPresent(String.self, forKey: .kind)
         includesVerification = container.contains(.verification)
         if let decoded = try? container.decodeIfPresent(FirstMateVerification.self, forKey: .verification) {
             // An additive empty object is "reported but unavailable", not a

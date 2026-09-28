@@ -52,19 +52,13 @@ struct FirstMateChatView: View {
             if !featureIsClosed {
                 // The shared composer, in either appearance: the coordinator
                 // context line on top, the model pill in its tool row.
-                PromptComposerView(
+                FirstMatePromptComposer(
+                    store: store,
                     model: model,
-                    destination: composerDestination,
-                    draft: draftBinding,
-                    attachments: attachmentBinding,
-                    quotes: quoteBinding,
-                    containsDictation: dictationBinding,
-                    modelFavorites: modelFavorites,
-                    contextAccessory: contextAccessory,
-                    toolbarAccessory: modelAccessory
+                    snapshot: snapshot,
+                    canControl: canControl,
+                    modelFavorites: modelFavorites
                 )
-                .equatable()
-                .id(composerDestination.id)
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
             }
@@ -163,57 +157,6 @@ struct FirstMateChatView: View {
             responseText: message.text,
             expectedContext: currentContext
         )
-    }
-
-    private struct ContextKey: Equatable {
-        let presentation: FirstMateCoordinatorContextPresentation
-        let attachmentsSupported: Bool
-    }
-
-    private struct ModelKey: Equatable {
-        let feature: FirstMateFeature
-        let context: FirstMateStore.OperationContext
-        let canControl: Bool
-        let hasQueuedWork: Bool
-    }
-
-    private var contextAccessory: ComposerAccessory {
-        let feature = snapshot.feature
-        let capability = store.contextSupported
-        let attachmentsSupported = store.attachmentsSupported
-        let key = ContextKey(
-            presentation: .init(feature: feature, capabilityAvailable: capability),
-            attachmentsSupported: attachmentsSupported
-        )
-        return ComposerAccessory(key: ComposerAccessoryKey(value: key)) {
-            VStack(alignment: .leading, spacing: 4) {
-                FirstMateCoordinatorContextView(feature: feature, capabilityAvailable: capability)
-                if !attachmentsSupported {
-                    Label("Update this feature's companion server to attach files.", systemImage: "arrow.down.circle")
-                        .herdrFont(size: HerdrTheme.TextSize.caption)
-                        .foregroundStyle(HerdrTheme.tertiaryText)
-                }
-            }
-        }
-    }
-
-    private var modelAccessory: ComposerAccessory {
-        let key = ModelKey(
-            feature: featureWithCurrentSessionSelection,
-            context: store.operationContext,
-            canControl: canControl,
-            hasQueuedWork: snapshot.messages.contains { $0.status == "queued" }
-        )
-        return ComposerAccessory(key: ComposerAccessoryKey(value: key)) { [store, modelFavorites] in
-            FirstMateComposerModelControls(
-                store: store,
-                feature: key.feature,
-                context: key.context,
-                canControl: key.canControl,
-                hasQueuedWork: key.hasQueuedWork,
-                modelFavorites: modelFavorites
-            )
-        }
     }
 
     private var transcript: some View {
@@ -388,57 +331,6 @@ struct FirstMateChatView: View {
         }
     }
 
-    private var featureWithCurrentSessionSelection: FirstMateFeature {
-        var feature = snapshot.feature
-        if let nativeSessionID = feature.nativeSessionID,
-           let session = snapshot.coordinatorSessions.last(where: { $0.nativeSessionID == nativeSessionID }),
-           let selection = session.modelSelection {
-            feature.modelSelection = selection
-        }
-        return feature
-    }
-
-    private var draftBinding: Binding<String> {
-        let context = store.operationContext
-        return Binding(
-            get: { store.composerDraft(for: context) },
-            set: { store.setComposerDraft($0, for: context) }
-        )
-    }
-
-    private var attachmentBinding: Binding<[TerminalAttachment]> {
-        let featureID = snapshot.feature.id
-        return Binding(
-            get: { store.composerDrafts.attachments(for: featureID) },
-            set: { store.composerDrafts.setAttachments($0, for: featureID) }
-        )
-    }
-
-    private var quoteBinding: Binding<[ChatQuote]> {
-        let featureID = snapshot.feature.id
-        return Binding(
-            get: { store.composerDrafts.quotes(for: featureID) },
-            set: { store.composerDrafts.setQuotes($0, for: featureID) }
-        )
-    }
-
-    private var dictationBinding: Binding<Bool> {
-        let featureID = snapshot.feature.id
-        return Binding(
-            get: { store.composerDrafts.containsDictation(for: featureID) },
-            set: { store.composerDrafts.setContainsDictation($0, for: featureID) }
-        )
-    }
-
-    private var composerDestination: PromptComposerDestination {
-        PromptComposerDestination.firstMate(
-            store: store,
-            model: model,
-            snapshot: snapshot,
-            canControl: canControl
-        )
-    }
-
     private func saveQuote(
         _ quote: ChatQuote,
         sourceMessageID: String,
@@ -474,11 +366,14 @@ extension PromptComposerDestination {
         store: FirstMateStore,
         model: HerdrAppModel,
         snapshot: FirstMateSnapshot,
-        canControl: Bool
+        canControl: Bool,
+        placeholder: String? = nil,
+        didSubmit: (@MainActor () -> Void)? = nil
     ) -> PromptComposerDestination {
         let context = store.operationContext
         let featureID = snapshot.feature.id
         let featureIsClosed = ["completed", "cancelled"].contains(snapshot.feature.status)
+        let isLead = snapshot.feature.isLead
         return PromptComposerDestination(
             voicePolicy: .firstMateStopToSend,
             id: context.destinationID(for: featureID)
@@ -486,9 +381,11 @@ extension PromptComposerDestination {
             canControl: canControl && !featureIsClosed,
             isSubmitting: store.isSending,
             isBusy: false,
-            placeholder: "Give direction, ask a question, or change the plan…",
+            placeholder: placeholder ?? (isLead
+                ? "Ask First Mate about any feature, or tell it what to pass on…"
+                : "Give direction, ask a question, or change the plan…"),
             sendAccessibilityLabel: "Send",
-            sendAccessibilityHint: "Sends direction to this First Mate feature",
+            sendAccessibilityHint: isLead ? "Sends your message to First Mate" : "Sends direction to this First Mate feature",
             supportsAttachments: store.attachmentsSupported,
             supportsVoice: true,
             supportsPaneTools: false,
@@ -551,7 +448,9 @@ extension PromptComposerDestination {
                 )
             },
             submit: { message in
-                await store.sendPreparedMessage(message, expectedContext: context)
+                let sent = await store.sendPreparedMessage(message, expectedContext: context)
+                if sent { didSubmit?() }
+                return sent
             },
             reportError: { store.reportComposerError($0) },
             reportToast: { model.toastMessage = $0 }

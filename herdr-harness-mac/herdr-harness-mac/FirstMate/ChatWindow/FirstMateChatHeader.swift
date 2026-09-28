@@ -53,6 +53,32 @@ struct FirstMateChatHeader: View {
             switch session.selection {
             case .lead:
                 Text(FirstMateLeadBriefing.headerSubtitle(conversations: session.conversations))
+                if let machineID = session.leadMachineID, session.leadMachineIDs.count > 1 {
+                    // A lead sees one machine's features; choose which.
+                    Menu {
+                        ForEach(session.leadMachineIDs, id: \.self) { id in
+                            Button {
+                                session.setLeadMachine(id)
+                            } label: {
+                                if id == machineID {
+                                    Label(session.machineName(id), systemImage: "checkmark")
+                                } else {
+                                    Text(session.machineName(id))
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(session.machineName(machineID))
+                            Image(systemName: "chevron.down").herdrFont(size: 8, weight: .semibold)
+                        }
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.herdrPlain)
+                    .fixedSize()
+                    .help("Choose which machine's First Mate to talk to")
+                    .accessibilityLabel("First Mate on \(session.machineName(machineID)). Choose a machine")
+                }
             case .feature:
                 if let conversation {
                     Text(FirstMateChatStatusStyle.word(for: conversation))

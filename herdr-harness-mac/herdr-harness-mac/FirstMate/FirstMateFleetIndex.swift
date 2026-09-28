@@ -22,6 +22,12 @@ struct FirstMateFleetHost: Identifiable, Equatable, Sendable {
     /// The fleet summary by feature ID, or nil when the host lacks the fleet
     /// capability or has not answered yet. A failed refresh keeps the last one.
     var fleetEntries: [String: FirstMateFleetEntry]? = nil
+    /// Whether the companion advertises `first-mate-lead-v1`: a lead First
+    /// Mate conversation across this machine's features.
+    var supportsLead: Bool = false
+    /// The lead's summary (newest message, unread, replying), or nil before it
+    /// is first used or when the host has no lead. A failed poll keeps it.
+    var lead: FirstMateLeadSummary? = nil
 
     var id: String { machineID }
 }
@@ -38,10 +44,16 @@ final class FirstMateFleetIndex {
         var probedFleetSupport: Bool? = nil
         /// Fleet entries, or nil when not requested or the request failed.
         var fleet: [FirstMateFleetEntry]? = nil
+        /// The lead capability answer, alongside ``probedFleetSupport``.
+        var probedLeadSupport: Bool? = nil
+        /// The lead summary; nil when not requested or the request failed,
+        /// `.some(nil)` when the host has no lead yet.
+        var lead: FirstMateLeadSummary?? = nil
     }
 
     private struct CapabilityProbe {
         let supportsFleet: Bool
+        var supportsLead = false
         let probedAt: Date
     }
 
@@ -221,12 +233,14 @@ final class FirstMateFleetIndex {
         refreshGeneration &+= 1
         let token = refreshGeneration
         let now = clock()
-        let requests = hosts.compactMap { host -> (String, any FirstMateClient, Bool?)? in
+        let requests = hosts.compactMap { host -> (String, any FirstMateClient, CapabilityProbe?)? in
             guard let client = clients[host.machineID] else { return nil }
-            // nil asks the host again; a supported answer lasts the lifecycle.
-            let known = capabilityProbes[host.machineID].flatMap { probe -> Bool? in
-                probe.supportsFleet || now.timeIntervalSince(probe.probedAt) < capabilityReprobeInterval
-                    ? probe.supportsFleet : nil
+            // nil asks the host again; a fully supported answer lasts the
+            // lifecycle, and a host without the fleet or the lead is asked
+            // again after the reprobe interval (a companion upgraded mid-run).
+            let known = capabilityProbes[host.machineID].flatMap { probe -> CapabilityProbe? in
+                (probe.supportsFleet && probe.supportsLead) || now.timeIntervalSince(probe.probedAt) < capabilityReprobeInterval
+                    ? probe : nil
             }
             return (host.machineID, client, known)
         }
@@ -241,19 +255,27 @@ final class FirstMateFleetIndex {
         }
 
         await withTaskGroup(of: FetchResult.self) { group in
-            for (machineID, client, knownFleetSupport) in requests {
+            for (machineID, client, known) in requests {
                 group.addTask {
                     // The probe runs alongside the list, so an unreachable
                     // host costs one timeout per round, not two.
-                    async let probe = FirstMateFleetIndex.probeFleetSupport(client, needed: knownFleetSupport == nil)
+                    async let probe = FirstMateFleetIndex.probeCapabilities(client, needed: known == nil)
                     do {
                         let response = try await client.fetchFirstMateFeatures()
                         guard response.ok else { throw APIError.invalidResponse }
                         let probed = await probe
                         try Task.checkCancellation()
                         var result = FetchResult(machineID: machineID, features: response.features, error: nil, unsupported: false)
-                        result.probedFleetSupport = probed
-                        if probed ?? knownFleetSupport ?? false {
+                        result.probedFleetSupport = probed?.fleet
+                        result.probedLeadSupport = probed?.lead
+                        if probed?.lead ?? known?.supportsLead ?? false {
+                            // The lead's small summary: its newest message and
+                            // whether it is unread, for the HUD and the window.
+                            if let lead = try? await client.fetchFirstMateLead(), lead.ok {
+                                result.lead = .some(lead.lead)
+                            }
+                        }
+                        if probed?.fleet ?? known?.supportsFleet ?? false {
                             do {
                                 let fleet = try await client.fetchFirstMateFleet()
                                 if fleet.ok { result.fleet = fleet.features }
@@ -303,8 +325,15 @@ final class FirstMateFleetIndex {
                     host.error = nil
                     host.unsupported = false
                     if let probed = result.probedFleetSupport {
-                        capabilityProbes[result.machineID] = CapabilityProbe(supportsFleet: probed, probedAt: now)
+                        let lead = result.probedLeadSupport ?? false
+                        capabilityProbes[result.machineID] = CapabilityProbe(supportsFleet: probed, supportsLead: lead, probedAt: now)
                         host.supportsFleet = probed
+                        host.supportsLead = lead
+                    }
+                    if !host.supportsLead {
+                        host.lead = nil
+                    } else if let lead = result.lead, !Self.samePublishedLead(host.lead, lead) {
+                        host.lead = lead
                     }
                     if !host.supportsFleet {
                         host.fleetEntries = nil
@@ -354,20 +383,62 @@ final class FirstMateFleetIndex {
         }
     }
 
-    /// Whether the host advertises `first-mate-fleet-v1`: nil when not
-    /// `needed`, or when the probe failed (unknown: the host keeps its last
-    /// answer and is asked again next time). A companion without the
-    /// capability route predates the fleet.
-    nonisolated private static func probeFleetSupport(_ client: any FirstMateClient, needed: Bool) async -> Bool? {
+    /// Whether the host advertises `first-mate-fleet-v1` and
+    /// `first-mate-lead-v1`: nil when not `needed`, or when the probe failed
+    /// (unknown: the host keeps its last answer and is asked again next time).
+    /// A companion without the capability route predates the fleet.
+    nonisolated private static func probeCapabilities(_ client: any FirstMateClient, needed: Bool) async -> (fleet: Bool, lead: Bool)? {
         guard needed else { return nil }
         do {
             let capabilities = try await client.fetchFirstMateCapabilities()
-            return capabilities.ok && capabilities.supportsFleet
+            return (capabilities.ok && capabilities.supportsFleet, capabilities.ok && capabilities.supportsLead)
         } catch APIError.server(let status, _) where status == 404 || status == 501 {
-            return false
+            return (false, false)
         } catch {
             return nil
         }
+    }
+
+    /// The lead's row moves with every Pi telemetry write; only what the HUD
+    /// and the window show publishes.
+    static func samePublishedLead(_ lhs: FirstMateLeadSummary?, _ rhs: FirstMateLeadSummary?) -> Bool {
+        guard let lhs, let rhs else { return lhs == nil && rhs == nil }
+        return lhs.feature.id == rhs.feature.id && lhs.unread == rhs.unread
+            && lhs.workingOnReply == rhs.workingOnReply && lhs.latestMessage == rhs.latestMessage
+    }
+
+    /// Records that the lead was read on this Mac once the companion confirms
+    /// it, so the HUD's lead dot clears before the next poll.
+    func noteLeadRead(machineID: String) {
+        guard let index = hosts.firstIndex(where: { $0.machineID == machineID }),
+              var lead = hosts[index].lead, lead.unread else { return }
+        lead.unread = false
+        hosts[index].lead = lead
+        contentRevision &+= 1
+    }
+
+    /// Posts the lead's read marker and clears its dot once the companion
+    /// confirms. A failure leaves it unread for the next poll to settle.
+    func markLeadRead(machineID: String, throughMessageID: String) async {
+        guard let lead = hosts.first(where: { $0.machineID == machineID })?.lead, lead.unread,
+              let client = readClients[machineID] else { return }
+        let expectedLifecycle = lifecycle
+        guard let response = try? await client.markFirstMateRead(featureID: lead.feature.id, throughMessageID: throughMessageID),
+              expectedLifecycle == lifecycle,
+              let index = hosts.firstIndex(where: { $0.machineID == machineID }),
+              var current = hosts[index].lead, current.feature.id == lead.feature.id,
+              current.unread != response.unread else { return }
+        current.unread = response.unread
+        hosts[index].lead = current
+        contentRevision &+= 1
+    }
+
+    /// Replaces a host's lead summary after this Mac opened or messaged it.
+    func noteLead(_ lead: FirstMateLeadSummary, machineID: String) {
+        guard let index = hosts.firstIndex(where: { $0.machineID == machineID }),
+              hosts[index].supportsLead, !Self.samePublishedLead(hosts[index].lead, lead) else { return }
+        hosts[index].lead = lead
+        contentRevision &+= 1
     }
 
     func refresh() async {

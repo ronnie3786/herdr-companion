@@ -62,6 +62,20 @@ enum FirstMateTranscriptLayout {
         return rows
     }
 
+    /// Apply compact-surface limits after canonical turn grouping, so cutting
+    /// old history cannot leave a checkpoint's closing question on its own.
+    static func recentRows(for messages: [FirstMateMessage], limit: Int, typing: Bool = false,
+                           pendingDecisionMessageID: String? = nil, now: Date, calendar: Calendar) -> [Row] {
+        var recent = Array(rows(for: messages, typing: typing, pendingDecisionMessageID: pendingDecisionMessageID,
+                                now: now, calendar: calendar).suffix(max(0, limit)))
+        if !recent.isEmpty {
+            recent[0].isFirstInGroup = true
+            recent[0].dayLabel = HerdrTimestamp.date(from: recent[0].message.createdAt)
+                .map { FirstMateChatTime.dayLabel(for: $0, now: now, calendar: calendar) }
+        }
+        return recent
+    }
+
     /// What re-runs read marking. The fleet's read state is part of it: the
     /// transcript usually shows a reply before the fleet reports the chat
     /// unread, and marking then is a no-op, so the flip to unread (or a newer

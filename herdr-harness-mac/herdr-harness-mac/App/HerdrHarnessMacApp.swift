@@ -78,7 +78,7 @@ struct HerdrHarnessMacApp: App {
                     background: shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).background : HerdrTheme.windowBackground
                 ))
                 .task { updates.start() }
-                .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell))
+                .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell, modelFavorites: modelFavorites))
                 .environment(herdPulse)
                 // Apple documents `dynamicTypeSize` as not affecting text size
                 // on macOS, so Herdr uses this custom scale environment instead.
@@ -125,7 +125,7 @@ struct HerdrHarnessMacApp: App {
         // main window owns every `herdr://` route.
         Window("First Mate", id: HerdrWindowID.firstMateChat) {
             FirstMateChatWindowRoot(model: model, shell: shell, modelFavorites: modelFavorites)
-                .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell))
+                .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell, modelFavorites: modelFavorites))
                 .modifier(FirstMateChatWindowDismissal())
                 .modifier(HerdrMainWindowChromeModifier())
                 .environment(herdPulse)

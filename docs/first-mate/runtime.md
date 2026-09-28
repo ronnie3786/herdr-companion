@@ -1,6 +1,7 @@
 # First Mate execution runtime
 
-First Mate is one saved Pi conversation per feature. Managed roles also receive
+First Mate is one saved Pi conversation per feature, plus one [lead First Mate](lead.md)
+conversation per machine across them. Managed roles also receive
 compact, validated Companion/role identity and pointers to the installed on-demand
 references; see [agent awareness](../agent-awareness.md). The companion service owns
 its message queue, assignments, process receipts, work log and human checkpoints.

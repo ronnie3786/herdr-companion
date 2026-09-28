@@ -53,6 +53,8 @@ final class FirstMateHudController {
         var text: String
         var featureID: FirstMateFleetFeatureID?
         var expiresAt: Date?
+        /// A reply from the lead First Mate: a click opens the chat.
+        var isLead = false
     }
 
     struct ChatLine: Identifiable, Equatable {
@@ -72,11 +74,13 @@ final class FirstMateHudController {
     /// list, so the HUD keeps the active-app rate instead of dropping to
     /// 30 s while another app is in front.
     static let hudPollingInterval: Duration = .seconds(10)
+    /// The lead's conversation refreshes this often while the chat shows.
+    static let leadRefreshInterval: Duration = .seconds(2)
     static let cardSizes: [String: CGSize] = [
         "readout": CGSize(width: 300, height: 262),
         "message": CGSize(width: 320, height: 292),
         "editor": CGSize(width: 300, height: 176),
-        "chat": CGSize(width: 352, height: 420),
+        "chat": CGSize(width: 400, height: 540),
         "latestLine": CGSize(width: 290, height: 104),
     ]
 
@@ -84,9 +88,16 @@ final class FirstMateHudController {
 
     private(set) var items: [FirstMateHudItem] = []
     private(set) var isExpanded: Bool
-    private(set) var showsAllMoving = false
+    /// Every row shows (compact) instead of five and a summary row.
+    private(set) var showsAllRows = false
     private(set) var hoverCard: Card?
-    private(set) var explicitCard: Card?
+    private(set) var explicitCard: Card? {
+        didSet {
+            // The lead's conversation is loaded and polled only while the chat shows.
+            if explicitCard == .chat, oldValue != .chat { startLeadSession() }
+            if oldValue == .chat, explicitCard != .chat { stopLeadSession() }
+        }
+    }
     private(set) var latestLine: LatestLine?
     private(set) var layout: FirstMateHudGeometry.Output
     /// Listening shows its caption beside the face, so the panel follows it.
@@ -95,7 +106,10 @@ final class FirstMateHudController {
     }
     /// The feature a message card's mic talks to; nil routes the words.
     private(set) var voiceTarget: FirstMateFleetFeatureID?
-    private(set) var isThinking = false
+    /// Words on their way to a feature or the lead.
+    private(set) var isSending = false
+    /// The face's thinking look: sending, or the lead working on a reply.
+    var isThinking: Bool { isSending || isLeadWorking }
     private(set) var speakingUntil: Date?
     /// Where the eyes look, up to 2.4 pt from center.
     private(set) var gaze: CGVector = .zero
@@ -113,8 +127,28 @@ final class FirstMateHudController {
     /// is on, else the main window's First Mate screen). Set by whichever
     /// window appears first, because opening a window needs SwiftUI.
     @ObservationIgnored var openConversation: ((FirstMateFleetFeatureID) -> Void)?
+    /// Opens My First Mate in the chat window. Nil while the chat window
+    /// preview is off; set with ``openConversation``.
+    @ObservationIgnored var openLeadInWindow: (() -> Void)?
+    /// The app's model favorites, for the lead chat's model pill.
+    @ObservationIgnored var modelFavorites: ModelFavoritesStore?
+
+    // MARK: Lead First Mate
+
+    /// The HUD's own store for the lead's machine, so the main window's and
+    /// the chat window's selections never move. Built when the chat opens.
+    private(set) var leadStore: FirstMateStore?
+    @ObservationIgnored private var leadStoreMachineID: String?
+    @ObservationIgnored private var leadStoreIdentity: FirstMateConnectionIdentity?
+    @ObservationIgnored private var leadTask: Task<Void, Never>?
+    @ObservationIgnored private var seenLeadMessageID: String?
+    /// Skim or Full reply per message in the lead chat.
+    @ObservationIgnored let leadSkimState = SkimDisplayState()
 
     // MARK: Plumbing
+
+    /// The app model, for views that need it (the shared composer).
+    var appModel: HerdrAppModel? { model }
 
     @ObservationIgnored private weak var model: HerdrAppModel?
     @ObservationIgnored private weak var shell: HerdrShellState?
@@ -167,7 +201,7 @@ final class FirstMateHudController {
     // MARK: Derived
 
     var collapsed: FirstMateHudOverflow.Collapsed { FirstMateHudOverflow.collapsed(items) }
-    var expanded: FirstMateHudOverflow.Expanded { FirstMateHudOverflow.expanded(items, showAllMoving: showsAllMoving) }
+    var expanded: FirstMateHudOverflow.Expanded { FirstMateHudOverflow.expanded(items, showAll: showsAllRows) }
     var badge: FirstMateHudBadge.Value? { FirstMateHudBadge.value(items) }
 
     /// The card showing: an explicit one wins over a hover, which wins over
@@ -268,6 +302,7 @@ final class FirstMateHudController {
         isVisible = false
         cancelVoice()
         closeCards()
+        stopLeadSession()
         panel?.orderOut(nil)
         removeMouseMonitors()
         shell?.firstMateFleetDriver?.setHudPolling(nil)
@@ -324,6 +359,7 @@ final class FirstMateHudController {
         guard let shell else { return }
         // The roster can gain or lose its First Mate machines.
         syncVisibility()
+        noticeLeadReply()
         let next = FirstMateHudRoster.items(hosts: hosts(), readState: shell.firstMateFleet.readState, now: Date())
         guard next != items else { return }
         let previous = items
@@ -344,6 +380,19 @@ final class FirstMateHudController {
             clearLatestLine()
         }
         relayout()
+    }
+
+    /// A new, unread reply from the lead shows as First Mate's latest line
+    /// (unless the chat already shows it); a click opens the chat.
+    private func noticeLeadReply() {
+        // A reply read elsewhere (the chat window) leaves the face too.
+        if let line = latestLine, line.isLead, line.expiresAt == nil, leadSummary?.unread != true { clearLatestLine() }
+        guard let lead = leadSummary, let latest = lead.latestMessage, latest.role == "assistant" else { return }
+        guard latest.id != seenLeadMessageID else { return }
+        seenLeadMessageID = latest.id
+        guard lead.unread, explicitCard != .chat else { return }
+        showLatestLine(LatestLine(text: latest.text, featureID: nil, expiresAt: nil, isLead: true))
+        speak()
     }
 
     /// First Mate's latest line: a summary once the first list lands, then
@@ -466,15 +515,16 @@ final class FirstMateHudController {
         let layout = expanded
         var y = FirstMateHudGeometry.listTop
         var centers: [FirstMateFleetFeatureID: CGFloat] = [:]
+        let height = layout.rowsAreCompact ? FirstMateHudGeometry.compactHeight : FirstMateHudGeometry.slatHeight
+        let pitch = layout.rowsAreCompact ? FirstMateHudGeometry.compactPitch : FirstMateHudGeometry.rowPitch
         for item in layout.needsYou {
-            centers[item.id] = y + FirstMateHudGeometry.slatHeight / 2
-            y += FirstMateHudGeometry.rowPitch
+            centers[item.id] = y + height / 2
+            y += pitch
         }
         if !layout.needsYou.isEmpty, !layout.moving.isEmpty || layout.summary != nil { y += FirstMateHudGeometry.groupGap }
         for item in layout.moving {
-            let height = layout.movingAreCompact ? FirstMateHudGeometry.compactHeight : FirstMateHudGeometry.slatHeight
             centers[item.id] = y + height / 2
-            y += layout.movingAreCompact ? FirstMateHudGeometry.compactPitch : FirstMateHudGeometry.rowPitch
+            y += pitch
         }
         return centers
     }
@@ -626,7 +676,7 @@ final class FirstMateHudController {
                     self.replyDraft = typed.isEmpty ? text : typed + " " + text
                     self.submitReply(to: target)
                 } else {
-                    await self.submit(text)
+                    await self.submit(text, byVoice: true)
                 }
             case .tooShort:
                 self.voicePhase = .idle
@@ -747,24 +797,24 @@ final class FirstMateHudController {
     func setExpanded(_ expanded: Bool) {
         guard isExpanded != expanded else { return }
         isExpanded = expanded
-        if !expanded { showsAllMoving = false }
+        if !expanded { showsAllRows = false }
         defaults.set(expanded, forKey: FirstMateHudPreferences.expandedKey)
         hoverTask?.cancel()
         hoverCard = nil
         relayout()
     }
 
-    func toggleShowAllMoving() {
+    func toggleShowAllRows() {
         hoverTask?.cancel()
-        showsAllMoving.toggle()
+        showsAllRows.toggle()
         hoverCard = nil
         relayout()
     }
 
-    /// "+N": opens the list with every moving row showing.
+    /// "+N": opens the list with every row showing.
     func openTucked() {
         hoverTask?.cancel()
-        showsAllMoving = true
+        showsAllRows = true
         hoverCard = nil
         if !isExpanded {
             isExpanded = true
@@ -799,10 +849,21 @@ final class FirstMateHudController {
         if latestLine?.featureID == id { clearLatestLine() }
     }
 
-    /// Typed or spoken words: answered here, or sent to the feature they name.
-    func submit(_ text: String) async {
+    /// Typed or spoken words. With a lead First Mate they go to it, and it
+    /// answers or passes them on; otherwise they are answered here or sent to
+    /// the feature they name.
+    func submit(_ text: String, byVoice: Bool = false) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if leadMachineID != nil {
+            let payload = PromptComposerSubmission.payload(draft: trimmed, attachments: [], quotes: [], references: [],
+                                                           containsDictation: byVoice)
+            if await sendToLead(payload), explicitCard != .chat {
+                showLatestLine(LatestLine(text: "Asked First Mate. The answer shows here.", featureID: nil,
+                                          expiresAt: Date().addingTimeInterval(Self.softNoteDuration), isLead: true))
+            }
+            return
+        }
         chatLines.append(ChatLine(role: .person, text: trimmed))
         switch FirstMateHudRouting.route(trimmed, items: items) {
         case .answer(let answer):
@@ -864,8 +925,8 @@ final class FirstMateHudController {
     /// Posts the words to the feature as the person's message.
     func send(_ text: String, to id: FirstMateFleetFeatureID) async -> Bool {
         guard let model, let shell else { return false }
-        isThinking = true
-        defer { isThinking = false }
+        isSending = true
+        defer { isSending = false }
         if model.isDemoMode {
             // The chat window's demo store; the HUD's extra demo features
             // have no chat to send to.
@@ -973,6 +1034,150 @@ final class FirstMateHudController {
         lastGazeUpdate = now
         let next = FirstMateHudFaceMotion.gaze(pointer: NSEvent.mouseLocation, face: face)
         if abs(next.dx - gaze.dx) > 0.1 || abs(next.dy - gaze.dy) > 0.1 { gaze = next }
+    }
+}
+
+// MARK: - Lead First Mate
+
+extension FirstMateHudController {
+    /// The machine whose lead First Mate the HUD talks to, or nil when no
+    /// machine has one: the HUD then keeps its local routing.
+    var leadMachineID: String? {
+        guard let model, let shell else { return nil }
+        if model.isDemoMode { return FirstMateChatWindowSession.demoMachineID }
+        return FirstMateLeadMachine.current(hosts: shell.firstMateFleet.hosts, machines: model.machines)
+    }
+
+    /// The lead's summary from the fleet poll (none in demo mode).
+    var leadSummary: FirstMateLeadSummary? {
+        guard let shell, let id = leadMachineID, model?.isDemoMode == false else { return nil }
+        return shell.firstMateFleet.hosts.first { $0.machineID == id }?.lead
+    }
+
+    /// The lead is answering: from its open conversation while the chat
+    /// shows, else from the fleet poll.
+    var isLeadWorking: Bool {
+        if explicitCard == .chat, let snapshot = leadStore?.leadSnapshot {
+            return snapshot.feature.coordinatorOwner != nil
+                || snapshot.messages.contains { $0.role == "user" && ($0.status == "queued" || $0.status == "processing") }
+        }
+        return leadSummary?.workingOnReply ?? false
+    }
+
+    /// The lead's machine name, when more than one machine has a lead.
+    var leadMachineName: String? {
+        guard let model, let shell, !model.isDemoMode, let id = leadMachineID,
+              FirstMateLeadMachine.capable(hosts: shell.firstMateFleet.hosts).count > 1 else { return nil }
+        return shell.firstMateFleet.hosts.first { $0.machineID == id }?.machineName
+    }
+
+    /// The lead store for the current lead machine, rebuilt when the machine
+    /// or its connection changes; nil when no machine has a lead.
+    func currentLeadStore() -> FirstMateStore? {
+        guard let model, let shell, let machineID = leadMachineID else { return nil }
+        if model.isDemoMode {
+            if let leadStore, leadStoreMachineID == machineID { return leadStore }
+            let store = FirstMateStore()
+            store.configure(client: nil, demo: true, demoFeatures: [FirstMateDemo.chatWindowLead(now: shell.firstMateChatDemo.now)])
+            replaceLeadStore(store, machineID: machineID, identity: nil)
+            return store
+        }
+        guard let configuration = model.firstMateConfiguration(machineID: machineID) else { return nil }
+        let identity = FirstMateConnectionIdentity(configuration: configuration, generation: model.connectionGeneration, isDemo: false)
+        if let leadStore, leadStoreMachineID == machineID, leadStoreIdentity == identity { return leadStore }
+        let store = FirstMateStore()
+        store.configure(client: HerdrAPIClient(configuration: configuration), demo: false)
+        // Messages to this machine's lead carry a snapshot of the others.
+        store.leadContextProvider = { [weak shell] in
+            guard let shell else { return nil }
+            return FirstMateLeadMachine.context(hosts: shell.firstMateFleet.hosts, excluding: machineID)
+        }
+        replaceLeadStore(store, machineID: machineID, identity: identity)
+        return store
+    }
+
+    private func replaceLeadStore(_ store: FirstMateStore, machineID: String, identity: FirstMateConnectionIdentity?) {
+        leadStore?.configure(client: nil, demo: false)
+        leadStore = store
+        leadStoreMachineID = machineID
+        leadStoreIdentity = identity
+    }
+
+    /// While the chat shows: opens the lead (creating it on first use), then
+    /// refreshes its conversation every 2 s, holding the store's control lease
+    /// so the composer can send. Marks the lead read as its replies show.
+    func startLeadSession() {
+        guard leadTask == nil, leadMachineID != nil else { return }
+        leadTask = Task { [weak self] in
+            let lease = FirstMateWorkspaceControlLease()
+            defer { lease.release() }
+            // Never holds the controller across a wait.
+            while !Task.isCancelled {
+                guard let store = self?.currentLeadStore() else { return }
+                lease.update(store: store, available: true)
+                if store.leadFeatureID == nil || store.selectedFeatureID != store.leadFeatureID {
+                    if await store.openLead() { self?.rememberLeadMachine() }
+                } else {
+                    await store.refreshLead()
+                }
+                self?.markLeadReadIfShowing()
+                try? await Task.sleep(for: FirstMateHudController.leadRefreshInterval)
+            }
+        }
+    }
+
+    func stopLeadSession() {
+        leadTask?.cancel()
+        leadTask = nil
+    }
+
+    /// Keeps the lead on the machine it opened on (see ``FirstMateLeadMachine``).
+    private func rememberLeadMachine() {
+        guard let model, let shell, !model.isDemoMode, let machineID = leadMachineID else { return }
+        FirstMateLeadMachine.remember(machineID, hosts: shell.firstMateFleet.hosts)
+    }
+
+    /// Sends words to the lead as your message.
+    func sendToLead(_ text: String) async -> Bool {
+        guard let store = currentLeadStore() else { return false }
+        isSending = true
+        defer { isSending = false }
+        if store.leadFeatureID == nil || store.selectedFeatureID != store.leadFeatureID {
+            guard await store.openLead() else {
+                showNotice(store.error ?? "First Mate isn't reachable right now.")
+                return false
+            }
+        }
+        guard await store.sendPreparedMessage(text, expectedContext: store.operationContext) else {
+            showNotice(store.error ?? "I couldn't send that. Check the connection and try again.")
+            return false
+        }
+        leadMessageSent()
+        return true
+    }
+
+    /// After the lead accepts a message: the fleet poll picks up that it is
+    /// answering, so the face thinks until the reply lands.
+    func leadMessageSent() {
+        guard let shell else { return }
+        Task { await shell.firstMateFleet.refresh() }
+    }
+
+    /// The chat shows the newest reply, so it is read.
+    func markLeadReadIfShowing() {
+        guard explicitCard == .chat, let shell, let machineID = leadMachineID,
+              let lead = leadSummary, lead.unread,
+              let through = leadStore?.leadSnapshot?.messages.last(where: { $0.role == "assistant" && $0.isConversation })?.id
+        else { return }
+        if latestLine?.isLead == true { clearLatestLine() }
+        let fleet = shell.firstMateFleet
+        Task { await fleet.markLeadRead(machineID: machineID, throughMessageID: through) }
+    }
+
+    /// Opens the lead in the chat window and closes the HUD's chat.
+    func openLeadWindow() {
+        closeCard(.chat)
+        openLeadInWindow?()
     }
 }
 

@@ -75,6 +75,11 @@ final class FirstMateStore {
     private(set) var contextSupported = false
     private(set) var safeModelSettingsSupported = false
     private(set) var linksSupported = false
+    /// The companion advertises `first-mate-lead-v1`.
+    private(set) var leadSupported = false
+    /// The lead First Mate's feature ID once it has been opened. Its snapshot
+    /// lives in ``snapshots`` like a feature's, but it is never in ``features``.
+    private(set) var leadFeatureID: String?
     private(set) var controlAvailable = false
     // Response feedback is companion data that deliberately stays outside
     // FirstMateSnapshot and composer state. Caches are scoped to this client
@@ -123,6 +128,12 @@ final class FirstMateStore {
     private var resourceGeneration = 0
     private var drafts: [String: String] = [:]
     private var pendingMessages: [String: (text: String, requestID: String)] = [:]
+    /// The snapshot sent with a pending message to the lead, by request ID,
+    /// so a retry repeats the exact request.
+    private var pendingLeadContexts: [String: FirstMateLeadContext] = [:]
+    /// Builds the read-only snapshot of the person's other machines that
+    /// messages to the lead carry. Set by the owner (the chat window, the HUD).
+    @ObservationIgnored var leadContextProvider: (@MainActor () -> FirstMateLeadContext?)?
     private var pendingLinkSaves: [String: (draft: FirstMateLinkDraft, requestID: String)] = [:]
     private var pendingLinkVisibility: [String: String] = [:]
     private var demoStep = 0
@@ -179,6 +190,7 @@ final class FirstMateStore {
         draft = ""
         drafts = [:]
         pendingMessages = [:]
+        pendingLeadContexts = [:]
         openedResource = nil
         resourcePresentation = nil
         resourceText = ""
@@ -212,6 +224,8 @@ final class FirstMateStore {
         feedbackDrafts = [:]
         pendingFeedbackRequests = [:]
         linksSupported = demo
+        leadSupported = demo && (demoFeatures ?? []).contains { $0.feature.isLead }
+        leadFeatureID = nil
         isSavingLink = false
         linkMutationError = nil
         pendingLinkSaves = [:]
@@ -371,17 +385,98 @@ final class FirstMateStore {
             snapshots[incoming.feature.id] = incoming
         }
         let acceptedFeature = snapshots[value.feature.id]?.feature ?? value.feature
-        if let index = features.firstIndex(where: { $0.id == value.feature.id }) {
+        if acceptedFeature.isLead {
+            // The lead is a conversation above the features, never one of them.
+            if leadFeatureID != acceptedFeature.id { leadFeatureID = acceptedFeature.id }
+        } else if let index = features.firstIndex(where: { $0.id == value.feature.id }) {
             features[index] = acceptedFeature
         } else { features.append(acceptedFeature) }
         lastUpdated = .now
+    }
+
+    private func apply(_ capabilities: FirstMateCapabilities) {
+        archiveSupported = capabilities.ok && capabilities.supportsArchive
+        attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
+        contextSupported = capabilities.ok && capabilities.supportsContext
+        safeModelSettingsSupported = capabilities.ok && capabilities.supportsSafeModelSettings
+        let journalOnly = capabilities.ok && capabilities.supportsJournalEventSnapshots
+        if journalEventSnapshotsSupported != journalOnly { journalEventSnapshotsSupported = journalOnly }
+        feedbackCapability = capabilities.ok
+            ? (capabilities.supportsFeedback ? .supported : .unsupported)
+            : .unknown
+        linksSupported = capabilities.ok && capabilities.supportsLinks
+        leadSupported = capabilities.ok && capabilities.supportsLead
+    }
+
+    /// Opens the lead First Mate: creates it on the companion on first use,
+    /// loads its conversation, and selects it. Returns false when the
+    /// companion has no lead or the request failed (see ``error``).
+    @discardableResult
+    func openLead() async -> Bool {
+        if isDemo {
+            guard let id = leadFeatureID else { return false }
+            if selectedFeatureID != id { select(id) }
+            return true
+        }
+        guard let client else {
+            error = "Connect to a companion server to talk to First Mate."
+            return false
+        }
+        let capturedGeneration = generation
+        do {
+            if !hasLoaded, let capabilities = try? await client.fetchFirstMateCapabilities() {
+                // A store that only shows the lead (the HUD's) never runs a
+                // full refresh, so the composer learns what it supports here.
+                guard capturedGeneration == generation else { return false }
+                apply(capabilities)
+                hasLoaded = true
+            }
+            let response = try await client.ensureFirstMateLead(requestID: UUID().uuidString)
+            guard capturedGeneration == generation else { return false }
+            guard response.ok, let lead = response.lead, lead.feature.isLead else { throw APIError.invalidResponse }
+            leadSupported = true
+            let snapshot = try await client.fetchFirstMateFeature(lead.feature.id, journalEventsOnly: journalEventSnapshotsSupported)
+            guard capturedGeneration == generation else { return false }
+            guard snapshot.ok, snapshot.feature.id == lead.feature.id else { throw APIError.invalidResponse }
+            receive(snapshot)
+            if selectedFeatureID != lead.feature.id { select(lead.feature.id) }
+            error = nil
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            guard capturedGeneration == generation else { return false }
+            record(error)
+            return false
+        }
+    }
+
+    /// The lead's cached conversation, when it has been opened.
+    var leadSnapshot: FirstMateSnapshot? { leadFeatureID.flatMap { snapshots[$0] } }
+
+    /// Refreshes only the opened lead's conversation: no feature list. The
+    /// HUD polls this while its chat card shows.
+    func refreshLead() async {
+        guard !isDemo, let client, let id = leadFeatureID, !isRefreshing else { return }
+        let capturedGeneration = generation
+        do {
+            let value = try await client.fetchFirstMateFeature(id, journalEventsOnly: journalEventSnapshotsSupported)
+            guard capturedGeneration == generation, value.ok, value.feature.id == id else { return }
+            receive(value)
+            error = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            guard capturedGeneration == generation else { return }
+            record(error)
+        }
     }
 
     func refresh() async {
         guard !isRefreshing else { return }
         if isDemo {
             features = snapshots.values.map(\.feature)
-                .filter { showArchived || !$0.isArchived }
+                .filter { !$0.isLead && (showArchived || !$0.isArchived) }
                 .sorted { $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt }
             reconcileSelection()
             return
@@ -394,16 +489,7 @@ final class FirstMateStore {
             do {
                 let capabilities = try await client.fetchFirstMateCapabilities()
                 guard capturedGeneration == generation else { return }
-                archiveSupported = capabilities.ok && capabilities.supportsArchive
-                attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
-                contextSupported = capabilities.ok && capabilities.supportsContext
-                safeModelSettingsSupported = capabilities.ok && capabilities.supportsSafeModelSettings
-                let journalOnly = capabilities.ok && capabilities.supportsJournalEventSnapshots
-                if journalEventSnapshotsSupported != journalOnly { journalEventSnapshotsSupported = journalOnly }
-                feedbackCapability = capabilities.ok
-                    ? (capabilities.supportsFeedback ? .supported : .unsupported)
-                    : .unknown
-                linksSupported = capabilities.ok && capabilities.supportsLinks
+                apply(capabilities)
             } catch {
                 guard capturedGeneration == generation else { return }
                 archiveSupported = false
@@ -522,12 +608,21 @@ final class FirstMateStore {
         let capturedGeneration = generation
         isSending = true
         defer { if capturedGeneration == generation { isSending = false } }
+        let context = id == leadFeatureID
+            ? pendingLeadContexts[pending.requestID] ?? leadContextProvider?()
+            : nil
+        if let context { pendingLeadContexts[pending.requestID] = context }
         do {
-            let value = try await client.sendFirstMateMessage(featureID: id, text: text, requestID: pending.requestID)
+            let value = if let context {
+                try await client.sendFirstMateMessage(featureID: id, text: text, requestID: pending.requestID, context: context)
+            } else {
+                try await client.sendFirstMateMessage(featureID: id, text: text, requestID: pending.requestID)
+            }
             guard capturedGeneration == generation, expectedContext.generation == generation else { return false }
             guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
             receive(value)
             pendingMessages[id] = nil
+            pendingLeadContexts[pending.requestID] = nil
             error = nil
             await refresh()
             return capturedGeneration == generation && expectedContext.generation == generation
@@ -819,7 +914,9 @@ final class FirstMateStore {
     }
 
     func fetchModelCatalog(expectedContext: OperationContext) async throws -> FirstMateModelCatalog {
-        guard expectedContext == operationContext, !isDemo, let client else { throw APIError.invalidResponse }
+        guard expectedContext == operationContext else { throw APIError.invalidResponse }
+        if isDemo { return FirstMateDemo.modelCatalog }
+        guard let client else { throw APIError.invalidResponse }
         let catalog = try await client.fetchFirstMateModels()
         guard expectedContext == operationContext, catalog.ok else { throw APIError.invalidResponse }
         return catalog
@@ -1449,6 +1546,8 @@ final class FirstMateStore {
 
     private func reconcileSelection() {
         guard selectedFeatureID == nil || !features.contains(where: { $0.id == selectedFeatureID }) else { return }
+        // The lead stays selected: it is never in the feature list.
+        if let selectedFeatureID, selectedFeatureID == leadFeatureID { return }
         if let first = features.first {
             select(first.id)
         } else {
@@ -1475,7 +1574,10 @@ final class FirstMateStore {
         guard var value = snapshot else { return }
         let createdAt = demoSendTimestamp(after: value.messages.last?.createdAt)
         value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "user", text: text, status: "delivered", createdAt: createdAt))
-        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant", text: "Your direction is recorded in this synthetic demo. Use Next scenario to inspect the planned implementation, review, checkpoint, and handoff states.", status: "delivered", createdAt: createdAt))
+        let reply = value.feature.isLead
+            ? "This is a synthetic demo, so I answer from made-up features. Connect a companion and I'll check your real ones."
+            : "Your direction is recorded in this synthetic demo. Use Next scenario to inspect the planned implementation, review, checkpoint, and handoff states."
+        value.messages.append(.init(id: UUID().uuidString, featureID: featureID, role: "assistant", text: reply, status: "delivered", createdAt: createdAt))
         value.feature.revision += 1
         receive(value)
     }

@@ -352,9 +352,195 @@ struct FirstMateHudEditorCard: View {
     }
 }
 
-/// Type to First Mate. Questions about the fleet are answered here; words
-/// that name a feature go to it as your message.
+/// The chat with First Mate. With a lead First Mate it is that real,
+/// continuing conversation, with the same prompt composer as every other chat
+/// (attachments, paste, voice, the model pill, and context); otherwise the
+/// local chat, which answers fleet questions and sends to named features.
 struct FirstMateHudChatCard: View {
+    @Bindable var controller: FirstMateHudController
+
+    var body: some View {
+        if controller.leadMachineID != nil {
+            FirstMateHudLeadChatCard(controller: controller)
+        } else {
+            FirstMateHudLocalChatCard(controller: controller)
+        }
+    }
+}
+
+/// The lead First Mate's conversation in the HUD.
+struct FirstMateHudLeadChatCard: View {
+    @Bindable var controller: FirstMateHudController
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            if let store = controller.leadStore, let snapshot = store.leadSnapshot,
+               let model = controller.appModel, let favorites = controller.modelFavorites {
+                FirstMateHudLeadTranscript(controller: controller, store: store, snapshot: snapshot)
+                FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
+                if controller.voicePhase.showsCaption {
+                    FirstMateHudVoiceCaption(controller: controller)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let error = store.error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(HerdrTheme.warning)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                FirstMatePromptComposer(
+                    store: store,
+                    model: model,
+                    snapshot: snapshot,
+                    canControl: store.controlAvailable,
+                    modelFavorites: favorites,
+                    placeholder: "Message First Mate",
+                    focusRequest: controller.focusRequest,
+                    focusOnAppear: true
+                ) { controller.leadMessageSent() }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+            } else {
+                VStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text(controller.leadStore?.error ?? "Opening First Mate…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(HerdrTheme.tertiaryText)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .environment(\.chatProsePalette, .firstMate(FirstMatePalette(scheme: .dark)))
+        .firstMateHudCard(cornerRadius: HerdrTheme.Radius.panel)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            FirstMateFaceOrb(size: 22)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("First Mate")
+                    .font(.system(size: 13, weight: .semibold))
+                if let machine = controller.leadMachineName {
+                    Text(machine)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(HerdrTheme.tertiaryText)
+                }
+            }
+            Spacer()
+            if controller.openLeadInWindow != nil, FirstMateChatWindowOpening.isChatWindowEnabled {
+                Button {
+                    controller.openLeadWindow()
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(HerdrTheme.iconTint)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.herdrPlain)
+                .help("Open in the First Mate window")
+                .accessibilityLabel("Open in the First Mate window")
+            }
+            FirstMateHudCloseButton { controller.closeCard(.chat) }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 44)
+        .herdrHairline(.bottom)
+    }
+}
+
+/// The lead's newest messages as the chat window's bubbles, with skims.
+private struct FirstMateHudLeadTranscript: View {
+    let controller: FirstMateHudController
+    @Bindable var store: FirstMateStore
+    let snapshot: FirstMateSnapshot
+
+    /// The HUD shows the recent conversation; the window has all of it.
+    static let messageLimit = 40
+    static let bubbleWidth: CGFloat = 296
+
+    var body: some View {
+        let messages = snapshot.messages.filter(\.isConversation)
+        let typing = FirstMateTranscriptLayout.isTyping(
+            messages: messages,
+            isSending: store.isSending,
+            isWorkingOnReply: snapshot.feature.coordinatorOwner != nil
+        )
+        let rows = FirstMateTranscriptLayout.recentRows(for: messages, limit: Self.messageLimit, typing: typing,
+            pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: .now, calendar: .current)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if rows.isEmpty, !typing {
+                        Text("Ask what needs you, or tell First Mate a decision to pass on. Hold First Mate's face to talk.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(HerdrTheme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 4)
+                    }
+                    ForEach(rows) { row in
+                        bubble(row)
+                            .padding(.top, row.isFirstInGroup ? 12 : 3)
+                        if !row.additionalReplies.isEmpty {
+                            DisclosureGroup("Additional response from this turn") {
+                                ForEach(FirstMateTranscriptLayout.rows(for: row.additionalReplies, now: .now, calendar: .current)) { reply in
+                                    bubble(reply)
+                                }
+                            }
+                            .font(.system(size: 11))
+                            .foregroundStyle(HerdrTheme.secondaryText)
+                            .padding(.vertical, 5)
+                        }
+                    }
+                    if typing {
+                        let startsGroup = FirstMateTranscriptLayout.typingStartsGroup(rows)
+                        FirstMateTypingRow(startsGroup: startsGroup)
+                            .padding(.top, startsGroup ? 12 : 3)
+                    }
+                    Color.clear.frame(height: 1).id(FirstMateChatTranscript.endID)
+                }
+                .environment(\.skimDisplayState, controller.leadSkimState)
+                .environment(\.skimScrollTo) { id in
+                    withAnimation(nil) { proxy.scrollTo(id, anchor: .center) }
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+            }
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .onChange(of: messages.last?.id) { _, _ in proxy.scrollTo(FirstMateChatTranscript.endID, anchor: .bottom) }
+            .onChange(of: typing) { _, isTyping in
+                if isTyping { proxy.scrollTo(FirstMateChatTranscript.endID, anchor: .bottom) }
+            }
+        }
+    }
+
+    private func bubble(_ row: FirstMateTranscriptLayout.Row) -> some View {
+        FirstMateChatBubbleRow(
+            row: row,
+            agent: row.message.assignmentID.flatMap { id in snapshot.assignments.first { $0.id == id } },
+            fileCards: [],
+            maxBubbleWidth: Self.bubbleWidth,
+            feedback: nil,
+            feedbackActions: FirstMateChatFeedbackActions(),
+            openDocuments: {}
+        )
+    }
+}
+
+/// Type to First Mate without a lead: questions about the fleet are answered
+/// here; words that name a feature go to it as your message.
+struct FirstMateHudLocalChatCard: View {
     @Bindable var controller: FirstMateHudController
     @FocusState private var isComposerFocused: Bool
 
@@ -482,10 +668,14 @@ struct FirstMateHudLatestLineCard: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture {
-            if let id = controller.latestLine?.featureID { controller.openExplicit(.message(id)) }
+            if let id = controller.latestLine?.featureID {
+                controller.openExplicit(.message(id))
+            } else if controller.latestLine?.isLead == true {
+                controller.openExplicit(.chat)
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(controller.latestLine?.featureID == nil ? [] : .isButton)
+        .accessibilityAddTraits(controller.latestLine?.featureID == nil && controller.latestLine?.isLead != true ? [] : .isButton)
     }
 }
 

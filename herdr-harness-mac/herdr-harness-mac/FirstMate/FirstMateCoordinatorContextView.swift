@@ -30,7 +30,7 @@ struct FirstMateCoordinatorContextView: View {
             .help("How First Mate measures context and performs managed handoff")
             .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Coordinator context")
+                    Text(feature.isLead ? "First Mate context" : "Coordinator context")
                         .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                         .foregroundStyle(HerdrTheme.primaryText)
                     Text(presentation.summary)

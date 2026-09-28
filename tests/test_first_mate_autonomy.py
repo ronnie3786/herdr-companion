@@ -60,6 +60,21 @@ class FirstMateAutonomyTests(unittest.TestCase):
         self.assertIn('"tool": "fm_delegate"', successor["prompt"])
         self.assertIn('"status": "completed"', successor["prompt"])
 
+    def test_lead_retry_keeps_its_charter_and_completed_relay_facts(self):
+        self.feature = self.store.ensure_lead(str(self.root))
+        self.store.append_human_message(self.feature["id"], "Check the synthetic feature", "lead-turn")
+        job = self.coordinator()
+        self.assertTrue(job["lead"])
+        directory = self.runtime._job_dir(job)
+        _write_json(directory / "requests" / "relay.json", {"action": "fm_relay", "request_id": "relay"})
+        _write_json(directory / "responses" / "relay.json", {"ok": True, "result": {"relayed": True}})
+        self.runtime._finish(job, {"ended": True, "error": "Connection reset"})
+        successor = self.coordinator()
+        self.assertTrue(successor["lead"])
+        self.assertIn("You have no stage authority", successor["charter"])
+        self.assertIn('"tool": "fm_relay"', successor["prompt"])
+        self.assertGreater(successor["retry_not_before"], 0)
+
     def test_unknown_or_successful_external_effect_never_replays_coordinator(self):
         job = self.coordinator()
         path = self.runtime._job_dir(job) / "effects.jsonl"
@@ -143,6 +158,18 @@ class FirstMateAutonomyTests(unittest.TestCase):
              patch.object(self.runtime, "_launch") as launch:
             self.runtime.reconcile()
         launch.assert_not_called()
+
+    def test_feature_fault_does_not_prevent_a_lead_reply(self):
+        self.coordinator()
+        lead = self.store.ensure_lead(str(self.root))
+        self.store.append_human_message(lead["id"], "What needs attention?", "lead-status")
+        with patch.object(self.runtime, "_observe", side_effect=FileNotFoundError("missing job cwd")), \
+             patch.object(self.runtime, "_launch") as launch, \
+             patch.object(self.runtime, "capabilities", return_value={"available": True}), \
+             patch.object(self.runtime, "_watch"):
+            self.runtime.reconcile()
+        self.assertEqual([call.args[0]["feature_id"] for call in launch.call_args_list], [lead["id"]])
+        self.assertTrue(launch.call_args.args[0]["lead"])
 
     def test_recovery_advisor_can_reach_extension_guarded_observational_shell(self):
         command = _pi_command({"kind": "advisor", "recovery_mode": True,

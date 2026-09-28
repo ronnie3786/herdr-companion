@@ -412,6 +412,7 @@ def cmd_run(ctx: Context, args: argparse.Namespace) -> int:
         print(f"Dashboard:  {dashboard.url if dashboard else 'disabled (--no-dashboard)'}", file=ctx.out, flush=True)
         print(f"Planner:    {settings.planner_model} ({settings.planner_thinking})", file=ctx.out, flush=True)
         print(f"Implementer: {settings.implementer_model} ({settings.implementer_thinking})", file=ctx.out, flush=True)
+        print(f"Reviewer:   {settings.reviewer_model} ({settings.reviewer_thinking})", file=ctx.out, flush=True)
         if dashboard and not settings.dashboard_token:
             print("warning: code_factory.dashboard_token is empty; anyone who can reach the dashboard can trigger actions",
                   file=ctx.err, flush=True)
@@ -643,7 +644,8 @@ def doctor_checks(ctx: Context, *, fix: bool = False) -> list[dict[str, Any]]:
     add("pi_binary", code == 0, _last_line(out, err) or (f"{settings.pi_binary} answered" if code == 0 else f"exit status {code}"))
 
     for role, configured_model in (("planner_model", settings.planner_model),
-                                   ("implementer_model", settings.implementer_model)):
+                                   ("implementer_model", settings.implementer_model),
+                                   ("reviewer_model", settings.reviewer_model)):
         configured_provider, model_part = _split_model_id(configured_model)
         code, out, err = _probe(deps.runner, [settings.pi_binary, "--list-models", model_part], pi_env)
         listed = code == 0 and any(

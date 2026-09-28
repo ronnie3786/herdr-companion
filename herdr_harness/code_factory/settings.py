@@ -183,10 +183,12 @@ class CodeFactorySettings:
     poll_seconds: int = 60
     trigger_label: str = "herdr-autofix"
     allowed_authors: tuple[str, ...] = ()
-    planner_model: str = "openai-codex/gpt-6-astra"
-    planner_thinking: str = "xhigh"
-    implementer_model: str = "ollama-cloud/deepseek-v4.1-flash:cloud"
-    implementer_thinking: str = "max"
+    planner_model: str = "anthropic/claude-fable-5-1"
+    planner_thinking: str = "high"
+    implementer_model: str = "openai-codex/gpt-6-sol"
+    implementer_thinking: str = "xhigh"
+    reviewer_model: str = "anthropic/claude-opus-5-5"
+    reviewer_thinking: str = "high"
     max_parallel_issues: int = 2
     max_review_rounds: int = 3
     max_ci_failures: int = 3
@@ -231,6 +233,7 @@ class CodeFactorySettings:
         checkout = _expand_path(checkout_raw, home) if checkout_raw.strip() else Path("")
         planner_thinking = _choice(environ, "PLANNER_THINKING", cls.planner_thinking, THINKING_LEVELS)
         implementer_thinking = _choice(environ, "IMPLEMENTER_THINKING", cls.implementer_thinking, THINKING_LEVELS)
+        reviewer_thinking = _choice(environ, "REVIEWER_THINKING", cls.reviewer_thinking, THINKING_LEVELS)
         trigger_label = _string(environ, "TRIGGER_LABEL", cls.trigger_label, maximum=50)
         if not LABEL_PATTERN.match(trigger_label):
             raise _invalid("code_factory.trigger_label must be 1-50 printable characters without commas")
@@ -248,6 +251,8 @@ class CodeFactorySettings:
             planner_thinking=planner_thinking,
             implementer_model=_model(environ, "IMPLEMENTER_MODEL", cls.implementer_model),
             implementer_thinking=implementer_thinking,
+            reviewer_model=_model(environ, "REVIEWER_MODEL", cls.reviewer_model),
+            reviewer_thinking=reviewer_thinking,
             max_parallel_issues=_integer(environ, "MAX_PARALLEL_ISSUES", cls.max_parallel_issues),
             max_review_rounds=_integer(environ, "MAX_REVIEW_ROUNDS", cls.max_review_rounds),
             max_ci_failures=_integer(environ, "MAX_CI_FAILURES", cls.max_ci_failures),
@@ -311,6 +316,8 @@ class CodeFactorySettings:
             "planner_thinking": self.planner_thinking,
             "implementer_model": self.implementer_model,
             "implementer_thinking": self.implementer_thinking,
+            "reviewer_model": self.reviewer_model,
+            "reviewer_thinking": self.reviewer_thinking,
             "release_enabled": self.release_enabled,
             "release_channel": self.release_channel,
             "max_review_rounds": self.max_review_rounds,

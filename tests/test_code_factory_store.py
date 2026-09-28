@@ -253,7 +253,7 @@ class AggregateTests(StoreTestCase):
         first = next(item for item in snapshot["issues"] if item["number"] == 1)
         self.assertEqual(set(first), ISSUE_KEYS)
         self.assertEqual(first["stage"], "review")
-        self.assertEqual(first["stageLabel"], "Reviewing (Astra)")
+        self.assertEqual(first["stageLabel"], "Reviewing (Opus)")
         self.assertEqual(first["stageIndex"], 6)
         self.assertEqual(len(first["events"]), 20)
         self.assertEqual(first["events"][0]["message"], "event 24")

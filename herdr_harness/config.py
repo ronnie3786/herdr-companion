@@ -128,6 +128,8 @@ ENVIRONMENT_FIELDS = {
         "planner_thinking": "HERDR_CODE_FACTORY_PLANNER_THINKING",
         "implementer_model": "HERDR_CODE_FACTORY_IMPLEMENTER_MODEL",
         "implementer_thinking": "HERDR_CODE_FACTORY_IMPLEMENTER_THINKING",
+        "reviewer_model": "HERDR_CODE_FACTORY_REVIEWER_MODEL",
+        "reviewer_thinking": "HERDR_CODE_FACTORY_REVIEWER_THINKING",
         "max_parallel_issues": "HERDR_CODE_FACTORY_MAX_PARALLEL_ISSUES",
         "max_review_rounds": "HERDR_CODE_FACTORY_MAX_REVIEW_ROUNDS",
         "max_ci_failures": "HERDR_CODE_FACTORY_MAX_CI_FAILURES",

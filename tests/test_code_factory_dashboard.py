@@ -257,7 +257,7 @@ class StateTests(DashboardTestCase):
         self.assertEqual(payload["releases"][0]["tag"], "macos-v0.20.1-beta.1")
         self.assertEqual(payload["releases"][0]["issueNumbers"], [14])
         issue = next(item for item in payload["issues"] if item["number"] == 12)
-        self.assertEqual(issue["stageLabel"], "Reviewing (Astra)")
+        self.assertEqual(issue["stageLabel"], "Reviewing (Opus)")
         self.assertEqual(issue["sessions"][0]["costUSD"], 0.12)
         self.assertEqual(issue["events"][0]["message"], "Review round 1 started")
         self.assertNotIn("planJson", issue)

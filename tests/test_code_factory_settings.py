@@ -33,10 +33,12 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(settings.poll_seconds, 60)
         self.assertEqual(settings.trigger_label, "herdr-autofix")
         self.assertEqual(settings.allowed_authors, ())
-        self.assertEqual(settings.planner_model, "openai-codex/gpt-6-astra")
-        self.assertEqual(settings.planner_thinking, "xhigh")
-        self.assertEqual(settings.implementer_model, "ollama-cloud/deepseek-v4.1-flash:cloud")
-        self.assertEqual(settings.implementer_thinking, "max")
+        self.assertEqual(settings.planner_model, "anthropic/claude-fable-5-1")
+        self.assertEqual(settings.planner_thinking, "high")
+        self.assertEqual(settings.implementer_model, "openai-codex/gpt-6-sol")
+        self.assertEqual(settings.implementer_thinking, "xhigh")
+        self.assertEqual(settings.reviewer_model, "anthropic/claude-opus-5-5")
+        self.assertEqual(settings.reviewer_thinking, "high")
         self.assertEqual(settings.max_parallel_issues, 2)
         self.assertEqual(settings.max_review_rounds, 3)
         self.assertEqual(settings.max_ci_failures, 3)
@@ -97,6 +99,8 @@ class OverrideTests(unittest.TestCase):
             planner_thinking="high",
             implementer_model="ollama-cloud/model:cloud",
             implementer_thinking="low",
+            reviewer_model="anthropic/reviewer-x",
+            reviewer_thinking="max",
             max_parallel_issues="4",
             max_review_rounds="0",
             max_ci_failures="5",
@@ -130,6 +134,8 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.planner_thinking, "high")
         self.assertEqual(settings.implementer_model, "ollama-cloud/model:cloud")
         self.assertEqual(settings.implementer_thinking, "low")
+        self.assertEqual(settings.reviewer_model, "anthropic/reviewer-x")
+        self.assertEqual(settings.reviewer_thinking, "max")
         self.assertEqual(settings.max_parallel_issues, 4)
         self.assertEqual(settings.max_review_rounds, 0)
         self.assertEqual(settings.max_ci_failures, 5)
@@ -157,7 +163,7 @@ class OverrideTests(unittest.TestCase):
     def test_blank_values_use_defaults(self):
         settings = CodeFactorySettings.from_environ(environ(poll_seconds="  ", planner_model="", release_enabled=""))
         self.assertEqual(settings.poll_seconds, 60)
-        self.assertEqual(settings.planner_model, "openai-codex/gpt-6-astra")
+        self.assertEqual(settings.planner_model, "anthropic/claude-fable-5-1")
         self.assertTrue(settings.release_enabled)
 
     def test_summaries_never_expose_the_token(self):
@@ -170,6 +176,7 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(settings.public_summary()["max_ci_failures"], 3)
         self.assertEqual(settings.public_summary()["reviser_session_timeout_seconds"], 7200)
         self.assertEqual(settings.public_summary()["max_rebase_attempts"], 2)
+        self.assertEqual(settings.public_summary()["reviewer_model"], "anthropic/claude-opus-5-5")
         self.assertEqual(settings.session_timeout_for("reviser"), 7200)
         self.assertEqual(settings.session_timeout_for("rebase"), 7200)
         self.assertEqual(settings.session_timeout_for("planner"), 3600)
@@ -226,6 +233,8 @@ class ValidationTests(unittest.TestCase):
         self.assert_invalid(environ(planner_model="bad model"), "planner_model")
         self.assert_invalid(environ(implementer_model="x" * 201), "implementer_model")
         self.assert_invalid(environ(implementer_model="model;rm"), "implementer_model")
+        self.assert_invalid(environ(reviewer_model="model;rm"), "reviewer_model")
+        self.assert_invalid(environ(reviewer_thinking="invalid"), "reviewer_thinking")
 
     def test_labels_authors_and_branches(self):
         self.assert_invalid(environ(trigger_label="a,b"), "trigger_label")

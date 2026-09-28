@@ -136,7 +136,10 @@ struct FirstMateMentionPicker: View {
     static let maximumHeight: CGFloat = 320
     static let rowHeight: CGFloat = 34
     static let labelHeight: CGFloat = 24
-    static let floatFill = Color(.sRGB, red: 25 / 255, green: 24 / 255, blue: 32 / 255, opacity: 0.95)
+    /// The design's float surface (#191820 at 95% over a 20 pt backdrop
+    /// blur). Without the blur, 5% lets the transcript's text show through,
+    /// so the native surface is opaque.
+    static let floatFill = Color(.sRGB, red: 25 / 255, green: 24 / 255, blue: 32 / 255, opacity: 1)
 
     private var features: [(Int, FirstMateMentionOption)] {
         options.enumerated().filter { $0.element.section == .features }.map { ($0.offset, $0.element) }

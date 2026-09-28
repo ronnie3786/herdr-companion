@@ -10,6 +10,27 @@ enum PromptComposerSubmission {
         canControl: Bool,
         dispositionIsAvailable: Bool
     ) -> Bool {
+        hasReadyContent(
+            draft: draft,
+            attachments: attachments,
+            quoteCount: quoteCount,
+            conversationReferenceCount: conversationReferenceCount
+        )
+            && !isSubmitting
+            && canControl
+            && dispositionIsAvailable
+    }
+
+    /// The staged-content half of readiness, independent of the destination's
+    /// control and submission state. Asynchronous completions pair this with
+    /// `PromptComposerDestination.isReadyToSubmit` so a completion that resumes
+    /// after a suspension never trusts the view snapshot that started it.
+    static func hasReadyContent(
+        draft: String,
+        attachments: [TerminalAttachment],
+        quoteCount: Int,
+        conversationReferenceCount: Int
+    ) -> Bool {
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasUploadedAttachment = attachments.contains {
             $0.status == .uploaded && $0.uploadedPath != nil
@@ -19,9 +40,6 @@ enum PromptComposerSubmission {
         }
         return (hasText || hasUploadedAttachment || quoteCount > 0 || conversationReferenceCount > 0)
             && !hasUnreadyAttachment
-            && !isSubmitting
-            && canControl
-            && dispositionIsAvailable
     }
 
     static func applyingUploadSuccess(

@@ -125,6 +125,35 @@ struct FirstMateComposerAsyncTests {
         #expect(store.isDemo)
     }
 
+    @Test("A failed dictation send preserves the transcript and retry reuses its request identity")
+    func dictationRetryReusesRequestIdentity() async throws {
+        let client = RetryingFirstMateComposerClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        let context = store.operationContext
+        let draft = try #require(
+            PromptComposerDictationSession.appending("Ship the fix", to: "Existing direction")
+        )
+        let payload = PromptComposerSubmission.payload(
+            draft: draft,
+            attachments: [],
+            quotes: [],
+            references: [],
+            containsDictation: true
+        )
+
+        // The first attempt fails; the exact payload and its request identity
+        // must survive for an explicit retry.
+        #expect(!(await store.sendPreparedMessage(payload, expectedContext: context)))
+        #expect(store.error != nil)
+        #expect(await store.sendPreparedMessage(payload, expectedContext: context))
+
+        let requests = await client.requestIDs
+        #expect(requests.count == 2)
+        #expect(Set(requests).count == 1)
+    }
+
     @Test("Cancellation and release before fake entry cannot strand continuations")
     func cancellationBeforeContinuationEntry() async throws {
         let client = DeferredFirstMateComposerClient(deferOperationEntry: true)
@@ -319,4 +348,59 @@ private actor DeferredFirstMateComposerClient: FirstMateClient {
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse { throw APIError.invalidResponse }
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse { throw APIError.invalidResponse }
+}
+
+/// Fails the first `sendFirstMateMessage` and records every request identity,
+/// so a dictation retry can prove it reuses the original request ID.
+private actor RetryingFirstMateComposerClient: FirstMateClient {
+    private(set) var requestIDs: [String] = []
+
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        .init(ok: true, capabilities: ["first-mate-v1"])
+    }
+
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
+        try await fetchFirstMateFeatures(scope: .active)
+    }
+
+    func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList {
+        .init(ok: true, features: FirstMateDemo.features(step: 0).map(\.feature))
+    }
+
+    func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
+        try #require(FirstMateDemo.features(step: 0).first { $0.feature.id == id })
+    }
+
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
+        requestIDs.append(requestID)
+        if requestIDs.count == 1 { throw APIError.invalidResponse }
+        guard let snapshot = FirstMateDemo.features(step: 0).first(where: { $0.feature.id == featureID }) else {
+            throw APIError.invalidResponse
+        }
+        return snapshot
+    }
+
+    func uploadFirstMateAttachment(
+        featureID: String,
+        fileURL: URL,
+        contentType: String
+    ) async throws -> AttachmentUploadResponse {
+        throw APIError.invalidResponse
+    }
+
+    func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+
+    func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+
+    func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
+        throw APIError.invalidResponse
+    }
+
+    func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse {
+        throw APIError.invalidResponse
+    }
 }

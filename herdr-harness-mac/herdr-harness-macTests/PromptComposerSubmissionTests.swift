@@ -105,6 +105,28 @@ struct PromptComposerSubmissionTests {
         #expect(updated[1].status == .failed)
     }
 
+    @Test("The dictation append rule trims, separates, and refuses empty text")
+    func dictationAppend() {
+        #expect(PromptComposerDictationSession.appending("  Ship the fix \n", to: "Existing direction")
+            == "Existing direction\n\nShip the fix")
+        #expect(PromptComposerDictationSession.appending("Ship the fix", to: "  ") == "Ship the fix")
+        #expect(PromptComposerDictationSession.appending("   \n", to: "Existing direction") == nil)
+    }
+
+    @Test("An appended dictation payload carries the transcription marker")
+    func appendedDictationMarker() throws {
+        let draft = try #require(PromptComposerDictationSession.appending("Ship the fix", to: "Existing direction"))
+        let payload = PromptComposerSubmission.payload(
+            draft: draft,
+            attachments: [],
+            quotes: [],
+            references: [],
+            containsDictation: true
+        )
+        #expect(payload.hasPrefix("Existing direction\n\nShip the fix"))
+        #expect(payload.hasSuffix("(transcribed audio, please account for incorrect names or typos)"))
+    }
+
     @Test("Quotes and files share deterministic inline serialization")
     func serialization() throws {
         let quoteID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))

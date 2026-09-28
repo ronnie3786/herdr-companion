@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import Testing
-import Vision
 @testable import herdr_harness_mac
 
 @Suite("Composer paste actions", .serialized)
@@ -70,13 +69,7 @@ struct ComposerPasteIntegrationTests {
         if route.contains("button") {
             // Both composers show Paste code in the `+` popover's window.
             let (target, targetView) = try await popoverWindow(for: window, excluding: earlierWindows)
-            // The popover fades in; wait until its Paste row has drawn.
-            var found: NSPoint?
-            for _ in 0..<20 where found == nil {
-                found = try? pasteButtonLocation(in: targetView, recordsIssue: false)
-                if found == nil { try await Task.sleep(for: .milliseconds(50)) }
-            }
-            let location = try found ?? pasteButtonLocation(in: targetView)
+            let location = try pasteButtonLocation(in: targetView)
             let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [], timestamp: 0,
                 windowNumber: target.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
             let up = try #require(NSEvent.mouseEvent(with: .leftMouseUp, location: location, modifierFlags: [], timestamp: 0.1,
@@ -141,27 +134,22 @@ struct ComposerPasteIntegrationTests {
         view.subviews.flatMap { [$0] + descendants($0) }
     }
 
-    private func pasteButtonLocation(in host: NSView, recordsIssue: Bool = true) throws -> NSPoint {
-        // Find the rendered CTA rather than assuming font-dependent coordinates.
-        // SwiftUI does not expose its AX children in this hosted unit-test process.
+    private func pasteButtonLocation(in host: NSView) throws -> NSPoint {
+        // SwiftUI does not expose its AX children in this hosted test process.
+        // Paste is the final ComposerAddMenuContent row, inside 6pt padding.
+        // Click within its minimum height, measured up from the content's bottom,
+        // so text rasterization, font metrics, and the Attach row do not locate it.
+        // The real mouse events and draft/selection/undo assertions verify the action.
         host.layoutSubtreeIfNeeded()
-        let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(host.bounds.width * 2),
-            pixelsHigh: Int(host.bounds.height * 2), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
-            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
-        bitmap.size = host.bounds.size
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let image = try #require(bitmap.cgImage)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.minimumTextHeight = 0.005
-        try HerdrOCR.perform(request, image: image)
-        let match = request.results?.first { $0.topCandidates(1).first?.string.lowercased().contains("paste") == true }
-        guard recordsIssue || match != nil else { throw CancellationError() }
-        let label = try #require(match)
-        let text = try #require(label.topCandidates(1).first)
-        let range = try #require(text.string.lowercased().range(of: "paste"))
-        let box = try #require(try text.boundingBox(for: range)).boundingBox
-        let point = NSPoint(x: box.midX * host.bounds.width, y: (host.isFlipped ? 1 - box.midY : box.midY) * host.bounds.height)
+        let padding: CGFloat = 6
+        let rowHeight = HerdrTheme.ControlHeight.row
+        try #require(host.bounds.width > padding * 2)
+        try #require(host.bounds.height >= padding * 2 + rowHeight)
+        let inset = padding + rowHeight / 2
+        let point = NSPoint(
+            x: host.bounds.midX,
+            y: host.isFlipped ? host.bounds.maxY - inset : host.bounds.minY + inset
+        )
         return host.convert(point, to: nil)
     }
 }

@@ -27,10 +27,14 @@ struct PaneGitWebDocument: Equatable {
     }
 
     init(configuration: ServerConfiguration, firstMateTarget: FirstMateGitWindowTarget) {
-        self.init(configuration: configuration, routeItems: [
+        var routeItems = [
             URLQueryItem(name: "firstMate", value: firstMateTarget.featureID),
             URLQueryItem(name: "workspace", value: firstMateTarget.workspaceID),
-        ])
+        ]
+        if let commitSHA = firstMateTarget.commitSHA {
+            routeItems.append(URLQueryItem(name: "git_commit", value: commitSHA))
+        }
+        self.init(configuration: configuration, routeItems: routeItems)
     }
 
     private init(configuration: ServerConfiguration, routeItems: [URLQueryItem]) {

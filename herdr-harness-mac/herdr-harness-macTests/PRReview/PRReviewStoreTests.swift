@@ -391,12 +391,16 @@ private actor DiffResponseGate {
 
 /// Shared by the PR Review store suites; internal so a deleted-file revision
 /// regression can drive a failing diff load with the same stub.
-final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
+final class TestPRReviewClient: PRReviewClient, PRReviewGuideClient, @unchecked Sendable {
     private let delay: Duration?
     private let capabilitiesError: APIError?
     private let reviewError: APIError?
     private let createdReviewID: String?
     private let diffHandler: (@Sendable (String, String?) async throws -> PRReviewDiff)?
+    var comparisonHandler: (@Sendable (GitComparisonSelection) async throws -> PRReviewDiff)?
+    var capabilitiesResult: PRReviewCapabilities?
+    var commitsResult: PRReviewCommits?
+    var viewedHandler: (@Sendable ([String]) async throws -> [PRReviewFile])?
 
     init(
         delay: Duration? = nil,
@@ -417,6 +421,7 @@ final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
             throw capabilitiesError
         }
         try await pauseIfNeeded()
+        if let capabilitiesResult { return capabilitiesResult }
         return try decode("{\"ok\":true,\"capabilities\":[\"pr-review-v1\"],\"available\":true,\"skills\":[]}")
     }
 
@@ -439,6 +444,15 @@ final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
         if let diffHandler { return try await diffHandler(id, path) }
         return PRReviewDemo.diff()
     }
+    func prReviewCommits(id: String, baseSHA: String, headSHA: String) async throws -> PRReviewCommits {
+        guard let commitsResult else { throw APIError.invalidResponse }
+        return commitsResult
+    }
+    func prReviewDiff(id: String, path: String?, comparison: GitComparisonSelection, baseSHA: String, headSHA: String) async throws -> PRReviewDiff {
+        if let comparisonHandler { return try await comparisonHandler(comparison) }
+        guard comparison == .all else { throw APIError.invalidResponse }
+        return try await prReviewDiff(id: id, path: path)
+    }
     func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?) async throws -> PRReviewFileText { throw APIError.invalidResponse }
     func prReviewFindings(id: String, path: String) async throws -> PRReviewFindings { throw APIError.invalidResponse }
     func createPRReviewRun(id: String, skillID: String, requestID: String) async throws -> PRReviewRun { throw APIError.invalidResponse }
@@ -449,6 +463,7 @@ final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
     func rankPRReview(id: String, requestID: String) async throws -> PRReviewSummary { PRReviewDemo.snapshot().review }
     func setPRReviewRankings(id: String, files: [[String: String]], requestID: String) async throws -> [PRReviewFile] { [] }
     func setPRReviewViewed(id: String, paths: [String], viewed: Bool, requestID: String) async throws -> [PRReviewFile] {
+        if let viewedHandler { return try await viewedHandler(paths) }
         try await pauseIfNeeded()
         return PRReviewDemo.snapshot().files
     }
@@ -458,6 +473,30 @@ final class TestPRReviewClient: PRReviewClient, @unchecked Sendable {
     func prReviewDocument(reviewID: String, documentID: String) async throws -> PRReviewDocument { throw APIError.invalidResponse }
     func downloadPRReviewDocument(reviewID: String, documentID: String, expectedByteSize: Int64, to destinationURL: URL) async throws { throw APIError.invalidResponse }
     func prReviewEvents(id: String, after: Int?) async throws -> [PRReviewEvent] { [] }
+
+    func startPRReviewGuide(reviewID: String, request: PRReviewGuideRequest) async throws -> PRReviewGuide {
+        let scope = PRReviewGuideScope(machineID: "synthetic-host", reviewID: reviewID, baseSHA: request.baseSHA, headSHA: request.headSHA)
+        var guide = PRReviewGuideDemo.make(scope: scope, question: request.question)
+        if let path = request.path, var chapter = guide.chapters?.first, var segment = chapter.segments.first {
+            segment.path = path; segment.startLine = nil; segment.endLine = nil; segment.drawings = []
+            chapter.segments = [segment]; guide.chapters = [chapter]
+        }
+        if let selection = request.comparison, let comparisonHandler {
+            guide.comparison = try await comparisonHandler(selection).comparison
+        }
+        return guide
+    }
+    func fetchPRReviewGuide(reviewID: String, guideID: String) async throws -> PRReviewGuide { throw APIError.invalidResponse }
+    func prReviewNarrationCapabilities() async throws -> PRReviewNarrationCapabilities {
+        .init(available: true, voices: ["synthetic"], defaultVoice: "synthetic", reason: nil)
+    }
+    func captionedPRReviewSpeech(text: String, voice: String, drawings: [PRReviewGuideDrawing]) async throws -> PRReviewNarrationManifest {
+        let data = Data("synthetic-recording".utf8)
+        return .init(available: true, script: text, voice: voice, audioBase64: data.base64EncodedString(), contentType: "audio/wav",
+                     scriptSHA256: PRReviewNarrationManifest.sha256(Data(text.utf8)), audioSHA256: PRReviewNarrationManifest.sha256(data),
+                     duration: 1, words: [.init(word: "Synthetic", start: 0, end: 1)], cues: [])
+    }
+    func transcribeVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse { throw APIError.invalidResponse }
 
     private func pauseIfNeeded() async throws {
         if let delay {

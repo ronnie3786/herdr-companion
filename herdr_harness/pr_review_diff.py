@@ -1,13 +1,23 @@
 """Small, dependency-free unified diff reader used by PR Review."""
 from __future__ import annotations
 
+import codecs
 import re
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
 
 
+def _decode_path(value: str) -> str:
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            return codecs.escape_decode(value[1:-1].encode("utf-8"))[0].decode("utf-8", "replace")
+        except (ValueError, UnicodeError):
+            return value
+    return value
+
+
 def _path(value: str) -> str | None:
-    value = value.split("\t", 1)[0]
+    value = _decode_path(value.split("\t", 1)[0])
     if value in {"/dev/null", "a/dev/null", "b/dev/null"}:
         return None
     return value[2:] if value.startswith(("a/", "b/")) else value
@@ -33,6 +43,10 @@ def parse_unified_diff(text: str, *, truncated: bool = False) -> list[dict]:
             header = raw[len("diff --git "):]
             old_text, separator, new_text = header.partition(" b/")
             old, new = (_path(old_text), _path("b/" + new_text)) if separator else (None, None)
+            if header.startswith('"'):
+                quoted = re.match(r'("(?:\\.|[^"\\])*") ("(?:\\.|[^"\\])*"|.*)$', header)
+                if quoted:
+                    old, new = _path(quoted[1]), _path(quoted[2])
             current = {
                 "path": new or old or "unknown",
                 "old_path": old,
@@ -51,10 +65,10 @@ def parse_unified_diff(text: str, *, truncated: bool = False) -> list[dict]:
         elif raw.startswith("deleted file mode "):
             current["status"] = "deleted"
         elif raw.startswith("rename from "):
-            current["old_path"] = raw[12:]
+            current["old_path"] = _decode_path(raw[12:])
             current["status"] = "renamed"
         elif raw.startswith("rename to "):
-            current["path"] = raw[10:]
+            current["path"] = _decode_path(raw[10:])
             current["status"] = "renamed"
         elif raw.startswith("Binary files ") or raw == "GIT binary patch":
             current["binary"] = True

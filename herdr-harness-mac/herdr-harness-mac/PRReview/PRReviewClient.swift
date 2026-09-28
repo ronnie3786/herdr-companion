@@ -11,6 +11,9 @@ protocol PRReviewClient: Sendable {
     func prReview(id: String) async throws -> PRReviewSnapshot
     func refreshPRReview(id: String, requestID: String) async throws -> PRReviewSnapshot
     func archivePRReview(id: String, archived: Bool, requestID: String) async throws -> PRReviewSnapshot
+    func prReviewCommits(id: String, baseSHA: String, headSHA: String) async throws -> PRReviewCommits
+    func prReviewDiff(id: String, path: String?, comparison: GitComparisonSelection, baseSHA: String, headSHA: String) async throws -> PRReviewDiff
+    func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?, comparison: GitComparisonSelection, baseSHA: String, headSHA: String) async throws -> PRReviewFileText
     func prReviewDiff(id: String, path: String?) async throws -> PRReviewDiff
     func prReviewFileText(
         id: String,
@@ -98,5 +101,21 @@ enum PRReviewDocumentPayload: Sendable {
 extension PRReviewClient {
     func refreshPRReviewStatuses(requestID: String) async throws {
         throw APIError.server(status: 404, message: "Update the companion to refresh GitHub review states.")
+    }
+}
+
+// A legacy transport must never silently substitute a full-PR diff for a
+// selected historical comparison. Existing all-changes callers remain valid.
+extension PRReviewClient {
+    func prReviewCommits(id: String, baseSHA: String, headSHA: String) async throws -> PRReviewCommits {
+        throw APIError.server(status: 404, message: "Update the companion for commit comparisons.")
+    }
+    func prReviewDiff(id: String, path: String?, comparison: GitComparisonSelection, baseSHA: String, headSHA: String) async throws -> PRReviewDiff {
+        guard comparison == .all else { throw APIError.invalidResponse }
+        return try await prReviewDiff(id: id, path: path)
+    }
+    func prReviewFileText(id: String, path: String, side: PRReviewSide, start: Int?, end: Int?, comparison: GitComparisonSelection, baseSHA: String, headSHA: String) async throws -> PRReviewFileText {
+        guard comparison == .all else { throw APIError.invalidResponse }
+        return try await prReviewFileText(id: id, path: path, side: side, start: start, end: end)
     }
 }

@@ -1463,6 +1463,11 @@ class HerdrService:
             "truncated": payload.get("truncated", False),
         }
 
+    def pane_git_compare(self, pane_id: str, *, comparison: dict | None, file: str | None, expected_root: str) -> dict:
+        _, root = self._pane_tool_context(pane_id)
+        payload = self._tool_call(self.local_tools.git_compare, root, comparison, file=file, expected_root=expected_root)
+        return {**payload, "pane_id": pane_id}
+
     def first_mate_git_workspaces(self, feature_id: str) -> dict:
         """Return only Git roots explicitly recorded by this First Mate feature."""
 
@@ -1592,6 +1597,38 @@ class HerdrService:
             "hash": payload.get("hash", commit_hash), "file": payload.get("file", file),
             "diff": payload.get("diff", ""), "truncated": payload.get("truncated", False),
         })
+
+    def _first_mate_git_baseline(self, feature_id: str, workspace_id: str) -> dict | None:
+        # Comparison inception is independent of a step's observed interval.
+        # Only server-captured evidence for this exact workspace is eligible.
+        snapshot = self.first_mate_store.snapshot(feature_id)
+        legacy_start = None
+        for visit in sorted(snapshot.get("visits", []), key=lambda item: (item.get("created_at", ""), item.get("id", ""))):
+            for evidence in [*(visit.get("git_baselines") or []), *(visit.get("git_evidence") or [])]:
+                if evidence.get("workspace_id") != workspace_id:
+                    continue
+                if evidence.get("comparison_baseline_sha"):
+                    return {"sha": evidence["comparison_baseline_sha"], "label": evidence.get("comparison_baseline_label") or "Target branch"}
+                legacy_start = legacy_start or evidence.get("start_sha")
+        if workspace_id != "project":
+            assignment = self.first_mate_store.get_assignment(workspace_id)
+            if assignment.get("feature_id") == feature_id:
+                metadata = assignment.get("metadata") or {}
+                if metadata.get("comparison_baseline_sha"):
+                    return {"sha": metadata["comparison_baseline_sha"], "label": metadata.get("comparison_baseline_label") or "Target branch"}
+        if legacy_start:
+            # A moving target may contain some or all earlier feature work.
+            # A step start alone cannot prove the original target baseline.
+            raise workspace_tools.WorkspaceToolError(
+                "The original target baseline was not captured for this workspace. Its historical comparison is unavailable.",
+                code="git_baseline_unavailable", status=409)
+        # Existing features without visit evidence keep the current target view.
+        return None
+
+    def first_mate_git_compare(self, feature_id: str, workspace_id: str, *, comparison: dict | None, file: str | None, expected_root: str) -> dict:
+        _, root = self._first_mate_git_context(feature_id, workspace_id)
+        payload = self._tool_call(self.local_tools.git_compare, root, comparison, file=file, expected_root=expected_root, baseline=self._first_mate_git_baseline(feature_id, workspace_id))
+        return self._first_mate_git_payload(feature_id, workspace_id, payload)
 
     def workspace_skills(self, workspace_id: str) -> dict:
         _, root = self._workspace_tool_context(workspace_id)
@@ -3140,7 +3177,7 @@ class HerdrService:
         )
 
     def start_contextual_question(self, request: dict) -> dict:
-        from .assistant import PR_REVIEW_PROFILE, start, validate_context
+        from .assistant import PR_REVIEW_PROFILE, start, validate_context, replay
         validate_context(request.get("context"))
         if request.get("profile") == PR_REVIEW_PROFILE:
             scope = request.get("scope") or {}
@@ -3155,6 +3192,64 @@ class HerdrService:
             if not isinstance(checkout, str) or not Path(checkout).is_dir():
                 raise AgentRunError("PR review checkout is unavailable.", code="invalid_assistant_scope", status=400)
             return start(self.agent_runs, request=request, cwd=str(Path(checkout).resolve()), pane_id=None, workspace_id=review.get("workspace_id"))
+        if request.get("profile") == "git-question-v1":
+            accepted = replay(self.agent_runs, request)
+            if accepted is not None:
+                return accepted
+            from .git_inspection import capture_source, manifest, working_paths, source_digest
+            scope = request.get("scope") or {}
+            if not isinstance(scope, dict):
+                raise AgentRunError("Git scope is invalid.", code="invalid_assistant_scope", status=400)
+            pane_id, feature_id = request.get("paneId"), scope.get("firstMateFeatureId")
+            if (pane_id is None) == (feature_id is None):
+                raise AgentRunError("Choose one Git workspace target.", code="invalid_assistant_scope", status=400)
+            if feature_id is not None:
+                workspace_id = scope.get("workspaceId", "project")
+                if not isinstance(feature_id, str) or not isinstance(workspace_id, str):
+                    raise AgentRunError("Git workspace target is invalid.", code="invalid_assistant_scope", status=400)
+                _, root = self._first_mate_git_context(feature_id, workspace_id)
+            else:
+                pane, root = self._pane_tool_context(pane_id)
+                workspace_id = pane.get("workspace_id")
+            expected = scope.get("expectedRootPath")
+            if not isinstance(expected, str) or not expected:
+                raise AgentRunError("The expected repository is required.", code="invalid_assistant_scope", status=400)
+            baseline = self._first_mate_git_baseline(feature_id, workspace_id) if feature_id is not None else None
+            response = self.local_tools.git_compare(root, scope.get("comparison"), expected_root=expected, baseline=baseline)
+            if scope.get("comparisonId") != response["comparison"]["id"]:
+                raise AgentRunError("The Git comparison changed. Refresh before asking.", code="assistant_scope_changed", status=409)
+            repository = Path(response["root_path"])
+            capture_id = hashlib.sha256((str(repository) + response["comparison"]["id"]).encode()).hexdigest()
+            working = response["comparison"]["mode"] == "working-tree"
+            names = working_paths(repository) if working else []
+            before_digest = source_digest(repository, names) if working else None
+            source_parent = self.agent_runs.runs_root / "git-sources"
+            source_parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            # Committed evidence is read lazily by SHA. Only mutable content
+            # needs a complete private snapshot before the question starts.
+            source = (capture_source(repository, "working-tree", source_parent, identity=capture_id) if working
+                      else Path(tempfile.mkdtemp(prefix="question-", dir=source_parent)))
+            if working:
+                try:
+                    verified = self.local_tools.git_compare(root, scope.get("comparison"), expected_root=expected, baseline=baseline)
+                    if (verified["comparison"]["id"] != response["comparison"]["id"] or names != working_paths(repository)
+                            or before_digest != source_digest(source, names) or before_digest != source_digest(repository, names)):
+                        raise AgentRunError("Working files changed while capturing this question. Refresh and retry.", code="assistant_scope_changed", status=409)
+                except Exception:
+                    import shutil
+                    shutil.rmtree(source, ignore_errors=True)
+                    raise
+            inspection = manifest(repository, response, working_tree=source if working else None)
+            inspection["captured_source"] = str(source)
+            try:
+                return start(self.agent_runs, request=request, cwd=str(source), pane_id=pane_id, workspace_id=workspace_id,
+                             git_inspection=inspection, source_root=str(repository))
+            finally:
+                # The manager adopts the snapshot into its run directory. On
+                # rejected/racing starts this removes the unused staging copy.
+                import shutil
+                shutil.rmtree(source, ignore_errors=True)
+                source.with_name(source.name + ".complete").unlink(missing_ok=True)
         pane_id = request.get("paneId")
         cwd = str(self._server_home())
         workspace_id = None
@@ -3243,7 +3338,7 @@ class HerdrService:
             if run.get("status") == "promoted":
                 return self.agent_runs.get(run["id"])
             try:
-                if run.get("profile") == "contextual-question-v1":
+                if run.get("profile") in {"contextual-question-v1", "git-question-v1"}:
                     scope = run["assistantScope"]
                     if scope.get("paneId"):
                         _, current_root = self._pane_tool_context(scope["paneId"])
@@ -3251,11 +3346,17 @@ class HerdrService:
                             current_root = workspace_tools.git_root(current_root)
                         if str(current_root.resolve()) != scope["rootPath"]:
                             raise AgentRunError("The source repository changed before handoff.", code="assistant_scope_changed", status=409)
+                    if run.get("profile") == "git-question-v1" and scope.get("firstMateFeatureId"):
+                        _, current_root = self._first_mate_git_context(scope["firstMateFeatureId"], scope["workspaceId"])
+                        if str(workspace_tools.git_root(current_root).resolve()) != scope["rootPath"]:
+                            raise AgentRunError("The source repository changed before handoff.", code="assistant_scope_changed", status=409)
                     if workspace_id is not None and workspace_id != scope.get("workspaceId"):
                         raise AgentRunError("Handoff must use the question's workspace.", code="assistant_scope_changed", status=409)
                     if cwd is not None and str(Path(cwd).resolve()) != scope["rootPath"]:
                         raise AgentRunError("Handoff must use the question's directory.", code="assistant_scope_changed", status=409)
-                    workspace_id = scope.get("workspaceId")
+                    # Feature workspace IDs are First Mate aliases, not Herdr
+                    # terminal workspace IDs. The exact repository is the cwd.
+                    workspace_id = None if scope.get("firstMateFeatureId") else scope.get("workspaceId")
                     cwd = scope["rootPath"]
                 result = self.quick_pi_session(
                     str(run.get("label") or "Agent chat")[:120],

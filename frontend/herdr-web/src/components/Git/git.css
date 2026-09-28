@@ -17,6 +17,48 @@
   min-height: 0;
   overflow: hidden;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hz-git-view-modes, .hz-comparison-toolbar, .hz-comparison-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hz-git-view-modes, .hz-comparison-toolbar {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.hz-git-view-modes button, .hz-comparison-toolbar button, .hz-comparison-controls select {
+  color: var(--fg, #e8eaed);
+  background: var(--surface, #161b22);
+  border: 1px solid var(--line, #30363d);
+  border-radius: 6px;
+  min-height: 30px;
+  padding: 4px 9px;
+}
+.hz-git-view-modes button[aria-pressed="true"] {
+  border-color: var(--accent, #a6a0ff);
+}
+.hz-comparison-workbench { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.hz-comparison-controls { flex: 1; min-width: 0; }
+.hz-comparison-controls label { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; font-size: 12px; }
+.hz-comparison-controls select { flex: 1; min-width: 0; width: 100%; }
+.hz-comparison-content { display: grid; grid-template-columns: minmax(190px, 26%) minmax(0, 1fr); flex: 1; min-height: 0; overflow: hidden; }
+.hz-comparison-files { overflow: auto; border-right: 1px solid var(--line); padding: 10px; }
+.hz-comparison-files p { font-size: 12px; color: var(--muted, #9ba2ad); margin: 4px 6px 10px; }
+.hz-comparison-files button { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; border: 0; border-radius: 6px; padding: 9px; background: transparent; color: var(--fg, #e8eaed); }
+.hz-comparison-files button span { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: 12px; }
+.hz-comparison-files button small { color: var(--muted, #9ba2ad); }
+.hz-comparison-files button:hover, .hz-comparison-files button[aria-current="true"] { background: var(--selection, #242a38); }
+.hz-comparison-content .hz-diff-title { flex: 1; min-width: 0; }
+@media (max-width: 760px) {
+  .hz-comparison-controls label { flex-direction: column; align-items: stretch; gap: 3px; }
+  .hz-comparison-toolbar { flex-wrap: wrap; }
+  .hz-comparison-controls { flex-basis: 100%; }
+  .hz-comparison-content { grid-template-columns: minmax(150px, 30%) minmax(0, 1fr); }
 }
 
 .hz-git-workbench {

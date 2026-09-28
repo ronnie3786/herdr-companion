@@ -96,7 +96,7 @@ struct PRReviewContainerView: View {
     }
 
     private var guideScopeIdentity: String {
-        "\(store.currentMachineID ?? "")|\(store.selectedReviewID ?? "")|\(store.snapshot?.review.baseSHA ?? "")|\(store.snapshot?.review.headSHA ?? "")|\(store.guideConnectionGeneration)|\(store.capabilities?.capabilities.contains("pr-review-guide-v1") == true)"
+        "\(store.currentMachineID ?? "")|\(store.selectedReviewID ?? "")|\(store.snapshot?.review.baseSHA ?? "")|\(store.snapshot?.review.headSHA ?? "")|\(store.comparisonSelection.identity)|\(store.currentComparison?.id ?? "")|\(store.guideConnectionGeneration)|\(store.capabilities?.capabilities.contains("pr-review-guide-v1") == true)"
     }
 
     private func header(_ review: PRReviewSummary) -> some View {

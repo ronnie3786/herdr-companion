@@ -11,7 +11,8 @@ from .agent_runs import AgentRunError, TERMINAL_STATUSES
 
 PROFILE = "contextual-question-v1"
 PR_REVIEW_PROFILE = "pr-review-question-v1"
-QUESTION_PROFILES = frozenset({PROFILE, PR_REVIEW_PROFILE})
+GIT_PROFILE = "git-question-v1"
+QUESTION_PROFILES = frozenset({PROFILE, PR_REVIEW_PROFILE, GIT_PROFILE})
 PR_REVIEW_CHARTER = (
     "Always give me the ‘short version’ unless I ask for the long version or for more details. "
     "Answer the user's question about a pull request under review. The attached context items "
@@ -55,7 +56,7 @@ def capabilities() -> dict:
         PROFILE as RESPONSE_BRIEF_PROFILE,
     )
 
-    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE, SMART_RENAME_PROFILE, ISSUE_REPORT_DRAFT_PROFILE_V1], "contextVersions": [1],
+    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, GIT_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE, SMART_RENAME_PROFILE, ISSUE_REPORT_DRAFT_PROFILE_V1], "contextVersions": [1],
             "hudChats": {"retention": "indefinite", "tools": "normal-pi", "history": "/api/v1/hud-chats"},
             "hudChatWorkingDirectory": True,
             "prReviewQuestions": {"version": 1, "tools": "read-only-in-checkout", "scope": "reviewId"},
@@ -142,7 +143,26 @@ def _request_path(manager, key: str) -> Path:
     return directory / (hashlib.sha256(key.encode()).hexdigest() + ".json")
 
 
-def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id: str | None) -> dict:
+def replay(manager, request: dict) -> dict | None:
+    """Reconcile an accepted request before consulting mutable viewer state."""
+    fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    with manager._lock:
+        receipt = _request_path(manager, request.get("clientRequestId"))
+        if not receipt.exists():
+            return None
+        saved = json.loads(receipt.read_text())
+        if saved["hash"] != fingerprint:
+            fail("This request ID was already used for another question.", "assistant_request_conflict", 409)
+        if saved.get("runId") is None:
+            for path in manager.runs_root.glob("agr_*/run.json"):
+                candidate = json.loads(path.read_text())
+                if candidate.get("clientRequestId") == request["clientRequestId"]:
+                    return manager.get(candidate["id"])
+            fail("Submission was interrupted. Start a new question attempt.", "assistant_submission_interrupted", 409)
+        return manager.get(saved["runId"])
+
+
+def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id: str | None, git_inspection: dict | None = None, source_root: str | None = None) -> dict:
     """One manager owns this store. Its lock serializes claim, append and promotion."""
     profile = request.get("profile")
     context = validate_context(request.get("context"))
@@ -166,10 +186,15 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
             fail("This restricted Agent run profile is not supported.")
         brief_length = validate_request(request, context)
     expected = request.get("scope", {})
-    if not isinstance(expected, dict) or set(expected) - {"expectedRootPath", "reviewId"}:
+    allowed_scope = {"expectedRootPath", "reviewId"} | ({"firstMateFeatureId", "workspaceId", "comparison", "comparisonId"} if profile == GIT_PROFILE else set())
+    if not isinstance(expected, dict) or set(expected) - allowed_scope:
         fail("Question scope is invalid.")
     canonical = str(Path(cwd).resolve())
-    scope = {"paneId": pane_id, "workspaceId": workspace_id, "rootPath": canonical}
+    scope = {"paneId": pane_id, "workspaceId": workspace_id, "rootPath": source_root or canonical}
+    if profile == GIT_PROFILE:
+        if git_inspection is None:
+            fail("Git inspection scope is unavailable.", "invalid_assistant_scope")
+        scope.update(firstMateFeatureId=expected.get("firstMateFeatureId"), comparisonId=git_inspection["comparison"]["id"], headSHA=git_inspection["head_sha"])
     fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     with manager._lock:
         receipt = _request_path(manager, request.get("clientRequestId"))
@@ -186,7 +211,7 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
             return manager.get(saved["runId"])
         if expected.get("expectedRootPath") is not None:
             root = expected["expectedRootPath"]
-            if not isinstance(root, str) or str(Path(root).resolve()) != canonical:
+            if not isinstance(root, str) or str(Path(root).resolve()) != scope["rootPath"]:
                 fail("The repository changed. Start a new question from the current view.", "assistant_scope_changed", 409)
         parent = request.get("continueFromRunId")
         sequence = 0
@@ -220,6 +245,8 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
             os.fsync(handle.fileno())
         assistant_metadata = {"profile": profile, "context": context, "assistantScope": scope,
                               "clientRequestId": request["clientRequestId"]}
+        if git_inspection is not None:
+            assistant_metadata["gitInspection"] = git_inspection
         if profile in QUESTION_PROFILES:
             assistant_metadata["assistantSequence"] = sequence
             if profile == PR_REVIEW_PROFILE:

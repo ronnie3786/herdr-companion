@@ -16,6 +16,17 @@ beforeEach(() => {
   vi.stubGlobal("sessionStorage", { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value) });
 });
 describe("contextual conversation ownership", () => {
+  it("requires the Git inspection capability and submits the restricted Git profile", async () => {
+    const { transport } = setup();
+    const start = vi.fn(async (_request: AssistantRequest) => run);
+    const session = new AssistantSession("git", "pane", "/example", context, { ...transport, start }, "git-question-v1");
+    await session.prepare();
+    expect(session.state.ready).toBe(false);
+    const available = new AssistantSession("git-new", "pane", "/example", context,
+      { ...transport, start, capabilities: async () => ({ profiles: ["git-question-v1"] }) }, "git-question-v1");
+    await available.prepare(); available.setDraft("Did a later commit fix this?"); await available.submit();
+    expect(start.mock.calls[0]?.[0]).toMatchObject({ profile: "git-question-v1", mode: "ask" });
+  });
   it("reconciles an uncertain POST with the exact request ID and frozen context", async () => {
     const requests: AssistantRequest[] = [];
     const { session } = setup(async (request) => {

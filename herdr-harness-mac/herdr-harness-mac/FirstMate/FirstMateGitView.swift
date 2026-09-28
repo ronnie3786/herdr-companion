@@ -22,6 +22,7 @@ struct FirstMateGitView: View {
 
     @State private var catalog: FirstMateGitCatalog
     @State private var retryGeneration = 0
+    @State private var selectedCommitSHA: String?
     @Environment(\.colorScheme) private var scheme
     @Environment(\.herdrFontScale) private var fontScale
 
@@ -34,6 +35,7 @@ struct FirstMateGitView: View {
         configurationRevision: Int,
         pinnedWorkspaceID: String? = nil,
         initialWorkspaceID: String = "project",
+        initialCommitSHA: String? = nil,
         workspaceSelectionChanged: ((String) -> Void)? = nil,
         popOut: ((FirstMateGitWindowTarget) -> Void)? = nil
     ) {
@@ -44,6 +46,7 @@ struct FirstMateGitView: View {
         self.configuration = configuration
         self.configurationRevision = configurationRevision
         self.pinnedWorkspaceID = pinnedWorkspaceID
+        _selectedCommitSHA = State(initialValue: initialCommitSHA)
         self.workspaceSelectionChanged = workspaceSelectionChanged
         self.popOut = popOut
         _catalog = State(initialValue: FirstMateGitCatalog(
@@ -114,6 +117,7 @@ struct FirstMateGitView: View {
                         get: { catalog.selectedWorkspaceID },
                         set: {
                             catalog.selectWorkspace(id: $0)
+                            selectedCommitSHA = nil
                             workspaceSelectionChanged?($0)
                         }
                     )
@@ -212,7 +216,7 @@ struct FirstMateGitView: View {
     }
 
     private var target: FirstMateGitWindowTarget {
-        .init(machineID: machineID, featureID: featureID, workspaceID: catalog.selectedWorkspaceID)
+        .init(machineID: machineID, featureID: featureID, workspaceID: catalog.selectedWorkspaceID, commitSHA: selectedCommitSHA)
     }
 
     private var machineName: String {
@@ -299,7 +303,8 @@ struct FirstMateGitWindowRoot: View {
             featureTitle: target.featureID,
             configuration: model.firstMateConfiguration(machineID: target.machineID),
             configurationRevision: model.machineConfigurationRevision(for: target.machineID),
-            pinnedWorkspaceID: target.workspaceID
+            pinnedWorkspaceID: target.workspaceID,
+            initialCommitSHA: target.commitSHA
         )
         .frame(minWidth: 720, minHeight: 520)
         .accessibilityElement(children: .contain)

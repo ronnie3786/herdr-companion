@@ -29,6 +29,7 @@ from .agent_runs import _assistant_text, _child_path
 from .child_environment import agent_environment
 from .normalization import pane_index
 from .pr_review_diff import line_window, parse_unified_diff
+from .git_comparison import comparison_identity, comparison_request, comparison_patch, first_parent_history, resolve_comparison
 from .pr_review_store import PRReviewError
 from .pr_review_status import REVIEW_QUERY, VIEWER_QUERY, viewer_review_summary
 
@@ -842,24 +843,72 @@ class PRReviewRuntime:
         key = hashlib.sha256(json.dumps([base, head, merge_base]).encode()).hexdigest()
         return self._review_dir(review_id) / "revisions" / key
 
-    def diff(self, review_id: str, path: str | None = None) -> dict[str, Any]:
+    def _comparison_review(self, review_id: str, base_sha: str | None = None, head_sha: str | None = None) -> dict:
         review = self.store.get_review(review_id, True)
-        document = self._revision_directory(review_id, review.get("base_sha"), review.get("head_sha"), review.get("merge_base_sha")) / "diff.json"
-        if not document.exists():
-            # Reviews prepared before revision-scoped artifacts remain readable.
-            document = self._review_dir(review_id) / "diff.json"
-        payload = json.loads(document.read_text(encoding="utf-8")) if document.exists() else {"files": [], "truncated": False}
-        files = [item for item in payload.get("files", []) if path is None or item.get("path") == path]
-        return {"review_id": review_id, "base_sha": review.get("base_sha"), "head_sha": review.get("head_sha"), "truncated": bool(payload.get("truncated")) or any(item.get("truncated") for item in files), "files": files}
+        if base_sha is not None and base_sha != review.get("base_sha") or head_sha is not None and head_sha != review.get("head_sha"):
+            raise PRReviewError("The pull request revision changed. Refresh the review.", code="stale_review_revision", status=409)
+        return review
 
-    def file_text(self, review_id: str, path: str, side: str, start: int, end: int) -> dict[str, Any]:
-        review = self.store.get_review(review_id, True)
+    def _comparison_run(self, review: dict, arguments: list[str]) -> str:
+        return self._run(["git", "--literal-pathspecs", "-C", str(review["checkout_path"]), *arguments], timeout=30).stdout
+
+    def commits(self, review_id: str, *, base_sha: str | None = None, head_sha: str | None = None) -> dict:
+        review = self._comparison_review(review_id, base_sha, head_sha)
+        if review.get("status") != "ready":
+            raise PRReviewError("The review is still preparing.", code="review_not_ready", status=409)
+        baseline = review.get("merge_base_sha") or review.get("base_sha")
+        commits = first_parent_history(lambda args: self._comparison_run(review, args), review.get("head_sha") or "", baseline)
+        self._comparison_review(review_id, review.get("base_sha"), review.get("head_sha"))
+        return {"review_id": review_id, "base_sha": review.get("base_sha"), "head_sha": review.get("head_sha"),
+                "baseline_sha": baseline, "baseline_label": review.get("base_ref") or "Target branch", "commits": commits, "truncated": False}
+
+    def diff(self, review_id: str, path: str | None = None, *, comparison: dict | None = None,
+             base_sha: str | None = None, head_sha: str | None = None) -> dict[str, Any]:
+        review = self._comparison_review(review_id, base_sha, head_sha)
+        selection = comparison_request(comparison)
+        if selection["mode"] == "working-tree":
+            raise PRReviewError("PR comparisons use committed revisions.", code="invalid_git_comparison", status=400)
+        baseline = review.get("merge_base_sha") or review.get("base_sha") or ""
+        resolved = comparison_identity("all", baseline, review.get("head_sha") or "", [])
+        if comparison is not None:
+            history = self.commits(review_id, base_sha=review.get("base_sha"), head_sha=review.get("head_sha"))
+            resolved = resolve_comparison(selection, history["commits"], before=baseline, after=review["head_sha"])
+        if selection["mode"] != "all":
+            def patch_run(arguments):
+                encoded = self._comparison_run(review, arguments).encode("utf-8")
+                return encoded[:MAX_DIFF_BYTES].decode("utf-8", "ignore"), len(encoded) > MAX_DIFF_BYTES
+            payload = comparison_patch(patch_run, resolved, path)
+        else:
+            document = self._revision_directory(review_id, review.get("base_sha"), review.get("head_sha"), review.get("merge_base_sha")) / "diff.json"
+            if not document.exists():
+                document = self._review_dir(review_id) / "diff.json"
+            payload = json.loads(document.read_text(encoding="utf-8")) if document.exists() else {"files": [], "truncated": False}
+            payload["files"] = [item for item in payload.get("files", []) if path is None or item.get("path") == path]
+        self._comparison_review(review_id, review.get("base_sha"), review.get("head_sha"))
+        files = payload["files"]
+        return {"review_id": review_id, "base_sha": review.get("base_sha"), "head_sha": review.get("head_sha"),
+                "comparison": resolved, "truncated": bool(payload.get("truncated")) or any(item.get("truncated") for item in files), "files": files}
+
+    def file_text(self, review_id: str, path: str, side: str, start: int, end: int, *, comparison: dict | None = None,
+                  base_sha: str | None = None, head_sha: str | None = None) -> dict[str, Any]:
+        review = self._comparison_review(review_id, base_sha, head_sha)
         sha = (review.get("merge_base_sha") or review.get("base_sha")) if side == "before" else review.get("head_sha")
-        if side not in {"before", "after"} or not sha:
+        resolved = None
+        actual_path = path
+        if comparison is not None:
+            diff = self.diff(review_id, comparison=comparison, base_sha=review.get("base_sha"), head_sha=review.get("head_sha"))
+            resolved = diff["comparison"]
+            sha = resolved["before_sha"] if side == "before" else resolved["after_sha"]
+            file = next((item for item in diff["files"] if item["path"] == path or item.get("old_path") == path), None)
+            if file is None:
+                raise PRReviewError("The file is outside this comparison.", code="invalid_request", status=400)
+            actual_path = (file.get("old_path") or file["path"]) if side == "before" else file["path"]
+        if side not in {"before", "after"} or not sha or path.startswith("/") or "\0" in path or ".." in path.split("/"):
             raise PRReviewError("File side is unavailable", code="invalid_request", status=400)
-        result = self._run(["git", "-C", str(review["checkout_path"]), "show", f"{sha}:{path}"], timeout=30, kind="git")
+        result = self._run(["git", "-C", str(review["checkout_path"]), "show", f"{sha}:{actual_path}"], timeout=30, kind="git")
         text = (result.stdout or "").encode("utf-8", "replace")[:MAX_FILE_BYTES].decode("utf-8", "ignore")
-        return {"path": path, "side": side, **line_window(text, start, end)}
+        self._comparison_review(review_id, review.get("base_sha"), review.get("head_sha"))
+        return {"path": path, "side": side, **({"comparison": resolved} if resolved else {}), **line_window(text, start, end)}
 
     def findings_for_path(self, review_id: str, path: str, limit: int = 8192) -> dict[str, Any]:
         review = self.store.get_review(review_id, True)

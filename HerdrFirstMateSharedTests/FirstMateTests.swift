@@ -9,6 +9,35 @@ import Testing
 @Suite("First Mate native contract", .serialized)
 @MainActor
 struct FirstMateTests {
+    @Test("Workflow primary commit uses captured end identity even when commit dates go backward")
+    func workflowPrimaryCommitUsesCapturedEnd() {
+        let predecessor = FirstMateVisitCommit(sha: String(repeating: "a", count: 40), subject: "Earlier change", committedAt: "2026-02-02T12:00:00Z")
+        let tip = FirstMateVisitCommit(sha: String(repeating: "b", count: 40), subject: "Final change", committedAt: "2026-02-01T12:00:00Z")
+        let evidence = FirstMateVisitGitEvidence(workspaceID: "worker-one", startSHA: String(repeating: "c", count: 40), endSHA: tip.sha, status: "captured", commits: [predecessor, tip], truncated: false)
+        let visit = FirstMateVisit(id: "visit", featureID: "feature", stageKey: "build", title: "Build", status: "completed", revision: 1, gitEvidence: [evidence])
+        #expect(visit.primaryGitEvidence?.workspaceID == "worker-one")
+        #expect(visit.primaryGitEvidence?.terminalCommit == tip)
+        var unavailable = evidence
+        unavailable.endSHA = nil
+        #expect(unavailable.terminalCommit == nil)
+    }
+
+    @Test("Workflow commit evidence decodes exact workspaces and legacy visits remain unknown")
+    func decodeWorkflowCommits() throws {
+        let legacy = #"{"id":"visit-one","feature_id":"feature-one","stage_key":"build","title":"Build","status":"completed","revision":1}"#
+        let visit = try JSONDecoder().decode(FirstMateVisit.self, from: Data(legacy.utf8))
+        #expect(visit.gitEvidence == nil)
+        let sha = String(repeating: "a", count: 40)
+        var recorded = visit
+        recorded.gitEvidence = [.init(workspaceID: "worker-one", startSHA: String(repeating: "b", count: 40), endSHA: sha, status: "captured", commits: [.init(sha: sha, subject: "Synthetic change", committedAt: "2026-01-01T12:00:00Z")], truncated: false)]
+        let data = try JSONEncoder().encode(recorded)
+        #expect(try JSONDecoder().decode(FirstMateVisit.self, from: data) == recorded)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(json.contains("git_evidence"))
+        #expect(json.contains("workspace_id"))
+        #expect(json.contains("start_sha"))
+    }
+
     @Test("Snake-case snapshots retain exact session and document ownership")
     func decodeSnapshot() throws {
         let original = FirstMateDemo.features(step: 3)[0]

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureClient } from "./client";
 import {
   gitCommitDiff,
+  gitComparison,
   gitCommitFiles,
   gitDiff,
   gitOpenFile,
@@ -62,6 +63,21 @@ describe("pane Git read preconditions", () => {
 });
 
 describe("First Mate Git target routing", () => {
+  it("loads an omitted patch without losing the comparison or workspace scope", async () => {
+    const target = gitTargetKey({ kind: "firstMate", featureId: "fmf/one", workspaceId: "fma two" });
+    await gitComparison(target, { mode: "commit", start_commit: "b".repeat(40) }, "/repo", undefined, "src/a b.ts");
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(Object.fromEntries(url.searchParams)).toEqual({ workspace: "fma two", expected_root: "/repo",
+      mode: "commit", start_commit: "b".repeat(40), file: "src/a b.ts" });
+  });
+  it("keeps a selected revision pair bound to the exact feature workspace and root", async () => {
+    const target = gitTargetKey({ kind: "firstMate", featureId: "fmf/one", workspaceId: "fma two" });
+    await gitComparison(target, { mode: "range", start_commit: "a".repeat(40), end_commit: "b".repeat(40) }, "/repo");
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.pathname).toBe("/api/v1/first-mate/features/fmf%2Fone/git/compare");
+    expect(Object.fromEntries(url.searchParams)).toEqual({ workspace: "fma two", expected_root: "/repo",
+      mode: "range", start_commit: "a".repeat(40), end_commit: "b".repeat(40) });
+  });
   it("routes every operation through the feature API with an explicit workspace", async () => {
     const target = gitTargetKey({ kind: "firstMate", featureId: "fmf/one", workspaceId: "fma two" });
     await gitStatus(target);

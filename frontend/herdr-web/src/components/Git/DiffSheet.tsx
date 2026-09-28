@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Columns2, FileCode2, Rows3, TriangleAlert, WrapText } from "lucide-react";
+import { useRef } from "react";
+import { FileCode2, TriangleAlert } from "lucide-react";
 import {
   EMPTY_GIT_ENTRY,
   useGitStore,
@@ -7,14 +7,11 @@ import {
 } from "../../store/gitStore";
 import {
   SharedDiffRenderer,
-  type SharedDiffOverflow as DiffOverflow,
-  type SharedDiffStyle as DiffStyle,
 } from "./SharedDiffRenderer";
 import { SelectionAskLauncher } from "./SelectionAskLauncher";
 import "./git.css";
 
-const DIFF_STYLE_KEY = "herdr.git.diff-style";
-const DIFF_OVERFLOW_KEY = "herdr.git.diff-overflow";
+import { DiffDisplayControls, useDiffDisplayPreferences } from "./DiffDisplayControls";
 
 /**
  * The persistent diff half of the Git workbench.
@@ -24,19 +21,12 @@ const DIFF_OVERFLOW_KEY = "herdr.git.diff-overflow";
  * presented as a sheet: the inspector stays beside the repository navigator.
  */
 export function DiffInspector({ paneId, allowsAsk = true }: { paneId: string; allowsAsk?: boolean }) {
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>(() =>
-    storedPreference(DIFF_STYLE_KEY, "unified", ["unified", "split"]),
-  );
-  const [diffOverflow, setDiffOverflow] = useState<DiffOverflow>(() =>
-    storedPreference(DIFF_OVERFLOW_KEY, "scroll", ["scroll", "wrap"]),
-  );
+  const { diffStyle, setDiffStyle, diffOverflow, setDiffOverflow } = useDiffDisplayPreferences();
   const diffBodyRef = useRef<HTMLDivElement | null>(null);
   const sheet = useGitStore((state) =>
     state.diffSheet?.paneId === paneId ? state.diffSheet : null,
   );
   const entry = useGitStore((state) => state.byPane[paneId] ?? EMPTY_GIT_ENTRY);
-  useEffect(() => persistPreference(DIFF_STYLE_KEY, diffStyle), [diffStyle]);
-  useEffect(() => persistPreference(DIFF_OVERFLOW_KEY, diffOverflow), [diffOverflow]);
 
   if (sheet === null) {
     return (
@@ -62,40 +52,7 @@ export function DiffInspector({ paneId, allowsAsk = true }: { paneId: string; al
             {sheet.file}
           </span>
         </div>
-        <div className="hz-diff-controls" aria-label="Diff display options">
-          <div className="hz-diff-segment" role="group" aria-label="Diff layout">
-            <button
-              type="button"
-              className={diffStyle === "unified" ? "hz-diff-control-active" : ""}
-              onClick={() => setDiffStyle("unified")}
-              aria-pressed={diffStyle === "unified"}
-              title="Unified diff"
-            >
-              <Rows3 size={13} aria-hidden />
-              <span>Unified</span>
-            </button>
-            <button
-              type="button"
-              className={diffStyle === "split" ? "hz-diff-control-active" : ""}
-              onClick={() => setDiffStyle("split")}
-              aria-pressed={diffStyle === "split"}
-              title="Split diff"
-            >
-              <Columns2 size={13} aria-hidden />
-              <span>Split</span>
-            </button>
-          </div>
-          <button
-            type="button"
-            className={`hz-diff-wrap${diffOverflow === "wrap" ? " hz-diff-control-active" : ""}`}
-            onClick={() => setDiffOverflow((current) => (current === "wrap" ? "scroll" : "wrap"))}
-            aria-pressed={diffOverflow === "wrap"}
-            title={diffOverflow === "wrap" ? "Disable line wrapping" : "Wrap long lines"}
-          >
-            <WrapText size={13} aria-hidden />
-            <span>Wrap</span>
-          </button>
-        </div>
+        <DiffDisplayControls style={diffStyle} overflow={diffOverflow} onStyle={setDiffStyle} onOverflow={setDiffOverflow} />
         {entry.loading ? <span className="hz-diff-refreshing">Refreshing repository…</span> : null}
       </header>
       {sheet.truncated ? (
@@ -133,30 +90,10 @@ export function DiffInspector({ paneId, allowsAsk = true }: { paneId: string; al
     </section>
   );
 }
-
 function retryDiff(sheet: DiffSheetState) {
   if (sheet.section === "commit" && sheet.commitHash !== null) {
     useGitStore.getState().commitDiff(sheet.paneId, sheet.commitHash, sheet.file);
   } else if (sheet.section !== "commit") {
     useGitStore.getState().diff(sheet.paneId, sheet.file, sheet.section);
-  }
-}
-
-function storedPreference<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const value = window.localStorage.getItem(key);
-    return value !== null && allowed.includes(value as T) ? (value as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function persistPreference(key: string, value: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // Display preferences are optional when storage is unavailable.
   }
 }

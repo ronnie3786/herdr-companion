@@ -1,4 +1,4 @@
-# Herdr Companion server 0.61.2b1
+# Herdr Companion server 0.62.1b1
 
 First Mate no longer stops an actively working coordinator merely because its
 turn has reached ten minutes.
@@ -15,6 +15,7 @@ turn has reached ten minutes.
   tools ran when the coordinator was using its shell.
 
 This is a server-only update, compatible with existing Mac and iOS clients.
+It includes the shared Git-comparison functionality from server 0.62.0b1.
 Install the wheel and bundled Pi package using `herdr_harness/README.md`, verify
 the installation with `scripts/verify-installed.py`, and preserve private
 configuration and consistent state backups during service switching. The Mac

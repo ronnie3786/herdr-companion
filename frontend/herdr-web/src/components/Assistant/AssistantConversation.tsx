@@ -6,10 +6,12 @@ import { MarkdownText } from "../Pi/MarkdownBlocks";
 import { isTerminalRunStatus } from "../../api/agentRuns";
 import type { AssistantContextItem } from "../../api/assistant";
 import type { AssistantSession } from "./AssistantSession";
+import { referencedComparisonFiles } from "../Git/comparison";
 
-export function AssistantConversation({ session, title, style, onClose, additionalContext }: {
+export function AssistantConversation({ session, title, style, onClose, additionalContext, availableFiles, onShowFile }: {
   additionalContext?: AssistantContextItem;
   session: AssistantSession; title: string; style?: CSSProperties; onClose: () => void;
+  availableFiles?: string[]; onShowFile?: (path: string) => void;
 }) {
   const state = useSyncExternalStore(session.subscribe, session.snapshot);
   const [handoff, setHandoff] = useState(false);
@@ -42,10 +44,14 @@ export function AssistantConversation({ session, title, style, onClose, addition
       </div>
     </details>
     <div className="hz-inline-ask-scroll">
-      <p className="hz-inline-ask-hint">Answers use the supplied context. Actions continue in an agent.</p>
+      <p className="hz-inline-ask-hint">{session.allowsGitInspection
+        ? "Ask about this comparison. The buddy can inspect its files and earlier or later commits when needed."
+        : "Answers use the supplied context. Actions continue in an agent."}</p>
       {state.turns.map((turn) => <div className="hz-inline-ask-turn" key={turn.id}>
         <div className="hz-inline-ask-question">{turn.prompt}</div>
         {turn.response && <div className="hz-inline-ask-answer hz-md"><MarkdownText text={turn.response} /></div>}
+        {turn.response && availableFiles && onShowFile ? referencedComparisonFiles(turn.response, availableFiles).map((path) =>
+          <button type="button" key={path} onClick={() => onShowFile(path)}>Show {path}</button>) : null}
         <small>{turn.status}</small>
         {turn.error && <p role="alert">{turn.error}</p>}
       </div>)}

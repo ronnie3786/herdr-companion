@@ -5,6 +5,7 @@ import SwiftUI
 struct FirstMateInspectorView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
+    var openCommit: ((FirstMateGitCommitSelection) -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
@@ -32,7 +33,7 @@ struct FirstMateInspectorView: View {
                     case .overview: FirstMateOverviewView(store: store, snapshot: snapshot)
                     case .agents: FirstMateAgentsView(store: store, snapshot: snapshot)
                     case .documents: FirstMateDocumentsView(store: store, snapshot: snapshot)
-                    case .workflow: FirstMateWorkflowView(store: store, snapshot: snapshot)
+                    case .workflow: FirstMateWorkflowView(store: store, snapshot: snapshot, openCommit: openCommit)
                     }
                 }
                 .padding(.top, 14)

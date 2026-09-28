@@ -5,6 +5,8 @@ struct PRReviewGuideScope: Codable, Equatable, Sendable {
     var reviewID: String
     var baseSHA: String
     var headSHA: String
+    var comparison: GitComparison? = nil
+    var comparisonSelection: GitComparisonSelection? = nil
 }
 
 struct PRReviewGuideSource: Codable, Equatable, Identifiable, Sendable {
@@ -85,8 +87,9 @@ struct PRReviewGuide: Codable, Equatable, Identifiable, Sendable {
     var error: String?
     var assessments: [PRReviewGuideAssessment]? = nil
     var warnings: [String]? = nil
+    var comparison: GitComparison? = nil
     enum CodingKeys: String, CodingKey {
-        case id, state, chapters, sources, coverage, error, assessments, warnings
+        case id, state, chapters, sources, coverage, error, assessments, warnings, comparison
         case reviewID = "review_id", baseSHA = "base_sha", headSHA = "head_sha", contextSnapshotID = "context_snapshot_id"
     }
 }
@@ -94,6 +97,26 @@ struct PRReviewGuide: Codable, Equatable, Identifiable, Sendable {
 struct PRReviewGuideResponse: Decodable, Sendable { var guide: PRReviewGuide }
 
 struct PRReviewGuideRequest: Encodable, Sendable {
+    struct ViewerState: Encodable, Sendable {
+        struct VisibleLines: Encodable, Sendable {
+            var path: String
+            var side: String
+            var startLine: Int
+            var endLine: Int
+            enum CodingKeys: String, CodingKey {
+                case path, side
+                case startLine = "start_line", endLine = "end_line"
+            }
+        }
+        var path: String?
+        var visibleLines: VisibleLines?
+        var diffStyle: String
+        var overflow: String
+        enum CodingKeys: String, CodingKey {
+            case path, overflow
+            case visibleLines = "visible_lines", diffStyle = "diff_style"
+        }
+    }
     struct Selection: Encodable, Sendable {
         struct Span: Encodable, Sendable { var side: String; var startLine: Int; var endLine: Int }
         var text: String
@@ -108,8 +131,11 @@ struct PRReviewGuideRequest: Encodable, Sendable {
     var chapterID: String?
     var continueFromGuideID: String?
     var selection: Selection?
+    var comparison: GitComparisonSelection? = nil
+    var viewerState: ViewerState? = nil
     enum CodingKeys: String, CodingKey {
-        case kind, question, path, selection
+        case kind, question, path, selection, comparison
+        case viewerState = "viewer_state"
         case requestID = "request_id", baseSHA = "base_sha", headSHA = "head_sha"
         case chapterID = "chapter_id", continueFromGuideID = "continue_from_guide_id"
     }

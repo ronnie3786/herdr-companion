@@ -14,6 +14,11 @@ struct PRReviewWindowSeed: Equatable {
     var hideViewed: Bool
     var search: String
     var showArchived: Bool
+    var comparisonSelection: GitComparisonSelection = .all
+    var comparisonBaseSHA: String? = nil
+    var comparisonHeadSHA: String? = nil
+    var diffStyle = "unified"
+    var diffOverflow = "scroll"
 
     @MainActor
     static func capture(from main: PRReviewStore, target: PRReviewWindowTarget) -> PRReviewWindowSeed? {
@@ -27,7 +32,12 @@ struct PRReviewWindowSeed: Equatable {
             impactFilter: main.impactFilter,
             hideViewed: main.hideViewed,
             search: main.search,
-            showArchived: main.showArchived
+            showArchived: main.showArchived,
+            comparisonSelection: main.comparisonSelection,
+            comparisonBaseSHA: main.snapshot?.review.baseSHA,
+            comparisonHeadSHA: main.snapshot?.review.headSHA,
+            diffStyle: main.diffStyle,
+            diffOverflow: main.diffOverflow
         )
     }
 }
@@ -194,5 +204,9 @@ final class PRReviewWindowSession {
         store.search = seed.search
         store.showArchived = seed.showArchived
         store.selectedPath = seed.selectedPath
+        store.diffStyle = seed.diffStyle
+        store.diffOverflow = seed.diffOverflow
+        store.restoreComparisonSelection(seed.comparisonSelection,
+                                         baseSHA: seed.comparisonBaseSHA, headSHA: seed.comparisonHeadSHA)
     }
 }

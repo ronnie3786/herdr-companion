@@ -2,8 +2,10 @@
 
 First Mate Git is a full-width Git workbench attached to a selected feature and
 its owning companion machine. It reuses the browser workbench used by pane Git:
-working-tree status, persistent diffs, commit history, stage/unstage, and local
-open or reveal actions have the same behavior.
+revision comparisons, contextual questions, working-tree status, persistent
+diffs, commit history, stage/unstage, and local open or reveal actions have the
+same behavior. See [shared Git comparisons](../shared-git-diff.md) for the
+comparison and AI inspection contract.
 
 ## Navigate and choose a workspace
 
@@ -13,6 +15,18 @@ open or reveal actions have the same behavior.
    visit, and inspector state remain intact.
 3. In Git, choose **Project workspace** (the default) or one of the assignment
    worktrees recorded by that feature.
+
+**Compare commits** opens the recorded baseline against the latest commit.
+The baseline is the target branch's merge-base captured when workflow tracking
+begins, so feature commits made before the first step remain visible even if
+the target branch later advances. Each step separately records its starting
+revision to attribute only the commits produced during that step.
+Use **Before** and **After** to choose an ordered pair of revisions, or choose
+**Uncommitted changes** on the right. **Working files** retains staging and
+unstaging. A workflow commit opens its exact recorded workspace with the
+baseline on the left and that commit on the right. Each completed step keeps
+its captured ending commit visible and can expand to show its other commits;
+commit dates never replace the recorded ending revision.
 
 The Git page stays mounted during companion catalog refreshes and transient
 terminal reconnects, so the open diff, selection, and scroll position do not
@@ -34,10 +48,12 @@ never falls back to the project checkout.
 ## Pop-out windows
 
 Choose **Open Git in New Window** beside the workspace picker. The window is
-identified by machine ID, feature ID, and workspace ID:
+identified by machine ID, feature ID, workspace ID, and an optional selected
+commit SHA:
 
 - reopening the same target focuses its existing window;
 - another workspace opens a distinct window;
+- another workflow commit opens a distinct window on that exact revision;
 - changing the main window's machine, feature, or workspace does not retarget it;
 - reconnecting or changing credentials re-resolves the same saved machine;
 - deleting a feature or removing a worktree produces an unavailable state rather
@@ -55,9 +71,18 @@ enough. An unreachable or removed owning host, missing project directory,
 non-Git directory, invalid recorded root, and failed refresh remain explicit
 load or retry states.
 
-First Mate Git intentionally has no terminal pane. **Ask AI about selection** is
-therefore hidden: that contextual action requires an actual terminal pane and
-never falls back to a generic agent. Use the feature conversation for direction.
+**Compare commits** supports **Ask AI** for the selected file or highlighted
+lines on companions advertising `git-comparison-v1` and `git-question-v1`.
+Questions stay scoped to the exact feature, recorded workspace, comparison,
+and selection. The buddy can inspect authorized history and files on demand,
+without requiring a terminal pane. Uncommitted source is captured for the
+question. Cited files available in the displayed comparison can be opened with
+**Show file**.
+
+On an older companion, the legacy **Working files** viewer remains available.
+Its selection Ask action is still hidden for First Mate because the older
+question contract requires a terminal pane. Use the feature conversation for
+direction when that companion lacks comparison questions.
 There is no browser-shell First Mate navigation in this version; the explicit
 `#firstMate=<feature>&workspace=<workspace>&view=git&embed=1` route is for the
 authenticated native web container.
@@ -73,8 +98,12 @@ authenticated native web container.
       showing the project checkout.
 - [ ] Exercise working-tree diff, staged/unstaged changes, untracked files,
       commit files, commit diff, open, and reveal on a synthetic repository.
-- [ ] Confirm the selection Ask affordance is absent in First Mate Git and still
-      present in pane Git.
+- [ ] In Compare commits, ask about a file and selected lines in First Mate Git,
+      then switch revisions and confirm the question context changes with them.
+- [ ] Confirm the legacy Working files selection Ask stays absent for First Mate
+      and remains present in pane Git.
+- [ ] Open a workflow commit and confirm the exact workspace and captured SHA
+      are selected. Expand its step to open another recorded commit.
 - [ ] Pop out project and worker targets; confirm each window remains pinned as
       the main window changes machine, feature, and workspace.
 - [ ] Stop only the terminal-pane connection while leaving the companion API

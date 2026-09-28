@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from . import attachments, voice, workspace_tools
+from .git_comparison import comparison_patch, comparison_request, repository_history, resolve_comparison
 
 LocalToolsError = workspace_tools.WorkspaceToolError
 GIT_TIMEOUT_SECONDS = workspace_tools.GIT_TIMEOUT_SECONDS
@@ -324,6 +325,68 @@ class LocalTools:
         relative = _relative_git_path(str(repository), file)
         output, truncated = workspace_tools._git(repository, ["show", "--format=", "--first-parent", "--no-ext-diff", "--no-textconv", commit, "--", relative], maximum_bytes=workspace_tools.MAX_DIFF_BYTES)
         return {"ok": True, "hash": commit, "file": relative, "diff": output, "truncated": truncated}
+
+    def git_compare(self, root: Path | str, comparison: dict | None = None, *, file: str | None = None, expected_root: Any = None, baseline: dict | None = None) -> dict:
+        repository = self._repository(root, expected_root)
+        run = lambda args: workspace_tools._git(repository, args)[0]
+        history = repository_history(run, baseline)
+        resolved = resolve_comparison(comparison, history["commits"], before=history["baseline_sha"], after=history["head_sha"])
+        from .git_inspection import working_paths, working_stat_digest
+        initial_signature = working_stat_digest(repository, working_paths(repository)) if resolved["mode"] == "working-tree" else None
+        patch_run = lambda args: workspace_tools._git(repository, args, maximum_bytes=workspace_tools.MAX_DIFF_BYTES)
+        # A working snapshot identity covers the whole view, even when the
+        # caller requests only one file.
+        result = comparison_patch(patch_run, resolved, None if resolved["mode"] == "working-tree" else file)
+        if resolved["mode"] == "working-tree":
+            # git diff includes both staged and unstaged content. Add the new
+            # regular files Git deliberately excludes from that command.
+            import hashlib
+            from .pr_review_diff import parse_unified_diff
+            untracked, untracked_truncated = workspace_tools._git(repository, ["ls-files", "--others", "--exclude-standard", "-z"])
+            if untracked_truncated:
+                raise LocalToolsError("Untracked file list exceeds the response limit", code="git_source_too_large", status=413)
+            used = len(result["diff"].encode())
+            for name in filter(None, untracked.split("\0")):
+                target = repository / name
+                if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(repository):
+                    continue
+                if used >= workspace_tools.MAX_DIFF_BYTES:
+                    result["files"].append({"path": name, "old_path": None, "status": "added", "additions": 0, "deletions": 0, "binary": False, "truncated": True, "hunks": [], "patch": ""})
+                    result["truncated"] = True
+                    continue
+                addition = workspace_tools.git_diff(repository, name, "untracked")
+                encoded = addition["diff"].encode()
+                remaining = max(0, workspace_tools.MAX_DIFF_BYTES - used)
+                partial = addition["truncated"] or len(encoded) > remaining
+                patch = encoded[:remaining].decode("utf-8", "ignore")
+                used += len(patch.encode())
+                result["diff"] += patch
+                files = parse_unified_diff(patch, truncated=partial)
+                for item in files: item["patch"] = patch
+                result["files"].extend(files)
+                result["truncated"] |= partial
+            # Include every tracked/untracked path, including those after the
+            # patch budget. A later omitted edit must invalidate the view ID.
+            signature = working_stat_digest(repository, working_paths(repository))
+            if signature != initial_signature:
+                raise LocalToolsError("Working files changed while loading the comparison. Retry.", code="git_revision_changed", status=409)
+            resolved["id"] += "_" + hashlib.sha256((history["head_sha"] + "\0" + result["diff"] + signature).encode()).hexdigest()
+            if file is not None:
+                # Reuse path validation even for the mutable comparison.
+                if not isinstance(file, str) or not file or file.startswith("/") or "\0" in file or any(part in {".", ".."} for part in file.split("/")):
+                    raise LocalToolsError("File must stay within the repository", code="invalid_git_path", status=400)
+                if file in untracked.split("\0"):
+                    addition = workspace_tools.git_diff(repository, file, "untracked")
+                    files = parse_unified_diff(addition["diff"], truncated=addition["truncated"])
+                    for item in files: item["patch"] = addition["diff"]
+                    result = {"comparison": resolved, "files": files, "diff": addition["diff"], "truncated": addition["truncated"]}
+                else:
+                    result = comparison_patch(patch_run, resolved, file)
+                if signature != working_stat_digest(repository, working_paths(repository)):
+                    raise LocalToolsError("Working files changed while loading this file. Retry.", code="git_revision_changed", status=409)
+        if run(["rev-parse", "--verify", "HEAD^{commit}"]).strip() != history["head_sha"]:
+            raise LocalToolsError("Repository changed while comparing revisions. Retry.", code="git_revision_changed", status=409)
+        return {"ok": True, "root_path": str(repository), **history, **result}
 
     def skills(self, root: Path | str) -> dict:
         return {"ok": True, **workspace_tools.skills(Path(_root_path(root)), environ=self.environ)}

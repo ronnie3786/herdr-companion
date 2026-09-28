@@ -78,6 +78,7 @@ struct HerdrHarnessMacApp: App {
                     background: shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).background : HerdrTheme.windowBackground
                 ))
                 .task { updates.start() }
+                .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell))
                 .environment(herdPulse)
                 // Apple documents `dynamicTypeSize` as not affecting text size
                 // on macOS, so Herdr uses this custom scale environment instead.
@@ -116,6 +117,29 @@ struct HerdrHarnessMacApp: App {
                 .tint(HerdrTheme.accent)
         }
         .defaultSize(width: 1280, height: 860)
+
+        // The First Mate chat window (preview, Settings ▸ General). A single
+        // `Window` so the Dock menu and ⇧⌘F can bring it back once closed.
+        // Its automatic Window-menu entry is removed; `HerdrMacCommands` adds
+        // one only while the preview is on. It handles no external URLs: the
+        // main window owns every `herdr://` route.
+        Window("First Mate", id: HerdrWindowID.firstMateChat) {
+            FirstMateChatWindowRoot(model: model, shell: shell, modelFavorites: modelFavorites)
+                .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell))
+                .modifier(FirstMateChatWindowDismissal())
+                .modifier(HerdrMainWindowChromeModifier())
+                .environment(herdPulse)
+                .environment(\.herdrFontScale, fontScale.scale)
+                .frame(minWidth: 680, minHeight: 620)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
+                .tint(HerdrTheme.accent)
+        }
+        .handlesExternalEvents(matching: [])
+        .defaultSize(width: 1320, height: 860)
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentMinSize)
+        .commandsRemoved()
 
         WindowGroup("Workspace Git", id: HerdrWindowID.workspaceGit, for: WorkspaceGitWindowTarget.self) { $target in
             if let target {
@@ -218,12 +242,27 @@ struct HerdrMacCommands: Commands {
     let quickVoiceController: QuickVoicePanelController
     let updates: HerdrUpdateController
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(FirstMateChatPreferences.windowEnabledKey)
+    private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
 
     var body: some Commands {
         // On macOS ⌘B/⌘I/⌘U are Format ▸ Font key equivalents, not text-view
         // key bindings. Without this menu nothing claims them and AppKit beeps,
         // which is exactly what the rich-text note editor was doing.
         TextFormattingCommands()
+
+        // Window ▸ First Mate (⇧⌘F; ⌥⌘F is Report a Bug), only while the
+        // chat window preview is on.
+        CommandGroup(before: .windowList) {
+            if firstMateChatWindowEnabled {
+                Button("First Mate") {
+                    NSApp.activate()
+                    openWindow(id: HerdrWindowID.firstMateChat)
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .accessibilityIdentifier("menu-first-mate-chat-window")
+            }
+        }
 
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") {

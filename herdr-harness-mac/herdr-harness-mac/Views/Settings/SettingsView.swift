@@ -16,6 +16,10 @@ struct SettingsView: View {
     @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
     private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
     @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
+    @AppStorage(FirstMateChatPreferences.windowEnabledKey)
+    private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
+    @AppStorage(FirstMateChatPreferences.dockBadgeEnabledKey)
+    private var firstMateDockBadgeEnabled = FirstMateChatPreferences.defaultDockBadgeEnabled
     @AppStorage(MobileAppHubSettings.dashboardBundleIDsKey) private var buildsDashboardApps = ""
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
@@ -158,6 +162,7 @@ struct SettingsView: View {
             appearanceSection
             feedbackSection
             chatSection
+            firstMateSection
             buildsSection
             aboutSection
         case .machines:
@@ -456,6 +461,33 @@ struct SettingsView: View {
         } footer: {
             SettingsSectionFooter {
                 Text("Keep thinking, tool use, and interim Pi commentary in one collapsed Clanking group for each turn. The final answer appears when the turn finishes.")
+            }
+        }
+    }
+
+    private var firstMateSection: some View {
+        Section {
+            Toggle(
+                "First Mate chat window (preview)",
+                systemImage: "bubble.left.and.bubble.right",
+                isOn: $firstMateChatWindowEnabled
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-first-mate-chat-window")
+            Toggle(
+                "Show First Mate count on the Dock icon",
+                systemImage: "app.badge",
+                isOn: $firstMateDockBadgeEnabled
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-first-mate-dock-badge")
+        } header: {
+            SettingsSectionHeader {
+                Text("First Mate")
+            }
+        } footer: {
+            SettingsSectionFooter {
+                Text("The chat window lists every First Mate conversation across your machines. Open it from Window ▸ First Mate (⇧⌘F). The Dock count shows conversations that need you and have a new message.")
             }
         }
     }

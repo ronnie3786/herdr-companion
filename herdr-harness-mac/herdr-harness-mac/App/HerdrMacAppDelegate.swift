@@ -75,6 +75,40 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         }
     }
 
+    // MARK: Dock menu
+
+    /// The First Mate conversations the Dock menu lists, and what choosing one
+    /// does. The delegate has no model or `openWindow`, so the windows inject
+    /// these (see `FirstMateAppServicesModifier`).
+    var firstMateDockMenuItems: (@MainActor () -> [FirstMateDockMenuItem])?
+    var openFirstMateDockMenuItem: (@MainActor (FirstMateFleetFeatureID) -> Void)?
+    private var dockMenuTargets: [FirstMateFleetFeatureID] = []
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let items = firstMateDockMenuItems?() ?? []
+        dockMenuTargets = items.map(\.id)
+        return Self.dockMenu(items: items, target: self, action: #selector(openDockMenuItem(_:)))
+    }
+
+    /// Up to five First Mate conversations with a dot, or nil when none has
+    /// one, so the Dock shows only its standard items.
+    static func dockMenu(items: [FirstMateDockMenuItem], target: AnyObject?, action: Selector?) -> NSMenu? {
+        guard !items.isEmpty else { return nil }
+        let menu = NSMenu()
+        for (index, item) in items.prefix(FirstMateDockMenuItem.limit).enumerated() {
+            let menuItem = NSMenuItem(title: item.title, action: action, keyEquivalent: "")
+            menuItem.target = target
+            menuItem.tag = index
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    @objc private func openDockMenuItem(_ sender: NSMenuItem) {
+        guard dockMenuTargets.indices.contains(sender.tag) else { return }
+        openFirstMateDockMenuItem?(dockMenuTargets[sender.tag])
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         HerdrPerfDiagnostics.start()
         VoiceRecordingPolicy.removeStaleTemporaryRecordings()

@@ -8,6 +8,8 @@ struct FirstMateChatView: View {
     let modelFavorites: ModelFavoritesStore
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.firstMateMarkRead) private var markRead
     @State private var followsLatest = true
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
     /// Skim or Full reply per message, kept while this chat is open.
@@ -15,6 +17,16 @@ struct FirstMateChatView: View {
 
     private var featureIsClosed: Bool {
         ["completed", "cancelled"].contains(snapshot.feature.status)
+    }
+
+    /// The newest First Mate message, and whether the person can see it: the
+    /// chat is in the key window and scrolled to the bottom.
+    private var readMarker: FirstMateChatReadMarker {
+        FirstMateChatReadMarker(
+            featureID: snapshot.feature.id,
+            messageID: snapshot.messages.last { $0.role == "assistant" && $0.isConversation }?.id,
+            isVisible: controlActiveState == .key && followsLatest
+        )
     }
 
     var body: some View {
@@ -57,6 +69,10 @@ struct FirstMateChatView: View {
         .herdrPaneBackground(FirstMatePalette(scheme: scheme).background)
         .task(id: feedbackLoadID) { await loadFeedback() }
         .onChange(of: store.operationContext) { _, _ in feedbackEditor = nil }
+        .onChange(of: readMarker, initial: true) { _, marker in
+            guard marker.isVisible, let messageID = marker.messageID else { return }
+            markRead?(marker.featureID, messageID)
+        }
         .sheet(item: $feedbackEditor) { target in
             FirstMateFeedbackEditor(store: store, target: target)
         }
@@ -545,4 +561,10 @@ private struct FirstMateChatNote: View {
         .herdrHairline(.top)
         .accessibilityElement(children: .combine)
     }
+}
+
+private struct FirstMateChatReadMarker: Equatable {
+    let featureID: String
+    let messageID: String?
+    let isVisible: Bool
 }

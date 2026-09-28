@@ -229,6 +229,20 @@ final class HerdrAppModel {
     @ObservationIgnored private var paneSubmissionRevisions: [String: UUID] = [:]
     @ObservationIgnored private var lastPresentedConnectionError: String?
     @ObservationIgnored private var lastBadgeCount: Int?
+    /// True while the First Mate count owns the Dock badge
+    /// (`FirstMateDockBadgeController`): the unread alert count yields, and is
+    /// written again as soon as this turns off.
+    @ObservationIgnored var isAlertBadgeSuspended = false {
+        didSet {
+            guard isAlertBadgeSuspended != oldValue else { return }
+            lastBadgeCount = nil
+            if !isAlertBadgeSuspended { updateBadgeIfNeeded() }
+        }
+    }
+    /// Test seam for the alert-count badge writer.
+    @ObservationIgnored var alertBadgeWriter: @MainActor (Int) -> Void = { count in
+        Task { await NotificationManager.setBadge(count) }
+    }
     @ObservationIgnored private var paneIndex: [String: PaneLocation] = [:]
     /// Internal test seam for deterministic URLProtocol-backed clients.
     @ObservationIgnored var clientFactory: (ServerConfiguration) -> HerdrAPIClient = {
@@ -4631,10 +4645,11 @@ final class HerdrAppModel {
     }
 
     private func updateBadgeIfNeeded() {
+        guard !isAlertBadgeSuspended else { return }
         let count = unreadAlertCount
         guard count != lastBadgeCount else { return }
         lastBadgeCount = count
-        Task { await NotificationManager.setBadge(count) }
+        alertBadgeWriter(count)
     }
 
     private func syncPushDevice(machineID: String, using client: HerdrAPIClient, expectedGeneration: Int) async {

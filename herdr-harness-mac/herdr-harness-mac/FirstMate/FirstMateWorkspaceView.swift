@@ -31,6 +31,9 @@ struct FirstMateWorkspaceView: View {
     var owningMachineName: String? = nil
     var allowsDirectCreate = true
     var popOutGit: ((FirstMateGitWindowTarget) -> Void)?
+    /// "Open in window": the First Mate chat window on this feature. Nil hides
+    /// the button (the chat window preview is off).
+    var popOutChat: (() -> Void)?
 
     @State private var mode = FirstMateWorkspaceMode.chat
     @State private var selectedGitWorkspaceID = "project"
@@ -197,7 +200,7 @@ struct FirstMateWorkspaceView: View {
         }
     }
 
-    /// The owning machine and Chat | Git.
+    /// The owning machine, Open in window, and Chat | Git.
     private var titleBarTrailing: some View {
         HStack(spacing: 10) {
             if let owningMachineName {
@@ -208,6 +211,19 @@ struct FirstMateWorkspaceView: View {
                     .lineLimit(1)
                     .fixedSize()
                     .accessibilityIdentifier("first-mate-owning-machine")
+            }
+            if let popOutChat {
+                Button(action: popOutChat) {
+                    Image(systemName: "macwindow")
+                        .herdrFont(size: 13)
+                        .foregroundStyle(palette.iconTint)
+                        .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.herdrPlain)
+                .accessibilityLabel("Open in window")
+                .help("Open in window")
+                .accessibilityIdentifier("first-mate-open-chat-window")
             }
             HerdrTabs(
                 selection: $mode,

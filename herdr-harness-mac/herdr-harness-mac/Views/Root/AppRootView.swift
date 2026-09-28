@@ -143,6 +143,10 @@ final class HerdrShellState {
     /// A request to show a feature in the First Mate chat window (Dock menu,
     /// "Open in window"). The window applies it and sets it back to nil.
     var firstMateChatOpenRequest: FirstMateFleetFeatureID?
+    /// Process-owned First Mate observation and the Dock badge. Either window
+    /// starts them; they keep running with every window closed.
+    @ObservationIgnored private(set) var firstMateFleetDriver: FirstMateFleetDriver?
+    @ObservationIgnored private(set) var firstMateDockBadge: FirstMateDockBadgeController?
     var isCreatingWorkspace = false
     var isCreatingPRReview = false
     var isAddingPRReviewSkill = false
@@ -238,6 +242,26 @@ final class HerdrShellState {
     func refreshFirstMateStore(machineID: String) async {
         guard let store = firstMateStores[machineID] else { return }
         await store.refresh()
+    }
+
+    /// Starts the fleet driver and the Dock badge once per process. Idempotent,
+    /// so the main window and the chat window both call it on appearance.
+    func startFirstMateServices(model: HerdrAppModel) {
+        let driver = firstMateFleetDriver ?? FirstMateFleetDriver(
+            fleet: firstMateFleet,
+            reconcile: { [weak self] roster in
+                self?.reconcileFirstMateStores(
+                    configurations: roster.configurations,
+                    connectionGeneration: roster.connectionGeneration,
+                    isDemo: roster.isDemo
+                )
+            }
+        )
+        firstMateFleetDriver = driver
+        driver.start(model: model)
+        let badge = firstMateDockBadge ?? FirstMateDockBadgeController()
+        firstMateDockBadge = badge
+        badge.start(model: model, shell: self)
     }
 
     func reconcileFirstMateStores(
@@ -799,6 +823,9 @@ struct AppRootView: View {
         }
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
+            // First Mate's fleet observation and Dock badge also belong to the
+            // process, so the chat window keeps working after this one closes.
+            shell.startFirstMateServices(model: model)
             agentControl.configure(
                 model: model,
                 shell: shell,

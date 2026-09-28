@@ -11,12 +11,60 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import stat
 import time
 
 from .first_mate_backup import BackupUnavailable, capture_backup, git_bytes
 from .first_mate_runtime import _bounded, _locked, _read_json, _recent_records, _write_json, _ledger_event, TERMINAL
 from .first_mate_store import FirstMateError
+
+# What an interrupted or failed command may have done beyond this machine: a
+# push, release, upload, deploy, remote API call, remote shell or message.
+# Only those need a human before a successor continues. Everything else left
+# its effects on this machine, where the successor inspects them first. The
+# patterns match anywhere in the command, so a stray mention errs toward
+# asking the human.
+_PROGRAM_END = r"(?=$|[\s;&|(){}`\"'])"
+_REMOTE_PROGRAM = re.compile(
+    r"(?:^|[\s;&|(){}`$\"'=/])(?:ssh|scp|sftp|rsync|mosh|gh|hub|glab|aws|gcloud|gsutil|az|kubectl|helm|"
+    r"terraform|tofu|pulumi|heroku|fly|flyctl|vercel|netlify|firebase|wrangler|fastlane|twine|sendmail|mailx?|"
+    r"osascript|shortcuts|tailscale|ngrok|ncat|nc|telnet|l?ftp|rclone|s3cmd|doctl|message-me|pi|claude|codex|"
+    r"herdr-[a-z-]+)" + _PROGRAM_END, re.I)
+_REMOTE_SUBCOMMAND = re.compile(
+    r"\bgit\b[^;&|\n]*?\s(?:push|send-email)\b"
+    r"|\b(?:npm|pnpm|yarn|bun|cargo|poetry|flutter|dart|gem|pod|dotnet|swift|uv)\b[^;&|\n]*?\s"
+    r"(?:publish|push|trunk|package-registry)\b"
+    r"|\b(?:docker|podman|buildah)\b[^;&|\n]*?\s(?:push|login)\b"
+    r"|\bxcrun\s+(?:altool|notarytool)\b", re.I)
+_REMOTE_TRANSFER = re.compile(
+    r"\b(?:curl|wget|xh|https?|httpie)\b[^;&|\n]*?(?:\s-(?:d|F|T)\b|\s--data|\s--form|\s--upload-file|\s--json\b"
+    r"|\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|\s--request[=\s]+(?:POST|PUT|PATCH|DELETE)\b|\s--post-|\s--method|\s--body-)",
+    re.I)
+# A program, script, target or path word naming a release step. Flags such as
+# --release and capitalized build settings (-configuration Release) are not.
+_REMOTE_WORD = re.compile(
+    r"(?:^|[\s;&|(){}`'\"/=])(?!-)[\w.~-]*(?:deploy|publish|upload|notari[sz]e|distribute|submit|release|land-pr)"
+    r"[\w.~-]*" + _PROGRAM_END)
+_REMOTE_SCRIPT = re.compile(r"[\w./~-]*(?:push|land)[\w.-]*\.(?:sh|bash|zsh|py|rb|js|mjs|ts|pl|swift)\b")
+# The ledger keeps a command's first 4000 characters; a longer one may hide
+# its remote part.
+_RETAINED_COMMAND = 4000
+
+
+def remote_effect(row) -> bool:
+    """Whether a failed or unfinished call may have changed something beyond
+    this machine, so a human inspects it before any continuation."""
+    tool = row.get('tool')
+    if tool in ('edit', 'write'):
+        return False  # A file on this machine.
+    if tool != 'bash':
+        return True  # An unknown tool may reach anywhere.
+    command = row.get('command')
+    if not isinstance(command, str) or not command.strip() or len(command) >= _RETAINED_COMMAND:
+        return True
+    return any(pattern.search(command) for pattern in
+               (_REMOTE_PROGRAM, _REMOTE_SUBCOMMAND, _REMOTE_TRANSFER, _REMOTE_WORD, _REMOTE_SCRIPT))
 
 
 def epoch(value, default: float) -> float:
@@ -309,7 +357,7 @@ class FirstMateReliability:
 
     def _effect_status(self, job):
         def invalid(reason):
-            return {'safe': False, 'has_mutations': True, 'issues': [{'reason': reason}]}
+            return {'safe': False, 'has_mutations': True, 'issues': [{'reason': reason}], 'local': []}
 
         path = self.runtime._job_dir(job) / 'effects.jsonl'
         if job.get('safety_ledger_version') != 1 or not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
@@ -345,11 +393,23 @@ class FirstMateReliability:
                     pending[row['id']] = {**start, 'is_error': True}
             else:
                 return invalid('Effect ledger contains an unsupported record')
-        issues = [{'id': row['id'][:200], 'tool': str(row.get('tool', 'unknown'))[:200],
-                   'scope': 'external', 'command': str(row.get('command', ''))[:4000],
-                   'reason': 'External command failed; partial effects require inspection' if row.get('is_error') else 'External command has no completion receipt'}
-                  for row in pending.values() if row['scope'] == 'external']
-        return {'safe': not issues, 'has_mutations': has_mutations, 'issues': issues}
+        # A failed or unfinished call that may reach beyond this machine needs
+        # a human. A local one (a red test run, a build, a diff that found
+        # differences, a command cut off mid-run) is listed for the successor,
+        # which inspects the workspace before changing anything.
+        issues, local = [], []
+        for row in pending.values():
+            if row['scope'] != 'external':
+                continue
+            entry = {'id': row['id'][:200], 'tool': str(row.get('tool', 'unknown'))[:200],
+                     'scope': 'external', 'command': str(row.get('command', ''))[:4000],
+                     'reason': 'External command failed; partial effects require inspection' if row.get('is_error') else 'External command has no completion receipt'}
+            if remote_effect(row):
+                issues.append(entry)
+            else:
+                local.append({**entry, 'reason': 'Local command failed; check its effects on this machine first'
+                              if row.get('is_error') else 'Local command was cut off; check its effects on this machine first'})
+        return {'safe': not issues, 'has_mutations': has_mutations, 'issues': issues, 'local': local}
 
     def _effects_safe(self, job):
         return self._effect_status(job)['safe']
@@ -384,6 +444,13 @@ class FirstMateReliability:
             return False
         self.runtime._require_storage(job['cwd'])
         effects = self._effect_status(job)
+        if effects['local'] and job.get('recovery_local_effects') != effects['local'][:20]:
+            # The recovery advisor and successor see these in the checkpoint.
+            job['recovery_local_effects'] = effects['local'][:20]
+            self.runtime._save_job(job)
+            self._event(job, 'local_effects_noted', 'Failed or cut-off local commands are listed for the successor to check first.',
+                        'local-effects:' + job['id'], {'effects': effects['local'][:20],
+                            'effects_truncated': len(effects['local']) > 20})
         if not effects['safe']:
             self._event(job, 'effect_inspection_required', 'Inspect the retained uncertain calls before continuation; no external effect was replayed.',
                         'effect-inspection:' + job['id'], {'effects': effects['issues'][:20],

@@ -280,7 +280,7 @@ class StatusTests(CliTestCase):
         self.assertTrue(snapshot["ok"])
         self.assertEqual(snapshot["stats"]["active"], 1)
         self.assertEqual(snapshot["issues"][0]["number"], 12)
-        self.assertEqual(snapshot["issues"][0]["stageLabel"], "Reviewing (Astra)")
+        self.assertEqual(snapshot["issues"][0]["stageLabel"], "Reviewing (Opus)")
         self.assertNotIn("planJson", snapshot["issues"][0])
         self.assertEqual(self.builders, [])
 
@@ -621,10 +621,12 @@ class DoctorTests(CliTestCase):
         self.runner.on("gh", "auth", "status", stderr="Logged in to github.com account your-username\n")
         self.runner.on("gh", "label", "list", stdout=json.dumps([{"name": name} for name in labels]))
         self.runner.on("pi", "--version", stdout="pi 0.60.0\n")
-        self.runner.on("pi", "--list-models", "gpt-6-astra",
-                       stdout=self.model_table(("openai-codex", "gpt-6-astra")))
-        self.runner.on("pi", "--list-models", "deepseek-v4.1-flash:cloud",
-                       stdout=self.model_table(("ollama-cloud", "deepseek-v4.1-flash:cloud")))
+        self.runner.on("pi", "--list-models", "claude-fable-5-1",
+                       stdout=self.model_table(("anthropic", "claude-fable-5-1")))
+        self.runner.on("pi", "--list-models", "gpt-6-sol",
+                       stdout=self.model_table(("openai-codex", "gpt-6-sol")))
+        self.runner.on("pi", "--list-models", "claude-opus-5-5",
+                       stdout=self.model_table(("anthropic", "claude-opus-5-5")))
         self.runner.on("tailscale", "ip", "-4", stdout="203.0.113.7\n")
 
     def checks(self):
@@ -638,7 +640,7 @@ class DoctorTests(CliTestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["failures"], 0)
         expected = {"repository", "checkout", "gh_auth", "labels", "pi_binary", "planner_model", "implementer_model",
-                    "ollama_api_key", "macos_release", "dashboard_host", "worktree_root"}
+                    "reviewer_model", "macos_release", "dashboard_host", "worktree_root"}
         self.assertEqual(set(checks), expected)
         for name, check in checks.items():
             self.assertTrue(check["ok"], name)
@@ -674,13 +676,12 @@ class DoctorTests(CliTestCase):
     def test_doctor_reports_failures_and_warnings(self):
         self.script_healthy(labels=("herdr-autofix",))
         self.runner.on("gh", "auth", "status", returncode=1, stderr="You are not logged into any GitHub hosts")
-        self.runner.on("pi", "--list-models", "deepseek-v4.1-flash:cloud", stdout=self.model_table())
+        self.runner.on("pi", "--list-models", "gpt-6-sol", stdout=self.model_table())
         self.runner.on("tailscale", "ip", "-4", raise_error=FileNotFoundError("tailscale"))
         self.runner.on("/Applications/Tailscale.app/Contents/MacOS/Tailscale", raise_error=FileNotFoundError("Tailscale"))
         self.runner.on("git", "-C", str(self.checkout), "remote", "get-url", "origin", stdout="git@github.com:someone/else.git\n")
         self.write_config("version = 1\n")
         environ = dict(self.environ, HERDR_CODE_FACTORY_DASHBOARD_HOST="tailscale")
-        del environ["OLLAMA_API_KEY"]
         self.deps.disk_usage = lambda path: SimpleNamespace(total=10 * GIB, used=9 * GIB, free=1 * GIB)
         self.assertEqual(self.run_cli("doctor", environ=environ), 1)
         payload, checks = self.checks()
@@ -693,45 +694,48 @@ class DoctorTests(CliTestCase):
         self.assertIn("released", checks["labels"]["detail"])
         self.assertTrue(checks["planner_model"]["ok"])
         self.assertFalse(checks["implementer_model"]["ok"])
-        self.assertFalse(checks["ollama_api_key"]["ok"])
-        self.assertTrue(checks["ollama_api_key"]["warning"])
+        self.assertTrue(checks["reviewer_model"]["ok"])
         self.assertFalse(checks["macos_release"]["ok"])
         self.assertFalse(checks["dashboard_host"]["ok"])
         self.assertFalse(checks["worktree_root"]["ok"])
         self.assertIn("need at least 5 GiB", checks["worktree_root"]["detail"])
-        self.assertEqual(payload["warnings"], 1)
+        self.assertEqual(payload["warnings"], 0)
         self.assertEqual(payload["failures"], 7)
 
     def test_doctor_strips_a_valid_thinking_suffix_from_the_model_probe(self):
         self.script_healthy()
-        environ = dict(self.environ, HERDR_CODE_FACTORY_PLANNER_MODEL="openai-codex/gpt-6-astra:xhigh")
+        environ = dict(self.environ, HERDR_CODE_FACTORY_PLANNER_MODEL="anthropic/claude-fable-5-1:xhigh")
         self.assertEqual(self.run_cli("doctor", environ=environ), 0)
         _, checks = self.checks()
         self.assertTrue(checks["planner_model"]["ok"])
-        self.assertEqual(checks["planner_model"]["detail"], "openai-codex/gpt-6-astra:xhigh is available")
-        self.assertIn(["pi", "--list-models", "gpt-6-astra"], self.runner.argv_with("pi", "--list-models"))
+        self.assertEqual(checks["planner_model"]["detail"], "anthropic/claude-fable-5-1:xhigh is available")
+        self.assertIn(["pi", "--list-models", "claude-fable-5-1"], self.runner.argv_with("pi", "--list-models"))
 
     def test_doctor_preserves_a_non_thinking_colon_suffix_in_the_model_probe(self):
         self.script_healthy()
-        self.assertEqual(self.run_cli("doctor"), 0)
+        self.runner.on("pi", "--list-models", "deepseek-v4.1-flash:cloud",
+                       stdout=self.model_table(("ollama-cloud", "deepseek-v4.1-flash:cloud")))
+        environ = dict(self.environ, HERDR_CODE_FACTORY_IMPLEMENTER_MODEL="ollama-cloud/deepseek-v4.1-flash:cloud")
+        self.assertEqual(self.run_cli("doctor", environ=environ), 0)
         _, checks = self.checks()
         self.assertTrue(checks["implementer_model"]["ok"])
+        self.assertTrue(checks["ollama_api_key"]["ok"])
         self.assertIn(["pi", "--list-models", "deepseek-v4.1-flash:cloud"], self.runner.argv_with("pi", "--list-models"))
 
     def test_doctor_rejects_a_model_table_without_the_configured_model(self):
         self.script_healthy()
-        self.runner.on("pi", "--list-models", "gpt-6-astra",
+        self.runner.on("pi", "--list-models", "claude-fable-5-1",
                        stdout=self.model_table(("openai-codex", "another-model")))
         self.assertEqual(self.run_cli("doctor"), 1)
         _, checks = self.checks()
         self.assertFalse(checks["planner_model"]["ok"])
         self.assertEqual(checks["planner_model"]["detail"],
-                         "openai-codex/gpt-6-astra not found in pi --list-models output")
+                         "anthropic/claude-fable-5-1 not found in pi --list-models output")
 
     def test_doctor_rejects_a_model_table_row_with_a_different_provider(self):
         self.script_healthy()
-        self.runner.on("pi", "--list-models", "gpt-6-astra",
-                       stdout=self.model_table(("other-provider", "gpt-6-astra")))
+        self.runner.on("pi", "--list-models", "claude-fable-5-1",
+                       stdout=self.model_table(("other-provider", "claude-fable-5-1")))
         self.assertEqual(self.run_cli("doctor"), 1)
         _, checks = self.checks()
         self.assertFalse(checks["planner_model"]["ok"])

@@ -1441,7 +1441,7 @@ class CodeFactory:
                 self._git.reset_hard(cwd, head)
             diff = self._github.pull_request_diff(pr_number)
             result = self._session(
-                issue_number=number, role="reviewer", model=self._settings.planner_model, thinking=self._settings.planner_thinking,
+                issue_number=number, role="reviewer", model=self._settings.reviewer_model, thinking=self._settings.reviewer_thinking,
                 prompt=prompts.reviewer_prompt(
                     view, plan, {"number": pr_number, "url": issue.get("prUrl")}, diff,
                     issue.get("ciStatus"), plan.get("ci_log"), round_number, descriptors,
@@ -1451,7 +1451,7 @@ class CodeFactory:
             )
             self._restore_clean_worktree(number, "review", cwd, "reviewer")
             review = prompts.validate_review(prompts.extract_json_block(result.text), plan)
-            # Persist before posting: a gh failure must not discard a finished Astra round.
+            # Persist before posting: a gh failure must not discard a finished review round.
             plan.update(last_review=review, last_review_head=head, last_review_posted=False)
             self._save_plan(issue, plan, paths)
         body = self._public(prompts.review_body(round_number, review))
@@ -1581,7 +1581,7 @@ class CodeFactory:
         return mergeable == "CONFLICTING" or state == "DIRTY"
 
     def _rebase_conflicted_branch(self, issue: Mapping[str, Any], stage: str) -> str | None:
-        """Rebase a conflicted branch with a DeepSeek session, spending a bounded rebase budget.
+        """Rebase a conflicted branch with a Sol session, spending a bounded rebase budget.
 
         A conflict is neither a review finding nor a CI failure, so the review round and
         CI failure counters are preserved: after the forced push the issue re-runs Verify,

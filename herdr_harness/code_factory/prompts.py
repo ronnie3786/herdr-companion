@@ -23,7 +23,7 @@ from .errors import CodeFactoryError
 # -- charters (verbatim from the specification) -----------------------------------
 
 PLANNER_CHARTER = (
-    "You are Astra, the planning and review lead of the Herdr Code Factory. You are working "
+    "You are Fable 5.1, the planning lead of the Herdr Code Factory. You are working "
     "in a clean git worktree of the repository at the current directory. Read AGENTS.md, "
     "README.md and the relevant code before planning. Your job is to turn ONE GitHub issue "
     "into a bounded, verifiable implementation plan for implementer sessions that cannot see "
@@ -43,11 +43,11 @@ PLANNER_CHARTER = (
 )
 
 _IMPLEMENTER_FIRST_SENTENCE = (
-    "You are a DeepSeek implementer session of the Herdr Code Factory working in a dedicated "
+    "You are a GPT 6 Sol implementer session of the Herdr Code Factory working in a dedicated "
     "git worktree at the current directory on a feature branch."
 )
 _REVISER_FIRST_SENTENCE = (
-    "You are a fresh DeepSeek revision session of the Herdr Code Factory addressing review "
+    "You are a fresh GPT 6 Sol revision session of the Herdr Code Factory addressing review "
     "feedback on an existing pull request branch checked out at the current directory."
 )
 _IMPLEMENTER_REST = (
@@ -68,7 +68,7 @@ IMPLEMENTER_CHARTER = _IMPLEMENTER_FIRST_SENTENCE + " " + _IMPLEMENTER_REST
 REVISER_CHARTER = _REVISER_FIRST_SENTENCE + " " + _IMPLEMENTER_REST
 
 REVIEWER_CHARTER = (
-    "You are Astra performing a code review for the Herdr Code Factory. You are in a clean "
+    "You are Opus 5.5 performing a code review for the Herdr Code Factory. You are in a clean "
     "git worktree checked out at the pull request head. Review the diff you are given "
     "against the plan's acceptance criteria, AGENTS.md rules, API compatibility between "
     "server, native clients and Pi extensions, error handling, races, privacy (no personal "
@@ -94,7 +94,7 @@ REVIEWER_CHARTER = (
 )
 
 RELEASE_AUTHOR_CHARTER = (
-    "You are a DeepSeek release-preparation session of the Herdr Code Factory working in a "
+    "You are a GPT 6 Sol release-preparation session of the Herdr Code Factory working in a "
     "clean git worktree of the main branch at the current directory. Your only job: run the "
     "version bump command you are given, write the release notes file you are told to "
     "write (concise UTF-8 Markdown following release/notes/*.md conventions: what changed "
@@ -104,7 +104,7 @@ RELEASE_AUTHOR_CHARTER = (
 )
 
 REBASER_CHARTER = (
-    "You are a fresh DeepSeek conflict-resolution session of the Herdr Code Factory working "
+    "You are a fresh GPT 6 Sol conflict-resolution session of the Herdr Code Factory working "
     "in a dedicated git worktree at the current directory. Your only job is to rebase the "
     "current feature branch onto the freshly fetched base branch, resolve every merge "
     "conflict so both sides' intent survives, and leave the worktree clean with the rebase "
@@ -219,7 +219,10 @@ _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s")
 _CODE_FACTORY_COMMENT_PREFIXES = (
     "🤖 Code Factory picked this up.",
     "❓ Code Factory needs a decision before it can continue:",
+    "🧭 Plan (Fable)",
+    "🧭 Corrected plan (Fable)",
     "🧭 Plan (Astra)",
+    "🧭 Corrected plan (Astra)",
     "Merged as ",
     "🚀 Released in ",
 )
@@ -456,7 +459,7 @@ def planner_prompt(
     repo_hints: Sequence[str] | str | None = None,
     previous_plan: Mapping[str, Any] | None = None,
 ) -> str:
-    """The Astra planning request for one issue (body verbatim, attachments described)."""
+    """The Fable planning request for one issue (body verbatim, attachments described)."""
     number = _issue_number(issue)
     title = _line(_issue_field(issue, "title"))
     hints = [repo_hints] if isinstance(repo_hints, str) else list(repo_hints or ())
@@ -600,7 +603,7 @@ def implementer_prompt(
     issue: Mapping[str, Any],
     previous_summaries: Sequence[str] = (),
 ) -> str:
-    """The DeepSeek request for one task of the plan."""
+    """The Sol request for one task of the plan."""
     number = _issue_number(issue)
     title = _line(_issue_field(issue, "title"))
     tasks = plan.get("tasks") if isinstance(plan.get("tasks"), list) else []
@@ -644,7 +647,7 @@ def reviewer_prompt(
     round_number: int,
     attachments: Sequence[Mapping[str, Any]] = (),
 ) -> str:
-    """The Astra review request for one pull request revision."""
+    """The Opus review request for one pull request revision."""
     number = _issue_number(issue)
     pr_number = pr.get("number") if isinstance(pr.get("number"), int) else "?"
     status = _line(ci_status) or "unknown"
@@ -701,7 +704,7 @@ def reviser_prompt(
     ci_log_excerpt: str | None,
     issue: Mapping[str, Any],
 ) -> str:
-    """The fresh DeepSeek request that addresses a review or a failed CI run."""
+    """The fresh Sol request that addresses a review or a failed CI run."""
     number = _issue_number(issue)
     sections: list[str] = []
     if isinstance(review, Mapping) and review:
@@ -711,7 +714,7 @@ def reviser_prompt(
             for item in comments if isinstance(item, Mapping)
         ]
         sections.append(
-            "## Review feedback (Astra)\n"
+            "## Review feedback (Opus)\n"
             f"Verdict: {_line(review.get('verdict'))}\n\n"
             + _clip(str(review.get("summary") or ""), MAX_TEXT_CHARS)
             + "\n\nBlocking:\n" + _bullets(review.get("blocking") or [])
@@ -742,7 +745,7 @@ def reviser_prompt(
 
 
 def rebase_prompt(plan: Mapping[str, Any], base_ref: str, issue: Mapping[str, Any]) -> str:
-    """The fresh DeepSeek request that rebases a conflicted branch onto the fetched base."""
+    """The fresh Sol request that rebases a conflicted branch onto the fetched base."""
     number = _issue_number(issue)
     return "\n\n".join([
         f"# Rebase the pull request branch for GitHub issue #{number}: {_line(_issue_field(issue, 'title'))}",
@@ -793,7 +796,7 @@ def release_author_prompt(
     merged_issues: Sequence[Mapping[str, Any]],
     commit_message: str,
 ) -> str:
-    """The DeepSeek request that bumps the version, writes notes and commits both."""
+    """The Sol request that bumps the version, writes notes and commits both."""
     rows = []
     for item in merged_issues:
         if not isinstance(item, Mapping):
@@ -872,7 +875,7 @@ def plan_digest(plan: Mapping[str, Any], *, corrected: bool = False) -> str:
         for index, item in enumerate(tasks, start=1) if isinstance(item, Mapping)
     ]
     body = "\n\n".join([
-        "🧭 Corrected plan (Astra)" if corrected else "🧭 Plan (Astra)",
+        "🧭 Corrected plan (Fable)" if corrected else "🧭 Plan (Fable)",
         _clip(_line(plan.get("summary")), MAX_SUMMARY_CHARS),
         "Requirements:\n" + _traceability_text(plan),
         "Assumptions:\n" + _assumptions_text(plan),
@@ -941,13 +944,13 @@ def pull_request_body(issue: Mapping[str, Any], plan: Mapping[str, Any]) -> str:
 
 
 def review_body(round_number: int, review: Mapping[str, Any]) -> str:
-    """The PR review body: ``### Astra review (round N): <verdict>`` plus the summary.
+    """The PR review body: ``### Opus review (round N): <verdict>`` plus the summary.
 
     Bounded to :data:`MAX_GITHUB_BODY_CHARS` so a long review never fails ``post_review``
     after the reviewer session already ran: non-blocking notes are dropped first, then
     the remainder is clipped with a visible marker.
     """
-    heading = f"### Astra review (round {int(round_number)}): {_line(review.get('verdict'))}"
+    heading = f"### Opus review (round {int(round_number)}): {_line(review.get('verdict'))}"
     summary = _clip(str(review.get("summary") or ""), MAX_TEXT_CHARS)
     blocking = [item for item in (review.get("blocking") or []) if isinstance(item, str) and item.strip()]
     non_blocking = [item for item in (review.get("non_blocking") or []) if isinstance(item, str) and item.strip()]

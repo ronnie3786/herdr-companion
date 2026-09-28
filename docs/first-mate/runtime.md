@@ -442,6 +442,14 @@ requests one checkpoint and cancels compaction. If the worker cannot produce a
 checkpoint within the bounded deadline, the supervisor stops it and an independent
 advisor assembles a recovery brief from recorded evidence.
 
+A handoff request, from the context target or an advisor, allows three minutes to
+reach a safe boundary and call `fm_handoff`. Past that the worker keeps its turn
+while Pi still reports activity (thinking, text, or a tool call streaming or
+running within the last minute), and is stopped only once it goes quiet or 15
+minutes after the request. A max-thinking model writing a thorough checkpoint
+routinely needs longer than the old fixed 90 seconds, and stopping it mid-write
+loses the checkpoint along with the verification and outcome it was about to record.
+
 A checkpoint is retained before the predecessor stops. A fresh native Pi session
 continues the same assignment in its existing workspace. The successor must
 inspect and acknowledge the handoff before mutation tools are available. The

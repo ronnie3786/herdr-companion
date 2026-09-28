@@ -34,4 +34,70 @@ struct FirstMateConversationTests {
             #expect(!FirstMateEvent.isMilestone(bookkeeping))
         }
     }
+
+    @Test("A checkpoint owns one turn while its closing reply keeps its original feedback identity")
+    func checkpointGroupsOnlyItsClosingReply() throws {
+        let messages = try decodeMessages([
+            #"{"id":"human","role":"user","text":"Proceed"}"#,
+            #"{"id":"checkpoint","role":"assistant","text":"Review this result","metadata":{"checkpoint":true,"turn_id":"human","visit_id":"visit"}}"#,
+            #"{"id":"closing","role":"assistant","text":"Would you like to review?","metadata":{"in_reply_to":"human"}}"#,
+            #"{"id":"next-reply","role":"assistant","text":"Would you like to review?","metadata":{"in_reply_to":"next-human"}}"#,
+        ])
+        let entries = FirstMateConversationEntry.make(messages: messages)
+        #expect(entries.map(\.id) == ["human", "checkpoint", "next-reply"])
+        #expect(entries[1].additionalReplies == [messages[2]])
+        #expect(entries[1].message == messages[1])
+        #expect(FirstMateFeedbackEligibility.isEligible(entries[1].additionalReplies[0]))
+        #expect(messages.map(\.id) == ["human", "checkpoint", "closing", "next-reply"])
+    }
+
+    @Test("Missing, malformed, background and foreign provenance cannot hide replies")
+    func unknownProvenanceIsNotCollapsed() throws {
+        let messages = try decodeMessages([
+            #"{"id":"old-checkpoint","role":"assistant","text":"Choose a next step","metadata":{"checkpoint":true}}"#,
+            #"{"id":"old-reply","role":"assistant","text":"Choose a next step"}"#,
+            #"{"id":"broken","role":"assistant","text":"Choose a next step","metadata":{"turn_id":12}}"#,
+            #"{"id":"background","role":"assistant","text":"Done","visibility":"background","metadata":{"checkpoint":true,"turn_id":"turn"}}"#,
+            #"{"id":"reply","role":"assistant","text":"Choose a next step","metadata":{"in_reply_to":"turn"}}"#,
+            #"{"id":"foreign","feature_id":"other-feature","role":"assistant","text":"Done","metadata":{"checkpoint":true,"turn_id":"turn"}}"#,
+        ])
+        let entries = FirstMateConversationEntry.make(messages: messages)
+        #expect(entries.map(\.id) == ["old-checkpoint", "old-reply", "broken", "reply", "foreign"])
+        #expect(entries.allSatisfy { $0.additionalReplies.isEmpty })
+        #expect(messages[2].metadata == nil)
+        let roundTrip = try JSONDecoder().decode([FirstMateMessage].self, from: JSONEncoder().encode(messages))
+        #expect(roundTrip == messages)
+    }
+
+    @Test("Only the current visit's latest checkpoint is marked as the pending decision")
+    func pendingDecisionFollowsWorkflowState() throws {
+        var snapshot = FirstMateDemo.features(step: 0)[0]
+        snapshot.feature.id = "f"
+        snapshot.feature.currentVisitID = "current"
+        snapshot.feature.status = "awaiting_direction"
+        snapshot.messages = try decodeMessages([
+            #"{"id":"old","role":"assistant","text":"Old question","metadata":{"checkpoint":true,"turn_id":"old-turn","visit_id":"old"}}"#,
+            #"{"id":"current","role":"assistant","text":"Current question","metadata":{"checkpoint":true,"turn_id":"current-turn","visit_id":"current"}}"#,
+            #"{"id":"closing","role":"assistant","text":"Closing question","metadata":{"in_reply_to":"current-turn"}}"#,
+        ])
+        #expect(snapshot.pendingDecisionMessageID == "current")
+        #expect(snapshot.conversationEntries.map(\.id) == ["old", "current"])
+        for status in ["running", "recovering", "completed", "paused", "blocked"] {
+            snapshot.feature.status = status
+            #expect(snapshot.pendingDecisionMessageID == nil)
+        }
+        snapshot.feature.status = "awaiting_direction"
+        snapshot.feature.currentVisitID = "next"
+        #expect(snapshot.pendingDecisionMessageID == nil)
+    }
+
+    private func decodeMessages(_ rows: [String]) throws -> [FirstMateMessage] {
+        try rows.map { row in
+            var value = try #require(JSONSerialization.jsonObject(with: Data(row.utf8)) as? [String: Any])
+            if value["feature_id"] == nil { value["feature_id"] = "f" }
+            value["status"] = "done"
+            value["created_at"] = "2026-01-01T00:00:00Z"
+            return try JSONDecoder().decode(FirstMateMessage.self, from: JSONSerialization.data(withJSONObject: value))
+        }
+    }
 }

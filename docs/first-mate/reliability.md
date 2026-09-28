@@ -18,7 +18,7 @@ human to keep asking for status.
 | Nudge | Advisor recommends steering/handoff, or cannot answer before its deadline | Send one durable, idempotent progress/handoff request. Allow five minutes by default to report concrete progress, declare an evidenced wait, or hand off safely. |
 | Verified restart | Nudge produced no progress | Request a graceful abort through the owning supervisor. Wait for its writer lock to clear. An unconfirmed stop blocks recovery; it never permits a competing writer. |
 | Checkpointed continuation | Stopped worker has verifiable effects and a safe next action | Preserve source changes, obtain an independent recovery brief, and queue a fresh execution in the same assignment and workspace. Mutation is fenced until that executor acknowledges the recovery checkpoint. |
-| Circuit breaker | Two unsuccessful continuations, unsafe effects, missing evidence, unconfirmed stop, or backup failure | Block with the actual reason and retained evidence. Configured notifications can ask for direction. No silent stage advance, publishing, or repeated external action. |
+| Circuit breaker | Two continuations at the same observed position, unsafe effects, missing evidence, unconfirmed stop, or backup failure | Block with the actual reason and retained evidence. A changed, independently observed source or completed child result opens a fresh bounded continuation budget. Configured notifications can ask for direction. No silent stage advance, publishing, or repeated external action. |
 
 The hourly interval is a sweep cadence, not a guarantee that every slow task is
 stalled after precisely one hour. Evidence can defer intervention. Active rescue
@@ -40,17 +40,34 @@ new position. Reports are model-authored evidence, not independently proven task
 completion; the advisor also receives bounded recent tool/session evidence.
 
 Successors receive retained progress, workspace observations, and the latest
-handoff-document reference. They should read the latest checkpoint and targeted
-source rather than re-read every predecessor. Four handoffs with the same observed
-position inside one sweep interval trip a churn breaker before another successor
-is launched. The latest handoff is retained, not deleted.
+handoff-document reference. Status responses carry bounded current references;
+exact assignment and document readers supply detail only when needed. Successors
+should read the latest checkpoint and targeted source rather than re-read every
+predecessor. When inherited context crosses the rotation target, the watcher first
+allows required inspection and acknowledgement, followed by up to 8,192 tokens of
+continuation while retaining 4,096 tokens for a final checkpoint. It does not order
+a fenced successor to hand off before that successor can acknowledge its evidence.
+
+Four handoffs with the same independently observed position inside one sweep
+interval trigger one focused automatic repair continuation. Another unchanged
+handoff stops the loop and retains its checkpoint. Rewording `fm_progress` or
+incrementing a generation does not renew this budget. Recovery fingerprints use
+bounded source content (including non-ignored untracked files) and settled child
+results. Missing evidence cannot refresh a budget, and the first fingerprint never
+erases an existing exhausted budget. Lifetime recovery totals remain retained.
 
 ## Safe effects and ownership
 
 New managed workers durably record mutating tool starts **before** allowing them
 to execute, then record completion. An unwritable ledger blocks the tool. Direct
 `edit`/`write` calls are classified as workspace-local only after canonical path
-checking; shell commands and unfamiliar tools are conservatively external.
+checking. Conservatively parsed read-only shell commands receive observational
+receipts, including searches that return no matches. `rg` is observational only
+when its configuration is disabled or absent and it cannot invoke a preprocessor.
+Git workspace inspection requires disabled filesystem monitors, external diff and
+text-conversion helpers where applicable. Unknown shell syntax, build/test scripts,
+publishing commands and unfamiliar tools remain conservatively external: a build
+script can run arbitrary commands, so its name alone cannot establish local effects.
 
 Automatic writable recovery requires the versioned ledger. Missing, malformed,
 incomplete, or failed external receipts stop it. A successful tool receipt still
@@ -68,7 +85,8 @@ A `read_only` workspace is an instruction, not a tool sandbox in current Pi.
 Normal configured tools remain available, but an effect-capable tool used outside
 a managed isolated worktree requires inspection rather than automatic recovery.
 Automatic stability and recovery advisors are explicitly restricted to read-only
-tools; ordinary advisors retain their existing tools. Ordinary known
+tools, including the same verified observational shell grammar available to fenced
+successors; ordinary advisors retain their existing tools. Ordinary known
 handoffs continue through their verified handoff protocol. Neither monitoring nor
 recovery grants new stage, deployment, publication, cleanup, or human-gate authority.
 Queued human direction takes precedence over automatic intervention.

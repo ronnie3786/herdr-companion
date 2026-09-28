@@ -71,7 +71,7 @@ function probeCommands(command: string): string[][] | undefined {
   return commands;
 }
 
-export function observationalShellCommand(command: unknown): boolean {
+export function observationalShellCommand(command: unknown, environment: NodeJS.ProcessEnv = process.env): boolean {
   if (typeof command !== "string" || command.length > 16000) return false;
   const commands = probeCommands(command);
   return Boolean(commands?.every(([program, ...args]) => {
@@ -86,12 +86,23 @@ export function observationalShellCommand(command: unknown): boolean {
         && !operands.some(arg => arg === "-v" || /[$`\[\]]/u.test(arg));
     }
     // rg may execute a preprocessor from configuration or command-line flags.
-    if (program === "rg") return args.includes("--no-config") && !args.some(arg => /^(?:--pre(?:=|$)|--hostname-bin(?:=|$)|--search-zip$|-[^-]*z)/u.test(arg));
-    // Git can run configured hooks, pagers and diff drivers. Only this explicit
-    // hook-free status form is recognized; other invocations stay external.
-    return program === "git" && args[0] === "--no-pager" && args[1] === "--no-optional-locks" && args[2] === "-c"
-      && args[3] === "core.fsmonitor=false" && args[4] === "status"
-      && args.slice(5).every(arg => !arg.startsWith("-") || /^(?:--short|--porcelain(?:=v?[12])?|--branch|-s|-b|--untracked-files(?:=(?:no|normal|all))?|--ignored|--)$/u.test(arg));
+    if (program === "rg") return (args.includes("--no-config") || !environment.RIPGREP_CONFIG_PATH)
+      && !args.some(arg => /^(?:--pre(?:=|$)|--hostname-bin(?:=|$)|--search-zip$|-[^-]*z)/u.test(arg));
+    // These Git reads do not invoke worktree filters, diff drivers or hooks.
+    // Do not accept arbitrary global -c/-p flags or subcommands by prefix.
+    if (program === "git" && args[0] === "rev-parse") return !args.some(arg => /^(?:--sq-quote|--parseopt)$/u.test(arg));
+    if (program === "git" && args[0] === "remote") return args.length === 1 || (args.length === 2 && ["-v", "--verbose"].includes(args[1]));
+    if (program === "git" && args[0] === "branch") return args.length === 2 && args[1] === "--show-current";
+    // Git can run configured hooks, pagers and diff drivers. Workspace reads
+    // require this explicit helper-free prefix; unknown forms stay external.
+    if (!(program === "git" && args[0] === "--no-pager" && args[1] === "--no-optional-locks" && args[2] === "-c"
+      && args[3] === "core.fsmonitor=false")) return false;
+    if (args[4] === "status") return args.slice(5).every(arg => !arg.startsWith("-") || /^(?:--short|--porcelain(?:=v?[12])?|--branch|-s|-b|--untracked-files(?:=(?:no|normal|all))?|--ignored|--)$/u.test(arg));
+    if (args[4] === "ls-files") return !args.slice(5).some(arg => arg.startsWith("--with-tree"));
+    // Explicitly suppress user-configured helpers. --output writes a file;
+    // --ext-diff/--textconv later in the command could re-enable execution.
+    return args[4] === "diff" && args.includes("--no-ext-diff") && args.includes("--no-textconv")
+      && !args.some(arg => /^--(?:ext-diff|textconv|output|no-index)(?:=|$)/u.test(arg));
   }));
 }
 
@@ -135,6 +146,8 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     let retired = false;
     let checkpointRequested = false;
     let successorAcknowledged = !job.handoff_id && !job.requires_recovery_ack;
+    let inspectionHeadroomRequested = false;
+    let continuationTarget = 0;
     const restrictedAdvisor = role === "advisor" && (job.recovery_mode || job.reliability_assessment);
     const roleTools = new Set(role === "coordinator" ? [
       "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
@@ -200,13 +213,21 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       async execute(toolCallId, params, signal, _update, ctx) {
         const result = await request(toolCallId, name, params, signal, ctx);
         if (["fm_outcome", "fm_handoff", "fm_advice", "fm_request_human", "fm_recovery_brief", "fm_wait_for_children"].includes(name)) retired = true;
-        if (["fm_acknowledge_handoff", "fm_acknowledge_recovery"].includes(name)) successorAcknowledged = true;
+        if (!successorAcknowledged && ["fm_acknowledge_handoff", "fm_acknowledge_recovery"].includes(name)) {
+          successorAcknowledged = true;
+          // Inspecting the inherited checkpoint may cross the normal handoff
+          // target. Leave one bounded work allowance after acknowledgement so
+          // successors do not spend every generation just rotating context.
+          const usage = ctx.getContextUsage();
+          const window = Number(usage?.contextWindow ?? 0);
+          if (usage?.tokens && window > 8192) continuationTarget = Math.min(window - 4096, usage.tokens + 8192);
+        }
         return result;
       },
     });
     register("fm_status", role === "coordinator"
       ? "Read the authoritative reference-oriented router status. Use bounded evidence readers directly and delegate substantial reconciliation; no polling is necessary."
-      : "Read authoritative feature status, assignments, outcomes and retained document references. No model polling is necessary.", Type.Object({}));
+      : "Read bounded authoritative feature status, the current assignment, outcomes and document references. Use an exact assignment_id for detail and targeted document/session readers for evidence. No model polling is necessary.", Type.Object({ assignment_id: Type.Optional(text("Exact assignment ID for a bounded detail lookup; omit for current scoped status")) }));
     register("fm_read_document", "Read a retained source document belonging to this feature before evaluating or synthesizing its evidence.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
     register("fm_read_session", "Inspect a retained native Pi conversation belonging to this feature when the actual execution evidence is needed.", Type.Object({ native_session_id: text("Exact native session ID"), before: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), message_index: Type.Optional(Type.Integer({ minimum: 0 })), text_offset: Type.Optional(Type.Integer({ minimum: 0 })), text_length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
     if (role === "coordinator" || role === "worker") {
@@ -269,6 +290,8 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       }));
       register("fm_record_verification", "Record the exact discovered suite inventory and one append-only gate batch from this execution, including failures, errors, skipped suites, and interrupted runs. Report every batch promptly rather than only a final successful report. The service derives the tested workspace and revision and returns the scoped verification verdict; quote that verdict and never claim unqualified green from a total test count.", Type.Object({
         revision: text("Exact tested source revision (commit SHA) for this batch"),
+        target_workspace_path: Type.Optional(text("Canonical absolute Git root actually tested when different from the assignment workspace; register together with baseline_revision. Must belong to the same repository.")),
+        baseline_revision: Type.Optional(text("Full retained baseline commit SHA for the explicit tested workspace, which must be its ancestor. Target registration is immutable for this assignment.")),
         status: Type.Optional(Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("interrupted")], { description: "Batch outcome. Defaults to completed only when every recorded gate passed." })),
         summary: Type.Optional(text("Bounded evidence summary for this batch")),
         inventory: Type.Optional(Type.Object({
@@ -327,8 +350,17 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       const window = Number(usage.contextWindow ?? 0);
       const configured = Number(environment.HERDR_FIRST_MATE_CONTEXT_TARGET ?? "150000");
       const reserve = Math.max(8192, Math.floor(window * 0.1));
-      const target = window > 0 ? Math.min(configured, Math.max(4096, window - reserve)) : configured;
+      const ordinaryTarget = window > 0 ? Math.min(configured, Math.max(4096, window - reserve)) : configured;
+      const target = Math.max(ordinaryTarget, continuationTarget);
       if (usage.tokens >= target) {
+        if (!successorAcknowledged) {
+          if (!inspectionHeadroomRequested) {
+            inspectionHeadroomRequested = true;
+            observe("checkpoint_inspection_required", { tokens: usage.tokens, target }, ctx);
+            pi.sendUserMessage("Context is near its handoff target, but this successor must finish its required inspection first. Read only the latest checkpoint and exact missing evidence, then acknowledge the handoff or recovery. Do not reread the full history or request another handoff before acknowledgement. After acknowledgement, execute the next bounded action within the remaining headroom, then checkpoint if needed.", { deliverAs: "steer" });
+          }
+          return;
+        }
         checkpointRequested = true;
         observe("checkpoint_requested", { tokens: usage.tokens, target }, ctx);
         pi.sendUserMessage("The context watcher requires a fresh-session handoff. Finish the current safe boundary, call fm_handoff with a complete checkpoint, then end. Do not compact or begin more implementation.", { deliverAs: "steer" });
@@ -340,13 +372,14 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     });
     pi.on("tool_call", (event) => {
       if (retired) return { block: true, reason: "This execution has reported its outcome or checkpoint. End the turn now.", terminate: true };
-      if (!successorAcknowledged && !["fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_request_human", "fm_status", "fm_read_document", "fm_read_session", "read", "ls", "find", "grep"].includes(event.toolName)) {
+      const observational = event.toolName === "bash" && observationalShellCommand(event.input?.command, environment);
+      if (!successorAcknowledged && !observational && !["fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_request_human", "fm_status", "fm_read_document", "fm_read_session", "read", "ls", "find", "grep"].includes(event.toolName)) {
         return { block: true, reason: "Inspect the retained checkpoint and workspace, then acknowledge the handoff or recovery before executing work." };
       }
       if (event.toolName.startsWith("fm_") && !roleTools.has(event.toolName)) {
         return { block: true, reason: "This First Mate workflow action is unavailable to the current role." };
       }
-      if (restrictedAdvisor && !["read", "ls", "find", "grep", "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
+      if (restrictedAdvisor && !observational && !["read", "ls", "find", "grep", "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
         return { block: true, reason: "Automatic recovery assessment is read-only; return evidence through the advisor tools." };
       }
       if (job.workspace_mode === "read_only" && event.toolName === "bash" && destructiveSharedGit(event.input?.command)) {
@@ -359,7 +392,6 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
           if (!existsSync(join(root, "effects.jsonl"))) {
             retainEffect({ type: "ledger_ready", version: 1, job_id: job.id });
           }
-          const observational = event.toolName === "bash" && observationalShellCommand(event.input?.command);
           retainEffect({ type: "start", id: event.toolCallId, tool: event.toolName,
             scope: observational ? "observational" : ["edit", "write"].includes(event.toolName) && workspaceEffect(event.input) ? "workspace" : "external",
             ...(event.toolName === "bash" && typeof event.input?.command === "string" ? { command: event.input.command.slice(0, 4000) } : {}) });

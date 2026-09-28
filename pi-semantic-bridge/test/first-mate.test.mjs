@@ -230,6 +230,9 @@ test("automatic recovery advisors cannot use mutating tools while ordinary advis
     try {
       for (const toolName of ["bash", "write", "edit", "synthetic_third_party"]) assert.equal(f.handlers.get("tool_call")({toolName}).block, true);
       assert.equal(f.handlers.get("tool_call")({toolName:"read"}), undefined);
+      assert.equal(f.handlers.get("tool_call")({toolName:"bash", input:{command:"rg --no-config --files"}}), undefined);
+      assert.equal(f.handlers.get("tool_call")({toolName:"bash", input:{command:"git rev-parse HEAD"}}), undefined);
+      assert.equal(f.handlers.get("tool_call")({toolName:"bash", input:{command:"git push"}}).block, true);
     } finally { f.cleanup(); }
   }
 });
@@ -281,6 +284,33 @@ test("model headroom lowers the 150k target for a smaller context window", async
   } finally { f.cleanup(); }
 });
 
+test("context pressure finishes fenced inspection then permits bounded useful continuation", async () => {
+  const f = fixture("worker", {requires_recovery_ack:true,workspace_mode:"isolated"});
+  try {
+    f.ctx.getContextUsage = () => ({tokens:115201,contextWindow:128000});
+    await f.handlers.get("turn_end")({}, f.ctx);
+    await f.handlers.get("turn_end")({}, f.ctx);
+    assert.equal(f.messages.length, 1);
+    assert.match(f.messages[0][0], /must finish its required inspection first/);
+    assert.equal(f.handlers.get("tool_call")({toolName:"bash",input:{command:"rg --no-config --files"}}), undefined);
+    assert.equal(f.handlers.get("tool_call")({toolName:"fm_handoff"}).block, true);
+    const id = spoolRequestId("synthetic-job", "ack-after-context-pressure");
+    writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{acknowledged:true}}));
+    await f.tools.get("fm_acknowledge_recovery").execute("ack-after-context-pressure",{summary:"Inspected exact checkpoint"},undefined,undefined,f.ctx);
+    await f.handlers.get("turn_end")({}, f.ctx);
+    assert.equal(f.messages.length, 1, "Acknowledgement must not immediately rotate the next executor");
+    assert.equal(f.handlers.get("tool_call")({toolName:"write"}), undefined);
+    f.ctx.getContextUsage = () => ({tokens:120000,contextWindow:128000});
+    const repeated = spoolRequestId("synthetic-job", "repeated-ack");
+    writeFileSync(join(f.root,"responses",repeated+".json"),JSON.stringify({ok:true,result:{acknowledged:true}}));
+    await f.tools.get("fm_acknowledge_recovery").execute("repeated-ack",{summary:"Same checkpoint"},undefined,undefined,f.ctx);
+    f.ctx.getContextUsage = () => ({tokens:123394,contextWindow:128000});
+    await f.handlers.get("turn_end")({}, f.ctx);
+    assert.equal(f.messages.length, 2);
+    assert.match(f.messages[1][0], /fm_handoff/);
+  } finally { f.cleanup(); }
+});
+
 test("automatic recovery successor can inspect evidence but is fenced until acknowledgement", async () => {
   const f = fixture("worker", {requires_recovery_ack:true,workspace_mode:"isolated"});
   try {
@@ -315,16 +345,24 @@ test("only a conservative complete shell probe is observational", () => {
     'cd /synthetic/worktree && echo "=== probe ===" && grep -n "expanded" Source.swift && grep -n "foo\\|bar\\b" Other.swift',
     "test -f README.md || ls -al", "grep -n '$(literal-pattern)' README.md | head -n 5",
     "rg --no-config --files", "git --no-pager --no-optional-locks -c core.fsmonitor=false status --porcelain",
-  ]) assert.equal(observationalShellCommand(command), true, command);
+    "rg pattern", "git rev-parse HEAD", "git remote -v", "git branch --show-current",
+    "git --no-pager --no-optional-locks -c core.fsmonitor=false diff --no-ext-diff --no-textconv --stat HEAD",
+    "git --no-pager --no-optional-locks -c core.fsmonitor=false ls-files --others --exclude-standard",
+  ]) assert.equal(observationalShellCommand(command, {}), true, command);
   for (const command of [
     "grep missing README.md; synthetic-publish artifact", "grep missing README.md > output.txt",
     "echo $(synthetic-publish)", 'echo "`synthetic-publish`"', "ls <(synthetic-publish)",
     "cat <<< input", "ls & synthetic-publish", "echo hello\nsynthetic-publish", "echo x &&", "echo x;",
     "find . -exec synthetic-publish {} ;", "sed -i replacement README.md", "rg --pre=synthetic-publish pattern",
     "rg --no-config --pre synthetic-publish pattern", "rg --no-config --hostname-bin=synthetic-publish pattern",
-    "rg --no-config -z pattern", "rg pattern", "git -c core.fsmonitor=synthetic-publish status", "git status",
+    "rg --no-config -z pattern", "git -c core.fsmonitor=synthetic-publish status", "git status",
     "git diff --ext-diff", "bash -c 'ls'", "GIT_CONFIG=synthetic git status", 'echo "unfinished',
+    "git remote add origin example", "git branch create-branch", "npm test", "xcodebuild test",
+    "git --no-pager --no-optional-locks -c core.fsmonitor=false diff --no-ext-diff --no-textconv --output=/tmp/result",
+    "git --no-pager --no-optional-locks -c core.fsmonitor=false diff --no-ext-diff --no-textconv --ext-diff",
   ]) assert.equal(observationalShellCommand(command), false, command);
+  assert.equal(observationalShellCommand("rg pattern", {RIPGREP_CONFIG_PATH:"/synthetic/config"}), false);
+  assert.equal(observationalShellCommand("rg --no-config pattern", {RIPGREP_CONFIG_PATH:"/synthetic/config"}), true);
 });
 
 test("failed observational shell probes retain their command and scope", () => {

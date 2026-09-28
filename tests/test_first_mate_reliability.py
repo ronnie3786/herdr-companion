@@ -87,6 +87,23 @@ class FirstMateReliabilityTests(unittest.TestCase):
         self.assertEqual(self.store.get_feature(feature['id'])['status'], 'blocked')
         self.assertEqual(self.store.get_assignment(assignment['id'])['generation'], 1, 'Never replace an unconfirmed live writer')
 
+    def test_failed_feature_is_excluded_without_suspending_healthy_feature_supervision(self):
+        feature, assignment, job, lock, now = self.stalled()
+        controller = self.runtime.reliability
+        # This deliberately incomplete feature must be skipped before eligibility,
+        # assignment reads, stale inspection, or coordinator-gap intervention.
+        failed = {'id':'fmf_synthetic-failed'}
+        healthy = self.store.get_feature(feature['id'])
+        with patch.object(self.store, 'list_features', return_value=[failed, healthy]), \
+             patch.object(self.runtime, '_launch') as launch, \
+             patch.object(controller, '_coordinator_gap', wraps=controller._coordinator_gap) as gap:
+            controller.tick(self.runtime._jobs(), now=now, excluded_feature_ids={failed['id']})
+        launch.assert_called_once()
+        self.assertEqual(launch.call_args.args[0]['feature_id'], healthy['id'])
+        gap.assert_called_once()
+        self.assertEqual(gap.call_args.args[0]['id'], healthy['id'])
+        self.assertEqual(_read_json(controller._path(assignment['id']))['phase'], 'assessing')
+
     def test_nudge_payload_survives_crash_after_control_before_journal_receipt(self):
         feature, assignment, job, lock, now = self.stalled()
         controller = self.runtime.reliability
@@ -428,13 +445,40 @@ class FirstMateReliabilityTests(unittest.TestCase):
         launch.assert_called_once()
         self.assertEqual(job['recovery_backup']['status'], 'saved')
 
-    def test_handoff_churn_circuit_breaker_retains_checkpoint_without_another_rotation(self):
+    def test_handoff_churn_gets_one_focused_repair_before_blocking_repeated_rotation(self):
         feature, assignment, job = self.worker()
-        for index in range(3):
+        for index in range(4):
             self.assertTrue(self.runtime.reliability.allow_handoff({**job, 'id':f'job-{index}'}))
-        self.assertFalse(self.runtime.reliability.allow_handoff({**job, 'id':'job-3'}))
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'running')
+        self.assertIn('next finite action', self.runtime.reliability.continuation_guidance(assignment['id']))
+        self.assertFalse(self.runtime.reliability.allow_handoff({**job, 'id':'job-4'}))
         self.assertEqual(self.store.get_feature(feature['id'])['status'], 'blocked')
         self.assertEqual(self.store.get_assignment(assignment['id'])['generation'], 1)
+
+    def test_recovery_budget_progress_observes_source_content_not_reworded_status(self):
+        feature, assignment, job = self.isolated()
+        controller = self.runtime.reliability
+        original = controller.recovery_progress_key(assignment, job)
+        changed_report = {**assignment, 'generation':99, 'metadata':{**assignment['metadata'], 'progress':{'summary':'Different words', 'evidence':'Claimed progress'}}}
+        self.assertEqual(original, controller.recovery_progress_key(changed_report, job))
+        (Path(job['cwd']) / 'README.md').write_text('A real source change\n')
+        tracked = controller.recovery_progress_key(assignment, job)
+        self.assertNotEqual(original, tracked)
+        (Path(job['cwd']) / 'new-source.txt').write_text('Initial source\n')
+        untracked = controller.recovery_progress_key(assignment, job)
+        self.assertNotEqual(tracked, untracked)
+        (Path(job['cwd']) / 'new-source.txt').write_text('Revised source\n')
+        self.assertNotEqual(untracked, controller.recovery_progress_key(assignment, job))
+        with patch('herdr_harness.first_mate_reliability.git_bytes', side_effect=BackupUnavailable('Bounded inspection unavailable')):
+            self.assertIsNone(controller.recovery_progress_key(assignment, job))
+
+    def test_reworded_progress_cannot_evade_the_handoff_loop_budget(self):
+        feature, assignment, job = self.worker()
+        controller = self.runtime.reliability
+        for index in range(5):
+            reported = {**assignment, 'metadata':{**assignment['metadata'], 'progress':{'summary':f'New claim {index}'}}}
+            with patch.object(self.store, 'get_assignment', return_value=reported):
+                self.assertEqual(controller.allow_handoff({**job, 'id':f'job-{index}'}), index < 4)
 
     def test_explicit_handoff_reset_starts_a_new_bounded_history(self):
         feature, assignment, job = self.worker()

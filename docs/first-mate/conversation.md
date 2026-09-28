@@ -13,8 +13,8 @@ their previous behavior.
 | Message | When |
 | --- | --- |
 | Your direction | Every message you send. |
-| First Mate's reply | Every reply to your message. |
-| Stage result | When a stage closes (`fm_complete_stage`). The checkpoint names the result, the deliverable, the verification verdict, and any decision needed, then says whether First Mate is continuing to an authorized next stage or waiting for you. The summary is limited to 1,200 characters and the recommendation to 400; longer text is refused so the coordinator shortens it and leaves detail in Documents. |
+| First Mate's reply | One reply to your message. If the turn posts a stage result, that result is the reply; its closing text stays in the journal. |
+| Stage result | When a stage closes (`fm_complete_stage`). The checkpoint names the result, the deliverable, the verification verdict, and any decision needed. If an authorized next stage remains, it states that work is continuing and does not display a permission question or suggested next step. Otherwise it presents the next decision and waits for you. The summary is limited to 1,200 characters and the recommendation to 400; longer text is refused so the coordinator shortens it and leaves detail in Documents. |
 | Notice | A background turn used `fm_notify_human` for a decision, a blocker, or a finished deliverable ready for your review. At most one per turn, 600 characters. |
 | Escalation | A worker asked for a human checkpoint, or recovery was exhausted, and First Mate explained what it needs. Each assignment's decision gets its own message, even when several arrive together. |
 | Stranded stage | A background turn ended with nothing running and nothing queued, so only you can move the stage. First Mate's closing message is delivered. If the turn itself failed, the chat says First Mate stopped and asks you to send a message to continue. |
@@ -31,8 +31,10 @@ turns**. They wake the coordinator, but its closing message becomes a private
 recent notes in **Overview → Journal**, and the full text stays in the
 coordinator's saved session.
 
-A background turn never adds a second message when it already posted a stage
-result or a notice. An update that is released for your message and claimed
+A coordinator turn never adds a second message when it already posted a stage
+result or a notice, including a turn answering your message. The closing text
+and any interrupted-turn diagnostics remain in the journal and saved session.
+An update that is released for your message and claimed
 again counts as a new turn. A delivered report records a fingerprint of the
 workflow state (feature status, current stage, and each current assignment's
 status, verdict, and human gate); an escalation also records the assignment it is
@@ -46,7 +48,8 @@ so the report is not copied into its conversation twice.
 
 A background turn that fails while other work is still running stays in the
 journal next to the existing `coordinator.interrupted` event. On your own turn,
-you always see a reply, including a failure message.
+you see one reply, including a failure message when the turn has not already
+posted a stage result.
 
 Journal milestones such as queued, progressing, or finished workers appear in
 **Overview → Journal**, not between chat messages.
@@ -80,3 +83,13 @@ No message text is changed or deleted. Snapshots still include every row, with i
    decision.
 4. Leave a stage blocked with nothing running. Expect one message asking for
    direction. Later stability sweeps stay in the journal until you reply.
+5. Ask First Mate to close a finished stage. Expect its checkpoint as the one
+   reply to that message, with no second closing question.
+6. Authorize planning followed by implementation. The planning result says it
+   is continuing with implementation and does not ask you to approve it again.
+
+Saving a refined goal while preparing an empty stage does not consume your
+direction twice. When the same active human turn opened that stage and no
+assignment has ever belonged to it, the stage and its recorded follow-ups stay
+authorized at the new plan revision. Once work exists, ordinary revision,
+writer-stop, and explicit human-checkpoint rules continue to apply.

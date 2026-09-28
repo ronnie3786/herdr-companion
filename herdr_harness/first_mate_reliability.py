@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
+import stat
 import time
 
 from .first_mate_backup import BackupUnavailable, capture_backup, git_bytes
@@ -85,6 +87,54 @@ class FirstMateReliability:
         data['children'] = [(a['id'], a['status'], a['verdict']) for a in children]
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
+    def recovery_progress_key(self, assignment: dict, job: dict) -> str | None:
+        """Independent facts for retry budgets, never reworded model progress.
+
+        Missing/oversized evidence cannot refresh a budget. Hash untracked source
+        as well as its names so a real edit is distinguished from a context loop.
+        """
+        data = {}
+        if job.get('workspace_mode') == 'isolated':
+            try:
+                cwd = Path(job['cwd']).resolve()
+                def inspect(*args, limit):
+                    return git_bytes(str(cwd), '--no-pager', '-c', 'core.fsmonitor=false', *args, limit=limit)
+                data['head'] = inspect('rev-parse', 'HEAD', limit=1024).decode().strip()
+                data['diff'] = hashlib.sha256(inspect('diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', limit=8 * 1024 * 1024)).hexdigest()
+                names = inspect('ls-files', '--others', '--exclude-standard', '-z', limit=1024 * 1024).split(b'\0')
+                if len(names) > 10000:
+                    return None
+                untracked, remaining = [], 8 * 1024 * 1024
+                for name in sorted(filter(None, names)):
+                    relative = Path(os.fsdecode(name))
+                    path = cwd / relative
+                    if relative.is_absolute() or '..' in relative.parts or not path.parent.resolve().is_relative_to(cwd):
+                        return None
+                    info = path.lstat()
+                    if stat.S_ISLNK(info.st_mode):
+                        untracked.append((os.fsdecode(name), 'symlink', os.readlink(path)))
+                        continue
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > remaining:
+                        return None
+                    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    with os.fdopen(descriptor, 'rb') as source:
+                        actual = os.fstat(source.fileno())
+                        if not stat.S_ISREG(actual.st_mode) or (actual.st_ino, actual.st_size, actual.st_mtime_ns) != (info.st_ino, info.st_size, info.st_mtime_ns):
+                            return None
+                        content = source.read(remaining + 1)
+                        after = os.fstat(source.fileno())
+                        if len(content) > remaining or (after.st_size, after.st_mtime_ns) != (actual.st_size, actual.st_mtime_ns):
+                            return None
+                    remaining -= len(content)
+                    untracked.append((os.fsdecode(name), hashlib.sha256(content).hexdigest()))
+                data['untracked'] = untracked
+            except (OSError, ValueError, BackupUnavailable):
+                return None
+        children = [a for a in self.store.list_assignments(feature_id=job['feature_id'])
+                    if a.get('metadata', {}).get('parent_assignment_id') == assignment['id'] and a['status'] == 'completed']
+        data['completed_children'] = sorted((a['id'], a['verdict'], a.get('code_revision')) for a in children)
+        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
     def progress_lease_until(self, job: dict, assignment: dict) -> float:
         """A wait belongs to its live requesting execution, never its successor."""
         progress = assignment.get('metadata', {}).get('progress', {})
@@ -112,7 +162,7 @@ class FirstMateReliability:
                        else epoch(record.get('lease_until'), 0))
         return record.get('job_id') == job['id'] and (record.get('phase') in {'assessing', 'nudge_pending', 'nudged', 'stopping'} or lease_until > time.time())
 
-    def tick(self, jobs: list[dict], *, now: float | None = None):
+    def tick(self, jobs: list[dict], *, now: float | None = None, excluded_feature_ids: set[str] | None = None):
         if not self.enabled or not self.runtime.capabilities()['available']:
             return
         if now is None:
@@ -123,7 +173,9 @@ class FirstMateReliability:
         due = now >= self.next_sweep
         coordinator_due = now >= self.next_coordinator_check
         for feature in self.store.list_features('all'):
-            if not self._eligible(feature):
+            # A feature whose reconciliation failed has uncertain current facts.
+            # Defer it without suspending supervision of independent features.
+            if feature['id'] in (excluded_feature_ids or ()) or not self._eligible(feature):
                 continue
             assignments = [a for a in self.store.list_assignments(feature_id=feature['id'])
                            if self.store.assignment_is_in_current_visit(a['id'])]
@@ -346,7 +398,13 @@ class FirstMateReliability:
         if not self._effects_safe(job):
             self._block(feature, 'An interrupted or failed side-effecting tool has no trustworthy completion receipt. Inspect it before continuation; the original dispatch was not replayed.', 'unsafe-effects:' + job['id'], job=job)
             return False
-        if assignment.get('recovery_count', 0) < 2:
+        if 'recovery_progress_key' not in job:
+            job['recovery_progress_key'] = self.recovery_progress_key(assignment, job)
+            self.runtime._save_job(job)
+        progress_key = job['recovery_progress_key']
+        previous_key = assignment.get('metadata', {}).get('recovery_progress_key')
+        progress_restored = bool(progress_key and previous_key and progress_key != previous_key)
+        if assignment.get('recovery_count', 0) < 2 or progress_restored:
             if not self.runtime._prepare_recovery_brief(job, state):
                 return False
             if not job.get('recovery_safe_to_continue'):
@@ -362,7 +420,7 @@ class FirstMateReliability:
                     return False
         result = self.store.recover_assignment(assignment['id'], job['claim']['generation'],
             'Automatic checkpointed continuation after a verified stop. Preserve existing work and verify the recovery checkpoint before mutation.',
-            'automatic-recovery:' + job['id'], verified_stopped=True, automatic=True)
+            'automatic-recovery:' + job['id'], verified_stopped=True, automatic=True, progress_key=progress_key)
         if result['status'] == 'queued':
             self._event(job, 'restarted', 'Queued a fresh executor from retained progress, not a replay of the original dispatch.', 'auto-restart:' + job['id'])
         return True
@@ -400,7 +458,7 @@ class FirstMateReliability:
         if not self.enabled:
             return True
         assignment = self.store.get_assignment(job['claim']['id'])
-        fingerprint = self._position(assignment, job)
+        fingerprint = self.recovery_progress_key(assignment, job) or 'unavailable'
         path = self.root / ('handoffs-' + assignment['id'] + '.json')
         now = time.time()
         reset_generation = assignment.get('metadata', {}).get('reliability_reset_generation')
@@ -409,7 +467,23 @@ class FirstMateReliability:
         if not any(r['job_id'] == job['id'] for r in history):
             history.append({'job_id': job['id'], 'generation': job['claim']['generation'], 'at': now, 'fingerprint': fingerprint})
             _write_json(path, history[-20:])
-        if len(history) >= 4 and len({r['fingerprint'] for r in history[-4:]}) == 1:
-            self._block(self.store.get_feature(job['feature_id']), 'Four handoffs repeated the same progress within one sweep interval. The latest checkpoint is retained. Obtain revised human direction, then use fm_recover with reset_budget=true, or fm_revise to change the approach.', 'handoff-churn:' + job['id'])
+        if len(history) >= 5 and len({r['fingerprint'] for r in history[-5:]}) == 1:
+            self._block(self.store.get_feature(job['feature_id']), 'A bounded repair continuation still repeated the same work after four handoffs. The latest checkpoint is retained. Obtain revised human direction, then use fm_recover with reset_budget=true, or fm_revise to change the approach.', 'handoff-churn:' + job['id'])
             return False
+        if len(history) >= 4 and len({r['fingerprint'] for r in history[-4:]}) == 1:
+            history[-1]['repair_guidance'] = ('Automatic loop repair within the current authorized assignment. Finish required acknowledgement using only the latest checkpoint and targeted missing evidence. '
+                'Do not reread full predecessor history or restate plans. Perform the checkpoint\'s next finite action, retain its concrete result, and complete the assignment when its criteria are met. '
+                'If that action fails, diagnose and fix it within scope. Request a human only for an actual decision or an uncertain external outcome. Another handoff without observable progress exhausts this repair attempt.')
+            _write_json(path, history[-20:])
+            self._event(job, 'handoff_repair', 'Repeated context handoffs triggered one focused repair continuation before escalation.', 'handoff-repair:' + job['id'])
         return True
+
+    def continuation_guidance(self, assignment_id):
+        history = _read_json(self.root / ('handoffs-' + assignment_id + '.json'), [])
+        if not history or history[-1].get('at', 0) < time.time() - self.interval:
+            return ''
+        assignment = self.store.get_assignment(assignment_id)
+        reset_generation = assignment.get('metadata', {}).get('reliability_reset_generation')
+        if reset_generation is not None and history[-1].get('generation', -1) <= reset_generation:
+            return ''
+        return history[-1].get('repair_guidance', '')

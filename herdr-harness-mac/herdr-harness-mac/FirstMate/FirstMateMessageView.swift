@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FirstMateMessageView: View {
     let message: FirstMateMessage
+    var isPendingDecision = false
     var canQuote = false
     var quoteSource = "First Mate"
     var saveQuote: @MainActor (ChatQuote) async throws -> Void = { _ in }
@@ -71,6 +72,12 @@ struct FirstMateMessageView: View {
                 Text("First Mate")
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
                     .foregroundStyle(palette.secondaryText)
+                if isPendingDecision {
+                    Label("Decision needed", systemImage: "hand.raised")
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                        .foregroundStyle(HerdrTheme.warning)
+                        .accessibilityIdentifier("first-mate-pending-decision-\(message.id)")
+                }
                 if message.status == "queued" {
                     Text("Queued")
                         .herdrFont(size: HerdrTheme.TextSize.caption)

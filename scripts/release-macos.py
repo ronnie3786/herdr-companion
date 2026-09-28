@@ -218,7 +218,12 @@ def source_revision():
 
 
 def latest_verify_run(source):
-    runs = json.loads(gh("run", "list", "--repo", REPOSITORY, "--commit", source, "--workflow", "Verify", "--json", "headSha,status,conclusion", "--limit", "20"))
+    """The latest push run of Verify for this exact revision. A same-repository
+    pull_request run skips its tests and leaves them to the push run, so it
+    finishes in seconds and is never evidence that the revision passed."""
+    runs = json.loads(gh("run", "list", "--repo", REPOSITORY, "--commit", source, "--workflow", "Verify", "--event", "push",
+                         "--json", "headSha,status,conclusion,event", "--limit", "20"))
+    runs = [run for run in runs if run.get("event", "push") == "push"]
     return runs[0] if runs and runs[0].get("headSha") == source else None
 
 

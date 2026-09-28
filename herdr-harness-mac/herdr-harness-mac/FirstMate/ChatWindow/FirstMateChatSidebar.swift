@@ -10,6 +10,8 @@ struct FirstMateChatSidebar: View {
     let isRail: Bool
     /// Bumped by ⌘K to focus the search field.
     let searchFocusRequest: Int
+    /// The ＋: selects My First Mate and focuses its composer.
+    let onNewFeature: () -> Void
 
     enum Focus: Hashable { case search, list }
     @FocusState private var focus: Focus?
@@ -66,7 +68,7 @@ struct FirstMateChatSidebar: View {
             }
             .accessibilityElement(children: .combine)
             Spacer(minLength: 8)
-            FirstMateNewFeatureButton { session.select(.lead) }
+            FirstMateNewFeatureButton(action: onNewFeature)
         }
         .padding(.leading, 16)
         .padding(.trailing, 12)
@@ -248,8 +250,8 @@ struct FirstMateChatSidebar: View {
 
 // MARK: - Rows
 
-/// The ＋ beside the title: selects My First Mate, whose composer starts a
-/// new feature.
+/// The ＋ beside the title: selects My First Mate and focuses its composer,
+/// which starts a new feature.
 private struct FirstMateNewFeatureButton: View {
     let action: () -> Void
     @State private var isHovered = false
@@ -362,18 +364,25 @@ struct FirstMateConversationRow: View {
             Text("typing…")
                 .herdrFont(size: HerdrTheme.TextSize.small)
                 .foregroundStyle(HerdrTheme.accent)
+                .frame(minHeight: FirstMateRowTopLine.previewHeight, alignment: .leading)
         } else {
             Text(conversation.previewText.isEmpty ? " " : conversation.previewText)
                 .herdrFont(size: HerdrTheme.TextSize.small)
                 .foregroundStyle(HerdrTheme.tertiaryText)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .frame(minHeight: FirstMateRowTopLine.previewHeight, alignment: .leading)
         }
     }
 }
 
-/// Name (13.5 semibold) and time (11), baseline-aligned.
+/// Name (13.5 semibold) and time (11), baseline-aligned. The reference's
+/// 1.5 line height gives the name line 20 pt and the preview 18 pt, so a row
+/// is 10 + 20 + 1 + 18 + 3 + 17 + 10 = 79 pt.
 private struct FirstMateRowTopLine: View {
+    static let nameHeight: CGFloat = 20
+    static let previewHeight: CGFloat = 18
+
     let name: String
     let date: Date?
 
@@ -385,7 +394,7 @@ private struct FirstMateRowTopLine: View {
                 .foregroundStyle(HerdrTheme.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: Self.nameHeight, alignment: .leading)
             if let date {
                 Text(FirstMateChatTime.label(for: date, now: Date(), calendar: .current))
                     .herdrFont(size: HerdrTheme.TextSize.caption)
@@ -432,6 +441,7 @@ private struct FirstMateLeadRow: View {
                         .herdrFont(size: HerdrTheme.TextSize.small)
                         .foregroundStyle(HerdrTheme.tertiaryText)
                         .lineLimit(1)
+                        .frame(minHeight: FirstMateRowTopLine.previewHeight, alignment: .leading)
                         .padding(.top, 1)
                     Text(status)
                         .herdrFont(size: 11.5)

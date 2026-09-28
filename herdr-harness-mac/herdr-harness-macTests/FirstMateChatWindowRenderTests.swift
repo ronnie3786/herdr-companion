@@ -100,6 +100,18 @@ struct FirstMateChatWindowLayoutTests {
         #expect(layout(1000).inspector == .hidden)
     }
 
+    @Test("The width opens or closes the inspector once; resizing afterwards keeps the choice")
+    func inspectorSettlesOnce() {
+        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1320, preference: nil) == true)
+        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1200, preference: nil) == false)
+        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 0, preference: nil) == nil)
+        // Settled open at 1320 pt, then dragged to 1200 pt: still open.
+        let settled = FirstMateChatWindowLayout.settledInspectorPreference(width: 1320, preference: nil)
+        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1200, preference: settled) == true)
+        #expect(layout(1200, settled).inspector == .inline)
+        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1440, preference: false) == false)
+    }
+
     @Test("The sidebar becomes a 76 pt rail below 760 pt")
     func sidebarModes() {
         #expect(layout(760).sidebar == .full)
@@ -162,5 +174,84 @@ struct FirstMateChatWindowLayoutTests {
             previewText: "", previewIsFromUser: false, isWorkingOnReply: false, activityAt: nil,
             latestFirstMateMessageID: nil, isUnread: unread, isArchived: false
         )
+    }
+}
+
+/// Creating a feature and "Open in window" requests over the chat demo.
+@Suite("First Mate chat window routing")
+@MainActor
+struct FirstMateChatWindowRoutingTests {
+    private func loadedDemoSession() async throws -> (FirstMateChatWindowSession, FirstMateStore) {
+        let model = HerdrRenderFixtures.demoModel()
+        let shell = HerdrShellState(userDefaults: try #require(UserDefaults(suiteName: "FirstMateChatRouting.\(UUID().uuidString)")))
+        let session = FirstMateChatWindowSession(model: model, shell: shell)
+        let store = try #require(session.store(for: FirstMateChatWindowSession.demoMachineID))
+        await store.refresh()
+        return (session, store)
+    }
+
+    @Test("A feature created from My First Mate opens in the window when the sheet closes")
+    func createdFeatureOpens() async throws {
+        let (session, store) = try await loadedDemoSession()
+        session.select(.lead)
+        session.beginCreate(goal: "Synthetic goal for a new feature")
+        let origin = try #require(session.createOrigin)
+        #expect(origin.machineID == FirstMateChatWindowSession.demoMachineID)
+        let created = await store.create(
+            title: "Synthetic feature", goal: "Synthetic goal for a new feature",
+            cwd: "/tmp/synthetic", requestID: UUID().uuidString
+        )
+        #expect(created)
+        let opened = try #require(session.finishCreate(from: origin))
+        #expect(opened.machineID == FirstMateChatWindowSession.demoMachineID)
+        #expect(opened.featureID == store.selectedFeatureID)
+        #expect(session.selection == .feature(opened))
+        #expect(session.selectedSnapshot != nil)
+        #expect(!session.selectionIsUnresolvable)
+        #expect(session.createStore == nil)
+    }
+
+    @Test("A cancelled create sheet stays on My First Mate")
+    func cancelledCreateStays() async throws {
+        let (session, _) = try await loadedDemoSession()
+        session.select(.lead)
+        session.beginCreate(goal: "Synthetic goal")
+        let origin = session.createOrigin
+        #expect(session.finishCreate(from: origin) == nil)
+        #expect(session.selection == .lead)
+        #expect(session.createStore == nil)
+    }
+
+    @Test("An open request for a feature the list does not show yet opens it on its machine")
+    func openRequestForUnlistedFeature() async throws {
+        let (session, store) = try await loadedDemoSession()
+        let listed = try #require(session.conversations.first?.id)
+        session.applyOpenRequest(listed)
+        #expect(session.selection == .feature(listed))
+
+        let unlisted = FirstMateFleetFeatureID(machineID: FirstMateChatWindowSession.demoMachineID, featureID: "demo-just-created")
+        session.applyOpenRequest(unlisted)
+        #expect(session.selection == .feature(unlisted))
+        // Until the store refreshes, the request may still load.
+        #expect(!session.selectionIsUnresolvable)
+        // The store's refresh does not know it and selects another feature,
+        // so the window falls back to My First Mate instead of loading forever.
+        await store.refresh()
+        #expect(session.selectionIsUnresolvable)
+
+        let elsewhere = FirstMateFleetFeatureID(machineID: "synthetic-elsewhere", featureID: "demo-receipts")
+        session.applyOpenRequest(elsewhere)
+        #expect(session.selection == .lead)
+    }
+
+    @Test("A chat that is not listed but holds a snapshot stays resolvable")
+    func heldSnapshotStays() async throws {
+        let (session, store) = try await loadedDemoSession()
+        let id = try #require(session.conversations.first?.id)
+        #expect(!FirstMateChatWindowSession.selectionIsUnresolvable(id, conversations: session.conversations, store: store))
+        let unlisted = session.conversations.filter { $0.id != id }
+        #expect(!FirstMateChatWindowSession.selectionIsUnresolvable(id, conversations: unlisted, store: store))
+        #expect(FirstMateChatWindowSession.selectionIsUnresolvable(id, conversations: unlisted, store: nil))
+        #expect(!FirstMateChatWindowSession.selectionIsUnresolvable(id, conversations: [], store: nil))
     }
 }

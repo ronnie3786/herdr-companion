@@ -35,6 +35,14 @@ struct FirstMateChatWindowLayout: Equatable {
         preference ?? (width >= autoOpenWidth)
     }
 
+    /// The width decides whether the inspector starts open only once, on the
+    /// window's first layout; after that it changes only when the person
+    /// toggles it, never because the window was resized.
+    static func settledInspectorPreference(width: CGFloat, preference: Bool?) -> Bool? {
+        guard preference == nil, width > 0 else { return preference }
+        return inspectorVisible(width: width, preference: nil)
+    }
+
     var sidebarWidth: CGFloat { sidebar == .rail ? Self.railWidth : Self.sidebarWidth }
 }
 
@@ -45,6 +53,8 @@ struct FirstMateChatWindowRoot: View {
     let modelFavorites: ModelFavoritesStore
     @State private var session: FirstMateChatWindowSession
     @State private var searchFocusRequest = 0
+    @State private var composerFocusRequest = 0
+    @State private var createOrigin: FirstMateChatCreateOrigin?
 
     init(model: HerdrAppModel, shell: HerdrShellState, modelFavorites: ModelFavoritesStore) {
         self.init(session: FirstMateChatWindowSession(model: model, shell: shell), modelFavorites: modelFavorites)
@@ -69,7 +79,8 @@ struct FirstMateChatWindowRoot: View {
                 FirstMateChatSidebar(
                     session: session,
                     isRail: layout.sidebar == .rail,
-                    searchFocusRequest: searchFocusRequest
+                    searchFocusRequest: searchFocusRequest,
+                    onNewFeature: startNewFeature
                 )
                 .frame(width: layout.sidebarWidth)
                 .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground) }
@@ -94,20 +105,29 @@ struct FirstMateChatWindowRoot: View {
                 session.inspectorPreference = false
                 return .handled
             }
+            .onChange(of: width, initial: true) { _, width in
+                session.inspectorPreference = FirstMateChatWindowLayout.settledInspectorPreference(
+                    width: width,
+                    preference: session.inspectorPreference
+                )
+            }
         }
         .environment(\.openURL, OpenURLAction { url in openMention(url) })
-        .sheet(isPresented: createSheetBinding, onDismiss: session.endCreate) {
+        .sheet(isPresented: createSheetBinding, onDismiss: finishCreate) {
             if let store = session.createStore {
                 FirstMateCreateSheet(store: store, initialGoal: session.createGoal)
             }
         }
+        .onChange(of: session.createStore.map(ObjectIdentifier.init), initial: true) { _, store in
+            createOrigin = store == nil ? nil : session.createOrigin
+        }
         .onChange(of: shell.firstMateChatOpenRequest, initial: true) { _, request in
             guard let request else { return }
             shell.firstMateChatOpenRequest = nil
-            applyOpenRequest(request)
+            session.applyOpenRequest(request)
         }
-        .onChange(of: session.conversations.map(\.id)) { _, ids in
-            fallBackToLeadIfSelectionVanished(ids: ids)
+        .onChange(of: session.selectionIsUnresolvable) { _, unresolvable in
+            if unresolvable { session.select(.lead) }
         }
         .task { await session.run() }
         .accessibilityIdentifier("first-mate-chat-window")
@@ -121,6 +141,7 @@ struct FirstMateChatWindowRoot: View {
                 toggleInspector(width: width)
             }
             FirstMateChatConversationView(session: session, model: model, modelFavorites: modelFavorites)
+                .environment(\.firstMateComposerFocusRequest, composerFocusRequest)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -170,11 +191,24 @@ struct FirstMateChatWindowRoot: View {
 
     // MARK: Routing
 
+    /// The sidebar ＋: My First Mate, with its composer focused.
+    private func startNewFeature() {
+        session.select(.lead)
+        composerFocusRequest &+= 1
+    }
+
     private var createSheetBinding: Binding<Bool> {
         Binding(
             get: { session.createStore?.isCreating ?? false },
-            set: { if !$0 { session.endCreate() } }
+            set: { if !$0 { finishCreate() } }
         )
+    }
+
+    /// Runs when the sheet closes (the binding and `onDismiss` both call it;
+    /// the second call finds nothing to do).
+    private func finishCreate() {
+        session.finishCreate(from: createOrigin)
+        createOrigin = nil
     }
 
     /// `herdr://first-mate` mention links open in this window and never reach
@@ -204,25 +238,85 @@ struct FirstMateChatWindowRoot: View {
         }
         return conversations.first { $0.featureID == featureID }?.machineID
     }
+}
 
-    /// Opens a Dock-menu or "Open in window" request. An id the list does not
-    /// know opens My First Mate instead; before the list has loaded, the
-    /// request waits in the session.
-    private func applyOpenRequest(_ request: FirstMateFleetFeatureID) {
-        let conversations = session.conversations
+extension EnvironmentValues {
+    /// Bumped when the chat window asks My First Mate's composer to take
+    /// focus (the sidebar ＋). The conversation view focuses its composer
+    /// whenever the value changes.
+    @Entry var firstMateComposerFocusRequest = 0
+}
+
+/// Where a create sheet started: the machine and the feature its store had
+/// selected, so a new selection afterwards is the created feature.
+struct FirstMateChatCreateOrigin: Equatable {
+    let machineID: String
+    let selectedFeatureID: String?
+}
+
+extension FirstMateChatWindowSession {
+    /// The showing create sheet's origin, or nil when no sheet shows.
+    var createOrigin: FirstMateChatCreateOrigin? {
+        guard let createStore,
+              let machineID = createMachineIDs.first(where: { store(for: $0) === createStore }) else { return nil }
+        return FirstMateChatCreateOrigin(machineID: machineID, selectedFeatureID: createStore.selectedFeatureID)
+    }
+
+    /// Closes the create sheet. A feature it created (its store now selects a
+    /// different, unarchived feature it holds) opens here, and the fleet and
+    /// the main window refresh so the list shows it right away.
+    @discardableResult
+    func finishCreate(from origin: FirstMateChatCreateOrigin?) -> FirstMateFleetFeatureID? {
+        defer { endCreate() }
+        guard let origin, let createStore,
+              let featureID = createStore.selectedFeatureID, featureID != origin.selectedFeatureID,
+              let snapshot = createStore.snapshots[featureID], !snapshot.feature.isArchived else { return nil }
+        let created = FirstMateFleetFeatureID(machineID: origin.machineID, featureID: featureID)
+        select(.feature(created))
+        didMutate(machineID: origin.machineID)
+        return created
+    }
+
+    /// Opens a Dock-menu or "Open in window" request. Before the list has
+    /// loaded, the request waits. A feature the list does not show yet (one
+    /// just created elsewhere) still opens on its machine's store, and the
+    /// fleet refreshes; ``selectionIsUnresolvable`` falls back to My First
+    /// Mate if the store turns out not to have it. A machine this window
+    /// cannot reach opens My First Mate.
+    func applyOpenRequest(_ request: FirstMateFleetFeatureID) {
+        let conversations = conversations
         if conversations.isEmpty {
-            session.pendingOpen = request
+            pendingOpen = request
         } else if conversations.contains(where: { $0.id == request }) {
-            session.select(.feature(request))
+            select(.feature(request))
+        } else if store(for: request.machineID) != nil {
+            select(.feature(request))
+            didMutate(machineID: request.machineID)
         } else {
-            session.select(.lead)
+            select(.lead)
         }
     }
 
-    /// An archived or removed chat that no longer loads falls back to My First Mate.
-    private func fallBackToLeadIfSelectionVanished(ids: [FirstMateFleetFeatureID]) {
-        guard let selected = session.selectedConversationID, !ids.isEmpty, !ids.contains(selected),
-              session.selectedSnapshot == nil else { return }
-        session.select(.lead)
+    /// The selected chat will never load: it is not in the list, holds no
+    /// snapshot, and its machine has no store, or the store's refresh
+    /// rejected it (it selected another feature) or failed. An archived or
+    /// removed chat whose snapshot is still held stays open.
+    var selectionIsUnresolvable: Bool {
+        Self.selectionIsUnresolvable(
+            selectedConversationID,
+            conversations: conversations,
+            store: selectedConversationID.flatMap { store(for: $0.machineID) }
+        )
+    }
+
+    static func selectionIsUnresolvable(
+        _ id: FirstMateFleetFeatureID?,
+        conversations: [FirstMateConversation],
+        store: FirstMateStore?
+    ) -> Bool {
+        guard let id, !conversations.isEmpty, !conversations.contains(where: { $0.id == id }) else { return false }
+        guard let store else { return true }
+        if store.snapshots[id.featureID] != nil { return false }
+        return store.selectedFeatureID != id.featureID || (store.hasLoaded && store.error != nil)
     }
 }

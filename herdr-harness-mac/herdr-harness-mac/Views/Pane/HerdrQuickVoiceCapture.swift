@@ -20,10 +20,17 @@ final class HerdrQuickVoiceCapture {
 
     static let minimumDuration: TimeInterval = 0.5
 
+    let recorder: HerdrVoiceRecorder
     private(set) var phase: Phase = .idle
-    private let recorder = HerdrVoiceRecorder()
     private var lockTask: Task<Void, Never>?
     var onLock: (() -> Void)?
+
+    /// Tests inject a recorder whose `makeRecordingEngine` seam returns a fake
+    /// engine, so capture lifecycle coverage never touches a microphone or the
+    /// system permission prompt. Live callers keep the default recorder.
+    init(recorder: HerdrVoiceRecorder = HerdrVoiceRecorder()) {
+        self.recorder = recorder
+    }
 
     var samples: [CGFloat] { recorder.samples }
     var recorderStatus: HerdrVoiceRecorderStatus { recorder.status }

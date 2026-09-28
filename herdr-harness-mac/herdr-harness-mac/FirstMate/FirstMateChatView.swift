@@ -8,6 +8,8 @@ struct FirstMateChatView: View {
     let modelFavorites: ModelFavoritesStore
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.firstMateMarkRead) private var markRead
     @State private var followsLatest = true
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
     /// Skim or Full reply per message, kept while this chat is open.
@@ -15,6 +17,19 @@ struct FirstMateChatView: View {
 
     private var featureIsClosed: Bool {
         ["completed", "cancelled"].contains(snapshot.feature.status)
+    }
+
+    /// The newest First Mate message, whether the person can see it (the
+    /// chat is in the key window and scrolled to the bottom), and whether the
+    /// fleet reports the chat unread, so a fleet that catches up after the
+    /// transcript marks it again.
+    private var readMarker: FirstMateChatReadMarker {
+        FirstMateChatReadMarker(
+            featureID: snapshot.feature.id,
+            messageID: snapshot.messages.last { $0.role == "assistant" && $0.isConversation }?.id,
+            isVisible: controlActiveState == .key && followsLatest,
+            fleetUnreadThrough: markRead?.unreadThrough[snapshot.feature.id]
+        )
     }
 
     var body: some View {
@@ -57,6 +72,10 @@ struct FirstMateChatView: View {
         .herdrPaneBackground(FirstMatePalette(scheme: scheme).background)
         .task(id: feedbackLoadID) { await loadFeedback() }
         .onChange(of: store.operationContext) { _, _ in feedbackEditor = nil }
+        .onChange(of: readMarker, initial: true) { _, marker in
+            guard let messageID = marker.markTarget else { return }
+            markRead?(featureID: marker.featureID, messageID: messageID)
+        }
         .sheet(item: $feedbackEditor) { target in
             FirstMateFeedbackEditor(store: store, target: target)
         }
@@ -412,9 +431,56 @@ struct FirstMateChatView: View {
     }
 
     private var composerDestination: PromptComposerDestination {
+        PromptComposerDestination.firstMate(
+            store: store,
+            model: model,
+            snapshot: snapshot,
+            canControl: canControl
+        )
+    }
+
+    private func saveQuote(
+        _ quote: ChatQuote,
+        sourceMessageID: String,
+        expectedContext: FirstMateStore.OperationContext
+    ) async throws {
+        let currentContext = store.operationContext
+        let currentSnapshot = store.snapshot(for: expectedContext)
+        guard FirstMateQuoteEligibility.canStage(
+            sourceMessageID: sourceMessageID,
+            snapshot: currentSnapshot,
+            expectedContext: expectedContext,
+            currentContext: currentContext,
+            canControl: store.controlAvailable
+        ), let featureID = currentSnapshot?.feature.id else {
+            throw CancellationError()
+        }
+        var values = store.composerDrafts.quotes(for: featureID)
+        values.append(quote)
+        store.composerDrafts.setQuotes(values, for: featureID)
+    }
+}
+
+/// First Mate's shared-composer wiring.
+///
+/// The destination identity is captured here; the live closures below consult
+/// `store` so a completion that resumes after a suspension never trusts the
+/// snapshot from the render that created this destination. Internal so the
+/// production wiring (including live readiness) can be exercised directly in
+/// tests.
+@MainActor
+extension PromptComposerDestination {
+    static func firstMate(
+        store: FirstMateStore,
+        model: HerdrAppModel,
+        snapshot: FirstMateSnapshot,
+        canControl: Bool
+    ) -> PromptComposerDestination {
         let context = store.operationContext
         let featureID = snapshot.feature.id
+        let featureIsClosed = ["completed", "cancelled"].contains(snapshot.feature.status)
         return PromptComposerDestination(
+            voicePolicy: .firstMateStopToSend,
             id: context.destinationID(for: featureID)
                 ?? "first-mate:invalid:\(context.lifecycleIdentity.opaqueID)",
             canControl: canControl && !featureIsClosed,
@@ -431,6 +497,17 @@ struct FirstMateChatView: View {
             },
             acceptsCompletion: {
                 store.isDestinationAlive(context)
+            },
+            isReadyToSubmit: {
+                // Live owner state: neither the view value captured by a
+                // suspension nor this destination's snapshot flags receive
+                // re-renders while transcription runs.
+                store.controlAvailable
+                    && !store.isSending
+                    && store.isDestinationAlive(context)
+                    && !(store.snapshot(for: context).map {
+                        ["completed", "cancelled"].contains($0.feature.status)
+                    } ?? false)
             },
             upload: { url, contentType in
                 if store.isDemo {
@@ -479,27 +556,6 @@ struct FirstMateChatView: View {
             reportError: { store.reportComposerError($0) },
             reportToast: { model.toastMessage = $0 }
         )
-    }
-
-    private func saveQuote(
-        _ quote: ChatQuote,
-        sourceMessageID: String,
-        expectedContext: FirstMateStore.OperationContext
-    ) async throws {
-        let currentContext = store.operationContext
-        let currentSnapshot = store.snapshot(for: expectedContext)
-        guard FirstMateQuoteEligibility.canStage(
-            sourceMessageID: sourceMessageID,
-            snapshot: currentSnapshot,
-            expectedContext: expectedContext,
-            currentContext: currentContext,
-            canControl: store.controlAvailable
-        ), let featureID = currentSnapshot?.feature.id else {
-            throw CancellationError()
-        }
-        var values = store.composerDrafts.quotes(for: featureID)
-        values.append(quote)
-        store.composerDrafts.setQuotes(values, for: featureID)
     }
 }
 

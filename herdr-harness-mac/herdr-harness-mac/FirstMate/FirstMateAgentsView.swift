@@ -6,10 +6,10 @@ struct FirstMateAgentsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Your crew").herdrFont(size: 15, weight: .semibold)
-            Text("\(snapshot.assignments.count) assignments, each with its own session and evidence.")
+            Text("\(FirstMateCountText.phrase(snapshot.assignments.count, "assignment")), each with its own session and evidence.")
                 .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
             if !snapshot.coordinatorSessions.isEmpty {
-                DisclosureGroup("First Mate coordinator · \(snapshot.coordinatorSessions.count) saved sessions") {
+                DisclosureGroup("First Mate coordinator · \(FirstMateCountText.phrase(snapshot.coordinatorSessions.count, "saved session"))") {
                     ForEach(snapshot.coordinatorSessions) { session in
                         FirstMateSessionRow(store: store, session: session)
                     }
@@ -18,7 +18,7 @@ struct FirstMateAgentsView: View {
                 Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
             }
             if !snapshot.advisorSessions.isEmpty {
-                DisclosureGroup("Advisors · \(snapshot.advisorSessions.count) saved sessions") {
+                DisclosureGroup("Advisors · \(FirstMateCountText.phrase(snapshot.advisorSessions.count, "saved session"))") {
                     ForEach(snapshot.advisorSessions) { session in
                         FirstMateSessionRow(store: store, session: session)
                     }
@@ -35,7 +35,7 @@ struct FirstMateAgentsView: View {
                     HStack {
                         Text(visit.title).herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                         Spacer()
-                        Text("\(snapshot.agents(for: visit.id).count) agents").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
+                        Text(FirstMateCountText.phrase(snapshot.agents(for: visit.id).count, "agent")).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.tertiaryText)
                     }
                 }
                 .accessibilityIdentifier("first-mate-agent-group-\(visit.id)")

@@ -140,6 +140,25 @@ final class HerdrShellState {
     var piSessionSummaryRequest: PiSessionSummaryRequest?
     var pendingFirstMateControlTarget: (machineID: String, featureID: String, inspector: FirstMateInspector)?
     var pendingFirstMateCreateMachineID: String?
+    /// A request to show a feature in the First Mate chat window (Dock menu,
+    /// "Open in window"). The window applies it and sets it back to nil.
+    var firstMateChatOpenRequest: FirstMateFleetFeatureID?
+    /// Process-owned First Mate observation and the Dock badge. Either window
+    /// starts them; they keep running with every window closed.
+    @ObservationIgnored private(set) var firstMateFleetDriver: FirstMateFleetDriver?
+    @ObservationIgnored private(set) var firstMateDockBadge: FirstMateDockBadgeController?
+    /// The First Mate HUD, separate from the agent HUD. Process-owned like
+    /// the fleet driver; it shows only while its setting is on.
+    @ObservationIgnored let firstMateHud = FirstMateHudController()
+    @ObservationIgnored private var firstMateChatDemoStorage: FirstMateChatDemoSource?
+    /// The chat window's demo, shared with the Dock badge and menu. Created on
+    /// first use.
+    var firstMateChatDemo: FirstMateChatDemoSource {
+        if let firstMateChatDemoStorage { return firstMateChatDemoStorage }
+        let demo = FirstMateChatDemoSource()
+        firstMateChatDemoStorage = demo
+        return demo
+    }
     var isCreatingWorkspace = false
     var isCreatingPRReview = false
     var isAddingPRReviewSkill = false
@@ -226,6 +245,36 @@ final class HerdrShellState {
         firstMate = store
         activeFirstMateMachineID = machineID ?? (isDemo ? "demo" : nil)
         return true
+    }
+
+    /// Refreshes the main window's cached store for one machine (`"demo"` in
+    /// demo mode), so a change made in the First Mate chat window shows here
+    /// without waiting for this screen's poll. Does nothing when that machine
+    /// has no store yet.
+    func refreshFirstMateStore(machineID: String) async {
+        guard let store = firstMateStores[machineID] else { return }
+        await store.refresh()
+    }
+
+    /// Starts the fleet driver and the Dock badge once per process. Idempotent,
+    /// so the main window and the chat window both call it on appearance.
+    func startFirstMateServices(model: HerdrAppModel) {
+        let driver = firstMateFleetDriver ?? FirstMateFleetDriver(
+            fleet: firstMateFleet,
+            reconcile: { [weak self] roster in
+                self?.reconcileFirstMateStores(
+                    configurations: roster.configurations,
+                    connectionGeneration: roster.connectionGeneration,
+                    isDemo: roster.isDemo
+                )
+            }
+        )
+        firstMateFleetDriver = driver
+        driver.start(model: model)
+        let badge = firstMateDockBadge ?? FirstMateDockBadgeController()
+        firstMateDockBadge = badge
+        badge.start(model: model, shell: self)
+        firstMateHud.start(model: model, shell: self)
     }
 
     func reconcileFirstMateStores(
@@ -787,6 +836,9 @@ struct AppRootView: View {
         }
         .onAppear {
             driver.startPulse(model: model, pulse: herdPulse)
+            // First Mate's fleet observation and Dock badge also belong to the
+            // process, so the chat window keeps working after this one closes.
+            shell.startFirstMateServices(model: model)
             agentControl.configure(
                 model: model,
                 shell: shell,

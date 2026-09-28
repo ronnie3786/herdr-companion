@@ -18,7 +18,7 @@ struct FirstMateResourceButtons: View {
                     }.disabled(agent.nativeSessionID == nil)
                 }
             } label: {
-                chip("\(agents.count) agents", systemImage: "person.2")
+                chip(FirstMateCountText.phrase(agents.count, "agent"), systemImage: "person.2")
             }
             .disabled(agents.isEmpty)
             .accessibilityIdentifier("first-mate-visit-agents-\(visit.id)")
@@ -29,7 +29,7 @@ struct FirstMateResourceButtons: View {
                     }
                 }
             } label: {
-                chip("\(documents.count) documents", systemImage: "doc.text")
+                chip(FirstMateCountText.phrase(documents.count, "document"), systemImage: "doc.text")
             }
             .disabled(documents.isEmpty)
             .accessibilityIdentifier("first-mate-visit-documents-\(visit.id)")

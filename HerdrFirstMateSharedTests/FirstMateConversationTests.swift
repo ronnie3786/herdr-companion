@@ -91,6 +91,31 @@ struct FirstMateConversationTests {
         #expect(snapshot.pendingDecisionMessageID == nil)
     }
 
+    @Test("Crew assignment and turn provenance share one backward-compatible metadata object")
+    func combinedMetadataRoundTrip() throws {
+        let message = try #require(decodeMessages([
+            #"{"id":"combined","role":"assistant","text":"Synthetic result","metadata":{"assignment_id":"crew","in_reply_to":"human","turn_id":"turn","visit_id":"visit","checkpoint":true}}"#,
+        ]).first)
+        #expect(message.assignmentID == "crew")
+        #expect(message.metadata?.turnID == "turn")
+        #expect(message.metadata?.checkpoint == true)
+        #expect(try JSONDecoder().decode(FirstMateMessage.self, from: JSONEncoder().encode(message)) == message)
+        var legacy = FirstMateMessage(id: "legacy", featureID: "f", role: "assistant", text: "Result",
+                                     status: "done", createdAt: "2026-01-01T00:00:00Z", assignmentID: "crew")
+        #expect(try JSONDecoder().decode(FirstMateMessage.self, from: JSONEncoder().encode(legacy)) == legacy)
+        legacy.metadata?.turnID = "turn"
+        legacy.assignmentID = nil
+        #expect(legacy.metadata?.turnID == "turn")
+        let partial = try decodeMessages([
+            #"{"id":"crew","role":"assistant","text":"Result","metadata":{"assignment_id":"crew","turn_id":12}}"#,
+            #"{"id":"checkpoint","role":"assistant","text":"Result","metadata":{"assignment_id":12,"turn_id":"turn","checkpoint":true}}"#,
+        ])
+        #expect(partial[0].assignmentID == "crew")
+        #expect(partial[0].metadata?.turnID == nil)
+        #expect(partial[1].assignmentID == nil)
+        #expect(partial[1].metadata?.turnID == "turn")
+    }
+
     private func decodeMessages(_ rows: [String]) throws -> [FirstMateMessage] {
         try rows.map { row in
             var value = try #require(JSONSerialization.jsonObject(with: Data(row.utf8)) as? [String: Any])

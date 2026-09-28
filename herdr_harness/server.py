@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from . import attachments, chat_tab_colors, issue_reports, response_audio, result_artifacts, voice
+from . import attachments, chat_tab_colors, first_mate_fleet, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .first_mate_verification import VERIFICATION_CAPABILITY
@@ -452,6 +452,7 @@ def api_description() -> dict:
             "first-mate-links-v1",
             "first-mate-quiet-chat-v1",
             "first-mate-skim-v1",
+            first_mate_fleet.CAPABILITY,
             VERIFICATION_CAPABILITY,
             "pr-review-v1",
             "pi-session-context-v1",
@@ -477,6 +478,9 @@ def api_description() -> dict:
             "firstMateGit": "/api/v1/first-mate/features/{featureId}/git",
             "firstMateBoard": "/api/v1/first-mate/features/{featureId}/board",
             "firstMateLinks": "/api/v1/first-mate/features/{featureId}/links",
+            "firstMateFleet": "/api/v1/first-mate/fleet",
+            "firstMateRead": "/api/v1/first-mate/features/{featureId}/read",
+            "firstMateHud": "/api/v1/first-mate/features/{featureId}/hud",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -554,6 +558,7 @@ def api_description() -> dict:
             "POST /api/v1/first-mate/features/{featureId}/messages/{messageId}/feedback",
             "POST /api/v1/first-mate/features/{featureId}/links",
             "POST /api/v1/first-mate/features/{featureId}/links/{linkId}/visibility",
+            "POST /api/v1/first-mate/features/{featureId}/read|hud",
             "PATCH|DELETE /api/v1/notes/{noteId}",
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
@@ -1123,6 +1128,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-links-v1",
                     "first-mate-quiet-chat-v1",
                     "first-mate-skim-v1",
+                    first_mate_fleet.CAPABILITY,
                     VERIFICATION_CAPABILITY,
                 ], **runtime.capabilities(),
                     **({"skim": service.skims.capabilities()} if hasattr(service, "skims") else {})}
@@ -1137,6 +1143,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     label = _string(body.get("label"), "label", maximum=80)
                     request_id = _string(body.get("request_id"), "request_id", maximum=200)
                     return {"ok": True, "category": store.create_feedback_category(label, request_id)}
+            if method == "GET" and tail == ["fleet"]:
+                # Store SQL only: never the runtime's per-feature job and usage scan.
+                if set(query) - {"view"} or any(len(values) != 1 for values in query.values()):
+                    raise HTTPValidationError("Fleet request accepts only one view query field")
+                view = (query.get("view") or ["active"])[0]
+                if view not in first_mate_fleet.FLEET_VIEWS:
+                    raise HTTPValidationError("Invalid feature view", code="invalid_request")
+                automatic_recovery = getattr(getattr(runtime, "reliability", None), "enabled", True)
+                return {"ok": True, "generated_at": utc_now(), "features": [
+                    first_mate_fleet.entry(row, automatic_recovery=automatic_recovery)
+                    for row in store.fleet_rows(view)]}
             if tail == ["features"]:
                 if method == "GET":
                     view = (query.get("view") or ["active"])[0]
@@ -1304,6 +1321,26 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "request_id": _string(body.get("request_id"), "request_id", maximum=200),
                     })
                     return {"ok": True, "link": link, **snapshot_view(feature_id), "runtime_health": runtime.health()}
+                if tail[2:] == ["read"] and method == "POST":
+                    # Read markers and hud presentation are per-feature display state:
+                    # never wake the coordinator, write events, or change the board version.
+                    if query:
+                        raise HTTPValidationError("Read request does not accept query fields")
+                    if set(body) != {"through_message_id"}:
+                        raise HTTPValidationError("Read must contain exactly through_message_id")
+                    message_id = _string(body.get("through_message_id"), "through_message_id", maximum=128)
+                    return {"ok": True, **store.mark_read(feature_id, message_id)}
+                if tail[2:] == ["hud"] and method == "POST":
+                    if query:
+                        raise HTTPValidationError("HUD request does not accept query fields")
+                    if not body or set(body) - {"label", "emoji"}:
+                        raise HTTPValidationError("HUD must contain label, emoji, or both")
+                    for key, value in body.items():
+                        if value is not None and not isinstance(value, str):
+                            raise HTTPValidationError(f"{key} must be a string or null")
+                    row = store.set_presentation(feature_id, body)
+                    automatic_recovery = getattr(getattr(runtime, "reliability", None), "enabled", True)
+                    return {"ok": True, "feature": first_mate_fleet.entry(row, automatic_recovery=automatic_recovery)}
                 if tail[2:] == ["messages"] and method == "POST":
                     if set(body) - {"text", "request_id"}:
                         raise HTTPValidationError("Message contains an unsupported field")

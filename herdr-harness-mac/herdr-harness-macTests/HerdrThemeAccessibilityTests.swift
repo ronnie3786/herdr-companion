@@ -96,6 +96,8 @@ struct HerdrThemeAccessibilityTests {
             ("prose", HerdrTheme.proseText), ("accent", HerdrTheme.accent), ("signal", HerdrTheme.signal),
             ("success", HerdrTheme.success), ("working", HerdrTheme.working), ("alert", HerdrTheme.alert),
             ("warning", HerdrTheme.warning),
+            // The First Mate chat window's "Your turn" status word.
+            ("attention badge", HerdrTheme.attentionBadge),
         ]
         for (surfaceName, surface, fills) in surfaces {
             for stack in fills {
@@ -140,6 +142,52 @@ struct HerdrThemeAccessibilityTests {
                 }
             }
         }
+    }
+
+    @Test("First Mate chat window capsules and the breathing label stay readable over the dusk")
+    @MainActor
+    func firstMateChatWindowContrast() throws {
+        let dusk = try brightestPixel(HerdrDusk.image)
+        let haze = try brightestPixel(HerdrHaze.image)
+        let pane = mix(try rgb(HerdrTheme.base), HerdrTheme.Glass.pane, over: dusk)
+        let sidebar = mix(try rgb(HerdrTheme.railBackground), HerdrTheme.Glass.sidebar, over: dusk)
+        let chat = mix(haze, HerdrHazeBand.opacity, over: pane)
+        // A capsule's name sits on its status tint (11% over ink 6%), inside a
+        // First Mate bubble (ink 6%) or a briefing, in the chat or on a card.
+        let bubble = HerdrTheme.inkFill(0.06)
+        for status in FirstMateHudStatus.allCases {
+            let tint = FirstMateChatStatusStyle.tintColor(for: status)
+            for (surfaceName, surface) in [("chat haze", chat), ("pane", pane)] {
+                for stack in [[bubble], [HerdrTheme.cardFill], []] {
+                    var background = surface
+                    for fill in stack + [HerdrTheme.inkFill(0.06), tint.opacity(0.11)] { background = try over(fill, background) }
+                    let contrast = ratio(try rgb(HerdrTheme.primaryText), background)
+                    #expect(contrast >= 4.5, "\(status) capsule label on \(surfaceName) with \(stack.count) fill(s) was \(contrast):1")
+                }
+            }
+        }
+        // Status words on conversation rows, resting, hovered, and selected.
+        let rowSurfaces: [(String, RGB)] = try [("pane", pane), ("sidebar", sidebar)].flatMap { name, surface in
+            [(name, surface), ("hovered \(name)", try over(HerdrTheme.hoverFill, surface)),
+             ("selected \(name)", try over(HerdrTheme.selectedFill, surface))]
+        }
+        for status in FirstMateHudStatus.allCases {
+            for (surfaceName, surface) in rowSurfaces {
+                let contrast = ratio(try rgb(FirstMateChatStatusStyle.color(for: status)), surface)
+                #expect(contrast >= 4.5, "\(status) row word on \(surfaceName) was \(contrast):1")
+            }
+        }
+        // The breathing label's floor: the smallest multiple of 0.05 at which
+        // working yellow still clears 4.5:1 on every row surface.
+        func passes(_ opacity: Double) throws -> Bool {
+            try rowSurfaces.allSatisfy { _, surface in
+                ratio(try over(HerdrTheme.working.opacity(opacity), surface), surface) >= 4.5
+            }
+        }
+        var floor = 0.05
+        while floor < 1, try !passes(floor) { floor = ((floor + 0.05) * 100).rounded() / 100 }
+        #expect(FirstMateBreathing.floor == floor, "The breathing floor should be \(floor)")
+        #expect(try passes(FirstMateBreathing.floor))
     }
 
     @Test("Herdr's plain buttons dim only when disabled")

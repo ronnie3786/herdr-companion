@@ -17,19 +17,6 @@ private struct FirstMateDetailConnectionIdentity: Hashable {
     let isDemo: Bool
 }
 
-private struct FirstMateFleetTaskIdentity: Hashable {
-    struct Machine: Hashable {
-        let id: String
-        let name: String
-        let urlString: String
-        let token: String
-    }
-
-    let isDemo: Bool
-    let generation: Int
-    let machines: [Machine]
-}
-
 private struct PRReviewPollingIdentity: Equatable {
     let machineID: String?
     let reviewID: String?
@@ -56,6 +43,8 @@ struct WorkspaceNavigationView: View {
     @Environment(\.openWindow) private var openWindow
 
     @AppStorage("herdr.shell.sidebarWidth") private var storedSidebarWidth = Double(HerdrTheme.sidebarWidth)
+    @AppStorage(FirstMateChatPreferences.windowEnabledKey)
+    private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
     @State private var liveSidebarWidth: Double?
     @State private var hasPlacedSidebar = false
     @Environment(\.herdrWindowIsFullScreen) private var isFullScreen
@@ -395,24 +384,9 @@ struct WorkspaceNavigationView: View {
                 shell.show(.firstMate, model: model)
             }
         }
-        .task(id: firstMateFleetTaskIdentity) {
-            // Connection-owned First Mate stores are reconciled on every roster
-            // or credential change, whether or not First Mate is on screen.
-            shell.reconcileFirstMateStores(
-                configurations: firstMateConfigurations,
-                connectionGeneration: model.connectionGeneration,
-                isDemo: model.isDemoMode
-            )
-            // The Chat sidebar badge has to be visible without opening First
-            // Mate, so observation runs independently of the selected
-            // destination and the selected First Mate host. Demo mode owns no
-            // live hosts: the empty roster also clears fleet data a previous
-            // connection left behind.
-            await shell.firstMateFleet.observe(
-                sources: model.isDemoMode ? [] : firstMateFleetSources,
-                connectionGeneration: model.connectionGeneration
-            )
-        }
+        // Fleet observation and store reconciliation belong to the process
+        // (`FirstMateFleetDriver`, started from `AppRootView`), so the badge,
+        // the Dock, and the chat window keep updating after this window closes.
         .task(id: PRReviewConnectionIdentity(configuration: prReviewConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: prReviewMachineID?.hashValue ?? model.prReviewMachineRevision)) {
             shell.attachPRReviewCommentStore(model.prReviewComments)
             shell.configurePRReviewIfNeeded(configuration: prReviewConfiguration, machineID: prReviewMachineID, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
@@ -550,17 +524,6 @@ struct WorkspaceNavigationView: View {
         model.machines.filter { firstMateConfigurations[$0.id] != nil }
     }
 
-    private var firstMateFleetSources: [FirstMateFleetSource] {
-        firstMateConfiguredMachines.compactMap { machine in
-            guard let configuration = firstMateConfigurations[machine.id] else { return nil }
-            return FirstMateFleetSource(
-                machine: machine,
-                configuration: configuration,
-                client: HerdrAPIClient(configuration: configuration)
-            )
-        }
-    }
-
     private var firstMateDetailConnectionIdentity: FirstMateDetailConnectionIdentity {
         .init(
             machineID: firstMateDetailMachineID,
@@ -571,33 +534,50 @@ struct WorkspaceNavigationView: View {
         )
     }
 
-    private var firstMateFleetTaskIdentity: FirstMateFleetTaskIdentity {
-        .init(
-            isDemo: model.isDemoMode,
-            generation: model.connectionGeneration,
-            machines: firstMateConfiguredMachines.compactMap { machine in
-                guard let configuration = firstMateConfigurations[machine.id] else { return nil }
-                return .init(
-                    id: machine.id,
-                    name: machine.name,
-                    urlString: configuration.baseURL.absoluteString,
-                    token: configuration.token
-                )
-            }
-        )
-    }
-
     /// What the Chat navigator badges beside First Mate.
     ///
-    /// Live attention is counted from the unfiltered fleet index, so search
-    /// text, machine scope, and the selected First Mate host never change it.
-    /// Demo mode has no live hosts, so the same predicate counts the demo
-    /// store's own synthetic features instead.
+    /// Live, it is the conversations with an unread dot
+    /// (`FirstMateBadge.count`), counted from the unfiltered fleet index, so
+    /// search text, machine scope, and the selected First Mate host never
+    /// change it, and it matches the Dock and the chat window. A host without
+    /// the fleet summary counts what `FirstMateAttention` counts. Demo mode has
+    /// no live hosts, so the attention predicate counts the demo store's own
+    /// synthetic features instead.
     private var firstMateAttentionCount: Int {
         if model.isDemoMode {
             return FirstMateAttention.count(features: shell.firstMate.features, machineID: "demo")
         }
-        return shell.firstMateFleet.attentionCount
+        return shell.firstMateFleet.badgeCount
+    }
+
+    /// The current First Mate screen marks its chat read while it is in the
+    /// key window and scrolled to the newest message, like the chat window.
+    /// Only a chat the fleet reports unread posts a marker. An equatable
+    /// value, so the chat re-renders only when the machine or its unread
+    /// chats change.
+    private var markFirstMateRead: FirstMateMarkReadAction? {
+        guard let machineID = shell.activeFirstMateMachineID else { return nil }
+        let fleet = shell.firstMateFleet
+        return FirstMateMarkReadAction(
+            machineID: machineID,
+            unreadThrough: FirstMateMarkReadAction.unreadThrough(hosts: fleet.hosts, readState: fleet.readState, machineID: machineID),
+            owner: fleet,
+            perform: { [weak fleet] machineID, featureID, messageID in
+                guard let fleet else { return }
+                Task { await fleet.markRead(machineID: machineID, featureID: featureID, throughMessageID: messageID) }
+            }
+        )
+    }
+
+    /// "Open in window": the chat window on the current feature. In demo mode
+    /// only a feature the chat demo also has is requested.
+    private func openFirstMateChatWindow() {
+        if let featureID = shell.firstMate.selectedFeatureID,
+           let machineID = shell.activeFirstMateMachineID,
+           !model.isDemoMode || FirstMateDemo.chatWindowFleet().contains(where: { $0.featureID == featureID }) {
+            shell.firstMateChatOpenRequest = FirstMateFleetFeatureID(machineID: machineID, featureID: featureID)
+        }
+        openWindow(id: HerdrWindowID.firstMateChat)
     }
 
     private var firstMateScopeSelection: Binding<FirstMateMachineScope> {
@@ -755,8 +735,10 @@ struct WorkspaceNavigationView: View {
                 configurationRevision: firstMateGitOwnerMachineID.map { model.machineConfigurationRevision(for: $0) } ?? 0,
                 owningMachineName: resolvedFirstMateScope == .all ? activeFirstMateMachine?.name : nil,
                 allowsDirectCreate: resolvedFirstMateScope != .all,
-                popOutGit: { openWindow(id: HerdrWindowID.firstMateGit, value: $0) }
+                popOutGit: { openWindow(id: HerdrWindowID.firstMateGit, value: $0) },
+                popOutChat: firstMateChatWindowEnabled ? { openFirstMateChatWindow() } : nil
             )
+            .environment(\.firstMateMarkRead, markFirstMateRead)
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,

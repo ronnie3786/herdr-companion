@@ -14,6 +14,16 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
     /// and a malformed one decodes as nil: the reply shows in full either way.
     var skim: FirstMateSkim? = nil
     var metadata: FirstMateMessageMetadata? = nil
+    /// The crew assignment that wrote this message, from the companion's
+    /// `metadata.assignment_id`. Nil for First Mate's and the human's own rows.
+    var assignmentID: String? {
+        get { metadata?.assignmentID }
+        set {
+            var value = metadata ?? FirstMateMessageMetadata()
+            value.assignmentID = newValue
+            metadata = value.isEmpty ? nil : value
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, role, text, status, visibility, skim, metadata
@@ -21,7 +31,7 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
     }
 
     init(id: String, featureID: String, role: String, text: String, status: String, createdAt: String,
-         visibility: String? = nil, skim: FirstMateSkim? = nil,
+         visibility: String? = nil, skim: FirstMateSkim? = nil, assignmentID: String? = nil,
          metadata: FirstMateMessageMetadata? = nil) {
         self.id = id
         self.featureID = featureID
@@ -32,6 +42,7 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
         self.visibility = visibility
         self.skim = skim
         self.metadata = metadata
+        if let assignmentID { self.assignmentID = assignmentID }
     }
 
     init(from decoder: Decoder) throws {
@@ -44,7 +55,8 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
         createdAt = try c.decode(String.self, forKey: .createdAt)
         visibility = try c.decodeIfPresent(String.self, forKey: .visibility)
         skim = try? c.decodeIfPresent(FirstMateSkim.self, forKey: .skim)
-        metadata = try? c.decodeIfPresent(FirstMateMessageMetadata.self, forKey: .metadata)
+        let decoded = try? c.decodeIfPresent(FirstMateMessageMetadata.self, forKey: .metadata)
+        metadata = decoded?.isEmpty == false ? decoded : nil
     }
 
     /// Whether this row belongs in the human's conversation with First Mate.

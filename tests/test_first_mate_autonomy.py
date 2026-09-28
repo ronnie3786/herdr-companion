@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from herdr_harness.first_mate_runtime import FirstMateRuntime, _write_json
+from herdr_harness.first_mate_runtime import FirstMateRuntime, _write_json, _pi_command
 from herdr_harness.first_mate_store import FirstMateStore
 
 
@@ -143,3 +143,13 @@ class FirstMateAutonomyTests(unittest.TestCase):
              patch.object(self.runtime, "_launch") as launch:
             self.runtime.reconcile()
         launch.assert_not_called()
+
+    def test_recovery_advisor_can_reach_extension_guarded_observational_shell(self):
+        command = _pi_command({"kind": "advisor", "recovery_mode": True,
+            "pi_bin": "pi", "session_file": str(self.root / "session.jsonl"),
+            "extension": "/synthetic/first-mate.ts", "claim": {}})
+        allowed = command[command.index("--tools") + 1].split(",")
+        self.assertIn("bash", allowed)
+        self.assertNotIn("write", allowed)
+        self.assertIn("--no-extensions", command)
+        self.assertIn("/synthetic/first-mate.ts", command)

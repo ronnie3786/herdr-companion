@@ -15,6 +15,13 @@ struct FirstMateFleetHost: Identifiable, Equatable, Sendable {
     var error: String?
     var unsupported: Bool
     var lastUpdated: Date?
+    /// Whether the companion advertises `first-mate-fleet-v1`. Probed once per
+    /// index lifecycle; an unsupported host is probed again at most every
+    /// ``FirstMateFleetIndex/capabilityReprobeInterval``.
+    var supportsFleet: Bool = false
+    /// The fleet summary by feature ID, or nil when the host lacks the fleet
+    /// capability or has not answered yet. A failed refresh keeps the last one.
+    var fleetEntries: [String: FirstMateFleetEntry]? = nil
 
     var id: String { machineID }
 }
@@ -26,6 +33,16 @@ final class FirstMateFleetIndex {
         let features: [FirstMateFeature]?
         let error: String?
         let unsupported: Bool
+        /// The capability answer, or nil when no probe ran or it failed. A
+        /// 404 or 501 from the fleet route also reads as unsupported.
+        var probedFleetSupport: Bool? = nil
+        /// Fleet entries, or nil when not requested or the request failed.
+        var fleet: [FirstMateFleetEntry]? = nil
+    }
+
+    private struct CapabilityProbe {
+        let supportsFleet: Bool
+        let probedAt: Date
     }
 
     var search = ""
@@ -38,12 +55,51 @@ final class FirstMateFleetIndex {
     @ObservationIgnored private var lastContact: [String: Date] = [:]
     @ObservationIgnored var pollingInterval: Duration = .seconds(10)
     @ObservationIgnored private var clients: [String: any FirstMateClient] = [:]
+    /// The roster's clients, kept after ``deactivate(lifecycle:)`` so a chat
+    /// read while nothing observes the index still reaches its companion. The
+    /// next activation replaces them along with the hosts they belong to.
+    @ObservationIgnored private var readClients: [String: any FirstMateClient] = [:]
+    /// The lifecycle an ``observe(sources:connectionGeneration:)`` call is
+    /// polling, or nil once it stops.
+    @ObservationIgnored private var observedLifecycle: Int?
     /// The authenticated connection each cached host was last reconciled with,
     /// keyed by stable machine ID. `activate` uses it to distinguish an
     /// unchanged host from a removed or reconfigured one.
     @ObservationIgnored private var hostConnections: [String: ServerConfiguration] = [:]
     @ObservationIgnored private var lifecycle = 0
     @ObservationIgnored private var refreshGeneration = 0
+    /// Capability answers for this lifecycle, by machine ID. A failed probe
+    /// records nothing, so the next refresh asks again.
+    @ObservationIgnored private var capabilityProbes: [String: CapabilityProbe] = [:]
+    @ObservationIgnored var capabilityReprobeInterval: TimeInterval = 5 * 60
+    /// Each observer's wait for its next poll, by lifecycle. A new activation
+    /// or a deactivation cancels them, so a superseded observer returns at
+    /// once instead of waking periodically to check.
+    @ObservationIgnored private var observerSleeps: [Int: Task<Void, Never>] = [:]
+    @ObservationIgnored var clock: @MainActor () -> Date = { Date() }
+
+    private struct FailedRead {
+        let messageID: String
+        let retryAt: Date
+        let delay: TimeInterval
+    }
+
+    /// Read markers the companion refused or never received, by chat. The
+    /// same marker is not posted again before `retryAt`, so a failing
+    /// companion is not asked in a loop by the read hooks, which fire again
+    /// whenever a rollback makes the chat unread. A newer marker (a new
+    /// First Mate message) is posted at once.
+    @ObservationIgnored private var failedReads: [FirstMateFleetFeatureID: FailedRead] = [:]
+    static let readRetryInitialDelay: TimeInterval = 8
+    static let readRetryMaximumDelay: TimeInterval = 180
+    /// Chats read on this Mac that the companion has not confirmed yet.
+    private(set) var readState = FirstMateReadState()
+    @ObservationIgnored private var badgeCache: (revision: Int, readState: FirstMateReadState, count: Int)?
+
+    /// Whether an ``observe(sources:connectionGeneration:)`` call is polling
+    /// the current roster. The chat window starts its own observer only when
+    /// none is, so it never supersedes the main window's.
+    var hasObserver: Bool { observedLifecycle == lifecycle }
 
     var filteredHosts: [FirstMateFleetHost] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,6 +129,22 @@ final class FirstMateFleetIndex {
     /// successful contribution, because an outage must not imply resolution.
     var attentionCount: Int {
         FirstMateAttention.count(hosts: hosts)
+    }
+
+    /// Conversations showing an unread dot: they need you and have an unread
+    /// First Mate message. Hosts without the fleet capability count exactly
+    /// what ``attentionCount`` counts.
+    ///
+    /// Cached against ``contentRevision`` and the read state: building the
+    /// conversation list renders every preview, and the Dock badge, sidebar,
+    /// and chat window all read this on each update.
+    var badgeCount: Int {
+        let revision = contentRevision
+        let readState = readState
+        if let cache = badgeCache, cache.revision == revision, cache.readState == readState { return cache.count }
+        let count = FirstMateBadge.count(hosts: hosts, readState: readState)
+        badgeCache = (revision, readState, count)
+        return count
     }
 
     /// Installs the observed roster and returns the lifecycle token that
@@ -120,6 +192,11 @@ final class FirstMateFleetIndex {
         }
         hostConnections = Dictionary(uniqueKeysWithValues: sources.map { ($0.machine.id, $0.configuration) })
         clients = Dictionary(uniqueKeysWithValues: sources.map { ($0.machine.id, $0.client) })
+        readClients = clients
+        capabilityProbes = [:]
+        // New clients deserve a fresh attempt at any refused read.
+        failedReads = [:]
+        wakeObservers()
         return lifecycle
     }
 
@@ -129,15 +206,29 @@ final class FirstMateFleetIndex {
         refreshGeneration &+= 1
         clients = [:]
         for index in hosts.indices where hosts[index].isLoading { hosts[index].isLoading = false }
+        wakeObservers()
+    }
+
+    /// Ends every observer's wait; each then sees whether it is still current.
+    private func wakeObservers() {
+        let sleeps = observerSleeps
+        observerSleeps = [:]
+        for sleep in sleeps.values { sleep.cancel() }
     }
 
     func refresh(lifecycle expectedLifecycle: Int) async {
         guard !Task.isCancelled, expectedLifecycle == lifecycle else { return }
         refreshGeneration &+= 1
         let token = refreshGeneration
-        let requests = hosts.compactMap { host -> (String, any FirstMateClient)? in
+        let now = clock()
+        let requests = hosts.compactMap { host -> (String, any FirstMateClient, Bool?)? in
             guard let client = clients[host.machineID] else { return nil }
-            return (host.machineID, client)
+            // nil asks the host again; a supported answer lasts the lifecycle.
+            let known = capabilityProbes[host.machineID].flatMap { probe -> Bool? in
+                probe.supportsFleet || now.timeIntervalSince(probe.probedAt) < capabilityReprobeInterval
+                    ? probe.supportsFleet : nil
+            }
+            return (host.machineID, client, known)
         }
         // Only a host that has never answered shows as loading. Background polls
         // of a loaded host change nothing observable until its data changes, so
@@ -150,12 +241,33 @@ final class FirstMateFleetIndex {
         }
 
         await withTaskGroup(of: FetchResult.self) { group in
-            for (machineID, client) in requests {
+            for (machineID, client, knownFleetSupport) in requests {
                 group.addTask {
+                    // The probe runs alongside the list, so an unreachable
+                    // host costs one timeout per round, not two.
+                    async let probe = FirstMateFleetIndex.probeFleetSupport(client, needed: knownFleetSupport == nil)
                     do {
                         let response = try await client.fetchFirstMateFeatures()
                         guard response.ok else { throw APIError.invalidResponse }
-                        return FetchResult(machineID: machineID, features: response.features, error: nil, unsupported: false)
+                        let probed = await probe
+                        try Task.checkCancellation()
+                        var result = FetchResult(machineID: machineID, features: response.features, error: nil, unsupported: false)
+                        result.probedFleetSupport = probed
+                        if probed ?? knownFleetSupport ?? false {
+                            do {
+                                let fleet = try await client.fetchFirstMateFleet()
+                                if fleet.ok { result.fleet = fleet.features }
+                            } catch is CancellationError {
+                                throw CancellationError()
+                            } catch APIError.server(let status, _) where status == 404 || status == 501 {
+                                // The companion lost the capability (for example a
+                                // rollback): fall back to the feature list at once.
+                                result.probedFleetSupport = false
+                            } catch {
+                                // A failed summary keeps the last one, like a failed list.
+                            }
+                        }
+                        return result
                     } catch is CancellationError {
                         return FetchResult(machineID: machineID, features: nil, error: nil, unsupported: false)
                     } catch {
@@ -190,6 +302,16 @@ final class FirstMateFleetIndex {
                     if host.lastUpdated == nil || host.error != nil || host.unsupported { host.lastUpdated = .now }
                     host.error = nil
                     host.unsupported = false
+                    if let probed = result.probedFleetSupport {
+                        capabilityProbes[result.machineID] = CapabilityProbe(supportsFleet: probed, probedAt: now)
+                        host.supportsFleet = probed
+                    }
+                    if !host.supportsFleet {
+                        host.fleetEntries = nil
+                    } else if let fleet = result.fleet {
+                        let entries = Dictionary(fleet.map { ($0.featureID, $0) }, uniquingKeysWith: { first, _ in first })
+                        if !Self.samePublishedFleetEntries(host.fleetEntries, entries) { host.fleetEntries = entries }
+                    }
                 } else if result.error != nil {
                     // "Last seen" is the last successful contact before this failure.
                     if host.error == nil, let contact = lastContact[result.machineID] { host.lastUpdated = contact }
@@ -220,9 +342,92 @@ final class FirstMateFleetIndex {
         }
     }
 
+    /// Only `updated_at` moves with Pi telemetry; every other fleet field is
+    /// on screen, so any other change publishes.
+    static func samePublishedFleetEntries(_ lhs: [String: FirstMateFleetEntry]?, _ rhs: [String: FirstMateFleetEntry]?) -> Bool {
+        guard let lhs, let rhs else { return lhs == nil && rhs == nil }
+        guard lhs.count == rhs.count else { return false }
+        return lhs.allSatisfy { id, left in
+            guard var right = rhs[id] else { return false }
+            right.updatedAt = left.updatedAt
+            return left == right
+        }
+    }
+
+    /// Whether the host advertises `first-mate-fleet-v1`: nil when not
+    /// `needed`, or when the probe failed (unknown: the host keeps its last
+    /// answer and is asked again next time). A companion without the
+    /// capability route predates the fleet.
+    nonisolated private static func probeFleetSupport(_ client: any FirstMateClient, needed: Bool) async -> Bool? {
+        guard needed else { return nil }
+        do {
+            let capabilities = try await client.fetchFirstMateCapabilities()
+            return capabilities.ok && capabilities.supportsFleet
+        } catch APIError.server(let status, _) where status == 404 || status == 501 {
+            return false
+        } catch {
+            return nil
+        }
+    }
+
     func refresh() async {
         let activeLifecycle = lifecycle
         await refresh(lifecycle: activeLifecycle)
+    }
+
+    /// Marks a chat read through `throughMessageID`.
+    ///
+    /// The dot and badge clear at once. The marker is then posted to the host
+    /// and rolled back if that fails. A host outside the roster (demo) or
+    /// without the fleet capability keeps the read on this Mac only, and a chat
+    /// already read through that message posts nothing. A roster host still
+    /// posts after the index stops observing, because its client is retained.
+    ///
+    /// A marker that failed is not posted again until its backoff expires
+    /// (8 s, doubling to 3 min), and the chat stays unread meanwhile, so the
+    /// dot stays honest and the read hooks do not retry in a loop.
+    func markRead(machineID: String, featureID: String, throughMessageID: String) async {
+        let id = FirstMateFleetFeatureID(machineID: machineID, featureID: featureID)
+        let host = hosts.first { $0.machineID == machineID }
+        let entry = host?.fleetEntries?[featureID]
+        if readState.overrides[id] == throughMessageID { return }
+        if let entry, !entry.unread, entry.readThroughMessageID == throughMessageID { return }
+        if let failed = failedReads[id], failed.messageID == throughMessageID, clock() < failed.retryAt { return }
+        readState.markRead(id, messageID: throughMessageID)
+        guard let host, host.supportsFleet else { return }
+        guard let client = readClients[machineID] else {
+            // A fleet host without a client cannot confirm the read, and a dot
+            // hidden only here would disagree with every other device.
+            readState.rollBack(id, messageID: throughMessageID)
+            recordFailedRead(id, messageID: throughMessageID)
+            return
+        }
+        let expectedLifecycle = lifecycle
+        do {
+            let response = try await client.markFirstMateRead(featureID: featureID, throughMessageID: throughMessageID)
+            if failedReads[id]?.messageID == throughMessageID { failedReads[id] = nil }
+            // The companion's answer replaces a possibly stale summary, so a
+            // newer message the summary had not reported yet clears too.
+            guard expectedLifecycle == lifecycle,
+                  let index = hosts.firstIndex(where: { $0.machineID == machineID }),
+                  var entries = hosts[index].fleetEntries, var current = entries[featureID] else { return }
+            current.unread = response.unread
+            current.readThroughMessageID = response.readThroughMessageID
+            guard current != entries[featureID] else { return }
+            entries[featureID] = current
+            hosts[index].fleetEntries = entries
+            contentRevision &+= 1
+        } catch {
+            readState.rollBack(id, messageID: throughMessageID)
+            recordFailedRead(id, messageID: throughMessageID)
+        }
+    }
+
+    /// Starts or doubles the marker's backoff. A different marker starts over.
+    private func recordFailedRead(_ id: FirstMateFleetFeatureID, messageID: String) {
+        let previous = failedReads[id].flatMap { $0.messageID == messageID ? $0.delay : nil }
+        let delay = previous.map { min($0 * 2, Self.readRetryMaximumDelay) } ?? Self.readRetryInitialDelay
+        failedReads[id] = FailedRead(messageID: messageID, retryAt: clock().addingTimeInterval(delay), delay: delay)
     }
 
     /// Activates the roster, refreshes it immediately, and then refreshes on
@@ -236,18 +441,34 @@ final class FirstMateFleetIndex {
     func observe(sources: [FirstMateFleetSource], connectionGeneration: Int) async {
         guard !Task.isCancelled else { return }
         let expectedLifecycle = activate(sources: sources, connectionGeneration: connectionGeneration)
-        defer { deactivate(lifecycle: expectedLifecycle) }
+        defer {
+            if observedLifecycle == expectedLifecycle { observedLifecycle = nil }
+            deactivate(lifecycle: expectedLifecycle)
+        }
         guard !sources.isEmpty else { return }
+        observedLifecycle = expectedLifecycle
         await refresh(lifecycle: expectedLifecycle)
         while isObserving(expectedLifecycle) {
-            do {
-                try await Task.sleep(for: pollingInterval)
-            } catch {
-                return
-            }
+            await sleepUntilNextPoll(expectedLifecycle)
             guard isObserving(expectedLifecycle) else { return }
             await refresh(lifecycle: expectedLifecycle)
         }
+    }
+
+    /// One sleep per poll. A newer activation or a deactivation cancels it
+    /// (``wakeObservers()``), so a superseded observer returns promptly to a
+    /// caller waiting to observe again, and cancelling the observing task
+    /// cancels it too.
+    private func sleepUntilNextPoll(_ expectedLifecycle: Int) async {
+        let interval = pollingInterval
+        let sleep = Task { _ = try? await Task.sleep(for: interval) }
+        observerSleeps[expectedLifecycle] = sleep
+        await withTaskCancellationHandler {
+            await sleep.value
+        } onCancel: {
+            sleep.cancel()
+        }
+        if observerSleeps[expectedLifecycle] == sleep { observerSleeps[expectedLifecycle] = nil }
     }
 
     private func isObserving(_ expectedLifecycle: Int) -> Bool {

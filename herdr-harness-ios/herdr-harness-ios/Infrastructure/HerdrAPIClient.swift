@@ -71,6 +71,30 @@ actor HerdrAPIClient: FirstMateClient {
         try await request(path: firstMatePath("documents", id: id))
     }
 
+    func fetchFirstMateFleet() async throws -> FirstMateFleetResponse {
+        try await request(path: "/api/v1/first-mate/fleet")
+    }
+
+    func markFirstMateRead(featureID: String, throughMessageID: String) async throws -> FirstMateReadResponse {
+        try await request(path: firstMatePath("features", id: featureID) + "/read", method: "POST", body: [
+            "through_message_id": throughMessageID,
+        ])
+    }
+
+    func updateFirstMateHud(featureID: String, label: String?, emoji: String?) async throws -> FirstMateFleetEntry {
+        var body: [String: String] = [:]
+        if let label { body["label"] = label }
+        if let emoji { body["emoji"] = emoji }
+        guard !body.isEmpty else { throw APIError.invalidResponse }
+        let response: FirstMateHudUpdateResponse = try await request(
+            path: firstMatePath("features", id: featureID) + "/hud",
+            method: "POST",
+            body: body
+        )
+        guard response.ok else { throw APIError.invalidResponse }
+        return response.feature
+    }
+
     func fetchFirstMateSession(_ id: String, before: Int? = nil) async throws -> FirstMateSessionResponse {
         var query = [URLQueryItem(name: "limit", value: "100")]
         if let before { query.append(URLQueryItem(name: "before", value: String(before))) }

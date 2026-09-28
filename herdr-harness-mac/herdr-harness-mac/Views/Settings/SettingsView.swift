@@ -16,6 +16,12 @@ struct SettingsView: View {
     @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
     private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
     @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
+    @AppStorage(FirstMateChatPreferences.windowEnabledKey)
+    private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
+    @AppStorage(FirstMateChatPreferences.dockBadgeEnabledKey)
+    private var firstMateDockBadgeEnabled = FirstMateChatPreferences.defaultDockBadgeEnabled
+    @AppStorage(FirstMateHudPreferences.enabledKey)
+    private var firstMateHudEnabled = FirstMateHudPreferences.defaultEnabled
     @AppStorage(MobileAppHubSettings.dashboardBundleIDsKey) private var buildsDashboardApps = ""
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
@@ -158,6 +164,7 @@ struct SettingsView: View {
             appearanceSection
             feedbackSection
             chatSection
+            firstMateSection
             buildsSection
             aboutSection
         case .machines:
@@ -345,13 +352,17 @@ struct SettingsView: View {
             .accessibilityIdentifier("settings-hud-visible-agents")
 
             LabeledContent("Summon", value: "⌃⌥Space")
+
+            Toggle("First Mate HUD", systemImage: "face.smiling", isOn: $firstMateHudEnabled)
+                .tint(HerdrTheme.controlAccent)
+                .accessibilityIdentifier("settings-first-mate-hud")
         } header: {
             SettingsSectionHeader {
                 Text("HUD")
             }
         } footer: {
             SettingsSectionFooter {
-                Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine.")
+                Text("Show 4 agents by default; additional agents are grouped under +N. Choose Show all to keep every agent in the scrollable list. The HUD can run real commands on the selected machine. The First Mate HUD is a separate floating panel: First Mate's face with your First Mate features under it. Click it to type, hold it to talk, drag it to move it.")
             }
         }
     }
@@ -456,6 +467,33 @@ struct SettingsView: View {
         } footer: {
             SettingsSectionFooter {
                 Text("Keep thinking, tool use, and interim Pi commentary in one collapsed Clanking group for each turn. The final answer appears when the turn finishes.")
+            }
+        }
+    }
+
+    private var firstMateSection: some View {
+        Section {
+            Toggle(
+                "First Mate chat window (preview)",
+                systemImage: "bubble.left.and.bubble.right",
+                isOn: $firstMateChatWindowEnabled
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-first-mate-chat-window")
+            Toggle(
+                "Show First Mate count on the Dock icon",
+                systemImage: "app.badge",
+                isOn: $firstMateDockBadgeEnabled
+            )
+            .tint(HerdrTheme.controlAccent)
+            .accessibilityIdentifier("settings-first-mate-dock-badge")
+        } header: {
+            SettingsSectionHeader {
+                Text("First Mate")
+            }
+        } footer: {
+            SettingsSectionFooter {
+                Text("The chat window lists every First Mate conversation across your machines. Open it from Window ▸ First Mate (⇧⌘F). The Dock count shows conversations that need you and have a new message.")
             }
         }
     }

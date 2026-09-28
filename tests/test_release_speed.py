@@ -49,6 +49,18 @@ class PreparationOverlapsVerifyTests(unittest.TestCase):
         with patch.object(release, "gh", return_value=verify_runs({"status": "completed", "conclusion": "success"})):
             release.require_green_ci(SHA)
 
+    def test_only_the_push_run_counts_because_the_pull_request_run_skips_tests(self):
+        runs = verify_runs({"status": "completed", "conclusion": "success", "event": "pull_request"},
+                           {"status": "in_progress", "conclusion": "", "event": "push"})
+        with patch.object(release, "gh", return_value=runs) as gh:
+            with self.assertRaises(release.ReleaseError):
+                release.require_green_ci(SHA)
+            release.wait_for_ci(SHA, 0)
+        self.assertIn(("--event", "push"), list(zip(gh.call_args.args, gh.call_args.args[1:])))
+        with patch.object(release, "gh", return_value=verify_runs({"status": "completed", "conclusion": "success", "event": "pull_request"})):
+            with self.assertRaises(release.ReleaseError):
+                release.require_ci_not_failed(SHA)
+
     def test_waiting_for_verify_stops_when_it_finishes_or_the_time_is_up(self):
         answers = iter([verify_runs({"status": "in_progress", "conclusion": ""}),
                         verify_runs({"status": "completed", "conclusion": "failure"})])

@@ -6,6 +6,7 @@ struct PiMarkdownText: View {
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.paneResponseLinkCatalog) private var paneLinks
     @Environment(\.detectsPaneResponseLinks) private var detectsPaneLinks
+    @Environment(\.firstMateMentionCatalog) private var mentionCatalog
     @Environment(\.chatProsePalette) private var palette
     let font: Font
     let cacheRenderedText: Bool
@@ -79,11 +80,15 @@ struct PiMarkdownText: View {
             styled = rendered
         }
 
-        let linked: AttributedString
+        var linked: AttributedString
         if detectsPaneLinks, let paneLinks {
             linked = PaneResponseLinker.link(styled, catalog: paneLinks)
         } else {
             linked = styled
+        }
+        // Opt-in: only the First Mate chat window sets a mention catalog.
+        if let mentionCatalog {
+            linked = FirstMateMentionLinker.link(linked, catalog: mentionCatalog)
         }
         return Group {
             if saveQuote != nil {

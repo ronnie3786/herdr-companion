@@ -75,7 +75,7 @@ struct PromptComposerView: View {
     @State private var isConversationDropTargeted = false
     @State private var disposition: PiPromptDisposition = .prompt
     @State private var hapticPulse = HerdrHapticPulse()
-    @State private var quickVoiceCapture = HerdrQuickVoiceCapture()
+    @State private var dictationSession = PromptComposerDictationSession()
     @State private var isCTACapture = false
     @State private var localDraftContainsDictation = false
     @State private var isLockPulsing = false
@@ -124,6 +124,14 @@ struct PromptComposerView: View {
             acceptsCompletion: {
                 destinationID == "pane:\(pane.id):generation:\(model.connectionGeneration)"
                     && model.pane(id: pane.id) != nil
+            },
+            isReadyToSubmit: {
+                if let piConfiguration {
+                    return piConfiguration.isConnected
+                        && !piConfiguration.isSubmitting
+                        && !piConfiguration.isCompacting
+                }
+                return model.canControl && !model.isSending
             },
             upload: { url, contentType in
                 try await model.uploadAttachment(from: url, contentType: contentType, to: workspace)
@@ -272,10 +280,10 @@ struct PromptComposerView: View {
             if addMenuInitiallyPresented { isShowingAddMenu = true }
         }
         .onDisappear {
-            quickVoiceCapture.cancel()
+            dictationSession.cancel()
         }
         .onChange(of: destination.id) {
-            quickVoiceCapture.cancel()
+            dictationSession.cancel()
             skillsPalette.dismiss()
             isShowingMoreTools = false
             showsTerminalKeys = false
@@ -283,7 +291,7 @@ struct PromptComposerView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
-                quickVoiceCapture.cancel()
+                dictationSession.cancel()
             }
         }
         .onChange(of: quickVoiceCapture.phase) { _, phase in
@@ -497,24 +505,29 @@ struct PromptComposerView: View {
             HStack(spacing: 4) {
                 addMenuButton
                 if destination.supportsVoice {
-                    ComposerAuxiliaryBar(
-                        attach: { isShowingFileImporter = true },
-                        recordVoice: { isShowingVoiceRecorder = true },
-                        searchFiles: { isShowingFileSearch = true },
-                        chooseJira: { isShowingJira = true },
-                        voicePhase: quickVoiceCapture.phase,
-                        beginVoiceHold: beginQuickVoiceCapture,
-                        endVoiceHold: finishQuickVoiceCapture,
-                        finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
-                        pasteCodeBlock: pasteCodeBlock,
-                        showsTitles: false,
-                        showsAttach: false,
-                        showsCode: false,
-                        showsVoice: true,
-                        showsContextTools: false,
-                        canPasteCode: canPasteCode
-                    )
-                    .fixedSize()
+                    switch destination.voicePolicy.externalVoiceRole {
+                    case .openRecorder:
+                        ComposerAuxiliaryBar(
+                            attach: { isShowingFileImporter = true },
+                            recordVoice: { isShowingVoiceRecorder = true },
+                            searchFiles: { isShowingFileSearch = true },
+                            chooseJira: { isShowingJira = true },
+                            voicePhase: quickVoiceCapture.phase,
+                            beginVoiceHold: beginQuickVoiceCapture,
+                            endVoiceHold: finishQuickVoiceCapture,
+                            finishLockedVoiceCapture: finishLockedQuickVoiceCapture,
+                            pasteCodeBlock: pasteCodeBlock,
+                            showsTitles: false,
+                            showsAttach: false,
+                            showsCode: false,
+                            showsVoice: true,
+                            showsContextTools: false,
+                            canPasteCode: canPasteCode
+                        )
+                        .fixedSize()
+                    case .dictate:
+                        dictationMicrophoneButton
+                    }
                 }
                 moreToolsButton
                 if let piConfiguration, showsPiOptionsBar {
@@ -676,13 +689,29 @@ struct PromptComposerView: View {
                     isVertical: true
                 )
                 if destination.supportsVoice {
-                    ComposerPopoverRow(
-                        title: "Start voice dictation",
-                        systemImage: "mic",
-                        hint: "Click Voice for a note. Hold to dictate, and keep holding to lock recording.",
-                        action: startLockedVoiceCapture
-                    )
-                    .disabled(quickVoiceCapture.phase != .idle || !canControl || isPiCompacting)
+                    switch destination.voicePolicy.menuVoiceRole {
+                    case .dictate:
+                        ComposerPopoverRow(
+                            title: "Start voice dictation",
+                            systemImage: "mic",
+                            hint: "Click Voice for a note. Hold to dictate, and keep holding to lock recording.",
+                            action: startLockedVoiceCapture
+                        )
+                        .disabled(quickVoiceCapture.phase != .idle || !canControl || isPiCompacting || isSubmitting)
+                        .accessibilityIdentifier("composer-start-dictation")
+                    case .openRecorder:
+                        ComposerPopoverRow(
+                            title: "Record a voice note",
+                            systemImage: "mic",
+                            hint: "Record, preview, attach the audio, or transcribe it into the prompt.",
+                            action: {
+                                isShowingMoreTools = false
+                                isShowingVoiceRecorder = true
+                            }
+                        )
+                        .disabled(quickVoiceCapture.phase != .idle || !canControl || isPiCompacting || isSubmitting)
+                        .accessibilityIdentifier("composer-record-voice-note")
+                    }
                 }
             }
             .padding(6)
@@ -694,19 +723,33 @@ struct PromptComposerView: View {
     private var voiceCaptureStatus: some View {
         if quickVoiceCapture.phase == .locked {
             HStack(spacing: 8) {
-                Label("Recording locked", systemImage: "mic.fill")
-                    .foregroundStyle(HerdrTheme.alert)
+                Label(
+                    dictationSubmitsOnStop ? "Listening" : "Recording locked",
+                    systemImage: "mic.fill"
+                )
+                .foregroundStyle(HerdrTheme.alert)
+                if dictationSubmitsOnStop {
+                    Text("Stop transcribes and sends")
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.secondaryText)
+                }
                 Spacer()
-                Button("Finish dictation", action: finishLockedQuickVoiceCapture)
-                    .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.alert, emphasis: .text))
-                    .accessibilityIdentifier("composer-finish-dictation")
+                Button(
+                    dictationSubmitsOnStop ? "Stop and send" : "Finish dictation",
+                    action: stopVoiceCapture
+                )
+                .buttonStyle(PiChatButtonStyle(tint: HerdrTheme.alert, emphasis: .text))
+                .help(dictationSubmitsOnStop
+                    ? "Stops recording, transcribes the dictation, and sends the prompt"
+                    : "Stops recording and transcribes the dictation")
+                .accessibilityIdentifier("composer-finish-dictation")
             }
             .herdrFont(size: HerdrTheme.TextSize.small)
             .transition(semanticControlTransition)
         } else if quickVoiceCapture.phase == .transcribing {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Transcribing dictation…")
+                Text(dictationSubmitsOnStop ? "Transcribing dictation, then sending…" : "Transcribing dictation…")
                     .herdrFont(size: HerdrTheme.TextSize.small)
                     .foregroundStyle(HerdrTheme.secondaryText)
                 Spacer()
@@ -714,6 +757,65 @@ struct PromptComposerView: View {
             .accessibilityElement(children: .combine)
             .transition(semanticControlTransition)
         }
+    }
+
+    /// First Mate's external microphone: one click starts click-to-stop
+    /// dictation, and the same control becomes Stop, which transcribes and
+    /// sends. Legacy destinations keep the recorder and hold gesture instead.
+    private var dictationMicrophoneButton: some View {
+        let isRecording = isCTALockedCapture
+        let isTranscribing = isCTATranscribing
+        return Button(action: handleDictationMicrophoneTap) {
+            if isTranscribing {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: isRecording ? "stop.fill" : "mic")
+            }
+        }
+        .buttonStyle(HerdrIconButtonStyle(
+            isActive: isRecording,
+            tint: isRecording ? HerdrTheme.alert : HerdrTheme.iconTint
+        ))
+        .disabled(isTranscribing || (!isRecording && (isSubmitting || !canControl || isPiCompacting)))
+        .help(dictationMicrophoneHelp)
+        .accessibilityLabel(dictationMicrophoneLabel)
+        .accessibilityHint(dictationMicrophoneHint)
+        .accessibilityIdentifier("composer-record-voice")
+    }
+
+    private func handleDictationMicrophoneTap() {
+        // Readiness gates the start only: while a recording is active the
+        // microphone stays a Stop control, and a click ends the capture even
+        // if control or another submission became unavailable meanwhile.
+        switch dictationSession.externalMicAction(
+            canStart: canControl && !isPiCompacting && !isSubmitting
+        ) {
+        case .start:
+            isShowingMoreTools = false
+            isCTACapture = true
+        case .stop:
+            stopVoiceCapture()
+        case .ignored:
+            break
+        }
+    }
+
+    private var dictationMicrophoneLabel: String {
+        if isCTALockedCapture { return "Stop dictation and send" }
+        if isCTATranscribing { return "Transcribing dictation" }
+        return "Start dictation"
+    }
+
+    private var dictationMicrophoneHelp: String {
+        if isCTALockedCapture { return "Stops recording, transcribes, and sends" }
+        if isCTATranscribing { return "Transcribing dictation" }
+        return "Start dictation · click Stop to transcribe and send"
+    }
+
+    private var dictationMicrophoneHint: String {
+        if isCTALockedCapture { return "Finishes recording, transcribes the dictation, and sends the prompt" }
+        if isCTATranscribing { return "No action is available while dictation is transcribed" }
+        return "Starts recording without opening More"
     }
 
     /// Mounted only on request. Narrow windows retain every key in the
@@ -915,6 +1017,16 @@ struct PromptComposerView: View {
 
     private var canControl: Bool { destination.canControl }
 
+    /// The capture shared by the legacy hold gesture and the click-to-dictate
+    /// microphone. `PromptComposerDictationSession` wraps it with the
+    /// exactly-once completion and explicit-stop intent.
+    private var quickVoiceCapture: HerdrQuickVoiceCapture { dictationSession.capture }
+
+    /// True only where an explicit inline-dictation Stop also submits.
+    private var dictationSubmitsOnStop: Bool {
+        destination.voicePolicy.submitsOnExplicitStop
+    }
+
     private var draftContainsDictation: Bool {
         persistedDictation?.wrappedValue ?? localDraftContainsDictation
     }
@@ -974,14 +1086,20 @@ struct PromptComposerView: View {
     }
 
     private var trailingComposerAccessibilityLabel: String {
-        if isCTALockedCapture { return "Stop voice dictation" }
+        if isCTALockedCapture {
+            return dictationSubmitsOnStop ? "Stop dictation and send" : "Stop voice dictation"
+        }
         if isCTATranscribing { return "Transcribing voice dictation" }
         if piConfiguration != nil { return effectiveDisposition.label }
         return destination.sendAccessibilityLabel
     }
 
     private var trailingComposerAccessibilityHint: String {
-        if isCTALockedCapture { return "Stops recording and transcribes the dictation" }
+        if isCTALockedCapture {
+            return dictationSubmitsOnStop
+                ? "Stops recording, transcribes the dictation, and sends the prompt"
+                : "Stops recording and transcribes the dictation"
+        }
         if isCTATranscribing { return "Voice dictation is being transcribed" }
         return sendAccessibilityHint
     }
@@ -1100,10 +1218,8 @@ struct PromptComposerView: View {
     }
 
     private func appendTranscript(_ transcript: String) {
-        let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
-        let existing = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = existing.isEmpty ? cleaned : "\(existing)\n\n\(cleaned)"
+        guard let updated = PromptComposerDictationSession.appending(transcript, to: draft) else { return }
+        draft = updated
         setDraftContainsDictation(true)
         isFocused = true
     }
@@ -1114,45 +1230,115 @@ struct PromptComposerView: View {
         quickVoiceCapture.beginHold()
     }
 
+    /// Release of the legacy hold-to-dictate gesture. Holds retain their
+    /// append-only contract on every destination.
     private func finishQuickVoiceCapture() {
         guard quickVoiceCapture.phase != .locked else { return }
-        completeQuickVoiceCapture()
+        completeVoiceCapture()
     }
 
+    /// Finishes a locked capture without recording an explicit Stop. The
+    /// recorder's automatic duration limit reaches this path, so it can never
+    /// authorize a First Mate send on its own.
     private func finishLockedQuickVoiceCapture() {
         guard quickVoiceCapture.phase == .locked else { return }
-        completeQuickVoiceCapture()
+        completeVoiceCapture()
     }
 
-    private func completeQuickVoiceCapture() {
+    /// Converges every explicit Stop affordance (the external microphone, the
+    /// primary button, and the status bar) on one guarded operation. Only a
+    /// click here records the auto-submit intent, and it is recorded before
+    /// the transcription suspends.
+    private func stopVoiceCapture() {
+        if dictationSubmitsOnStop {
+            _ = dictationSession.beginExplicitStop()
+        }
+        finishLockedQuickVoiceCapture()
+    }
+
+    private func completeVoiceCapture() {
         Task {
             hapticPulse.fire(.recordingStopped)
-            let destinationID = destination.id
-            let outcome = await quickVoiceCapture.endHold { url in
-                try await destination.transcribe(url)
-            }
-            guard destination.id == destinationID, destination.acceptsCompletion() else { return }
-            switch outcome {
-            case .cancelled:
-                break
-            case .tooShort:
-                destination.reportToast("Hold the mic to dictate")
-            case let .transcript(result):
-                appendTranscript(result.text)
-                hapticPulse.fire(.transcriptionSucceeded)
-                destination.reportToast(result.usedFallback
-                    ? "Parakeet unavailable · transcribed with Apple Speech"
-                    : "Transcribed with \(result.provider.rawValue)")
-            case let .failure(message):
-                hapticPulse.fire(.failed)
-                destination.reportError(message)
-            }
-            isCTACapture = false
+            let outcome = await dictationSession.finish(dictationCompletion)
+            applyDictationOutcome(outcome)
         }
     }
 
+    /// The destination-bound operations for one dictation completion. The
+    /// session appends the transcript and, only when the explicit Stop intent
+    /// survived the await, submits through the composer's normal path.
+    ///
+    /// Internal so production-wiring tests can exercise the exact completion
+    /// this view hands to `PromptComposerDictationSession`.
+    var dictationCompletion: PromptComposerDictationSession.Completion {
+        destination.dictationCompletion(
+            appendTranscript: { appendTranscript($0) },
+            hasReadyContent: { hasReadyContentForSubmission() },
+            submit: { await dispatchSubmission() }
+        )
+    }
+
+    /// Live readiness for a submission that may resume after a suspension.
+    ///
+    /// `canSend` reads the destination's render snapshot, which is right for a
+    /// synchronous button but wrong inside an asynchronous completion: the
+    /// view value that started the transcription never receives re-renders.
+    /// Staged content is read through the bindings and control, submission,
+    /// and compaction state through `destination.isReadyToSubmit()`.
+    private func isReadyToSubmitLive() -> Bool {
+        destination.isReadyToSubmit() && hasReadyContentForSubmission()
+    }
+
+    private func hasReadyContentForSubmission() -> Bool {
+        guard piConfiguration?.availableDispositions.contains(effectiveDisposition) ?? true else {
+            return false
+        }
+        return PromptComposerSubmission.hasReadyContent(
+            draft: draft,
+            attachments: attachments,
+            quoteCount: quotes.count,
+            conversationReferenceCount: stagedConversationReferences.count
+        )
+    }
+
+    private func applyDictationOutcome(_ outcome: PromptComposerDictationSession.Outcome) {
+        isCTACapture = false
+        switch outcome {
+        case .cancelled, .stale:
+            break
+        case .tooShort:
+            destination.reportToast(dictationSubmitsOnStop
+                ? "That was too short to transcribe. Tap the microphone, speak, then tap Stop."
+                : "Hold the mic to dictate")
+        case .empty:
+            destination.reportToast("No speech was detected. Nothing was added or sent.")
+        case let .failed(message):
+            hapticPulse.fire(.failed)
+            destination.reportError(message)
+        case let .retained(result), let .submitted(result):
+            hapticPulse.fire(.transcriptionSucceeded)
+            destination.reportToast(transcriptionToast(result))
+        case .notSent:
+            // The session already surfaced the actionable explanation; a failed
+            // dispatch fires its own feedback haptic.
+            break
+        }
+    }
+
+    private func transcriptionToast(_ result: VoiceTranscription) -> String {
+        result.usedFallback
+            ? "Parakeet unavailable · transcribed with Apple Speech"
+            : "Transcribed with \(result.provider.rawValue)"
+    }
+
+    /// The legacy More row's locked capture. It stays outside the session's
+    /// explicit-stop contract, so it always transcribes into the draft only.
     private func startLockedVoiceCapture() {
-        guard quickVoiceCapture.phase == .idle, canControl, !isPiCompacting else { return }
+        guard quickVoiceCapture.phase == .idle,
+              canControl,
+              !isPiCompacting,
+              !isSubmitting
+        else { return }
         isShowingMoreTools = false
         isCTACapture = true
         quickVoiceCapture.beginLocked()
@@ -1160,7 +1346,7 @@ struct PromptComposerView: View {
 
     private func handleTrailingComposerAction() {
         if isCTALockedCapture {
-            finishLockedQuickVoiceCapture()
+            stopVoiceCapture()
         } else {
             send()
         }
@@ -1283,7 +1469,22 @@ struct PromptComposerView: View {
     }
 
     private func send() {
-        guard canSend, destination.isCurrent() else { return }
+        Task { _ = await dispatchSubmission() }
+    }
+
+    /// The composer's one submission path, shared by the Send button, Return,
+    /// and a completed First Mate dictation. It serializes the staged payload,
+    /// awaits the destination, and consumes only the accepted identities.
+    /// Returns whether the destination accepted the submission.
+    @discardableResult
+    private func dispatchSubmission() async -> Bool {
+        // A recording or transcription must never race a submission; the
+        // dictation completion itself runs after its capture is idle.
+        guard quickVoiceCapture.phase == .idle else { return false }
+        // Re-read readiness from the destination instead of `canSend`: this
+        // method also runs when a dictation completion resumes long after the
+        // view value that recorded the explicit Stop was rendered.
+        guard destination.isCurrent(), isReadyToSubmitLive() else { return false }
         let destinationID = destination.id
         let draftToSend = draft
         let attachmentsToSend = attachments.filter { $0.status == .uploaded && $0.uploadedPath != nil }
@@ -1300,42 +1501,41 @@ struct PromptComposerView: View {
         let piConfiguration = self.piConfiguration
         let disposition = effectiveDisposition
 
-        Task {
-            let didSend = if let piConfiguration {
-                await piConfiguration.submit(message, disposition)
-            } else {
-                await destination.submit(message)
-            }
-            guard destination.id == destinationID, destination.acceptsCompletion() else { return }
-
-            if didSend {
-                var currentDraft = draft
-                var currentAttachments = attachments
-                var currentQuotes = quotes
-                var currentContainsDictation = draftContainsDictation
-                PromptComposerSubmission.consumeAccepted(
-                    sentDraft: draftToSend,
-                    sentAttachmentIDs: Set(attachmentsToSend.map(\.id)),
-                    sentQuoteIDs: Set(quotesToSend.map(\.id)),
-                    sentContainsDictation: sentDictation,
-                    draft: &currentDraft,
-                    attachments: &currentAttachments,
-                    quotes: &currentQuotes,
-                    containsDictation: &currentContainsDictation
-                )
-                draft = currentDraft
-                attachments = currentAttachments
-                quotes = currentQuotes
-                setDraftContainsDictation(currentContainsDictation)
-                if let pane {
-                    let sentReferenceIDs = Set(referencesToSend.map(\.id))
-                    model.removeConversationReferences(sentReferenceIDs, from: pane.id)
-                }
-                hapticPulse.fire(.promptSent)
-            } else {
-                hapticPulse.fire(.failed)
-            }
+        let didSend = if let piConfiguration {
+            await piConfiguration.submit(message, disposition)
+        } else {
+            await destination.submit(message)
         }
+        guard destination.id == destinationID, destination.acceptsCompletion() else { return didSend }
+
+        if didSend {
+            var currentDraft = draft
+            var currentAttachments = attachments
+            var currentQuotes = quotes
+            var currentContainsDictation = draftContainsDictation
+            PromptComposerSubmission.consumeAccepted(
+                sentDraft: draftToSend,
+                sentAttachmentIDs: Set(attachmentsToSend.map(\.id)),
+                sentQuoteIDs: Set(quotesToSend.map(\.id)),
+                sentContainsDictation: sentDictation,
+                draft: &currentDraft,
+                attachments: &currentAttachments,
+                quotes: &currentQuotes,
+                containsDictation: &currentContainsDictation
+            )
+            draft = currentDraft
+            attachments = currentAttachments
+            quotes = currentQuotes
+            setDraftContainsDictation(currentContainsDictation)
+            if let pane {
+                let sentReferenceIDs = Set(referencesToSend.map(\.id))
+                model.removeConversationReferences(sentReferenceIDs, from: pane.id)
+            }
+            hapticPulse.fire(.promptSent)
+        } else {
+            hapticPulse.fire(.failed)
+        }
+        return didSend
     }
 
     private func selectDisposition(_ selection: PiPromptDisposition) {

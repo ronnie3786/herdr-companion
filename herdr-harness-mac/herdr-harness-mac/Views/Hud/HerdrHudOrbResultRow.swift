@@ -9,6 +9,9 @@ struct HerdrHudOrbResultRow: View {
     var attentionChipCount: Int = 0
     var attentionChipStatuses: [AgentStatus] = []
     var notes: HerdrHudNotesState?
+    /// The orb's progress out of the resting circle. The satellite controls
+    /// are the last layer to arrive, once the orb has all but landed.
+    var morphProgress: Double = 1
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -30,12 +33,17 @@ struct HerdrHudOrbResultRow: View {
                     controller: controller,
                     session: session,
                     attentionChipCount: attentionChipCount,
-                    attentionChipStatuses: attentionChipStatuses
+                    attentionChipStatuses: attentionChipStatuses,
+                    morphProgress: morphProgress
                 )
-                .frame(width: 56, height: 56)
+                .frame(width: HerdrHudMorph.orbDiameter, height: HerdrHudMorph.orbDiameter)
                 .padding(.leading, HerdrHudPlacement.orbLeadingInset)
                 orbControls
-                .opacity(controller.areOrbControlsVisible ? 1 : 0)
+                .opacity(
+                    controller.areOrbControlsVisible
+                        ? HerdrHudMorph.satelliteOpacity(orb: morphProgress)
+                        : 0
+                )
                 .allowsHitTesting(controller.areOrbControlsVisible)
                 .accessibilityHidden(!controller.areOrbControlsVisible)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: controller.areOrbControlsVisible)

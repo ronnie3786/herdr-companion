@@ -143,9 +143,34 @@ final class HerdrHudController {
     private var hoveredHudRegions: Set<String> = []
     private var attachmentHoverExitTask: Task<Void, Never>?
     private let attachmentHoverGrace: Duration
+    /// Extra time a hover-expanded resting HUD stays open after the pointer
+    /// leaves, on top of `attachmentHoverGrace`. Coming back inside this
+    /// window cancels the collapse, so a short excursion never snaps the HUD
+    /// back to its circle and out again.
+    private let ultraCompactCollapseDelay: Duration
+    /// True while that countdown is running toward the resting circle.
+    private(set) var isUltraCompactCollapsePending = false
+
+    /// The morph back to the resting circle plays inside the collapsed orb's
+    /// panel; shrinking the window at the same moment would clip it. The
+    /// panel keeps the orb's frame for this long, then snaps to the circle's.
+    private let restingFrameHoldDuration: Duration
+    private var restingFrameHoldTask: Task<Void, Never>?
+    /// True while the panel is still at the orb's size for a HUD that is
+    /// already resting. The root view keeps the matching margin.
+    private(set) var isRestingFrameHeld = false
+    private enum PanelSurface { case card, orb, resting }
+    /// The surface the current panel frame was applied for.
+    private var appliedSurface: PanelSurface = .orb
+    private let reduceMotionPreference: @MainActor () -> Bool
+
+    /// Whether the panel frame and the root view's margin use the small
+    /// resting lane right now. Lags `isUltraCompactResting` by the frame hold.
+    var usesUltraCompactLane: Bool { isUltraCompactResting && !isRestingFrameHeld }
 
     #if DEBUG
     var panelFrameForTesting: CGRect? { panel?.frame }
+    var panelForTesting: NSPanel? { panel }
     var placementOffsetForTesting: CGSize { placementOffset }
     func setPanelFrameForTesting(_ frame: CGRect) { panel?.setFrame(frame, display: true) }
     #endif
@@ -154,6 +179,11 @@ final class HerdrHudController {
         userDefaults: UserDefaults = .standard,
         chipRegroupDelay: Duration = .seconds(5),
         attachmentHoverGrace: Duration = .milliseconds(180),
+        ultraCompactCollapseDelay: Duration = .seconds(2),
+        restingFrameHoldDuration: Duration = HerdrHudMorph.restingFrameHold,
+        reduceMotionPreference: @escaping @MainActor () -> Bool = {
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        },
         focusedWindowSelection: @escaping FocusedWindowSelection = {
             try HerdrFocusedWindowScreenshot.prepare(processID: $0)
         },
@@ -191,6 +221,12 @@ final class HerdrHudController {
         self.preferredChatCardSize = chatSize
         self.chipRegroupDelay = chipRegroupDelay
         self.attachmentHoverGrace = attachmentHoverGrace
+        self.ultraCompactCollapseDelay = ultraCompactCollapseDelay
+        self.restingFrameHoldDuration = restingFrameHoldDuration
+        self.reduceMotionPreference = reduceMotionPreference
+        // A HUD that launches resting is not arriving from the orb, so its
+        // first frame must not be held at the orb's size.
+        appliedSurface = isUltraCompactEnabled ? .resting : .orb
     }
 
     var isEnabled: Bool {
@@ -457,6 +493,9 @@ final class HerdrHudController {
         regroupChips()
         userDefaults.set(enabled, forKey: DefaultsKey.enabled)
         enabledRevision &+= 1
+        // Hiding or showing the HUD is not a morph; the panel takes its final
+        // frame at once.
+        releaseRestingFrameHold()
         guard let panel else { return }
 
         if enabled {
@@ -683,28 +722,48 @@ final class HerdrHudController {
     /// Use a union of visible HUD controls, never the transparent panel frame.
     /// A short exit grace lets the pointer cross the gaps between controls and
     /// reach the newly disclosed attachments without flickering them closed.
+    ///
+    /// When leaving would return a hover-expanded HUD to its resting circle,
+    /// the exit waits `ultraCompactCollapseDelay` longer. Re-entering any HUD
+    /// region inside that window cancels the collapse outright.
     func setHoveringHud(_ hovering: Bool, region: String) {
         if hovering {
             guard isEnabled else { return }
             hoveredHudRegions.insert(region)
-            attachmentHoverExitTask?.cancel()
-            attachmentHoverExitTask = nil
+            cancelHoverExit()
             setAttachmentTitlesExpanded(true)
         } else {
             guard hoveredHudRegions.remove(region) != nil, hoveredHudRegions.isEmpty else { return }
             attachmentHoverExitTask?.cancel()
-            attachmentHoverExitTask = Task { [weak self, attachmentHoverGrace] in
-                try? await Task.sleep(for: attachmentHoverGrace)
+            let returnsToRestingCircle = hoverExitReturnsToRestingCircle
+            isUltraCompactCollapsePending = returnsToRestingCircle
+            let delay = returnsToRestingCircle
+                ? attachmentHoverGrace + ultraCompactCollapseDelay
+                : attachmentHoverGrace
+            attachmentHoverExitTask = Task { [weak self, delay] in
+                try? await Task.sleep(for: delay)
                 guard !Task.isCancelled, let self, self.hoveredHudRegions.isEmpty else { return }
                 self.attachmentHoverExitTask = nil
+                self.isUltraCompactCollapsePending = false
                 self.setAttachmentTitlesExpanded(false)
             }
         }
     }
 
-    private func resetHudHover() {
+    /// Only a hover preview of the resting circle earns the long grace. Titles
+    /// on a standard HUD, or beside an open chat card, keep the short one.
+    private var hoverExitReturnsToRestingCircle: Bool {
+        isUltraCompactEnabled && areAttachmentTitlesExpanded && !hasExplicitInteractionSurface
+    }
+
+    private func cancelHoverExit() {
         attachmentHoverExitTask?.cancel()
         attachmentHoverExitTask = nil
+        isUltraCompactCollapsePending = false
+    }
+
+    private func resetHudHover() {
+        cancelHoverExit()
         hoveredHudRegions.removeAll()
         setAttachmentTitlesExpanded(false)
     }
@@ -732,12 +791,12 @@ final class HerdrHudController {
             let offset = HerdrHudPlacement.offset(
                 forFrame: panel.frame,
                 visibleFrame: visibleFrame,
-                isUltraCompact: isUltraCompactResting
+                isUltraCompact: usesUltraCompactLane
             )
             placementOffset = HerdrHudPlacement.reclamp(
                 topRightOffset: offset,
                 isExpanded: isExpanded,
-                isUltraCompact: isUltraCompactResting,
+                isUltraCompact: usesUltraCompactLane,
                 visibleFrame: visibleFrame
             )
             savePlacementOffset()
@@ -1010,7 +1069,7 @@ final class HerdrHudController {
             placementOffset = HerdrHudPlacement.offset(
                 forFrame: panel.frame,
                 visibleFrame: visibleFrame(for: panel),
-                isUltraCompact: isUltraCompactResting
+                isUltraCompact: usesUltraCompactLane
             )
             return
         }
@@ -1018,7 +1077,7 @@ final class HerdrHudController {
         placementOffset = HerdrHudPlacement.offset(
             forFrame: panel.frame,
             visibleFrame: visibleFrame(for: panel),
-            isUltraCompact: isUltraCompactResting
+            isUltraCompact: usesUltraCompactLane
         )
         savePlacementOffset()
     }
@@ -1042,8 +1101,9 @@ final class HerdrHudController {
             return
         }
         guard let panel else { return }
+        updateRestingFrameHold()
         let newFrame = frame(for: isExpanded)
-        let shouldAnimate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let shouldAnimate = animated && !reduceMotionPreference()
         isProgrammaticMove = true
         frameAnimationGeneration &+= 1
         let generation = frameAnimationGeneration
@@ -1065,6 +1125,34 @@ final class HerdrHudController {
                 self.isProgrammaticMove = false
             }
         }
+    }
+
+    /// Starts, keeps, or releases the frame hold for the current surface. Only
+    /// the collapsed orb morphing back into the resting circle holds; every
+    /// other change (a chat card, hiding, Reduce Motion) takes its frame now.
+    private func updateRestingFrameHold() {
+        let surface: PanelSurface = isExpanded ? .card : (isUltraCompactResting ? .resting : .orb)
+        defer { appliedSurface = surface }
+        guard surface == .resting else {
+            releaseRestingFrameHold()
+            return
+        }
+        guard appliedSurface == .orb, !reduceMotionPreference() else { return }
+        isRestingFrameHeld = true
+        restingFrameHoldTask?.cancel()
+        restingFrameHoldTask = Task { [weak self, restingFrameHoldDuration] in
+            try? await Task.sleep(for: restingFrameHoldDuration)
+            guard !Task.isCancelled, let self else { return }
+            self.restingFrameHoldTask = nil
+            self.isRestingFrameHeld = false
+            self.applyFrame(animated: false)
+        }
+    }
+
+    private func releaseRestingFrameHold() {
+        restingFrameHoldTask?.cancel()
+        restingFrameHoldTask = nil
+        isRestingFrameHeld = false
     }
 
     private func frame(for isExpanded: Bool) -> CGRect {
@@ -1106,7 +1194,7 @@ final class HerdrHudController {
         )
         return HerdrHudPlacement.frame(
             isExpanded: isExpanded,
-            isUltraCompact: isUltraCompactResting,
+            isUltraCompact: usesUltraCompactLane,
             visibleFrame: visibleFrame,
             topRightOffset: placementOffset,
             chipCount: isExpanded ? 0 : collapsedChipCount,

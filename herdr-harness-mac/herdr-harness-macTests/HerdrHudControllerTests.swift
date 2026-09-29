@@ -44,9 +44,12 @@ struct HerdrHudControllerTests {
 
     @Test("Ultra-compact hover previews with grace and the HUD region union cancels exit")
     func ultraCompactHoverPreviewUsesHudUnion() async throws {
+        // The extra resting-collapse delay has its own tests below; this one
+        // covers the region union and the short grace alone.
         let controller = HerdrHudController(
             userDefaults: makeDefaults(),
-            attachmentHoverGrace: .milliseconds(80)
+            attachmentHoverGrace: .milliseconds(80),
+            ultraCompactCollapseDelay: .zero
         )
         controller.setHoveringHud(true, region: "hud-orb")
         controller.setUltraCompactEnabled(true)
@@ -67,6 +70,219 @@ struct HerdrHudControllerTests {
         controller.setHoveringHud(false, region: "hud-orb")
         try await Task.sleep(for: .milliseconds(120))
         #expect(controller.isUltraCompactResting)
+    }
+
+    @Test("A hover-expanded resting HUD waits the extra collapse delay after the pointer leaves")
+    func ultraCompactHoverExitWaitsForCollapseDelay() async throws {
+        let controller = HerdrHudController(
+            userDefaults: makeDefaults(),
+            attachmentHoverGrace: .milliseconds(20),
+            ultraCompactCollapseDelay: .milliseconds(240),
+            reduceMotionPreference: { false }
+        )
+        controller.setUltraCompactEnabled(true)
+        controller.setHoveringHud(true, region: "hud-ultra-compact")
+        #expect(!controller.isUltraCompactResting)
+        #expect(!controller.isUltraCompactCollapsePending)
+
+        let clock = ContinuousClock()
+        let exit = clock.now
+        controller.setHoveringHud(false, region: "hud-ultra-compact")
+        #expect(controller.isUltraCompactCollapsePending)
+        #expect(!controller.isUltraCompactResting)
+
+        // Well past the old 20 ms grace, still inside the extra window.
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(!controller.isUltraCompactResting)
+        #expect(controller.areOrbControlsVisible)
+        #expect(controller.isUltraCompactCollapsePending)
+
+        try await waitUntil { controller.isUltraCompactResting }
+        #expect(exit.duration(to: clock.now) >= .milliseconds(260))
+        #expect(!controller.isUltraCompactCollapsePending)
+        #expect(!controller.areOrbControlsVisible)
+    }
+
+    @Test("Re-entering the HUD inside the collapse window cancels the pending collapse")
+    func ultraCompactReentryCancelsPendingCollapse() async throws {
+        let controller = HerdrHudController(
+            userDefaults: makeDefaults(),
+            attachmentHoverGrace: .milliseconds(20),
+            ultraCompactCollapseDelay: .milliseconds(200),
+            reduceMotionPreference: { false }
+        )
+        controller.setUltraCompactEnabled(true)
+        controller.setHoveringHud(true, region: "hud-ultra-compact")
+        controller.setHoveringHud(false, region: "hud-ultra-compact")
+        #expect(controller.isUltraCompactCollapsePending)
+
+        try await Task.sleep(for: .milliseconds(100))
+        // Back in, on a different HUD control than the one that was left.
+        controller.setHoveringHud(true, region: "hud-orb")
+        #expect(!controller.isUltraCompactCollapsePending)
+        #expect(!controller.isUltraCompactResting)
+
+        // Long after the original countdown would have fired: still open.
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(!controller.isUltraCompactResting)
+        #expect(controller.areOrbControlsVisible)
+
+        // Leaving again starts a fresh countdown of the full length.
+        let clock = ContinuousClock()
+        let exit = clock.now
+        controller.setHoveringHud(false, region: "hud-orb")
+        #expect(controller.isUltraCompactCollapsePending)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!controller.isUltraCompactResting)
+        try await waitUntil { controller.isUltraCompactResting }
+        #expect(exit.duration(to: clock.now) >= .milliseconds(220))
+    }
+
+    @Test("The extra collapse delay applies only when leaving would return the HUD to its resting circle")
+    func collapseDelayIsScopedToTheRestingHud() async throws {
+        // A standard HUD keeps the short grace for its attachment titles.
+        let standard = HerdrHudController(
+            userDefaults: makeDefaults(),
+            attachmentHoverGrace: .milliseconds(20),
+            ultraCompactCollapseDelay: .seconds(5),
+            reduceMotionPreference: { false }
+        )
+        standard.setHoveringHud(true, region: "session")
+        standard.setHoveringHud(false, region: "session")
+        #expect(!standard.isUltraCompactCollapsePending)
+        try await waitUntil { !standard.areAttachmentTitlesExpanded }
+
+        // So does an ultra-compact HUD while its chat card is open: closing the
+        // card is what returns it to the circle, not moving the pointer.
+        let harness = makeHarness(attachmentHoverGrace: .milliseconds(20), ultraCompactCollapseDelay: .seconds(5))
+        defer { harness.controller.setEnabled(false) }
+        // This test drives hover explicitly; native pointer events in the real
+        // panel must not re-enter the union after the synthetic exit.
+        harness.controller.panelForTesting?.ignoresMouseEvents = true
+        harness.controller.setUltraCompactEnabled(true)
+        harness.controller.summon()
+        #expect(harness.controller.isExpanded)
+        // Keep synthetic hover independent of SwiftUI's real NSPanel hover
+        // notifications while the card is first mounted.
+        harness.controller.panelForTesting?.orderOut(nil)
+        try await Task.sleep(for: .milliseconds(60))
+        harness.controller.setHoveringHud(true, region: "hud-card")
+        harness.controller.setHoveringHud(false, region: "hud-card")
+        #expect(!harness.controller.isUltraCompactCollapsePending)
+        try await waitUntil { !harness.controller.areAttachmentTitlesExpanded }
+        #expect(harness.controller.isExpanded)
+        #expect(!harness.controller.isUltraCompactResting)
+    }
+
+    @Test("Returning to the resting circle keeps the panel at the orb's size until the morph has landed")
+    func restingFrameHoldsThroughTheMorph() async throws {
+        let harness = makeHarness(
+            attachmentHoverGrace: .milliseconds(20),
+            ultraCompactCollapseDelay: .milliseconds(40),
+            restingFrameHoldDuration: .milliseconds(200)
+        )
+        defer { harness.controller.setEnabled(false) }
+        // Switching the orb into the resting circle is itself a morph, so the
+        // frame is held first; wait for that to land before measuring rest.
+        harness.controller.setUltraCompactEnabled(true)
+        #expect(harness.controller.isRestingFrameHeld)
+        try await waitUntil { harness.controller.usesUltraCompactLane }
+        let resting = try #require(harness.controller.panelFrameForTesting)
+        #expect(resting.size == restingPanelSize)
+
+        // Growing out of the circle takes the orb's frame at once; the morph
+        // plays inside it. Chip counts from the demo fleet can shift between
+        // frames, so compare lanes and anchors rather than exact heights.
+        harness.controller.setHoveringHud(true, region: "hud-ultra-compact")
+        let preview = try #require(harness.controller.panelFrameForTesting)
+        #expect(!harness.controller.usesUltraCompactLane)
+        #expect(!harness.controller.isRestingFrameHeld)
+        #expect(preview.width >= orbPanelMinimumSize.width)
+        #expect(preview.height >= orbPanelMinimumSize.height)
+        #expect(preview.maxX == resting.maxX + HerdrHudPlacement.ultraCompactAnchorAdjustment)
+        #expect(preview.maxY == resting.maxY + HerdrHudPlacement.ultraCompactAnchorAdjustment)
+
+        // Going back, the HUD rests immediately but the frame waits for the morph.
+        harness.controller.setHoveringHud(false, region: "hud-ultra-compact")
+        try await waitUntil { harness.controller.isUltraCompactResting }
+        #expect(harness.controller.isRestingFrameHeld)
+        #expect(!harness.controller.usesUltraCompactLane)
+        let held = try #require(harness.controller.panelFrameForTesting)
+        #expect(held.width >= orbPanelMinimumSize.width)
+        #expect(held.height >= orbPanelMinimumSize.height)
+        #expect(held.maxX == preview.maxX)
+        #expect(held.maxY == preview.maxY)
+
+        try await waitUntil { !harness.controller.isRestingFrameHeld }
+        #expect(harness.controller.usesUltraCompactLane)
+        #expect(harness.controller.panelFrameForTesting == resting)
+    }
+
+    /// The resting panel ignores chips entirely: the lane plus its small margin.
+    private var restingPanelSize: CGSize {
+        CGSize(
+            width: HerdrHudPlacement.collapsedSize.width + 2 * HerdrHudPlacement.ultraCompactShadowMargin,
+            height: HerdrHudPlacement.collapsedSize.height + 2 * HerdrHudPlacement.ultraCompactShadowMargin
+        )
+    }
+
+    /// The orb lane with its full shadow margin; chips only make it taller and wider.
+    private var orbPanelMinimumSize: CGSize {
+        CGSize(
+            width: HerdrHudPlacement.collapsedSize.width + 2 * HerdrHudPlacement.shadowMargin,
+            height: HerdrHudPlacement.collapsedSize.height + 2 * HerdrHudPlacement.shadowMargin
+        )
+    }
+
+    @Test("Re-hovering during the morph back cancels the frame hold and keeps the orb's frame")
+    func reentryDuringFrameHoldKeepsThePreviewFrame() async throws {
+        let harness = makeHarness(
+            attachmentHoverGrace: .milliseconds(20),
+            ultraCompactCollapseDelay: .milliseconds(40),
+            restingFrameHoldDuration: .milliseconds(250)
+        )
+        defer { harness.controller.setEnabled(false) }
+        harness.controller.setUltraCompactEnabled(true)
+        try await waitUntil { harness.controller.usesUltraCompactLane }
+        harness.controller.setHoveringHud(true, region: "hud-ultra-compact")
+        let preview = try #require(harness.controller.panelFrameForTesting)
+
+        harness.controller.setHoveringHud(false, region: "hud-ultra-compact")
+        try await waitUntil { harness.controller.isUltraCompactResting }
+        #expect(harness.controller.isRestingFrameHeld)
+
+        harness.controller.setHoveringHud(true, region: "hud-orb")
+        #expect(!harness.controller.isUltraCompactResting)
+        #expect(!harness.controller.isRestingFrameHeld)
+        #expect(!harness.controller.usesUltraCompactLane)
+        #expect(harness.controller.panelFrameForTesting?.maxX == preview.maxX)
+        #expect(harness.controller.panelFrameForTesting?.maxY == preview.maxY)
+
+        // The cancelled hold must not fire late and shrink an open HUD.
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(!harness.controller.isUltraCompactResting)
+        #expect(!harness.controller.usesUltraCompactLane)
+        let frame = try #require(harness.controller.panelFrameForTesting)
+        #expect(frame.width >= orbPanelMinimumSize.width)
+        #expect(frame.height >= orbPanelMinimumSize.height)
+    }
+
+    @Test("Reduce Motion skips the frame hold so the panel snaps with the content")
+    func reduceMotionSkipsTheFrameHold() async throws {
+        let defaults = makeDefaults()
+        let controller = HerdrHudController(
+            userDefaults: defaults,
+            attachmentHoverGrace: .milliseconds(20),
+            ultraCompactCollapseDelay: .milliseconds(40),
+            restingFrameHoldDuration: .seconds(5),
+            reduceMotionPreference: { true }
+        )
+        controller.setUltraCompactEnabled(true)
+        controller.setHoveringHud(true, region: "hud-ultra-compact")
+        controller.setHoveringHud(false, region: "hud-ultra-compact")
+        try await waitUntil { controller.isUltraCompactResting }
+        #expect(!controller.isRestingFrameHeld)
+        #expect(controller.usesUltraCompactLane)
     }
 
     @Test("Explicit chat, note, Quick Voice, and voice reply surfaces override ultra-compact rest")
@@ -1100,6 +1316,8 @@ struct HerdrHudControllerTests {
         chipRegroupDelay: Duration = .seconds(5),
         includesVoice: Bool = false,
         attachmentHoverGrace: Duration = .milliseconds(180),
+        ultraCompactCollapseDelay: Duration = .seconds(2),
+        restingFrameHoldDuration: Duration = HerdrHudMorph.restingFrameHold,
         screenshotSelection: HerdrHudController.FocusedWindowSelection? = nil,
         screenshotCapture: HerdrHudController.FocusedWindowScreenshotCapture? = nil,
         frontmostProcessID: pid_t? = 321,
@@ -1116,6 +1334,11 @@ struct HerdrHudControllerTests {
             userDefaults: defaults,
             chipRegroupDelay: chipRegroupDelay,
             attachmentHoverGrace: attachmentHoverGrace,
+            ultraCompactCollapseDelay: ultraCompactCollapseDelay,
+            restingFrameHoldDuration: restingFrameHoldDuration,
+            // Deterministic motion: the morph and its frame hold do not depend
+            // on this Mac's Reduce Motion setting.
+            reduceMotionPreference: { false },
             focusedWindowSelection: screenshotSelection ?? { processID in
                 HerdrFocusedWindowTarget(processID: processID ?? 0, windowID: 99)
             },
@@ -1138,6 +1361,9 @@ struct HerdrHudControllerTests {
         let voice = includesVoice ? QuickVoicePanelController(defaults: defaults) : nil
         voice?.setEnabled(true)
         controller.configure(model: model, session: session, notes: notes, fontScale: HerdrFontScaleStore(), quickVoice: voice)
+        // Ordered in but transparent, so the suite does not flash HUD panels in
+        // the corner of the screen. AppKit frames and layout are unaffected.
+        controller.panelForTesting?.alphaValue = 0
         return Harness(defaults: defaults, model: model, session: session, notes: notes, controller: controller)
     }
 

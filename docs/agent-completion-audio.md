@@ -51,9 +51,12 @@ delayed alert cannot complete a newer turn. A committed Pi start carries the
 committed event's server timestamp and journal cursor; a start covered by the
 receipted completion is the replay of an episode whose stream was interrupted,
 so it keeps the existing receipt instead of arming a duplicate settlement. The
-journal cursor orders the start whenever both sides have one, and the recorded
-completion instant decides otherwise, including a snapshot restored from an
-older committed cursor after the fleet already receipted the run. Each played
+journal cursor proves a replay when it is at or before the receipt; a strictly
+earlier start instant also proves one when a fleet alert arrived ahead of its
+pane snapshot and that snapshot's cursor lagged behind. This includes a
+snapshot fetched before but committed after the fleet already receipted the
+run. Snapshot/candidate cursor and generated-at provenance are carried through
+that commit. Each played
 completion also keeps an exact reconciliation obligation: a stalled fleet that
 later delivers a batch of already-heard completions - an acknowledged pane
 reports idle, so no status transition accompanies them - consumes one
@@ -62,13 +65,16 @@ watermark additionally collapses arbitrarily many delayed duplicates that
 arrive after a newer turn began.
 A fresh completion alert carries its own server timestamp: when the debounced
 pane snapshot still reports the previous done episode, the alert instant - not
-the stale pane episode key - is what the receipt records, so a late replay of
-that run's start and settlement cannot look like a newer turn. This is evidence
+the stale pane episode key or its Pi cursor - identifies the alert for ordering.
+A pane cursor can advance past batched old alerts or lag behind a fresh alert;
+it does not identify which run created that alert. A late replay of that run's
+start and settlement therefore cannot look like a newer turn. This is evidence
 ordering against server-recorded evidence, not a local elapsed-time window.
 Repeated polling, replayed alerts, a later turn, and a different machine or run
-stay independently correct. Receipts are bounded and are dropped only at real
-identity boundaries, such as a changed connection identity, a re-created pane,
-or a pane that left the fleet.
+stay independently correct. Unmatched reconciliation obligations remain until
+consumed or until a real identity boundary, such as changed credentials, a
+re-created pane, or a pane that left the fleet; recent evidence IDs and headless
+run receipts are separately bounded.
 
 ## What plays and what stays silent
 

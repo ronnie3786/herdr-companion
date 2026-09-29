@@ -302,8 +302,7 @@ struct AgentCompletionFeedbackIntegrationTests {
         fixture.model.agentCompletionFeedback.playback = { recorder.record() }
         let pane = Self.testPane()
 
-        // The fleet observes a complete run at committed cursor 11 while the
-        // chat stream is still disconnected.
+        // Seed the idle fleet baseline before starting the chat stream.
         CompletionFleetURLProtocol.state.withLock {
             $0 = CompletionFleetProtocolState(paneStatus: "idle", lastActivityAt: "2030-01-01T00:00:00Z", alerts: [])
         }
@@ -312,31 +311,9 @@ struct AgentCompletionFeedbackIntegrationTests {
             using: fixture.fleetClient(),
             expectedGeneration: fixture.model.connectionGeneration
         )
-        CompletionFleetURLProtocol.state.withLock {
-            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:01Z", alerts: [])
-        }
-        try await fixture.model.refresh(
-            machineID: fixture.machine.id,
-            using: fixture.fleetClient(),
-            expectedGeneration: fixture.model.connectionGeneration
-        )
-        CompletionFleetURLProtocol.state.withLock {
-            $0 = CompletionFleetProtocolState(
-                paneStatus: "done",
-                lastActivityAt: "2030-01-01T00:00:10Z",
-                alerts: [],
-                piCursor: "11"
-            )
-        }
-        try await fixture.model.refresh(
-            machineID: fixture.machine.id,
-            using: fixture.fleetClient(),
-            expectedGeneration: fixture.model.connectionGeneration
-        )
-        #expect(recorder.count == 1)
 
-        // The active snapshot that restores that same run at cursor 10 is held
-        // until after the fleet already receipted the completion.
+        // Hold the active snapshot at cursor 10 in flight. Its fetch begins
+        // before the fleet finishes this run; its commit happens afterward.
         let (snapshotGate, snapshotGateContinuation) = AsyncStream<Void>.makeStream()
         var snapshotRequests = 0
         var eventStreams = 0
@@ -349,7 +326,10 @@ struct AgentCompletionFeedbackIntegrationTests {
                 return try Self.snapshot(cursor: "1", latest: "1", prompt: "Earlier answer")
             }
             for await _ in snapshotGate { break }
-            return try Self.snapshot(cursor: "10", latest: "10", working: true, prompt: "Earlier answer")
+            return try Self.snapshot(
+                cursor: "10", latest: "10", working: true,
+                prompt: "Earlier answer", generatedAt: "2030-01-01T00:00:05Z"
+            )
         }
         store.eventsProvider = { _, _ in
             eventStreams += 1
@@ -374,12 +354,35 @@ struct AgentCompletionFeedbackIntegrationTests {
         }
         defer {
             follow.cancel()
+            snapshotGateContinuation.finish()
             liveContinuation?.finish()
         }
 
         try await Self.waitUntil { snapshotRequests == 2 }
         #expect(store.phase == .idle)
+        #expect(recorder.count == 0)
+
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:01Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(
+                paneStatus: "done", lastActivityAt: "2030-01-01T00:00:10Z",
+                alerts: [], piCursor: "11"
+            )
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id,
+            using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
         #expect(recorder.count == 1)
+        #expect(store.phase == .idle)
 
         // Releasing the snapshot restores the still-active run at cursor 10,
         // which the fleet's cursor-11 receipt already covers.
@@ -655,7 +658,7 @@ struct AgentCompletionFeedbackIntegrationTests {
             $0 = CompletionFleetProtocolState(
                 paneStatus: "done",
                 lastActivityAt: "2030-01-01T00:00:00Z",
-                alerts: [baselineAlert]
+                alerts: [baselineAlert], piCursor: "1"
             )
         }
         try await fixture.model.refresh(
@@ -683,13 +686,14 @@ struct AgentCompletionFeedbackIntegrationTests {
         #expect(recorder.count == 0)
 
         // The server publishes the new completion's alert at T2, but the
-        // debounced pane snapshot still reports the previous done episode T0.
+        // debounced pane snapshot still reports the previous done episode and
+        // Pi cursor at T0.
         let freshAlert = Self.alertJSON(id: "a2", status: "done", createdAt: "2030-01-01T00:00:20Z")
         CompletionFleetURLProtocol.state.withLock {
             $0 = CompletionFleetProtocolState(
                 paneStatus: "done",
                 lastActivityAt: "2030-01-01T00:00:00Z",
-                alerts: [baselineAlert, freshAlert]
+                alerts: [baselineAlert, freshAlert], piCursor: "1"
             )
         }
         try await fixture.model.refresh(

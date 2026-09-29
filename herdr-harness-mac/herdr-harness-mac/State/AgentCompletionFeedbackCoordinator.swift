@@ -216,6 +216,16 @@ final class AgentCompletionFeedbackCoordinator {
             return false
         }
 
+        /// Fleet alerts have their own server timestamp, but the pane's Pi
+        /// cursor belongs to the *latest pane snapshot*, not necessarily that
+        /// alert. Prefer the alert's instant when comparable: a stale pane
+        /// cursor must not silence a newer alert, and an old alert must stay
+        /// covered even if the pane has advanced since it was created.
+        func coversFleet(date: Date?, paneCursor: String?) -> Bool {
+            if let date, let completedAt { return date < completedAt }
+            return covers(date: nil, cursor: paneCursor)
+        }
+
         mutating func record(date: Date?, cursor: String?) {
             if let date {
                 completedAt = completedAt.map { Swift.max($0, date) } ?? date
@@ -331,15 +341,21 @@ final class AgentCompletionFeedbackCoordinator {
     }
 
     /// A completed receipt absorbs a Pi start that the fleet already covered.
-    /// The committed journal cursor is authoritative when both sides have one;
-    /// the recorded completion instant decides otherwise. A start at or before
-    /// the receipt's watermark is that receipt's own replay, even when a newer
-    /// snapshot delivered it out of order.
+    /// A committed cursor at or before the receipt proves this is a replay.
+    /// A fleet alert can precede its pane snapshot, however, leaving the pane
+    /// cursor *behind* the run that alert describes. In that case a strictly
+    /// earlier start instant also proves it was covered. Equal instants cannot
+    /// order two turns when both cursors exist (server timestamp resolution is
+    /// not guaranteed), so leave those to the channel acknowledgements.
     private func isReplayedStart(episode: Episode, evidence: PiWorkEvidence) -> Bool {
         guard episode.isComplete else { return false }
         if let cursor = evidence.cursor.flatMap(Int64.init),
            let completedCursor = episode.completedPiCursor.flatMap(Int64.init) {
-            return cursor <= completedCursor
+            if cursor <= completedCursor { return true }
+            if let startedAt = evidence.date, let completedAt = episode.completedAt {
+                return startedAt < completedAt
+            }
+            return false
         }
         if let startedAt = evidence.date, let completedAt = episode.completedAt {
             return startedAt <= completedAt
@@ -547,7 +563,7 @@ final class AgentCompletionFeedbackCoordinator {
         // however many refreshes were missed before it arrived. Consume the
         // still-open obligation when there is one so a later genuine turn is
         // not mistaken for this completion's partner.
-        if state.receiptWatermark?.covers(date: observationDate, cursor: piCursor) == true {
+        if state.receiptWatermark?.coversFleet(date: observationDate, paneCursor: piCursor) == true {
             consumeDuplicateAcknowledgement(&state, channel: channel, partnerIncluded: partnerIncluded)
             return false
         }

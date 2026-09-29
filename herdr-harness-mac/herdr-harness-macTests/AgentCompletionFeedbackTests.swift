@@ -183,44 +183,45 @@ struct AgentCompletionFeedbackTests {
         #expect(recorder.count == 2)
     }
 
-    @Test("A fresh alert keeps its own instant over a stale pane snapshot")
+    @Test("A fresh alert keeps its own instant over a stale pane snapshot and cursor")
     func freshAlertInstantBeatsStalePaneSnapshot() {
         let (coordinator, recorder) = makeCoordinator()
         // Baseline: the previous answer is done at T0 and its alert is known.
-        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:00:00Z")])
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:00:00Z", piCursor: "1")])
         #expect(recorder.count == 0)
 
         // The new alert (T2) arrives while the debounced pane snapshot still
-        // reports the previous done episode at T0. The alert owns the claim.
+        // reports the previous done episode AND cursor at T0.
         refresh(coordinator, [paneObservation(
             .done,
             episodeKey: "2030-01-01T00:00:00Z",
             newDoneAlertID: "alert-1",
-            newDoneAlertCreatedAt: "2030-01-01T00:00:20Z"
+            newDoneAlertCreatedAt: "2030-01-01T00:00:20Z",
+            piCursor: "1"
         )])
         #expect(recorder.count == 1)
 
-        // The committed stream resumes late. The delayed start at T1 predates
-        // the receipted completion T2, so the same run's settlement is silent
-        // instead of being mistaken for a newer turn.
+        // The committed stream resumes late. Its start's cursor is newer than
+        // the stale pane's cursor, but its instant predates the alert; this is
+        // still the already-receipted turn, not a new one.
         coordinator.piWorkStarted(
             scope: scope(),
-            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:10Z")
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:10Z", cursor: "2")
         )
         coordinator.piWorkSettled(
             scope: scope(),
-            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:30Z")
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:00:30Z", cursor: "3")
         )
         #expect(recorder.count == 1)
 
         // A genuinely later turn is newer than the receipt and plays once.
         coordinator.piWorkStarted(
             scope: scope(),
-            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:00Z")
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:00Z", cursor: "4")
         )
         coordinator.piWorkSettled(
             scope: scope(),
-            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:05Z")
+            evidence: .init(sessionID: "s1", observedAt: "2030-01-01T00:01:05Z", cursor: "5")
         )
         #expect(recorder.count == 2)
     }
@@ -535,6 +536,38 @@ struct AgentCompletionFeedbackTests {
             observedAt: "2030-01-01T00:00:40Z",
             cursor: "4"
         ))
+        #expect(recorder.count == 4)
+    }
+
+    @Test("Delayed batched alerts use their own instant, not the pane's newer or stale cursor")
+    func batchedAlertsWithIndependentPaneCursor() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e0")])
+        for turn in 1...3 {
+            let time = "2030-01-01T00:00:\(turn * 10)Z"
+            coordinator.piWorkStarted(scope: scope(), evidence: .init(
+                sessionID: "s1", observedAt: time, cursor: String(turn * 10 - 1)
+            ))
+            coordinator.piWorkSettled(scope: scope(), evidence: .init(
+                sessionID: "s1", observedAt: time, cursor: String(turn * 10)
+            ))
+        }
+        #expect(recorder.count == 3)
+
+        // The pane has already advanced past all three completions. Its
+        // cursor cannot identify which completion each delayed alert reports.
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e0", piCursor: "40")], alerts: [
+            alert("a1", createdAt: "2030-01-01T00:00:10Z"),
+            alert("a2", createdAt: "2030-01-01T00:00:20Z"),
+            alert("a3", createdAt: "2030-01-01T00:00:30Z"),
+        ])
+        #expect(recorder.count == 3)
+
+        // Conversely, a new alert can arrive with a *stale* pane cursor.
+        // Its later instant proves a new finish, not a replay of turn three.
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "e0", piCursor: "30")], alerts: [
+            alert("a4", createdAt: "2030-01-01T00:00:40Z")
+        ])
         #expect(recorder.count == 4)
     }
 

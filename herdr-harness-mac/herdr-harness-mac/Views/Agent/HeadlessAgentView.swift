@@ -8,7 +8,7 @@ struct HeadlessAgentView: View {
     let openPane: (HerdrPane) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var controller = HeadlessAgentController()
+    @State private var controller = HeadlessAgentController(reportsCompletionFeedback: true)
     @State private var prompt = ""
     @State private var selectedMachineID = ""
     @State private var promotionWorkspaceID = ""

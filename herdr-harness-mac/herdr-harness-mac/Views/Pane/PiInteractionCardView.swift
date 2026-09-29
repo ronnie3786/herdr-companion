@@ -88,8 +88,13 @@ struct PiInteractionCardView: View {
         isSubmitting = true
         Task {
             let succeeded = await respond(response)
-            hapticPulse.fire(succeeded ? .completed : .failed)
+            hapticPulse.fire(Self.feedback(forSucceededResponse: succeeded))
             isSubmitting = false
         }
+    }
+
+    /// Answering an interaction resumes work; it does not finish the agent.
+    static func feedback(forSucceededResponse succeeded: Bool) -> HerdrHaptic {
+        succeeded ? .selection : .failed
     }
 }

@@ -147,6 +147,10 @@ final class HerdrAppModel {
                 discardPendingQuickPaneRoutes()
                 acceptedPrompts.removeAll()
                 paneSubmissionRevisions.removeAll()
+                // A changed connection identity describes different servers,
+                // panes, and runs: no receipt from the old connection may mute
+                // or misattribute the new one's completions.
+                agentCompletionFeedback.reset()
             }
         }
     }
@@ -176,6 +180,10 @@ final class HerdrAppModel {
     var remotePushRegistrationError: String?
     let cleanupPresenter = CleanupSheetPresenter()
     let externalPiLauncher = ExternalPiLauncher()
+    /// Process-owned single owner of the Mac completion cue. It must outlive
+    /// the main window, because the fleet refresh that observes an unmounted
+    /// chat finishing runs in `HerdrConnectionDriver`.
+    @ObservationIgnored let agentCompletionFeedback = AgentCompletionFeedbackCoordinator()
 
     private let userDefaults: UserDefaults
     let chatTabColors: ChatTabColorStore
@@ -4441,6 +4449,12 @@ final class HerdrAppModel {
         )
         if workspacesChanged { workspaces = mergedWorkspaces }
         if alertsChanged { alerts = mergedAlerts }
+        reportCompletionEvidence(
+            machineID: machineID,
+            freshWorkspaces: freshWorkspaces,
+            freshAlerts: freshAlerts,
+            previousAlertIDs: previousAlertIDs
+        )
         if contentChanged {
             lastUpdated = .now
             if !wasBoring { fleetRevision &+= 1 }
@@ -4523,6 +4537,64 @@ final class HerdrAppModel {
         return boringCycles >= fleetRefreshBoringCycleThreshold
             ? fleetRefreshBackoffWindow
             : fleetRefreshBaseWindow
+    }
+
+    /// Reports one successful refresh to the process-owned completion owner.
+    /// Pane status transitions catch unmounted chats and a closed main window;
+    /// a brand-new done alert catches work that finished before a running poll
+    /// was observed. Both are the same evidence for one episode, so the
+    /// coordinator keeps a single receipt.
+    private func reportCompletionEvidence(
+        machineID: String,
+        freshWorkspaces: [HerdrWorkspace],
+        freshAlerts: [HerdrAlert],
+        previousAlertIDs: Set<String>
+    ) {
+        var terminalIDByPaneID: [String: String] = [:]
+        for workspace in freshWorkspaces {
+            for pane in workspace.panes {
+                terminalIDByPaneID[pane.paneID] = pane.terminalID
+            }
+        }
+        var newDoneAlerts: [HerdrAlert] = []
+        var newDoneAlertByPaneID: [String: HerdrAlert] = [:]
+        for alert in freshAlerts where alert.status == .done && !previousAlertIDs.contains(alert.id) {
+            newDoneAlerts.append(alert)
+            // The pane snapshot can carry only one alert timestamp. Every new
+            // alert still reaches the coordinator through doneAlerts below.
+            if newDoneAlertByPaneID[alert.paneID] == nil {
+                newDoneAlertByPaneID[alert.paneID] = alert
+            }
+        }
+        var observations: [AgentCompletionFeedbackCoordinator.FleetObservation] = []
+        for workspace in freshWorkspaces {
+            for pane in workspace.panes {
+                let newDoneAlert = newDoneAlertByPaneID[pane.paneID]
+                observations.append(AgentCompletionFeedbackCoordinator.FleetObservation(
+                    paneID: pane.paneID,
+                    terminalID: pane.terminalID,
+                    status: pane.agentStatus,
+                    episodeKey: pane.episodeKey,
+                    newDoneAlertID: newDoneAlert?.id,
+                    newDoneAlertCreatedAt: newDoneAlert?.createdAt,
+                    workingSince: pane.workingSince.map(HerdrTimestamp.string),
+                    piCursor: pane.piSemantic?.cursor
+                ))
+            }
+        }
+        let doneAlerts = newDoneAlerts.map { alert in
+            AgentCompletionFeedbackCoordinator.DoneAlertObservation(
+                paneID: alert.paneID,
+                terminalID: terminalIDByPaneID[alert.paneID] ?? alert.paneID,
+                alertID: alert.id,
+                createdAt: alert.createdAt
+            )
+        }
+        agentCompletionFeedback.observeFleet(
+            machineID: machineID,
+            panes: observations,
+            doneAlerts: doneAlerts
+        )
     }
 
     private func mergeWorkspaces(

@@ -887,11 +887,14 @@ struct AppRootView: View {
             await model.prepareSmartAlerts()
         }
         // Fleet-transition feedback. iOS hung this on the always-alive
-        // Workspaces tab root; the Mac's equivalent always-alive surface is the
-        // window root, so it lives here.
+        // Workspaces tab root; on the Mac's window root it only owns the
+        // attention cue. Completion belongs to the process-owned coordinator
+        // on `HerdrAppModel`, which keeps working while this window is closed
+        // and deduplicates the fleet observation against committed Pi
+        // settlement.
         .onChange(of: agentStatuses, initial: true) { _, statuses in
-            if let event = statusHapticTracker.observe(statuses) {
-                hapticPulse.fire(event)
+            if statusHapticTracker.observe(statuses) == .attention {
+                hapticPulse.fire(.attention)
             }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in

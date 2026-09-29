@@ -36,7 +36,12 @@ enum HerdrHaptic: Equatable, Sendable {
             .selection(.off)
         case .promptSent:
             nil
-        case .transcriptionSucceeded, .completed:
+        case .completed:
+            // The process-owned completion coordinator plays the explicit
+            // companion cue. Requesting SwiftUI success audio here would make
+            // one completion audible twice.
+            nil
+        case .transcriptionSucceeded:
             .success
         case .gitStaged:
             .increase

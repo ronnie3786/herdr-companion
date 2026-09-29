@@ -39,14 +39,14 @@ enum NotificationManager {
 
     /// The delivered notification for one alert. Completion audio belongs to
     /// the process-owned companion cue; a Notification Center sound would make
-    /// the same completion audible twice, so this content is always silent
-    /// while its title, body, interruption level, routing, and badge handling
-    /// stay exactly as before.
+    /// the same completion audible twice. Only done notifications are silent;
+    /// blocked notifications retain their background attention sound. Title,
+    /// body, interruption level, routing, and badge handling stay as before.
     static func content(for alert: HerdrAlert) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = alert.title
         content.body = alert.message
-        content.sound = nil
+        content.sound = alert.status == .done ? nil : .default
         content.interruptionLevel = alert.status == .blocked ? .timeSensitive : .active
         content.userInfo = userInfo(for: alert)
         return content

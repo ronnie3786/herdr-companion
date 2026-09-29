@@ -4553,6 +4553,8 @@ final class HerdrAppModel {
         var newDoneAlertByPaneID: [String: HerdrAlert] = [:]
         for alert in freshAlerts where alert.status == .done && !previousAlertIDs.contains(alert.id) {
             newDoneAlerts.append(alert)
+            // The pane snapshot can carry only one alert timestamp. Every new
+            // alert still reaches the coordinator through doneAlerts below.
             if newDoneAlertByPaneID[alert.paneID] == nil {
                 newDoneAlertByPaneID[alert.paneID] = alert
             }

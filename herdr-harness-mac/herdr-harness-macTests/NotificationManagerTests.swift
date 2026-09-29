@@ -27,8 +27,8 @@ struct NotificationManagerTests {
         ])
     }
 
-    @Test("Alert notification content is silent while routing and presentation stay intact")
-    func alertContentIsSilent() {
+    @Test("Done notifications are silent; blocked notifications retain attention sound and routing")
+    func doneNotificationsAreSilentAndBlockedNotificationsKeepSound() {
         let alert = HerdrAlert(
             id: "alert-1",
             workspaceID: "workspace-1",
@@ -61,8 +61,12 @@ struct NotificationManagerTests {
             isRead: false
         ).stamped(machineID: "machine-1")
         let blockedContent = NotificationManager.content(for: blocked)
-        #expect(blockedContent.sound == nil)
+        #expect(blockedContent.sound == .default)
+        #expect(blockedContent.title == "Needs input")
+        #expect(blockedContent.body == "Confirm deployment")
         #expect(blockedContent.interruptionLevel == .timeSensitive)
+        #expect(blockedContent.userInfo["pane_id"] as? String == "workspace-1:pane-1")
+        #expect(blockedContent.userInfo["machine_id"] as? String == "machine-1")
     }
 
     @Test("Notification pane routing scopes current notifications and preserves legacy pane IDs")

@@ -25,7 +25,8 @@ Completion audio is the explicit companion sink only:
 The view-driven `HerdrMacFeedback.play(_:)` entry point ignores `.completed`;
 answering an interaction card only requests selection feedback while the agent
 resumes work. Completed work never requests SwiftUI `.success` sensory feedback,
-and the companion never sets a sound on a Notification Center notification.
+and completion notifications request no Notification Center sound. Blocked
+attention notifications retain their default sound.
 
 Evidence reaches the one owner from three observation paths:
 
@@ -78,6 +79,16 @@ consumed or until a real identity boundary, such as changed credentials, a
 re-created pane, or a pane that left the fleet; recent evidence IDs and headless
 run receipts are separately bounded.
 
+A compact transition map for the coordinator's regression tests:
+
+| State change | Sound / receipt | Representative test |
+| --- | --- | --- |
+| No fleet baseline → first snapshot; Pi start or restored history | Silent, arm only known work | `submissionAndHistoryAreSilent` |
+| Armed work → committed settlement or fleet done/alert | One cue, record completion and channel acknowledgements | `settlementPlaysOncePerTurn`, `fleetOnlyCompletion`, `fastCompletionAlert` |
+| Recorded completion → delayed fleet/alert/Pi replay | Silent, consume matching acknowledgements; leave newer turns armed | `fleetAfterSettlementIsSilent`, `settlementAfterFleetIsSilent` |
+| Armed work → committed failure | Silent failure receipt absorbs later matching fleet evidence | `failedPiEpisodeDoesNotSoundOnFleetDone` |
+| New work after a receipt → its own completion | One new cue; old acknowledgements do not consume it | `failedPiEpisodeWithoutFleetDone`, `fleetOnlyCompletion` |
+
 ## What plays and what stays silent
 
 | Moment | Audio |
@@ -107,20 +118,21 @@ connection identity (changed credentials, configuration, or paired roster)
 starts a new baseline, because no receipt from the old connection describes the
 new one.
 
-## Notifications stay visual and silent
+## Completion notifications stay visual and silent
 
 Completion and attention banners, badge counts, deep-link routing, and read
-acknowledgement are unchanged. What changed is one field: notification content
-is always built with `sound == nil`, while the title, body, interruption level
-(time-sensitive for blocked, active otherwise), and machine/workspace/pane
-routing metadata are exactly as before. Notification Center therefore remains a
-visual channel, and the companion cue is the only completion audio.
+acknowledgement are unchanged. Done notification content has `sound == nil` so
+Notification Center cannot duplicate the companion completion cue. Blocked
+attention notifications keep the default sound, including when the window-owned
+attention cue is unavailable in the background or with the main window closed.
+The title, body, interruption level (time-sensitive for blocked, active
+otherwise), and machine/workspace/pane routing metadata are unchanged.
 
 Notification authorization is independent of the cue:
 
-- **Authorization enabled** — completion and attention notifications appear as
-  silent banners or in Notification Center; the companion cue still plays once
-  when work finishes.
+- **Authorization enabled** — completion notifications appear as silent banners
+  or in Notification Center; blocked attention notifications retain the default
+  notification sound. The companion cue still plays once when work finishes.
 - **Authorization denied, not determined, or unavailable** — no banner or badge
   is delivered; the companion cue still plays when work finishes, because it is
   process-owned and is not gated on notification permission.
@@ -128,13 +140,13 @@ Notification authorization is independent of the cue:
 There is deliberately no “if notifications are unavailable, play a fallback
 sound” branch, so neither authorization state can add a second completion
 sound. The notification content is constructed as a pure value; automated
-tests assert `sound == nil` for both done (active) and blocked (time-sensitive)
-alerts, so the two authorization states cannot diverge in what the companion
-posts. Enabling Smart Alerts still asks for the standard notification
-authorization (alerts, badges, and sound access); that permission decides
-whether the system delivers banners and badges, not whether the companion cue
-plays. Toggling the real authorization in System Settings and re-listening
-remains an installed check below.
+tests assert `sound == nil` for done (active) and `.default` for blocked
+(time-sensitive) alerts, so authorization cannot add a second completion sound.
+Enabling Smart Alerts still asks for the standard notification authorization
+(alerts, badges, and sound access); that permission decides whether the system
+delivers banners and badges, not whether the companion cue plays. Toggling
+the real authorization in System Settings and re-listening remains an installed
+check below.
 
 ## Installed listening matrix (pending)
 
@@ -182,8 +194,9 @@ Relevant suites:
   history observations.
 - `HerdrHudChatsTests.hudCompletionRequestsOneCue` — saved HUD chat submission
   and a second consecutive turn.
-- `NotificationManagerTests.alertContentIsSilent` — silent notification content
-  with unchanged routing and interruption level.
+- `NotificationManagerTests.doneNotificationsAreSilentAndBlockedNotificationsKeepSound`
+  — silent completion notifications, default blocked attention sound, and
+  unchanged routing and interruption levels.
 - `HerdrHapticTests` — completed work requests no SwiftUI success feedback;
   interaction answers request selection, and view haptics cannot request the
   completion sink.
@@ -240,7 +253,9 @@ unchanged, and First Mate's chat window keeps its phase-specific behavior.
 
 There is no new user-facing enable, disable, or volume setting in this change.
 The cue stays the quiet system “Glass” sound behind the existing companion
-feedback sink.
+feedback sink. The sink's reserved master mute (`HerdrMacFeedback.isEnabled`)
+gates the coordinator cue as well as attention feedback; any future mute setting
+must cover both.
 
 ## Verification status
 

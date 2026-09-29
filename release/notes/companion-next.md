@@ -16,8 +16,10 @@
   marker so every client agrees on what is unread. It only moves forward, so
   replays and racing windows are harmless.
 - `POST /api/v1/first-mate/features/{featureId}/hud` sets or resets a feature's
-  short label (24 characters) and emoji. Without one, the server picks a stable
-  default emoji from the feature ID with the same rule the Mac app uses.
+  user label (up to 100 Unicode code points after trimming, on one line) and emoji.
+  Default labels still clip the feature title to 24 code points at a word boundary.
+  Without a user emoji, the server picks a stable default from the feature ID
+  with the same rule the Mac app uses.
 - These are presentation writes: they never wake First Mate, enqueue work,
   append events, change status or revision, reorder the list, or change the
   Agent view board version.

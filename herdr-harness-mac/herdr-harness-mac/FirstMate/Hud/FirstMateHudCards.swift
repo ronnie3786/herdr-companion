@@ -323,8 +323,8 @@ struct FirstMateHudEditorCard: View {
                     .frame(height: 32)
                     .background(RoundedRectangle(cornerRadius: HerdrTheme.Radius.composer).fill(HerdrTheme.fieldFill))
                     .onChange(of: controller.editorLabel) { _, value in
-                        if value.count > FirstMateHudEditing.labelLimit {
-                            controller.editorLabel = String(value.prefix(FirstMateHudEditing.labelLimit))
+                        if FirstMateHudEditing.labelLength(value) > FirstMateHudEditing.labelLimit {
+                            controller.editorLabel = FirstMateHudEditing.clippedLabel(value)
                         }
                     }
                     .onSubmit { controller.saveEditor(for: item.id) }
@@ -339,7 +339,7 @@ struct FirstMateHudEditorCard: View {
                 }
             }
             HStack {
-                Text("\(controller.editorLabel.count)/\(FirstMateHudEditing.labelLimit)")
+                Text("\(FirstMateHudEditing.labelLength(controller.editorLabel))/\(FirstMateHudEditing.labelLimit)")
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(HerdrTheme.tertiaryText)
                 Spacer()

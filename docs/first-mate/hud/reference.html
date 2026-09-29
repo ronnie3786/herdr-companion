@@ -777,7 +777,7 @@ details.how[open] summary::after { content: "−"; }
         <li><b>Halo orb:</b> dark glass core with the emoji, and the six-step progress ring in its status color with a soft glow. A dashed lavender ring turning slowly means a message is waiting.</li>
         <li><b>Expanded:</b> rows on one lit line, 38 px tall, 46 px apart, 236 px glass slats. Needs-you rows first, a small diamond, then moving rows in start order. Three moving rows, then a summary row; opening it turns moving rows into 24 px compact rows.</li>
         <li><b>Status:</b> blocked #E2A7B6, your turn #FF9F0A, ready #9CCDB9, working #E4C386, First Mate and messages #AAA6F4. Glass at 78% on #151519.</li>
-        <li><b>Names:</b> a short label up to 24 characters in the row, ending with an ellipsis if it runs long. The hover card shows the full feature title.</li>
+        <li><b>Names:</b> user labels can be up to 100 Unicode code points after trimming; the row truncates a long label with an ellipsis. Default labels still clip the feature title to 24 code points. The hover card shows the full feature title.</li>
       </ul>
     </details>
     <p class="foot">Explorations: <a href="list.html">holographic list</a>, <a href="list-v3.html">third</a>, <a href="list-v2.html">second</a> and <a href="list-v1.html">first</a> list versions, <a href="index.html">holographic</a>, <a href="jarvis.html">compact Jarvis</a>, <a href="jarvis-full.html">full-screen Jarvis</a> and <a href="v1.html">ropes</a>.</p>  </aside>
@@ -1935,7 +1935,7 @@ details.how[open] summary::after { content: "−"; }
     editor.innerHTML = `${BRACKETS}
       <h3>${isFM ? 'First Mate' : `Edit ${esc(target.label)}`}</h3>
       <div class="emoji-grid" role="group" aria-label="Emoji">${options.map(e => `<button type="button" data-e="${e}" aria-pressed="${e === chosen}" aria-label="${MARKS[e] ? `${cap(e)} mark` : e}">${MARKS[e] || e}</button>`).join('')}</div>
-      <label class="field-row"><span class="micro">${isFM ? 'Name' : 'Short label'}</span><input type="text" maxlength="${isFM ? 16 : 24}" value="${esc(isFM ? fm.name : target.label)}"></label>
+      <label class="field-row"><span class="micro">${isFM ? 'Name' : 'Short label'}</span><input type="text" ${isFM ? 'maxlength="16"' : ''} value="${esc(isFM ? fm.name : target.label)}"></label>
       <div class="editor-actions"><button class="btn" type="button" data-act="cancel">Cancel</button><button class="btn primary" type="button" data-act="save">Save</button></div>`;
     editor.hidden = false;
     editor.style.animation = 'none'; void editor.offsetWidth; editor.style.animation = '';
@@ -1950,6 +1950,7 @@ details.how[open] summary::after { content: "−"; }
       editor.style.top = spot.y + 'px';
     }
     const input = $('input', editor);
+    if (!isFM) input.oninput = () => { input.value = Array.from(input.value).slice(0, 100).join(''); };
     const save = () => {
       const val = input.value.trim();
       if (isFM) { fm.mark = chosen; if (val) fm.name = val; renderIdentity(); refreshBadge(); }

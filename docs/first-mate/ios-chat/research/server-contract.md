@@ -132,7 +132,7 @@ All paths below are relative to this absolute root: `<repository-root>`. The roo
 - `POST /read` accepts any message belonging to the feature, including the human's. Errors: 404 `not_found`, 409 `message_feature_mismatch`.
 
 **`POST /hud`**
-- Label limit is 24 code points on one line; emoji limit is 16 code points with no whitespace or control characters. Null or empty resets to the default (first_mate_fleet.py:155-189; store 1194-1216).
+- User labels accept up to 100 Unicode code points after trimming, on one line; default labels still clip the title to 24 code points at a word boundary. Emoji limit is 16 code points with no whitespace or control characters. Null or empty resets to the default (see [the build contract](../../build-contract.md#fleet-summary-api)).
 - The lead is refused with 409 `lead_unsupported`.
 - Read and hud writes never emit events, never change `updated_at`, activity or the board version, and never wake the coordinator.
 

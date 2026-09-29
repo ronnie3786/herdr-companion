@@ -149,7 +149,7 @@ export function GitStatusView({ paneId, embedded = false, initialCommit }: GitSt
   } else {
     body = <>
       <div className="hz-git-view-modes" role="group" aria-label="Git view">
-        {comparisonAvailable ? <button aria-pressed={mode === "compare"} onClick={() => setMode("compare")}>Compare commits</button> : null}
+        {comparisonAvailable ? <button aria-pressed={mode === "compare"} onClick={() => setMode("compare")}>Branch changes</button> : null}
         <button aria-pressed={mode === "working"} onClick={() => setMode("working")}>Working files</button>
       </div>
       {mode === "compare" && comparisonAvailable
@@ -168,9 +168,9 @@ export function GitStatusView({ paneId, embedded = false, initialCommit }: GitSt
     >
       {target.kind === "firstMate" ? (
         <div className="hz-git-header-meta" aria-label="First Mate Git context">
-          <strong>First Mate</strong>
-          <span className="mono">Feature {target.featureId}</span>
-          <span className="mono">Workspace {target.workspaceId}</span>
+          <GitBranch size={14} aria-hidden />
+          <strong>{entry.snapshot?.branch ?? "Loading branch…"}</strong>
+          <span className="mono">{entry.snapshot?.rootPath}</span>
         </div>
       ) : null}
       <div className="hz-git-scroll">{body}</div>

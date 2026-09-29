@@ -172,7 +172,7 @@ class GitComparisonTests(unittest.TestCase):
         service._agent_runs = manager
         service.local_tools = self.tools
         service._first_mate_git_context = lambda feature, workspace: ({}, self.repo)
-        service._first_mate_git_baseline = lambda feature, workspace: None
+        service._first_mate_git_baseline = lambda feature, workspace, comparison=None: None
         selected = {"mode": "commit", "start_commit": self.first}
         response = self.compare(selected)
         request = {"prompt": "Why this change?", "mode": "ask", "profile": "git-question-v1", "clientRequestId": "11111111-1111-1111-1111-111111111111", "scope": {"firstMateFeatureId": "feature", "workspaceId": "project", "expectedRootPath": str(self.repo), "comparison": selected, "comparisonId": response["comparison"]["id"]}, "context": {"version": 1, "snapshotId": "view", "capturedAt": "2026-01-01T00:00:00Z", "source": {"feature": "git.diff", "instanceId": "file"}, "items": []}}
@@ -260,6 +260,19 @@ class GitComparisonTests(unittest.TestCase):
         with self.assertRaises(WorkspaceToolError) as error:
             service._first_mate_git_baseline("feature", "project")
         self.assertEqual(error.exception.code, "git_baseline_unavailable")
+
+    def test_live_feature_review_tracks_current_target_instead_of_original_workflow_baseline(self):
+        record = {"workspace_id": "project", "start_sha": self.base,
+                  "comparison_baseline_sha": self.base, "comparison_baseline_label": "main"}
+        service = self.first_mate_service([{"id": "v1", "git_baselines": [record]}])
+        self.git("branch", "-f", "main", self.first)
+        for selection in (None, {"mode": "all"}, {"mode": "working-tree"}):
+            with self.subTest(selection=selection):
+                result = service.first_mate_git_compare("feature", "project", comparison=selection,
+                                                       file=None, expected_root=str(self.repo))
+                self.assertEqual(result["baseline_sha"], self.first)
+                self.assertNotIn(self.first, result["comparison"]["commit_shas"])
+                self.assertIn(self.second, result["comparison"]["commit_shas"])
 
     def test_existing_feature_without_capture_uses_current_target(self):
         service = self.first_mate_service([], {"feature_id": "feature", "metadata": {"base_revision": self.second}})

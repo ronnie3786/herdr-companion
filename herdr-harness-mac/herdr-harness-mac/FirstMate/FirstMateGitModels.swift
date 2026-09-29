@@ -4,11 +4,25 @@ struct FirstMateGitWorkspace: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let path: String
+    var aliases: [String]? = nil
+    var branch: String? = nil
+
+    func matches(_ workspaceID: String) -> Bool {
+        id == workspaceID || (aliases?.contains(workspaceID) ?? false)
+    }
 }
 
 struct FirstMateGitWorkspaceResponse: Decodable, Sendable {
     let ok: Bool
     let workspaces: [FirstMateGitWorkspace]
+    var defaultWorkspaceID: String? = nil
+    var selectionMessage: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case ok, workspaces
+        case defaultWorkspaceID = "default_workspace_id"
+        case selectionMessage = "selection_message"
+    }
 }
 
 protocol FirstMateGitClient: Sendable {

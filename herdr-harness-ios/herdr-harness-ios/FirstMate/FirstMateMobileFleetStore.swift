@@ -47,6 +47,10 @@ struct FirstMateMobileFleetHost: Identifiable, Equatable, Sendable {
     var safeModelSettingsSupported = false
     var linksSupported = false
     var feedbackCapability: FirstMateFeedbackCapability = .unknown
+    var supportsFleet = false
+    var supportsLead = false
+    var supportsLeadPeers = false
+    var failedPolls = 0
 
     var id: String { machineID }
 
@@ -75,6 +79,12 @@ struct FirstMateMobileFleetHost: Identifiable, Equatable, Sendable {
 /// that exists on several machines can never redirect an action.
 @MainActor @Observable
 final class FirstMateMobileFleetStore {
+    let chat: FirstMateMobileChatState
+    var conversations: [FirstMateConversation] { chat.conversations(fleet: self) }
+    /// Global feature dots, independent of host scope, search and lead unread.
+    var badgeCount: Int { conversations.count(where: \.showsDot) }
+    var leadChoice: FirstMateLeadMachine.Choice { chat.leadChoice(fleet: self) }
+
     /// The list fields mirrored out of one host store after a refresh.
     private struct HostRefreshSnapshot: Sendable {
         let machineID: String
@@ -130,6 +140,7 @@ final class FirstMateMobileFleetStore {
     init(defaults: UserDefaults = .standard) {
         let preference = FirstMateScopePreference(defaults: defaults)
         self.preference = preference
+        chat = FirstMateMobileChatState(defaults: defaults)
         scope = preference.load()
     }
 
@@ -152,6 +163,18 @@ final class FirstMateMobileFleetStore {
         preference.save(scope)
     }
 
+    /// Presentation-only renames do not restart healthy clients or discard
+    /// drafts/read state. Connection changes still go through activate.
+    func updateMachineNames(_ machines: [HerdrMachine]) {
+        let names = Dictionary(machines.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        for index in hosts.indices {
+            if let name = names[hosts[index].machineID], name != hosts[index].machineName {
+                hosts[index].machineName = name
+                contentRevision &+= 1
+            }
+        }
+    }
+
     /// Whether any visible host runs the synthetic mobile demo.
     var isDemo: Bool { hosts.contains(where: \.isDemo) }
 
@@ -160,7 +183,8 @@ final class FirstMateMobileFleetStore {
 
     /// Advances every synthetic host's shared scenario together.
     func advanceDemo() {
-        for store in stores.values { store.advanceDemo() }
+        if let store = stores["demo2"], store.isDemo { store.advanceDemo() }
+        else { for store in stores.values { store.advanceDemo() } }
     }
 
     /// Presents the create sheet with a destination preselected whenever there
@@ -221,8 +245,10 @@ final class FirstMateMobileFleetStore {
             archived: archived,
             reason: reason
         )
-        if archivedSuccessfully { mirrorHost(machineID: target.machineID) }
-        return archivedSuccessfully
+        if archivedSuccessfully, stores[target.machineID] === store {
+            await didMutate(machineID: target.machineID)
+        }
+        return archivedSuccessfully && stores[target.machineID] === store
     }
 
     /// Creates one feature on exactly one host and returns its composite
@@ -247,6 +273,8 @@ final class FirstMateMobileFleetStore {
         ) else { return nil }
         mirrorHost(machineID: machineID)
         guard stores[machineID] === store, let featureID = store.selectedFeatureID else { return nil }
+        await didMutate(machineID: machineID)
+        guard stores[machineID] === store else { return nil }
         return FirstMateFeatureTarget(machineID: machineID, featureID: featureID)
     }
 
@@ -354,10 +382,12 @@ final class FirstMateMobileFleetStore {
     func selectTarget(_ target: FirstMateFeatureTarget?) {
         guard let target else {
             selectedTarget = nil
+            chat.select(nil)
             return
         }
         guard stores[target.machineID] != nil else { return }
         selectedTarget = target
+        chat.select(.feature(target))
     }
 
     /// Opens a feature on its owning store while preserving the browsing
@@ -365,8 +395,10 @@ final class FirstMateMobileFleetStore {
     @discardableResult
     func open(_ target: FirstMateFeatureTarget) -> Bool {
         guard let store = stores[target.machineID] else { return false }
+        if store.snapshots[target.featureID]?.feature.isArchived == true { setShowArchived(true) }
         selectedTarget = target
         store.select(target.featureID)
+        chat.select(store.snapshots[target.featureID]?.feature.isLead == true ? .lead : .feature(target))
         return true
     }
 
@@ -413,10 +445,13 @@ final class FirstMateMobileFleetStore {
                 // captured reference can never act on the new connection.
                 previousStore?.configure(client: nil, demo: false)
                 store = FirstMateStore()
-                store.configure(client: source.client, demo: source.isDemo)
+                store.configure(client: source.client, demo: source.isDemo,
+                                demoFeatures: source.isDemo ? FirstMateMobileDemo.initialSnapshots(forMachineID: machineID) : nil)
                 store.showArchived = showArchived
-                for snapshot in FirstMateMobileDemo.supplementalSnapshots(forMachineID: machineID) {
-                    store.receive(snapshot)
+                if source.isDemo {
+                    for snapshot in FirstMateMobileDemo.supplementalSnapshots(forMachineID: machineID) {
+                        store.receive(snapshot)
+                    }
                 }
                 retiredMachineIDs.insert(machineID)
             }
@@ -470,6 +505,7 @@ final class FirstMateMobileFleetStore {
             self.creationMachineID = nil
             isCreating = false
         }
+        chat.configure(sources: sources, generation: connectionGeneration, fleet: self)
         return lifecycle
     }
 
@@ -488,6 +524,7 @@ final class FirstMateMobileFleetStore {
     /// Retires every store immediately. Used when the whole app connection is
     /// replaced, so no captured store reference can operate afterwards.
     func retireAll() {
+        chat.retire()
         lifecycle &+= 1
         refreshGeneration &+= 1
         for store in stores.values { store.configure(client: nil, demo: false) }
@@ -503,6 +540,48 @@ final class FirstMateMobileFleetStore {
     }
 
     // MARK: - Refresh
+
+    /// The app-active index polls summaries without a second all-store observer.
+    func refreshChatIndex() async {
+        let expectedLifecycle = lifecycle
+        await chat.index.refresh()
+        guard !Task.isCancelled, expectedLifecycle == lifecycle else { return }
+        for value in chat.index.hosts {
+            guard let index = hosts.firstIndex(where: { $0.machineID == value.machineID }) else { continue }
+            var host = hosts[index]
+            if !showArchived, !Self.samePublishedFeatures(host.features, value.features) { host.features = value.features }
+            host.supportsFleet = value.supportsFleet
+            host.supportsLead = value.supportsLead
+            host.supportsLeadPeers = value.supportsLeadPeers
+            host.failedPolls = value.failedPolls
+            host.isLoading = value.isLoading
+            host.error = value.error
+            host.unsupported = value.unsupported
+            host.hasLoaded = host.hasLoaded || value.lastUpdated != nil || value.error != nil
+            host.lastUpdated = value.lastUpdated ?? host.lastUpdated
+            if host != hosts[index] { hosts[index] = host; contentRevision &+= 1 }
+        }
+    }
+
+    func refreshSelected(_ target: FirstMateFeatureTarget) async {
+        guard selectedTarget == target, let store = stores[target.machineID],
+              store.selectedFeatureID == target.featureID else { return }
+        let context = store.operationContext
+        if store.snapshots[target.featureID]?.feature.isLead == true { await store.refreshLead() }
+        else { await store.refresh() }
+        guard stores[target.machineID] === store, context == store.operationContext else { return }
+        mirrorHost(machineID: target.machineID)
+    }
+
+    func didMutate(machineID: String) async {
+        mirrorHost(machineID: machineID)
+        await refreshChatIndex()
+    }
+
+    func refreshAll() async {
+        await refresh()
+        await refreshChatIndex()
+    }
 
     /// Refreshes the current lifecycle's hosts.
     func refresh() async {

@@ -42,6 +42,19 @@ actor HerdrAPIClient: FirstMateClient {
         try await request(path: firstMatePath("features", id: id))
     }
 
+    func fetchFirstMateFeature(_ id: String, journalEventsOnly: Bool) async throws -> FirstMateSnapshot {
+        guard journalEventsOnly else { return try await fetchFirstMateFeature(id) }
+        return try await request(path: firstMatePath("features", id: id), query: [URLQueryItem(name: "events", value: "journal")])
+    }
+
+    func fetchFirstMateLead() async throws -> FirstMateLeadResponse {
+        try await request(path: "/api/v1/first-mate/lead")
+    }
+
+    func ensureFirstMateLead(requestID: String) async throws -> FirstMateLeadResponse {
+        try await request(path: "/api/v1/first-mate/lead", method: "POST", body: ["request_id": requestID])
+    }
+
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot {
         try await request(path: "/api/v1/first-mate/features", method: "POST", body: [
             "title": title, "goal": goal, "cwd": cwd, "request_id": requestID,
@@ -52,6 +65,41 @@ actor HerdrAPIClient: FirstMateClient {
         try await request(path: firstMatePath("features", id: featureID) + "/messages", method: "POST", body: [
             "text": text, "request_id": requestID,
         ])
+    }
+
+    func sendFirstMateMessage(featureID: String, text: String, requestID: String,
+                              context: FirstMateLeadContext) async throws -> FirstMateSnapshot {
+        try await request(path: firstMatePath("features", id: featureID) + "/messages", method: "POST",
+                          body: FirstMateLeadMessageBody(text: text, requestID: requestID, context: context))
+    }
+
+    func uploadFirstMateAttachment(featureID: String, fileURL: URL, contentType: String) async throws -> AttachmentUploadResponse {
+        let path = try firstMatePath("features", id: featureID) + "/attachments"
+        let candidate = try AttachmentPolicy.candidate(for: fileURL, ownership: .userSelected)
+        let accessed = fileURL.startAccessingSecurityScopedResource()
+        defer { if accessed { fileURL.stopAccessingSecurityScopedResource() } }
+        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+        try AttachmentPolicy.validateFile(named: candidate.filename, byteCount: Int64(data.count))
+        return try await request(path: path, method: "POST", body: WorkspaceAttachmentBody(
+            filename: candidate.filename, contentType: contentType, dataBase64: data.base64EncodedString()
+        ))
+    }
+
+    func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
+        try await transcribeVoice(fileURL: fileURL)
+    }
+
+    func saveFirstMateLink(featureID: String, url: String, title: String?, kind: String?, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        var body = ["url": url, "request_id": requestID]
+        if let title, !title.isEmpty { body["title"] = title }
+        if let kind, !kind.isEmpty { body["kind"] = kind }
+        return try await request(path: firstMatePath("features", id: featureID) + "/links", method: "POST", body: body)
+    }
+
+    func setFirstMateLinkVisibility(featureID: String, linkID: String, hidden: Bool, requestID: String) async throws -> FirstMateLinkMutationResponse {
+        let safeLinkID = try validatedFirstMateID(linkID)
+        return try await request(path: firstMatePath("features", id: featureID) + "/links/\(safeLinkID)/visibility",
+                                 method: "POST", body: FirstMateLinkVisibilityBody(hidden: hidden, requestID: requestID))
     }
 
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot {
@@ -840,6 +888,14 @@ actor HerdrAPIClient: FirstMateClient {
     }
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
+        if path.hasPrefix("/api/v1/first-mate/") {
+            guard method == "POST" else { return 15 }
+            // Mobile uploads keep their explicit bound before the shipped
+            // long-running mutation rule. Resource IDs ending in "events"
+            // are still reads, never an accidental stream timeout.
+            if path.hasSuffix("/attachments") { return 90 }
+            return 86_400
+        }
         if path == "/api/v1/health" || path == "/api/v1/network" {
             return 8
         }
@@ -889,8 +945,8 @@ actor HerdrAPIClient: FirstMateClient {
     private static func validate(response: URLResponse, data: Data = Data()) throws {
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONDecoder().decode(ServerErrorEnvelope.self, from: data).error.message) ?? ""
-            throw APIError.server(status: http.statusCode, message: message)
+            let payload = try? JSONDecoder().decode(ServerErrorEnvelope.self, from: data).error
+            throw APIError.server(status: http.statusCode, message: payload?.message ?? "", code: payload?.code)
         }
     }
 }
@@ -1003,7 +1059,7 @@ struct HerdrSSEParser {
 
 private struct ServerErrorEnvelope: Decodable {
     struct Payload: Decodable {
-        let code: String
+        let code: String?
         let message: String
     }
 

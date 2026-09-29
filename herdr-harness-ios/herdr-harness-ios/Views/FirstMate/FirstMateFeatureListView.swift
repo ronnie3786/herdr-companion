@@ -43,7 +43,7 @@ struct FirstMateFeatureListView: View {
             .padding(20)
         }
         .background(palette.background)
-        .refreshable { await fleet.refresh() }
+        .refreshable { await fleet.refreshAll() }
         .navigationTitle("First Mate")
         .toolbarColorScheme(scheme, for: .navigationBar)
         .searchable(text: $fleet.search, prompt: "Find a feature or goal")
@@ -173,13 +173,13 @@ struct FirstMateFeatureListView: View {
                     Text(option.title).tag(option)
                 }
             }
-            Button("Refresh features", systemImage: "arrow.clockwise") { Task { await fleet.refresh() } }
+            Button("Refresh features", systemImage: "arrow.clockwise") { Task { await fleet.refreshAll() } }
             Button(
                 fleet.canShowArchived ? (fleet.showArchived ? "Hide archived" : "Show archived") : "Archive requires companion update",
                 systemImage: "archivebox"
             ) {
                 fleet.setShowArchived(!fleet.showArchived)
-                Task { await fleet.refresh() }
+                Task { await fleet.refreshAll() }
             }
             .disabled(!fleet.canShowArchived)
             .accessibilityIdentifier("first-mate-show-archived")
@@ -278,7 +278,7 @@ struct FirstMateFeatureListView: View {
             } description: {
                 Text(fleet.visibleHosts.compactMap(\.error).first ?? "The selected machines are unreachable right now.")
             } actions: {
-                Button("Try again") { Task { await fleet.refresh() } }
+                Button("Try again") { Task { await fleet.refreshAll() } }
             }
         } else {
             ContentUnavailableView {

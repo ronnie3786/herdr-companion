@@ -9,6 +9,17 @@ import Foundation
 /// demo features) plus a genuinely host-specific row, without live agents and
 /// without touching the shared Mac demo.
 enum FirstMateMobileDemo {
+    static func initialSnapshots(forMachineID machineID: String) -> [FirstMateSnapshot]? {
+        guard machineID == "demo1" else { return nil }
+        // Retain the old list's synthetic identifiers while the replacement
+        // conversation UI is not installed yet.
+        return FirstMateDemo.features(step: 0) + FirstMateDemo.chatWindowFeatures() + [FirstMateDemo.chatWindowLead()]
+    }
+
+    static func chatFleet(forMachineID machineID: String) -> [FirstMateFleetEntry] {
+        machineID == "demo1" ? FirstMateDemo.chatWindowFleet() : []
+    }
+
     /// Extra synthetic snapshots owned by one demo host. Nothing is fetched,
     /// nothing leaves the device, and every value is invented.
     static func supplementalSnapshots(forMachineID machineID: String) -> [FirstMateSnapshot] {

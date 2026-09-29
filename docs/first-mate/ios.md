@@ -29,8 +29,9 @@ gates or a separate test matrix.
 The [implementation plan](ios-chat/IMPLEMENTATION-PLAN.md) and its three research
 inventories travel with the source. Those inventories describe the original
 baseline, not a promise that later phases are already implemented. No Mac view,
-shared First Mate behavior, or server contract changes in Phase 0. Phases 1–6
-remain unimplemented. Each retains automated verification/review/landing gates,
+shared First Mate behavior, or server contract changes in Phase 0. Phase 1 now
+provides the shared/mobile data layer below; Phases 2–6 remain unimplemented.
+Each phase retains automated verification/review/landing gates,
 without a first-push approval or per-phase device-test pause. One final signed iOS
 build is delivered after Phase 6; Phase 7, Mac releases, server deployment and
 companion package publication are outside this delivery.
@@ -49,6 +50,48 @@ pins canonical bitmap hashes and verifies opacity, one-time darkening, and the
 haze fade. `HerdrThemeFoundationUITests` checks the live sample, Settings toggles,
 the effective text-size cap, 44 pt targets, and existing tab destinations with
 synthetic data.
+
+## Phase 1 data layer
+
+The existing list and chat remain available. The First Mate tab now shows a
+**global feature-dot badge**: needs-you **and** unread across saved machines,
+independent of search/host scope and excluding lead unread. Older companions
+without fleet summaries keep attention-style dots; opening them does not invent
+read-marker support. One app-active summary loop runs every 10 seconds even on
+Agents/Notes; suspension stops it and foregrounding refreshes immediately. The
+selected store uses a 3-second visible / 60-second inactive loop. Archive browsing
+keeps its exact-host full-list path, separate from the active projection.
+
+Shared Mac rules/tests were mechanically extracted before phone behavior work;
+Mac views and local-host preference policy remain unchanged. Phone-owned read,
+lead and routing state fences asynchronous results to the saved connection and
+feature. New replies survive older read acknowledgements; read failures roll back
+with 8–180-second backoff. Lead choice/ensure/context and the new chat route types
+are ready for later screens; no prompt is resent or moved on failover.
+
+`herdr://first-mate?feature_id=…[&assignment_id=…][&server_url=…]` and
+`herdr://first-mate/lead` are additive phone links. A supplied server origin must
+match exactly one configured machine, with no fallback if unknown/ambiguous.
+Otherwise an in-chat link uses its captured owner, and an external feature link
+needs one unique listed owner. Names, roster ordering and lead metadata never
+establish identity. Invalid/duplicate/security-bearing fields are rejected; pane
+and car links retain their existing behavior. Valid agent links open the current
+Agents inspector; pushed info/highlighting arrives in Phases 3/6.
+
+Concrete `FirstMateClient` witnesses now cover lead, context, attachments, voice,
+journal snapshots and links. First Mate reads use 15 seconds, normal POSTs 86,400
+seconds (matching the shipped long-running mutation contract), with an explicit
+90-second upload exception; voice uses 120 seconds. Structured server codes are
+retained without changing two-value status catches. This adds transport/data
+support, not the Phase 5 attachment/voice/model UI, and needs no server deployment.
+
+Demo mode adds chat-window features/lead on the first synthetic host while
+retaining legacy fixtures during Phase 1; the second host retains its scenario
+and host-only release-checklist feature. No demo client starts agents or networks.
+Focused coverage includes `FirstMateMobileHTTPContractTests`,
+`FirstMateMobileChatStateTests`, `FirstMateMobileDeepLinkTests`,
+`FirstMateMobileRouteLifecycleTests`, existing mobile suites and moved shared
+rules/outgoing tests. HTTP tests use URLProtocol/fake clients, not a live agent.
 
 ## Navigation
 

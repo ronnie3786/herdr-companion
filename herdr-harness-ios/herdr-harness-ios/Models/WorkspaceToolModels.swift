@@ -258,6 +258,29 @@ struct UploadedAttachment: Codable, Equatable, Hashable, Identifiable, Sendable 
     }
 }
 
+extension UploadedAttachment {
+    private enum CamelKeys: String, CodingKey {
+        case originalFilename, contentType, workspaceId, createdAt
+    }
+
+    init(from decoder: any Decoder) throws {
+        let snake = try decoder.container(keyedBy: CodingKeys.self)
+        let camel = try decoder.container(keyedBy: CamelKeys.self)
+        id = try snake.decode(String.self, forKey: .id)
+        filename = try snake.decode(String.self, forKey: .filename)
+        size = try snake.decode(Int.self, forKey: .size)
+        path = try snake.decode(String.self, forKey: .path)
+        originalFilename = try snake.decodeIfPresent(String.self, forKey: .originalFilename)
+            ?? camel.decode(String.self, forKey: .originalFilename)
+        contentType = try snake.decodeIfPresent(String.self, forKey: .contentType)
+            ?? camel.decode(String.self, forKey: .contentType)
+        workspaceID = try snake.decodeIfPresent(String.self, forKey: .workspaceID)
+            ?? camel.decodeIfPresent(String.self, forKey: .workspaceId)
+        createdAt = try snake.decodeIfPresent(String.self, forKey: .createdAt)
+            ?? camel.decode(String.self, forKey: .createdAt)
+    }
+}
+
 struct TerminalAttachment: Equatable, Identifiable, Sendable {
     var id: UUID
     var filename: String

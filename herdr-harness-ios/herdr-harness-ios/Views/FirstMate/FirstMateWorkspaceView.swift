@@ -55,6 +55,16 @@ struct FirstMateWorkspaceView: View {
         .onChange(of: fleet.selectedTarget) { _, target in
             if target == nil, !path.isEmpty { path = [] }
         }
+        .onChange(of: path) { _, path in
+            if horizontalSizeClass != .regular, path.isEmpty { fleet.selectTarget(nil) }
+        }
+        .onChange(of: fleet.chat.route, initial: true) { _, route in
+            guard let route else { return }
+            // The router has already selected the validated owner. Do not
+            // select again and invalidate its inspector request.
+            if horizontalSizeClass != .regular { path = [route.target] }
+            fleet.store(for: route.target)?.graphMode = route.graph
+        }
         .accessibilityIdentifier("first-mate-workspace")
     }
 
@@ -67,7 +77,9 @@ struct FirstMateWorkspaceView: View {
             store: store,
             featureID: target.featureID,
             machineName: model.machineName(target.machineID),
-            canControl: model.firstMateCanControl(machineID: target.machineID)
+            canControl: model.firstMateCanControl(machineID: target.machineID),
+            requestedInspector: fleet.chat.route?.target == target ? fleet.chat.route?.inspector : nil,
+            inspectorRequestID: fleet.chat.route?.target == target ? fleet.chat.route?.id : nil
         )
         .id("\(target.machineID)-\(target.featureID)")
     }

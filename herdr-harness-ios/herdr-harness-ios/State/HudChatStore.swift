@@ -854,7 +854,7 @@ final class HudChatStore {
             if capabilityRequest && (status == 404 || status == 426) {
                 return upgradeMessage
             }
-            if !message.isEmpty { return message }
+            if !message.text.isEmpty { return message.text }
         }
         if let urlError = error as? URLError {
             switch urlError.code {

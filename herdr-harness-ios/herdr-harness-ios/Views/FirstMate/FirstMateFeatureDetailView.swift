@@ -5,15 +5,19 @@ struct FirstMateFeatureDetailView: View {
     let featureID: String
     let machineName: String
     let canControl: Bool
+    var requestedInspector: FirstMateInspector? = nil
+    var inspectorRequestID: UUID? = nil
     @Environment(\.colorScheme) private var scheme
     @State private var showsInspector = false
     @State private var confirmsCancellation = false
+    @State private var controlLease = FirstMateWorkspaceControlLease()
 
     private var snapshot: FirstMateSnapshot? { store.snapshots[featureID] }
     private var featureIsClosed: Bool { ["completed", "cancelled"].contains(snapshot?.feature.status ?? "") }
     private var controlsAvailable: Bool {
         canControl && snapshot != nil && store.selectedFeatureID == featureID
     }
+    private var featureActionsAvailable: Bool { controlsAvailable && snapshot?.feature.isLead != true }
 
     var body: some View {
         Group {
@@ -45,13 +49,13 @@ struct FirstMateFeatureDetailView: View {
                     Divider()
                     if snapshot?.feature.status == "paused" {
                         Button("Resume feature", systemImage: "play") { perform("resume") }
-                            .disabled(!controlsAvailable || store.isSending)
+                            .disabled(!featureActionsAvailable || store.isSending)
                     } else {
                         Button("Pause feature", systemImage: "pause") { perform("pause") }
-                            .disabled(!controlsAvailable || store.isSending || featureIsClosed)
+                            .disabled(!featureActionsAvailable || store.isSending || featureIsClosed)
                     }
                     Button("Cancel feature", systemImage: "stop.circle", role: .destructive) { confirmsCancellation = true }
-                        .disabled(!controlsAvailable || store.isSending || featureIsClosed)
+                        .disabled(!featureActionsAvailable || store.isSending || featureIsClosed)
                 }
                 .accessibilityIdentifier("first-mate-feature-options")
                 .confirmationDialog("Cancel this feature?", isPresented: $confirmsCancellation, titleVisibility: .visible) {
@@ -65,6 +69,16 @@ struct FirstMateFeatureDetailView: View {
         .modifier(FirstMateInspectorPresentation(
             store: store, snapshot: snapshot, isPresented: $showsInspector
         ))
+        .onChange(of: controlsAvailable, initial: true) { _, available in
+            controlLease.update(store: store, available: available)
+        }
+        .onChange(of: store.lifecycle) { _, _ in
+            controlLease.update(store: store, available: controlsAvailable)
+        }
+        .onDisappear { controlLease.release() }
+        .task(id: inspectorRequestID) {
+            if let requestedInspector { openInspector(requestedInspector) }
+        }
         .task(id: featureID) {
             if store.selectedFeatureID != featureID { store.select(featureID) }
             await store.refresh()
@@ -77,10 +91,10 @@ struct FirstMateFeatureDetailView: View {
     }
 
     private func perform(_ action: String) {
-        guard controlsAvailable, !store.isSending, !featureIsClosed else { return }
+        guard featureActionsAvailable, !store.isSending, !featureIsClosed else { return }
         let context = store.operationContext
         Task {
-            guard controlsAvailable else { return }
+            guard featureActionsAvailable else { return }
             await store.perform(action, expectedContext: context)
         }
     }

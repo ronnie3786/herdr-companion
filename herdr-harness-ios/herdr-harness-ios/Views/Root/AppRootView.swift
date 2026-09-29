@@ -51,6 +51,18 @@ struct AppRootView: View {
             guard firstMateObservation.isActive else { return }
             await model.observeFirstMate()
         }
+        .onChange(of: model.machines) { _, machines in
+            model.firstMateFleet.updateMachineNames(machines)
+        }
+        .onChange(of: model.selectedTab == .firstMate && scenePhase == .active, initial: true) { _, visible in
+            model.firstMateDriver.isFirstMateVisible = visible
+        }
+        .onChange(of: visibleFirstMateTarget, initial: true) { _, target in
+            model.firstMateDriver.setVisibleTarget(target)
+        }
+        .onChange(of: model.firstMateFleet.selectedStore?.operationContext) { _, _ in
+            model.firstMateDriver.setVisibleTarget(visibleFirstMateTarget)
+        }
         .task(id: herdPulseContext) {
             await herdPulse.synchronize(context: herdPulseContext)
         }
@@ -94,8 +106,12 @@ struct AppRootView: View {
             machineIDs: model.machines.map(\.id),
             generation: model.connectionGeneration,
             isDemo: model.isDemoMode,
-            isActive: model.hasCompletedSetup && model.selectedTab == .firstMate && scenePhase == .active
+            isActive: model.hasCompletedSetup && scenePhase == .active
         )
+    }
+
+    private var visibleFirstMateTarget: FirstMateFeatureTarget? {
+        model.selectedTab == .firstMate && scenePhase == .active ? model.firstMateFleet.selectedTarget : nil
     }
 
     private var herdPulseContext: HerdPulseSyncContext {
@@ -116,6 +132,7 @@ struct AppRootView: View {
             Tab("First Mate", systemImage: "sailboat", value: .firstMate) {
                 FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
             }
+            .badge(model.firstMateFleet.badgeCount)
 
 
             Tab("Agents", systemImage: "bubble.left.and.bubble.right", value: .workspaces) {

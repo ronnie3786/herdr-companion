@@ -19,10 +19,17 @@ phases; the legacy First Mate appearance menu is removed in Phase 2. Debug build
 can open the synthetic theme sample with
 `-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample`. Render outputs go to
 `$HERDR_IOS_RENDER_DIR`. See the [phase plan](../docs/first-mate/ios-chat/IMPLEMENTATION-PLAN.md)
-and [verification guide](../docs/first-mate/ios.md). Phases 1–6 remain planned, with
-per-phase automated verification and one final signed iOS build after Phase 6
+and [verification guide](../docs/first-mate/ios.md). Phase 1 now adds the shared
+fleet/chat rules, app-active polling, global feature-dot tab badge, exact-owner
+links, fenced read/lead state and concrete authenticated client gaps. Existing
+list/chat screens remain; Phases 2–6 are still planned, with per-phase automated
+verification and one final signed iOS build after Phase 6
 rather than intermediate phone-test pauses. No first-push approval gate remains.
-No server update, Mac release or Phase 7 work is included.
+No server update, Mac release or Phase 7 work is included. Lead metadata never
+replaces saved connection identity; unknown/ambiguous link origins do not fall
+back to another machine. First Mate POSTs retain the 86,400-second mutation
+budget, with 90-second uploads, 120-second voice and 15-second reads. These are
+transport/data foundations, not completion of the later composer or lead UI.
 
 
 The **First Mate** tab brings the feature workspace to iPhone and iPad. It opens

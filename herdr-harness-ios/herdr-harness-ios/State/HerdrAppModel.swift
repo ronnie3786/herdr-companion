@@ -28,6 +28,7 @@ final class HerdrAppModel: HudChatTransport {
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
     let firstMateFleet: FirstMateMobileFleetStore
+    let firstMateDriver: FirstMateFleetDriver
     let hudChats = HudChatStore()
     var selectedWorkspaceID: String?
     var selectedPaneID: String?
@@ -173,7 +174,9 @@ final class HerdrAppModel: HudChatTransport {
         let uiTestServerURL: String? = nil
         let uiTestToken = ""
         #endif
-        self.firstMateFleet = FirstMateMobileFleetStore(defaults: userDefaults)
+        let firstMateFleet = FirstMateMobileFleetStore(defaults: userDefaults)
+        self.firstMateFleet = firstMateFleet
+        self.firstMateDriver = FirstMateFleetDriver(fleet: firstMateFleet)
         self.chatTabColors = ChatTabColorStore(defaults: defaults)
         self.paneDrafts = PaneDraftStore()
         Self.migrateMachinesIfNeeded(defaults: defaults, credentials: credentials, bootstrapMachines: bootstrapMachines)
@@ -1653,6 +1656,29 @@ final class HerdrAppModel: HudChatTransport {
     }
 
     func open(url: URL) {
+        if url.scheme?.lowercased() == "herdr", url.host?.lowercased() == "first-mate" {
+            guard let request = FirstMateMobileOpenRequest(url: url), hasCompletedSetup else {
+                toastMessage = "This First Mate link is invalid or no machine is configured."
+                return
+            }
+            let generation = connectionGeneration
+            Task {
+                if firstMateFleet.hosts.isEmpty {
+                    firstMateFleet.activate(sources: firstMateSources(), connectionGeneration: generation)
+                    await firstMateFleet.refreshAll()
+                }
+                guard generation == connectionGeneration, !Task.isCancelled else { return }
+                if await firstMateFleet.chat.navigate(request, fleet: firstMateFleet, canControl: { [weak self] in
+                    self?.firstMateCanControl(machineID: $0) ?? false
+                }) {
+                    guard generation == connectionGeneration else { return }
+                    selectedTab = .firstMate
+                } else {
+                    toastMessage = firstMateFleet.chat.routingError ?? "The feature could not be opened on its owning machine."
+                }
+            }
+            return
+        }
         if Self.opensCarMode(url) {
             openCarMode()
             return
@@ -2289,7 +2315,7 @@ final class HerdrAppModel: HudChatTransport {
     /// its workers.
     func observeFirstMate() async {
         guard !Task.isCancelled, hasCompletedSetup else { return }
-        await firstMateFleet.observe(
+        await firstMateDriver.observe(
             sources: firstMateSources(),
             connectionGeneration: connectionGeneration
         )
@@ -2315,7 +2341,12 @@ final class HerdrAppModel: HudChatTransport {
             } else {
                 ServerConfiguration(urlString: machine.urlString, token: connectionToken(for: machine.id))
             }
-            let client = runtimes[machine.id]?.client ?? configuration.map(clientFactory)
+            let client: HerdrAPIClient? = if currentConnection?.generation == connectionGeneration,
+                                            currentConnection?.configuration == configuration {
+                runtimes[machine.id]?.client ?? configuration.map(clientFactory)
+            } else {
+                configuration.map(clientFactory)
+            }
             return FirstMateMobileFleetSource(
                 machine: machine,
                 configuration: configuration,

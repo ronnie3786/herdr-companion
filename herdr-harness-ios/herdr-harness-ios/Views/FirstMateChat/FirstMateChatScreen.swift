@@ -228,13 +228,7 @@ struct FirstMateChatScreen: View {
         }
     }
     private func openMention(_ url: URL) {
-        guard currentOwner, let request = FirstMateMobileOpenRequest(url: url) else { return }
-        let context = store.operationContext
-        let intent = fleet.chat.beginNavigation()
-        Task {
-            guard fleet.store(for: target) === store, store.lifecycle == context.lifecycleIdentity, fleet.chat.isCurrentNavigation(intent) else { return }
-            _ = await fleet.chat.navigate(request, owner: target, intent: intent, fleet: fleet,
-                                          canControl: { model.firstMateCanControl(machineID: $0) })
-        }
+        guard appeared, topmost, model.selectedTab == .firstMate else { return }
+        FirstMateMobileOwnedNavigation.open(url, owner: target, store: store, model: model)
     }
 }

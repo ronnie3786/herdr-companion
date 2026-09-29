@@ -169,6 +169,43 @@ struct FirstMateMobileTranscriptTests {
         let code = FirstMateMentionText.render("`Sample feature`", catalog: catalog)
         #expect(code.runs.allSatisfy { $0.link == nil })
     }
+    @Test("Owned-link failures are visible, but superseded links cannot replace newer feedback")
+    func ownedLinkFeedback() async throws {
+        let model = await demo(), fleet = model.firstMateFleet
+        let row = try #require(fleet.conversations.first { $0.machineID == "demo1" })
+        let owner = FirstMateMobileListPresentation.target(row)
+        #expect(fleet.open(owner))
+        let store = try #require(fleet.store(for: owner))
+        let invalid = try #require(URL(string: "herdr://first-mate?feature_id=one&feature_id=two"))
+        #expect(FirstMateMobileOwnedNavigation.open(invalid, owner: owner, store: store, model: model) == nil)
+        #expect(model.toastMessage == "This First Mate link is invalid.")
+        let unknown = FirstMateMention.url(for: .feature(featureID: "not-in-this-demo"))
+        await FirstMateMobileOwnedNavigation.open(unknown, owner: owner, store: store, model: model)?.value
+        #expect(model.toastMessage == "The feature could not be opened on its owning machine.")
+        let pending = FirstMateMobileOwnedNavigation.open(unknown, owner: owner, store: store, model: model)
+        model.beginAppNavigation(); model.toastMessage = "Newer navigation result"
+        await pending?.value
+        #expect(model.toastMessage == "Newer navigation result")
+        #expect(fleet.selectedTarget == owner)
+    }
+
+    @Test("Owned-link UI navigation keeps its source machine and rejects retired sources")
+    func ownedLinkOwner() async throws {
+        let model = await demo(), fleet = model.firstMateFleet
+        let owner = FirstMateFeatureTarget(machineID: "demo2", featureID: "demo-session-continuity")
+        #expect(fleet.open(owner))
+        let store = try #require(fleet.store(for: owner))
+        let other = try #require(fleet.conversations.first { $0.machineID == owner.machineID && $0.featureID != owner.featureID })
+        let url = FirstMateMention.url(for: .feature(featureID: other.featureID))
+        await FirstMateMobileOwnedNavigation.open(url, owner: owner, store: store, model: model)?.value
+        #expect(fleet.selectedTarget == FirstMateMobileListPresentation.target(other))
+        #expect(model.toastMessage == nil)
+        fleet.activate(sources: [], connectionGeneration: 99)
+        model.toastMessage = "Replacement owner"
+        #expect(FirstMateMobileOwnedNavigation.open(url, owner: owner, store: store, model: model) == nil)
+        #expect(model.toastMessage == "Replacement owner")
+    }
+
     @Test("Mention styling cannot erase explicit origins or invalid security-bearing URL fields")
     func mentionURLPreservation() throws {
         let catalog = FirstMateMentionCatalog(entries: [.init(name: "Feature", emoji: "🧾", status: .blocked, target: .feature(featureID: "feature"))])

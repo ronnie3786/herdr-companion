@@ -1,11 +1,13 @@
-# Herdr Companion 0.70.2-beta.1
+# macOS 0.70.2-beta.1
 
-First Mate now shows consistent execution status across the conversation list, current focus, and workflow. Implementation and test-fixture cleanup use the active worker role instead of being mislabeled as QA. A draft PR link no longer implies readiness for review, and custom workflows no longer show an invented six-step completion percentage.
+## Context compacted cue
 
-The matching companion update detects real progress inside nested Git worktrees, preventing false repeated-handoff blockers. Stopped handoffs settle consistently while preserving their checkpoints.
+- The **Context compacted** cue beside the prompt disappears after the next prompt and stays gone when you reopen the chat, switch panes, or refresh. The transcript’s **Context compacted** entry remains as history. [Issue #121](https://github.com/ronnie3786/herdr-companion/issues/121) · [PR #122](https://github.com/ronnie3786/herdr-companion/pull/122).
 
-First Mate replies no longer receive generated verification inventories. Detailed evidence remains in Verification and Documents. Skims retain a follow-up only when the original reply explicitly contains it, without adding a new action or scope. Older generated appendices are hidden and incompatible saved skims fall back to the cleaned full reply.
+## Companion compatibility
 
-Compatibility: install companion 0.65.2b1 separately on each execution host for the status, recovery, and reply changes. The Mac updater installs only the app. Existing configuration, conversations, and saved sessions are retained; no new API request fields are required.
+This release updates the Mac app only; no companion update is required. The companion server, CLI, and Pi package are published separately and are not installed by the Mac updater.
 
-To check the changes, reopen a First Mate conversation and compare its list badge with Current Focus. Fixture cleanup should show implementation activity, blocked work should stay blocked throughout, and new replies should have no automatic coverage appendix or invented follow-up.
+## Install and verify
+
+With preview updates enabled, install via **Settings → Updates → Check for Updates…**. Compact a chat, send another prompt, and confirm the cue disappears while the transcript entry remains. Reopen the chat, switch panes, or refresh to confirm the cue does not return.

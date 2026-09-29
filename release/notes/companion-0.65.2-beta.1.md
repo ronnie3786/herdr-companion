@@ -7,4 +7,4 @@
 
 Deploy the wheel with freshly built web assets into a new versioned runtime. Preserve private configuration and state, use consistent SQLite backups, update matching CLI and Pi package paths, and keep the previous runtime for rollback. Existing detached First Mate executions must survive the service update. New coordinator turns use the updated instructions; a live executor keeps its existing context until its next turn or handoff.
 
-The companion remains compatible with existing native clients. Mac 0.70.2-beta.1 also updates Current Focus and workflow status labels. The app updater does not install this server package.
+The companion remains compatible with existing native clients. Mac 0.70.3-beta.1 also updates Current Focus and workflow status labels. The app updater does not install this server package.

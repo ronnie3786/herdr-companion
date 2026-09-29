@@ -66,10 +66,10 @@ final class FirstMateChatWindowSession {
         let readState: FirstMateReadState
     }
 
-    /// The last built list. Building renders every preview, and one update
+    /// The last fleet-built list. Building renders every preview, and one update
     /// reads the list several times, so it is rebuilt only when the hosts or
-    /// read markers change. A live key compares the index's own array, which
-    /// is a storage identity check until the index publishes a change.
+    /// read markers change. Local reply progress is projected on every read,
+    /// without caching store state or changing the fleet-built rows.
     @ObservationIgnored private var conversationCache: (key: ConversationCacheKey, value: [FirstMateConversation])?
 
     convenience init(model: HerdrAppModel, shell: HerdrShellState) {
@@ -113,12 +113,36 @@ final class FirstMateChatWindowSession {
 
     var readState: FirstMateReadState { shell.firstMateFleet.readState }
 
+    /// Fleet rows with window-local reply progress, including sends before
+    /// the fleet poll catches up. Reading existing stores here observes their
+    /// outgoing messages and snapshots without creating a store for every row.
     var conversations: [FirstMateConversation] {
         let key = ConversationCacheKey(hosts: hosts, readState: readState)
-        if let cache = conversationCache, cache.key == key { return cache.value }
-        let value = FirstMateConversationList.build(hosts: key.hosts, readState: key.readState)
-        conversationCache = (key, value)
-        return value
+        let value: [FirstMateConversation]
+        if let cache = conversationCache, cache.key == key {
+            value = cache.value
+        } else {
+            value = FirstMateConversationList.build(hosts: key.hosts, readState: key.readState)
+            conversationCache = (key, value)
+        }
+        return value.map { conversation in
+            let localPending: Bool
+            if let store = stores[conversation.machineID]?.store {
+                let featureID = conversation.featureID
+                let hostUpdatedAt = key.hosts.first { $0.machineID == conversation.machineID }?
+                    .features.first { $0.id == featureID }?.updatedAt
+                localPending = FirstMateReplyProgress.isLocalReplyPending(
+                    outgoing: store.outgoingMessages(for: featureID),
+                    isAwaitingSendResolution: store.isAwaitingSendResolution(featureID: featureID),
+                    snapshot: store.snapshots[featureID],
+                    hostFeatureUpdatedAt: hostUpdatedAt,
+                    fleetLatestFirstMateMessageID: conversation.latestFirstMateMessageID
+                )
+            } else {
+                localPending = false
+            }
+            return FirstMateReplyProgress.presenting(conversation, workingOnReply: conversation.isWorkingOnReply || localPending)
+        }
     }
 
     /// Title, label, preview, or machine name, ignoring case.
@@ -133,7 +157,8 @@ final class FirstMateChatWindowSession {
         }
     }
 
-    /// ``FirstMateBadge/count(hosts:readState:)``, taken from the cached list.
+    /// The window's need-you count, after local reply progress is applied.
+    /// The process-wide Dock badge still uses the unprojected fleet list.
     var badgeCount: Int { conversations.count(where: \.showsDot) }
 
     /// Whether conversations come from more than one machine, so headers name it.

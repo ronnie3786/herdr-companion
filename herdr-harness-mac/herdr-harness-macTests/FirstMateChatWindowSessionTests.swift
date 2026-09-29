@@ -158,6 +158,151 @@ struct FirstMateChatWindowSessionTests {
         #expect(shell.firstMateFleet.search.isEmpty, "The main window's fleet search is untouched")
     }
 
+    @Test("Submitting a prompt shows the row as working until First Mate replies")
+    func submittedPromptProgress() async throws {
+        let (shell, session, client, store, lifecycle) = try await blockedConversation()
+        let id = FirstMateFleetFeatureID(machineID: "alpha", featureID: "f1")
+        let original = try #require(session.conversations.first { $0.id == id })
+        #expect(original.hudStatus == .blocked)
+        #expect(original.showsDot)
+        #expect(session.badgeCount == 1)
+
+        var response = try #require(store.snapshots["f1"])
+        response.messages.append(FirstMateMessage(id: "um_2", featureID: "f1", role: "user",
+                                                  text: "Synthetic direction", status: "processing",
+                                                  createdAt: "2030-01-01T10:01:00Z"))
+        client.snapshots["f1"] = response
+        let gate = ChatTestGate()
+        client.beforeSend = { await gate.wait() }
+        let handle = try #require(store.beginOutgoingMessage("Synthetic direction", expectedContext: store.operationContext))
+        let send = Task { await store.completeOutgoingMessage(handle) }
+        try await ChatFixtures.waitUntil("send reached companion") { client.sent.count == 1 }
+        let sending = try #require(session.conversations.first { $0.id == id })
+        #expect(sending.hudStatus == .working)
+        #expect(sending.isWorkingOnReply)
+        #expect(!sending.showsDot)
+        #expect(session.badgeCount == 0)
+        #expect(FirstMateChatSidebar.subtitle(featureCount: 1, needCount: session.badgeCount) == "1 feature, 0 need you")
+        #expect(shell.firstMateFleet.badgeCount == 1, "The shared fleet badge remains authoritative")
+
+        await gate.open()
+        _ = await send.value
+        let bridged = try #require(session.conversations.first { $0.id == id })
+        #expect(bridged.hudStatus == .working)
+        #expect(bridged.isWorkingOnReply)
+        #expect(!bridged.showsDot)
+        #expect(store.snapshots["f1"]?.messages.last?.id == "um_2")
+
+        var fleet = try #require(try client.fleet.get().first)
+        fleet.workingOnReply = true
+        client.fleet = .success([fleet])
+        await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+        #expect(session.conversations.first { $0.id == id }?.hudStatus == .working)
+        #expect(session.badgeCount == 0)
+
+        // A different selected chat must not be required for the original
+        // feature's local progress to retire on the next fleet reply.
+        session.select(.lead)
+        var feature = try #require(try client.features.get().first)
+        feature.status = "awaiting_direction"
+        feature.updatedAt = "2030-01-01T10:05:00Z"
+        client.features = .success([feature])
+        fleet.status = "awaiting_direction"
+        fleet.hudStatus = .turn
+        fleet.latestFirstMateMessageID = "fmm_3"
+        fleet.unread = true
+        fleet.workingOnReply = false
+        fleet.activityAt = "2030-01-01T10:05:00Z"
+        client.fleet = .success([fleet])
+        await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+        let replied = try #require(session.conversations.first { $0.id == id })
+        #expect(replied.hudStatus == .turn)
+        #expect(!replied.isWorkingOnReply)
+        #expect(replied.showsDot)
+        #expect(session.badgeCount == 1)
+        #expect(store.snapshots["f1"]?.messages.last?.id == "um_2", "The unselected store still holds the old echo")
+    }
+
+    @Test("A rejected send restores the waiting badge at once")
+    func rejectedPrompt() async throws {
+        let (_, session, client, store, _) = try await blockedConversation()
+        client.beforeSend = { throw APIError.server(status: 403, message: "Synthetic rejection") }
+        let handle = try #require(store.beginOutgoingMessage("Synthetic direction", expectedContext: store.operationContext))
+        #expect(session.conversations.first { $0.featureID == "f1" }?.hudStatus == .working)
+        _ = await store.completeOutgoingMessage(handle)
+        #expect(store.sendFailure(for: "f1") != nil)
+        let row = try #require(session.conversations.first { $0.featureID == "f1" })
+        #expect(row.hudStatus == .blocked)
+        #expect(row.showsDot)
+        #expect(session.badgeCount == 1)
+    }
+
+    @Test("A conversation without a window store is never projected")
+    func fleetWithoutWindowStore() async throws {
+        let shell = ChatFixtures.shell()
+        let client = SyntheticChatFleetClient(
+            features: [ChatFixtures.feature("f1", status: "blocked")],
+            fleet: [ChatFixtures.entry("f1", hud: .blocked, latestFirstMate: "fmm_1")]
+        )
+        let lifecycle = shell.firstMateFleet.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1)
+        await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+        let state = StoreTestState()
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: false), shell: shell,
+                                                 configuration: { _ in nil }, makeClient: { _ in
+                                                     state.clientsMade += 1
+                                                     return SyntheticChatFleetClient()
+                                                 })
+        let expected = FirstMateConversationList.build(hosts: shell.firstMateFleet.hosts, readState: shell.firstMateFleet.readState)
+        #expect(session.conversations == expected)
+        #expect(session.conversations == expected, "A cached read must not create a store either")
+        #expect(state.clientsMade == 0)
+        #expect(session.badgeCount == shell.firstMateFleet.badgeCount)
+
+        // The fleet's own reply flag still changes the row, without creating
+        // a local store or changing the process-wide badge.
+        var entry = try #require(try client.fleet.get().first)
+        entry.workingOnReply = true
+        client.fleet = .success([entry])
+        await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+        let working = try #require(session.conversations.first)
+        #expect(working.hudStatus == .working)
+        #expect(working.isWorkingOnReply)
+        #expect(!working.showsDot)
+        #expect(session.badgeCount == 0)
+        #expect(shell.firstMateFleet.badgeCount == 1)
+        #expect(state.clientsMade == 0)
+    }
+
+    private func blockedConversation() async throws -> (HerdrShellState, FirstMateChatWindowSession,
+                                                        SyntheticChatFleetClient, FirstMateStore, Int) {
+        let shell = ChatFixtures.shell()
+        var feature = ChatFixtures.feature("f1", title: "Receipt export", status: "blocked")
+        feature.updatedAt = "2030-01-01T10:00:00Z"
+        let snapshot = FirstMateSnapshot(feature: feature, messages: [
+            FirstMateMessage(id: "fmm_1", featureID: "f1", role: "assistant", text: "Awaiting direction",
+                             status: "delivered", createdAt: "2030-01-01T10:00:00Z")
+        ])
+        let client = SyntheticChatFleetClient(
+            features: [feature],
+            fleet: [FirstMateFleetEntry(featureID: "f1", title: feature.title, status: "blocked",
+                                        hudStatus: .blocked, latestFirstMateMessageID: "fmm_1", unread: true,
+                                        activityAt: "2030-01-01T10:00:00Z")]
+        )
+        client.snapshots["f1"] = snapshot
+        let lifecycle = shell.firstMateFleet.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1)
+        await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+        let session = FirstMateChatWindowSession(
+            model: ChatFixtures.model(demo: false), shell: shell,
+            configuration: { $0 == "alpha" ? ServerConfiguration(urlString: "https://alpha.example.invalid", token: "synthetic") : nil },
+            makeClient: { _ in client }
+        )
+        session.select(.feature(FirstMateFleetFeatureID(machineID: "alpha", featureID: "f1")))
+        let store = try #require(session.selectedStore)
+        await store.refresh()
+        #expect(store.snapshots["f1"]?.messages.map(\.id) == ["fmm_1"])
+        return (shell, session, client, store, lifecycle)
+    }
+
     @Test("A demo chat read in a key window at the bottom clears its dot locally")
     func demoMarkRead() async throws {
         let shell = ChatFixtures.shell()

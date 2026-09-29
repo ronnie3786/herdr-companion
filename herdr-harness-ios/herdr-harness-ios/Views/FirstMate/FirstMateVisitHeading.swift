@@ -3,6 +3,7 @@ import SwiftUI
 struct FirstMateVisitHeading: View {
     let visit: FirstMateVisit
     var isCurrent = false
+    var displayStatus: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -10,13 +11,13 @@ struct FirstMateVisitHeading: View {
                 .fixedSize(horizontal: false, vertical: true)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
-                    FirstMateStatusLabel(status: visit.status)
+                    FirstMateStatusLabel(status: displayStatus ?? visit.status)
                         .fixedSize(horizontal: true, vertical: true)
                     Text("Revision \(visit.revision)").font(.footnote).foregroundStyle(.secondary)
                         .fixedSize(horizontal: true, vertical: true)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    FirstMateStatusLabel(status: visit.status)
+                    FirstMateStatusLabel(status: displayStatus ?? visit.status)
                     Text("Revision \(visit.revision)").font(.footnote).foregroundStyle(.secondary)
                 }
             }

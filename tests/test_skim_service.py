@@ -32,7 +32,7 @@ REPLY = "\n\n".join([
 OUTPUT = "\n".join([
     "status: answer",
     "say: Checkout [reserves stock first](s1), so a [declined card](s3) keeps the [SKU held](s2) until cleanup.",
-    "ask: Want me to [add the rollback](s4-s5)?",
+    "ask: Want me to [add the rollback and a test](s6) that declines a card?",
 ])
 QUESTION = "Why do declined cards keep stock reserved?"
 
@@ -104,7 +104,7 @@ class HookSelectionTests(SkimFixture, unittest.TestCase):
         key = self.skim_row(long_reply["id"])
         self.assertEqual((key["format"], key["prompt_version"], key["segmenter_version"], key["skim_version"],
                           key["model"], key["thinking"]),
-                         ("breath_tight", "skim-v2", 1, 1, "synthetic-provider/fast-model", "low"))
+                         ("breath_tight", "skim-v3", 1, 1, "synthetic-provider/fast-model", "low"))
 
     def test_background_turns_and_disabled_skims_record_nothing(self):
         self.service(self.manager(), enabled=False)
@@ -140,7 +140,7 @@ class ProjectionTests(SkimFixture, unittest.TestCase):
         reply = self.reply()
         board = self.store.board(self.feature_id)
         message = next(m for m in board["messages"] if m["id"] == reply["id"])
-        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_tight", "prompt_version": "skim-v2",
+        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_tight", "prompt_version": "skim-v3",
                                            "segmenter_version": 1, "skim_version": 1})
         pending_version = board["version"]
         self.assertTrue(self.store.board(self.feature_id, if_version=pending_version)["unchanged"])

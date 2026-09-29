@@ -117,18 +117,18 @@ Needs-you means `blocked`, `turn` and `ready`. Put the rule for splitting `turn`
 ### Steps (Plan, Build, Review, QA, PR, Merge)
 If the feature has a `work_item_id`, map its Active Work stages:
 
-| Active Work stage | HUD step |
-|---|---|
-| `start-ticket`, `plan` | Plan (0) |
-| `implement` | Build (1) |
-| `architect-code-review` | Review (2) |
-| `proof` | QA (3) |
-| `code-review-pre-pr`, `pr` | PR (4) |
-| `pr-triage` | Merge (5) |
+The badge follows the current visit's active assignment roles: planner means
+Planning, coder/implementer means Building, reviewer means In review, and an
+explicit qa role means In QA. Mixed or custom roles have no single phase and
+show Working. A new human message or active coordinator clears the phase while
+direction is being interpreted. Without active assignments, only an exact
+canonical stage name identifies a phase. Free-form keys such as
+`test-fixture-cleanup`, `phase-3`, and `code-review-pre-pr` remain unknown.
 
-`step_fraction` is the share of that HUD step's stages that are complete. `percent = round((step_index + step_fraction) / 6 × 100)`.
-
-With no work item, map `currentVisit.stageKey` by keyword (plan, implement or build, review, proof or qa or test, pr, merge). If no keyword matches, send `null`.
+A phase does not establish a six-stage pipeline or completion percentage.
+`step_fraction` and `percent` are null until there is evidence for progress;
+the native header names the phase without saying "Step N of 6". Completed means
+Complete, not Merged. A saved PR URL never establishes draft or review readiness.
 
 ---
 

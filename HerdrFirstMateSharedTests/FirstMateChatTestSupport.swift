@@ -287,13 +287,14 @@ enum ChatFixtures {
         _ title: String,
         hud: FirstMateHudStatus,
         step: Int? = nil,
+        featureStatus: String = "running",
         activityAt: Date? = nil,
         unread: Bool = false
     ) -> FirstMateConversation {
         FirstMateConversation(
             id: FirstMateFleetFeatureID(machineID: "local", featureID: title), machineID: "local", machineName: "Local Mac",
             featureID: title, title: title, label: title, isUserNamed: false, emoji: "🧪", isUserEmoji: false,
-            hudStatus: hud, featureStatus: "running",
+            hudStatus: hud, featureStatus: featureStatus,
             stepIndex: step, stepFraction: nil, now: nil, previewText: "", previewIsFromUser: false,
             isWorkingOnReply: false, activityAt: activityAt, latestFirstMateMessageID: nil, isUnread: unread, isArchived: false
         )

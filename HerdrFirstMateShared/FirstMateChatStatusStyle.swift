@@ -46,10 +46,22 @@ enum FirstMateChatStatusStyle {
     /// The row's word: a working feature shows its step ("In review"), or
     /// "Working" when the step is unknown.
     static func word(for conversation: FirstMateConversation) -> String {
+        if let execution = executionLabel(for: conversation) { return execution }
         if conversation.hudStatus == .working, let step = conversation.stepIndex {
             return FirstMateChatSteps.doing[step]
         }
         return label(for: conversation.hudStatus)
+    }
+
+    static func executionLabel(for conversation: FirstMateConversation) -> String? {
+        switch conversation.featureStatus {
+        case "blocked": return "Blocked"
+        case "paused": return "Paused"
+        case "cancelled": return "Cancelled"
+        case "recovering" where conversation.hudStatus == .working: return "Recovering"
+        case "coordinating" where conversation.hudStatus == .working: return "Responding"
+        default: return nil
+        }
     }
 
     /// Quiet words use tertiary ink at weight 500.
@@ -57,10 +69,10 @@ enum FirstMateChatStatusStyle {
         [.idle, .done, .unknown].contains(status)
     }
 
-    /// "Step 4 of 6, QA", "All six steps done", or nil when the step is unknown.
+    /// The current phase name, without inventing a fixed pipeline or completion count.
     static func stepText(for conversation: FirstMateConversation) -> String? {
-        if conversation.hudStatus == .done { return "All six steps done" }
+        if conversation.hudStatus == .done { return nil }
         guard let step = conversation.stepIndex else { return nil }
-        return "Step \(step + 1) of \(FirstMateChatSteps.names.count), \(FirstMateChatSteps.names[step])"
+        return FirstMateChatSteps.names[step]
     }
 }

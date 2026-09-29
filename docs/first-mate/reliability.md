@@ -216,3 +216,22 @@ The storage-fault suite, native contract/render tests, Pi extension tests, and
 existing First Mate store/runtime/acceptance suites cover the integration. Tests
 use temporary synthetic repositories/providers; they never fill a real volume,
 restart a production backend, or contact a real model/notification provider.
+
+## Blocked handoffs and status presentation
+
+After a verified predecessor stop, exhausting the handoff repair allowance marks
+the assignment blocked, retains its session and checkpoint, and finalizes its
+execution spool. An upgrade reconciles older blocked features whose stopped
+assignment was left handoff pending. A held writer lock prevents reconciliation;
+no automatic retry or new human authorization is inferred.
+
+The current unfinished stage displays the feature's blocked, paused, recovering,
+or awaiting-direction state across native and web views. Historical completed
+stages keep their recorded result. Internal visit state remains resumable.
+
+Progress inspection includes nested Git repositories and linked worktrees inside
+the managed checkout. Git reports these as a directory entry, so inspecting only
+the parent can miss real edits and commits. The detector now reads each exact
+nested root with shared byte, file-count, repository-count, and time bounds.
+Symlink targets outside the checkout are never followed. Existing writer-stop,
+effect-receipt, backup, and human-direction gates still apply.

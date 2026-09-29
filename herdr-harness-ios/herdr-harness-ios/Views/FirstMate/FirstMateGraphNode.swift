@@ -24,7 +24,7 @@ struct FirstMateGraphNode: View {
                             Text("CURRENT STEP").font(.footnote.weight(.semibold))
                                 .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
                         }
-                        FirstMateVisitHeading(visit: visit, isCurrent: isCurrent)
+                        FirstMateVisitHeading(visit: visit, isCurrent: isCurrent, displayStatus: snapshot.displayStatus(for: visit))
                     }
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.subheadline.weight(.semibold))

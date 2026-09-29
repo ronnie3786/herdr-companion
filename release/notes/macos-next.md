@@ -10,6 +10,7 @@
 ## First Mate optimistic chat
 
 - Enter, Send, and First Mate dictation Stop now clear a sendable prompt immediately in the main Mac screen, standalone feature/lead window, and shared HUD lead conversation. Your outgoing bubble says **Sending…** before First Mate's working animation, then reconciles to the saved message without a duplicate or a disappearing accepted prompt.
+- In the standalone First Mate chat window, sending a prompt into a **Blocked**, **Your turn**, or **Ready for review** chat immediately replaces its sidebar waiting word with the breathing working word, a “typing…” preview, and no unread dot, and removes it from the window's “need you” count. The waiting word and dot return when First Mate replies; a rejected send restores them at once. No companion update is required: the Mac feed installs only the app.
 - A rejected or unconfirmed send stops speculative working and keeps a red error with explicit retry and copy recovery. Untouched composer content returns; a newer draft, including the same text typed again, is not overwritten or cleared by a late response. Retry reuses the original payload, request identity, and lead context; it never happens automatically. Refresh notices remain separate.
 - This is an app-only presentation fix using the existing authenticated First Mate API, including older response envelopes. No companion update is required; pane Chat, iOS, and web submission paths are unchanged. The Mac updater does not install companion packages.
 

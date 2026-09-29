@@ -30,7 +30,9 @@ struct AgentBoardContent: Equatable, Sendable {
 
     struct NoteRow: Equatable, Sendable, Identifiable {
         let id: String
+        /// Exact journal source; the Overview renders its Markdown blocks.
         let text: String
+        let blocks: [AgentBoardProseBlock]
         /// Consecutive journal notes collapse into one quiet line.
         let count: Int
         let date: Date?
@@ -65,7 +67,9 @@ struct AgentBoardContent: Equatable, Sendable {
     var workItemID: String?
     var status: String
     var awaitingTurn: Bool
+    /// Exact goal source plus blocks prepared away from the main actor.
     var goal: String
+    var goalBlocks: [AgentBoardProseBlock]
     var acceptsMessages: Bool
     var stageTitle: String?
     var stageIndex: Int?
@@ -124,7 +128,8 @@ extension AgentBoardContent {
             workItemID: feature.workItemID,
             status: feature.status,
             awaitingTurn: summary?.awaitingTurn == true,
-            goal: AgentBoardProse.plainText(fromMarkdown: feature.goal),
+            goal: feature.goal,
+            goalBlocks: AgentBoardProse.blocks(from: feature.goal),
             acceptsMessages: !feature.isArchived && !["completed", "cancelled"].contains(feature.status),
             stageTitle: summary?.currentStageTitle ?? currentVisit?.title,
             stageIndex: stageIndex,
@@ -177,7 +182,7 @@ extension AgentBoardContent {
     private static func note(_ event: FirstMateEvent) -> NoteRow? {
         let summary = event.summary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty, event.isMilestone else { return nil }
-        return NoteRow(id: event.id, text: AgentBoardProse.plainText(fromMarkdown: summary), count: 1,
+        return NoteRow(id: event.id, text: summary, blocks: AgentBoardProse.blocks(from: summary), count: 1,
                        date: HerdrTimestamp.date(from: event.createdAt))
     }
 
@@ -185,7 +190,13 @@ extension AgentBoardContent {
         var result: [NoteRow] = []
         for note in notes {
             if let last = result.last, last.text == note.text {
-                result[result.count - 1] = NoteRow(id: last.id, text: note.text, count: last.count + note.count, date: note.date)
+                result[result.count - 1] = NoteRow(
+                    id: last.id,
+                    text: note.text,
+                    blocks: note.blocks,
+                    count: last.count + note.count,
+                    date: note.date
+                )
             } else {
                 result.append(note)
             }

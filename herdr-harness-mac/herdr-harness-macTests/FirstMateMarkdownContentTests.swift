@@ -75,6 +75,40 @@ struct FirstMateMarkdownContentTests {
         }
     }
 
+    @Test("Overview and workflow prose host structured Markdown in both appearances")
+    func hostsOverviewAndWorkflowMarkdown() {
+        let goal = """
+        ## Outcome
+
+        Keep **saved work** readable.
+
+        - Preserve [review links](https://example.test/review)
+        - Show `inline code`
+        """
+        let progress = FirstMateProgress(
+            summary: "### Completed\n\n- Parsed the **fixture**\n- Kept `code` visible",
+            nextAction: "Run the [focused check](https://example.test/check).",
+            evidence: "`2` synthetic files changed.",
+            recordedAt: "2030-01-01T12:00:00Z",
+            waitUntilEpoch: nil
+        )
+
+        for scheme in [ColorScheme.light, .dark] {
+            let hosting = NSHostingView(
+                rootView: VStack(alignment: .leading, spacing: 20) {
+                    FirstMateOverviewGoalView(source: goal)
+                    FirstMateProgressView(progress: progress)
+                }
+                .environment(\.colorScheme, scheme)
+                .environment(\.herdrFontScale, .xxxLarge)
+                .frame(width: 360)
+            )
+            hosting.layoutSubtreeIfNeeded()
+            #expect(hosting.fittingSize.width > 0)
+            #expect(hosting.fittingSize.height > 260)
+        }
+    }
+
     @Test("First Mate prose has readable contrast in both appearances")
     func paletteContrast() throws {
         for scheme in [ColorScheme.light, .dark] {

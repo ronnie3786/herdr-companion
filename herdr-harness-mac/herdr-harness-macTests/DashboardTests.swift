@@ -125,6 +125,38 @@ struct DashboardTests {
         if case .notice = blocks[5] {} else { Issue.record("table notice") }
     }
 
+    @Test("Overview retains goal and journal Markdown as prepared blocks")
+    func overviewMarkdown() {
+        var snapshot = FirstMateDemo.features(step: 2)[0]
+        let source = "## Outcome\n\nKeep **saved work** readable.\n\n- Preserve links\n- Show `code`"
+        snapshot.feature.goal = source
+        snapshot.events = [
+            FirstMateEvent(
+                sequence: 1,
+                id: "synthetic-note",
+                featureID: snapshot.feature.id,
+                type: "coordinator.note",
+                summary: "**Review:** keep `fixtures` synthetic.",
+                createdAt: "2030-01-01T12:00:00Z"
+            )
+        ]
+
+        let content = AgentBoardContent.build(from: .adapting(snapshot))
+        #expect(content.goal == source)
+        #expect(content.goalBlocks.count == 4)
+        if case .heading(_, let heading) = content.goalBlocks[0] {
+            #expect(heading == "Outcome")
+        } else {
+            Issue.record("goal heading")
+        }
+        #expect(content.latestNotes.first?.text == "**Review:** keep `fixtures` synthetic.")
+        if case .paragraph(_, let note)? = content.latestNotes.first?.blocks.first {
+            #expect(String(note.characters) == "Review: keep fixtures synthetic.")
+        } else {
+            Issue.record("journal paragraph")
+        }
+    }
+
     @Test("Agents list running work first and decode role text")
     func agentOrdering() {
         var snapshot = FirstMateDemo.features(step: 2)[0]

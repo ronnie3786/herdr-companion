@@ -5,12 +5,15 @@ struct FirstMateProgressView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let summary = progress.summary { Text(summary).herdrFont(size: HerdrTheme.TextSize.small) }
-            if let nextAction = progress.nextAction {
-                Text("Next: \(nextAction)").herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
+            if let summary = progress.summary, !summary.isEmpty {
+                FirstMateMarkdownContentView(source: summary)
+                    .environment(\.firstMateMarkdownDensity, .compact)
             }
-            if let evidence = progress.evidence {
-                Text("Worker-reported evidence: \(evidence)").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
+            if let nextAction = progress.nextAction, !nextAction.isEmpty {
+                FirstMateProgressMarkdownField(label: "Next", source: nextAction, emphasis: true)
+            }
+            if let evidence = progress.evidence, !evidence.isEmpty {
+                FirstMateProgressMarkdownField(label: "Worker-reported evidence", source: evidence)
             }
             if let recordedAt = progress.recordedAt {
                 Text("Checkpoint: \(recordedAt)").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)

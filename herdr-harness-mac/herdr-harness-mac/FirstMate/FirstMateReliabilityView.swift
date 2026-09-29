@@ -48,7 +48,8 @@ struct FirstMateReliabilityView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(history.prefix(30)) { event in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(event.summary).herdrFont(size: HerdrTheme.TextSize.small)
+                                FirstMateMarkdownContentView(source: event.summary)
+                                    .environment(\.firstMateMarkdownDensity, .compact)
                                 Text(event.createdAt).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                             }
                         }

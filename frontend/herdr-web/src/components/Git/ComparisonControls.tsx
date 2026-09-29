@@ -23,7 +23,7 @@ export function ComparisonControls({ baseline, baselineLabel, commits, before, a
       <select aria-label="Later revision" value={after} disabled={disabled}
         onChange={(event) => onChange(before, event.target.value)}>
         {revisions.filter((sha) => isComparisonAncestor(before, sha, baseline, commits)).map((sha) => <option key={sha} value={sha}>{label(sha)}</option>)}
-        <option value={WORKING_TREE}>Uncommitted changes</option>
+        <option value={WORKING_TREE}>Working tree (including uncommitted changes)</option>
       </select>
     </label>
   </div>;

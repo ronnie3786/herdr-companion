@@ -84,7 +84,72 @@ class FirstMateGitServiceTests(unittest.TestCase):
     def test_catalog_has_project_and_only_recorded_owned_assignment_worktrees(self):
         response = self.service.first_mate_git_workspaces("fmf-one")
         self.assertEqual([item["id"] for item in response["workspaces"]], ["project", "fma-worker", "fma-removed"])
-        self.assertEqual(response["workspaces"][0]["path"], str(self.project))
+        self.assertEqual(response["workspaces"][0]["path"], str(self.project.resolve()))
+
+    def tracked_checkout(self, branch, name):
+        path = Path(self.temp.name) / name
+        self._git(self.project, "worktree", "add", "-b", branch, str(path))
+        self._git(self.project, "update-ref", "refs/remotes/origin/" + branch, "HEAD")
+        self._git(path, "branch", "--set-upstream-to", "origin/" + branch)
+        return path
+
+    def prepare_feature_repository(self):
+        self._git(self.project, "remote", "add", "origin", "https://example.test/team/repo.git")
+        self._git(self.project, "update-ref", "refs/remotes/origin/develop", "HEAD")
+
+    def test_catalog_selects_actual_tracked_branch_and_collapses_assignment_and_path_aliases(self):
+        self.prepare_feature_repository()
+        feature_path = self.tracked_checkout("feature/paste", "feature-checkout")
+        alias = Path(self.temp.name) / "alias"
+        alias.symlink_to(feature_path, target_is_directory=True)
+        self.assignments.extend([
+            {"id": "feature-worker", "feature_id": "fmf-one", "title": "Old task label",
+             "metadata": {"worktree_path": str(feature_path), "branch": "stale-recorded-branch"}},
+            {"id": "reviewer", "feature_id": "fmf-one", "title": "Review",
+             "metadata": {"worktree_path": str(alias)}},
+            {"id": "researcher", "feature_id": "fmf-one", "title": "Latest task",
+             "metadata": {"worktree_path": str(self.project)}},
+        ])
+        response = self.service.first_mate_git_workspaces("fmf-one")
+        self.assertEqual(response["default_workspace_id"], "feature-worker")
+        row = next(w for w in response["workspaces"] if w["id"] == "feature-worker")
+        self.assertEqual(row["aliases"], ["reviewer"])
+        self.assertEqual(row["branch"], "feature/paste")
+        self.assertEqual(row["title"], "Feature branch · feature/paste")
+        self.assertEqual(response["workspaces"][0]["aliases"], ["researcher"])
+        # Existing links continue to resolve their exact assignment route.
+        self.assertEqual(self.service.first_mate_git_status("fmf-one", "reviewer")["root_path"], str(feature_path.resolve()))
+
+    def test_multiple_tracked_feature_branches_require_a_choice_without_guessing_newest(self):
+        self.prepare_feature_repository()
+        for number in (1, 2):
+            path = self.tracked_checkout("feature/" + str(number), "tracked-" + str(number))
+            self.assignments.append({"id": "tracked-" + str(number), "feature_id": "fmf-one",
+                                     "title": "Canonical latest final", "metadata": {"worktree_path": str(path)}})
+        response = self.service.first_mate_git_workspaces("fmf-one")
+        self.assertIsNone(response["default_workspace_id"])
+        self.assertIn("Choose", response["selection_message"])
+
+    def test_tracking_target_branch_is_not_feature_evidence_and_missing_worktrees_remain_visible(self):
+        self.prepare_feature_repository()
+        path = Path(self.temp.name) / "base-checkout"
+        self._git(self.project, "worktree", "add", "-b", "research", str(path))
+        self._git(path, "branch", "--set-upstream-to", "origin/develop")
+        self.assignments.append({"id": "research", "feature_id": "fmf-one", "title": "Research",
+                                 "metadata": {"worktree_path": str(path)}})
+        response = self.service.first_mate_git_workspaces("fmf-one")
+        self.assertIsNone(response["default_workspace_id"])
+        removed = next(w for w in response["workspaces"] if w["id"] == "fma-removed")
+        self.assertFalse(removed["available"])
+
+    def test_only_project_and_single_isolated_checkout_have_deterministic_defaults(self):
+        self.assignments.clear()
+        self.assertEqual(self.service.first_mate_git_workspaces("fmf-one")["default_workspace_id"], "project")
+        isolated = Path(self.temp.name) / "isolated"
+        self._git(self.project, "worktree", "add", "-b", "implementation", str(isolated))
+        self.assignments.append({"id": "implementation", "feature_id": "fmf-one", "title": "Build",
+                                 "metadata": {"worktree_path": str(isolated)}})
+        self.assertEqual(self.service.first_mate_git_workspaces("fmf-one")["default_workspace_id"], "implementation")
 
     def test_project_status_needs_no_herdr_terminal_or_pane(self):
         status = self.service.first_mate_git_status("fmf-one", "project")

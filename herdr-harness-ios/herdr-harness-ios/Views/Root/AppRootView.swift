@@ -128,7 +128,7 @@ struct AppRootView: View {
     }
 
     private var appTabs: some View {
-        TabView(selection: $model.selectedTab) {
+        TabView(selection: Binding(get: { model.selectedTab }, set: { model.selectTab($0) })) {
             Tab("First Mate", systemImage: "sailboat", value: .firstMate) {
                 FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
             }

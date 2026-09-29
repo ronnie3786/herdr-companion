@@ -82,7 +82,9 @@ phone explicitly asks for a server-URL link or opening the feature on its machin
 without guessing a first responder or silently queuing a retry. Exact-owner links
 remain independent of other hosts' discovery. One navigation intent is established
 before app bootstrap; newer links or manual selections fence older results and
-errors. Names, roster ordering and lead metadata never establish identity. Invalid/duplicate/security-bearing fields are rejected; pane
+errors. Pane URLs/selections, tab selection, car mode and explicit in-app navigation
+advance the same intent. Background refresh/recovery does not create a new user
+intent or let an older pending pane displace a newer destination. Names, roster ordering and lead metadata never establish identity. Invalid/duplicate/security-bearing fields are rejected; pane
 and car links retain their existing behavior. Valid agent links open the current
 Agents inspector; pushed info/highlighting arrives in Phases 3/6.
 

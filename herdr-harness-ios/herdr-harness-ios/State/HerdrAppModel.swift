@@ -108,6 +108,7 @@ final class HerdrAppModel: HudChatTransport {
     @ObservationIgnored private var runtimes: [String: MachineRuntime] = [:]
     @ObservationIgnored private var pendingPushToken: String?
     @ObservationIgnored private var pendingPaneID: String?
+    @ObservationIgnored private var pendingPaneNavigationIntent: UUID?
     @ObservationIgnored private var pendingLocalAlertIDs: Set<String> = []
     /// Scoped pane IDs whose read acknowledgement has not yet been confirmed by
     /// the server. A refresh that overlaps the POST must not resurrect the
@@ -716,9 +717,21 @@ final class HerdrAppModel: HudChatTransport {
         userDefaults.set(modelID, forKey: "herdr.agent.model")
     }
 
+    /// Only explicit user navigation advances this identity. Refreshes and
+    /// ordinary interactions must not cancel a destination being recovered.
+    @discardableResult
+    func beginAppNavigation() -> UUID { firstMateFleet.chat.beginNavigation() }
+
+    /// User-driven tab selection, distinct from applying a completed route.
+    func selectTab(_ tab: AppTab) {
+        beginAppNavigation()
+        selectedTab = tab
+    }
+
     // MARK: - Car mode
 
     func openCarMode() {
+        beginAppNavigation()
         noteUserInteraction()
         isSidebarPresented = false
         isCarModePresented = true
@@ -1597,12 +1610,15 @@ final class HerdrAppModel: HudChatTransport {
     func openPane(id paneID: String) {
         noteUserInteraction()
         guard !paneID.isEmpty else { return }
+        let intent = beginAppNavigation()
         guard let pane = pane(id: paneID) ?? resolveRawPane(id: paneID) else {
             pendingPaneID = paneID
+            pendingPaneNavigationIntent = intent
             return
         }
         pendingPaneID = nil
-        route(to: pane)
+        pendingPaneNavigationIntent = nil
+        route(to: pane, navigationIntent: intent)
     }
 
     func toggleSidebarSection(_ workspaceID: String) {
@@ -2195,13 +2211,22 @@ final class HerdrAppModel: HudChatTransport {
         paneDrafts.reconcile(machineID: machineID, validPaneIDs: validPaneIDs)
     }
 
-    private func resolvePendingPaneRoute() {
-        guard let pendingPaneID, let pane = resolveRawPane(id: pendingPaneID) else { return }
+    /// Called after inventory refresh; internal for deterministic recovery tests.
+    func resolvePendingPaneRoute() {
+        guard let pendingPaneID else { return }
+        guard let intent = pendingPaneNavigationIntent, firstMateFleet.chat.isCurrentNavigation(intent) else {
+            self.pendingPaneID = nil
+            pendingPaneNavigationIntent = nil
+            return
+        }
+        guard let pane = resolveRawPane(id: pendingPaneID) else { return }
         self.pendingPaneID = nil
-        route(to: pane)
+        pendingPaneNavigationIntent = nil
+        route(to: pane, navigationIntent: intent)
     }
 
-    private func route(to pane: HerdrPane) {
+    private func route(to pane: HerdrPane, navigationIntent: UUID) {
+        guard firstMateFleet.chat.isCurrentNavigation(navigationIntent) else { return }
         isSidebarPresented = false
         selectedTab = .workspaces
         selectedWorkspaceID = workspace(containing: pane)?.id

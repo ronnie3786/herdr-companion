@@ -9,7 +9,7 @@ struct AttentionStrip: View {
             HStack {
                 HerdrSectionLabel(title: "attention", detail: "\(model.attentionPanes.count)")
                 Spacer()
-                Button("open queue") { model.selectedTab = .attention }
+                Button("open queue") { model.selectTab(.attention) }
                     .font(.subheadline.monospaced().bold())
             }
 

@@ -173,6 +173,87 @@ struct FirstMateAppNavigationReviewTests {
         #expect(model.toastMessage == error)
     }
 
+    @Test("Newer app-wide navigation owns tab, pane, car and toast after old First Mate completion",
+          arguments: ["bootstrap-success", "bootstrap-error", "detail-success", "detail-error"],
+          ["pane-url", "pane-manual", "tab", "tab-first-mate", "car-url", "car-manual"])
+    func appWideSupersession(_ scenario: String, _ destination: String) async throws {
+        let model = model(), gate = NavigationReviewGate()
+        model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: "alpha") }
+        let pane = try #require(model.workspaces.first?.panes.first)
+        let bootstrap = scenario.hasPrefix("bootstrap"), failure = scenario.hasSuffix("error")
+        let sources = [source("alpha", NavigationReviewClient(ids: ["old"], listGate: bootstrap ? gate : nil,
+            detailGate: bootstrap ? nil : gate, failList: bootstrap && failure, failDetail: !bootstrap && failure)),
+            source("beta", NavigationReviewClient(ids: ["new"]))]
+        if !bootstrap { model.firstMateFleet.activate(sources: sources, connectionGeneration: model.connectionGeneration) }
+        let old = model.openFirstMate(try request("old", on: bootstrap ? nil : "alpha"), sources: sources)
+        defer { old.cancel(); Task { await gate.open() } }
+        try await wait { await gate.arrivals > 0 }
+        switch destination {
+        case "pane-url":
+            let encoded = try #require(pane.id.addingPercentEncoding(withAllowedCharacters: .alphanumerics))
+            model.open(url: try #require(URL(string: "herdr://pane/" + encoded)))
+        case "pane-manual": model.openPane(id: pane.id)
+        case "tab": model.selectTab(.attention)
+        case "tab-first-mate": model.selectTab(.firstMate)
+        case "car-url": model.open(url: try #require(URL(string: "herdr://car")))
+        default: model.openCarMode()
+        }
+        let expectedTab = model.selectedTab
+        let expectedPane = model.selectedPaneID
+        let expectedWorkspace = model.selectedWorkspaceID
+        let expectedPath = model.workspacePath
+        let expectedCar = model.isCarModePresented
+        model.toastMessage = "New navigation owns this synthetic toast"
+        await gate.open(); await old.value
+        #expect(model.selectedTab == expectedTab)
+        #expect(model.selectedPaneID == expectedPane && model.selectedWorkspaceID == expectedWorkspace)
+        #expect(model.workspacePath == expectedPath && model.isCarModePresented == expectedCar)
+        #expect(model.firstMateFleet.selectedTarget == nil && model.firstMateFleet.chat.route == nil)
+        #expect(model.firstMateFleet.chat.routingError == nil)
+        #expect(model.toastMessage == "New navigation owns this synthetic toast")
+        if destination.hasPrefix("pane") { #expect(expectedPane == pane.id && expectedTab == .workspaces) }
+        if destination.hasPrefix("car") { #expect(expectedCar) }
+    }
+
+    @Test("Ordinary interaction and content refresh do not supersede a First Mate route")
+    func interactionIsNotNavigation() async throws {
+        let model = model(), gate = NavigationReviewGate()
+        let sources = [source("alpha", NavigationReviewClient(ids: ["old"], detailGate: gate))]
+        model.firstMateFleet.activate(sources: sources, connectionGeneration: model.connectionGeneration)
+        let opening = model.openFirstMate(try request("old", on: "alpha"), sources: sources)
+        defer { opening.cancel(); Task { await gate.open() } }
+        try await wait { await gate.arrivals > 0 }
+        model.noteUserInteraction(machineID: "alpha")
+        model.workspaces = DemoData.workspaces.map { $0.stamped(machineID: "alpha") }
+        model.isSidebarPresented = true
+        await gate.open(); await opening.value
+        #expect(model.selectedTab == .firstMate)
+        #expect(model.firstMateFleet.selectedTarget == .init(machineID: "alpha", featureID: "old"))
+    }
+
+    @Test("Pending pane recovery retains its original intent, but never supersedes a newer First Mate route", arguments: [false, true])
+    func pendingPaneRecovery(_ superseded: Bool) async throws {
+        let model = model()
+        let workspace = DemoData.workspaces[0].stamped(machineID: "alpha")
+        let pane = try #require(workspace.panes.first)
+        model.openPane(id: pane.paneID)
+        #expect(model.selectedPaneID == nil)
+        if superseded {
+            let sources = [source("alpha", NavigationReviewClient(ids: ["new"]))]
+            await model.openFirstMate(try request("new", on: "alpha"), sources: sources).value
+        }
+        model.noteUserInteraction()
+        model.workspaces = [workspace]
+        model.resolvePendingPaneRoute()
+        if superseded {
+            #expect(model.selectedPaneID == nil && model.selectedTab == .firstMate)
+            #expect(model.firstMateFleet.selectedTarget == .init(machineID: "alpha", featureID: "new"))
+        } else {
+            #expect(model.selectedPaneID == pane.id && model.selectedTab == .workspaces)
+            #expect(model.workspacePath == [.pane(pane.id)])
+        }
+    }
+
     @Test("Connection rotation fences a held app bootstrap and its failure", arguments: [false, true])
     func bootstrapRotation(_ changesGeneration: Bool) async throws {
         let model = model(), gate = NavigationReviewGate()

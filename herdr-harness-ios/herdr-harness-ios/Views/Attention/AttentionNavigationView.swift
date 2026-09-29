@@ -13,7 +13,10 @@ struct AttentionNavigationView: View {
             AttentionView(
                 model: model,
                 selectPane: { pane, _ in openPane(pane) },
-                openActivity: { path.append(AttentionRoute.activity) }
+                openActivity: {
+                    model.beginAppNavigation()
+                    path.append(AttentionRoute.activity)
+                }
             )
             // Both destinations sit on the stack's root content, so a pane
             // pushed from two levels deep (Attention → Activity → pane) still
@@ -39,6 +42,7 @@ struct AttentionNavigationView: View {
     }
 
     private func openPane(_ pane: HerdrPane) {
+        model.beginAppNavigation()
         model.selectedWorkspaceID = model.workspace(containing: pane)?.id
         model.selectedPaneID = pane.id
         model.clearAlertsForPaneOnOpen(pane)

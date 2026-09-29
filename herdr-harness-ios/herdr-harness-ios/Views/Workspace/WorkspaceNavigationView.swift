@@ -21,6 +21,7 @@ struct WorkspaceNavigationView: View {
                     model.openPane(id: pane.id)
                 },
                 openHudChats: {
+                    model.beginAppNavigation()
                     model.workspacePath.append(.hudChats)
                 }
             )
@@ -54,6 +55,7 @@ struct WorkspaceNavigationView: View {
                     model.openPane(id: pane.id)
                 },
                 openHudChats: {
+                    model.beginAppNavigation()
                     showsHudChats = true
                 }
             )

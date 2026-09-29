@@ -6,20 +6,22 @@ struct FirstMateStageDetailView: View {
     let visit: FirstMateVisit
 
     var body: some View {
+        let agents = snapshot.agents(for: visit.id)
+        let documents = snapshot.presentedDocuments(for: visit.id)
         VStack(alignment: .leading, spacing: 14) {
-            if !snapshot.agents(for: visit.id).isEmpty {
+            if !agents.isEmpty {
                 Text("Assigned crew").font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                ForEach(snapshot.agents(for: visit.id)) { agent in
+                ForEach(agents) { agent in
                     FirstMateAgentRow(store: store, agent: agent)
                 }
             }
-            if !snapshot.documents(for: visit.id).isEmpty {
+            if !documents.isEmpty {
                 Text("Attached documents").font(.subheadline.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                ForEach(snapshot.documents(for: visit.id)) { document in
+                ForEach(documents) { document in
                     FirstMateDocumentRow(store: store, snapshot: snapshot, document: document, showsVisit: false)
                 }
             }
-            if snapshot.agents(for: visit.id).isEmpty && snapshot.documents(for: visit.id).isEmpty {
+            if agents.isEmpty && documents.isEmpty {
                 Text("Agents and documents will appear when this step begins.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

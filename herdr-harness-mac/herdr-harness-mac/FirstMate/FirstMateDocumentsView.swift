@@ -4,6 +4,8 @@ struct FirstMateDocumentsView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
 
+    private var presentedDocuments: [FirstMateDocument] { snapshot.presentedDocuments }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .documents)
@@ -31,7 +33,7 @@ struct FirstMateDocumentsView: View {
             Text("Evidence stays connected to the visit and agent that produced it.")
                 .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
                 .padding(.bottom, 6)
-            ForEach(snapshot.documents) { document in
+            ForEach(presentedDocuments) { document in
                 Button { Task { await store.open(.document(document)) } } label: {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "doc.text").herdrFont(size: 13).foregroundStyle(HerdrTheme.iconTint).padding(.top, 1)
@@ -49,7 +51,7 @@ struct FirstMateDocumentsView: View {
                 }.buttonStyle(.herdrPlain).accessibilityIdentifier("first-mate-document-\(document.id)")
                 Rectangle().fill(HerdrTheme.rowDivider).frame(height: 1)
             }
-            if snapshot.documents.isEmpty { ContentUnavailableView("No documents yet", systemImage: "doc.text") }
+            if presentedDocuments.isEmpty { ContentUnavailableView("No documents yet", systemImage: "doc.text") }
         }
     }
 }

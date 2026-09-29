@@ -9,7 +9,7 @@ struct FirstMateResourceButtons: View {
 
     var body: some View {
         let agents = snapshot.agents(for: visit.id)
-        let documents = snapshot.documents(for: visit.id)
+        let documents = snapshot.presentedDocuments(for: visit.id)
         HStack(spacing: 6) {
             Menu {
                 ForEach(agents) { agent in

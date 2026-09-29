@@ -1020,7 +1020,7 @@ final class FirstMateHudController {
         closeCard(.delivery)
     }
 
-    /// Saves a new label (24 characters at most) and emoji.
+    /// Saves a new label (100 characters at most) and emoji.
     func saveEditor(for id: FirstMateFleetFeatureID) {
         let label = String(editorLabel.trimmingCharacters(in: .whitespacesAndNewlines).prefix(FirstMateHudEditing.labelLimit))
         let emoji = FirstMateHudEditing.firstEmoji(in: editorEmoji)
@@ -1274,7 +1274,7 @@ enum FirstMateHudFaceMotion {
 }
 
 enum FirstMateHudEditing {
-    static let labelLimit = 24
+    static let labelLimit = 100
 
     /// The first emoji in the text (a whole grapheme, so flags and skin tones
     /// survive), or nil when there is none.

@@ -308,8 +308,9 @@ struct FirstMateHudTests {
         }
     }
 
-    @Test("Labels stop at 24 characters; emoji keep whole graphemes")
+    @Test("Labels stop at 100 characters; emoji keep whole graphemes")
     func editing() {
+        #expect(FirstMateHudEditing.labelLimit == 100)
         #expect(FirstMateHudEditing.firstEmoji(in: "abc 🧾 x") == "🧾")
         #expect(FirstMateHudEditing.firstEmoji(in: "👍🏽") == "👍🏽")
         #expect(FirstMateHudEditing.firstEmoji(in: "no emoji") == nil)

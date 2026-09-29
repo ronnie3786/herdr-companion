@@ -141,7 +141,7 @@ struct FirstMateConversationPresentationEditor: View {
     private func saveChanges() {
         guard !isSaving, draft.canSave else { return }
         guard let changes = draft.changes(for: conversation) else { dismiss(); return }
-        // A default feature title can exceed 24 code points. Editing only
+        // A default feature title can exceed the name limit. Editing only
         // its emoji must not silently turn the clipped title into a user label.
         let label = Self.labelForSave(changes.label, draftName: draft.name, conversation: conversation)
         guard label != nil || changes.emoji != nil else { dismiss(); return }

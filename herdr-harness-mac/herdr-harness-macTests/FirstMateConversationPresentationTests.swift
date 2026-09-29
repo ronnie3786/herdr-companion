@@ -18,6 +18,7 @@ struct FirstMateConversationPresentationTests {
 
     @Test("Prefills the displayed name; blank titles cannot save; counts Unicode code points")
     func nameNormalization() {
+        #expect(FirstMateConversationPresentationDraft.nameLimit == 100)
         let current = conversation(label: "Friendly name", labelSource: "user")
         var draft = FirstMateConversationPresentationDraft(conversation: current)
         #expect(draft.name == "Friendly name")
@@ -26,9 +27,9 @@ struct FirstMateConversationPresentationTests {
         draft.name = " \n \t "
         #expect(!draft.canSave)
         #expect(draft.changes(for: current) == nil)
-        draft.name = "  " + String(repeating: "é", count: 25) + "  "
-        #expect(draft.normalizedName == String(repeating: "é", count: 24))
-        #expect(draft.changes(for: current)?.label == String(repeating: "é", count: 24))
+        draft.name = "  " + String(repeating: "é", count: 101) + "  "
+        #expect(draft.normalizedName == String(repeating: "é", count: 100))
+        #expect(draft.changes(for: current)?.label == String(repeating: "é", count: 100))
         draft.name = "  Renamed   "
         #expect(draft.changes(for: current)?.label == "Renamed")
         #expect(draft.changes(for: current)?.emoji == nil)

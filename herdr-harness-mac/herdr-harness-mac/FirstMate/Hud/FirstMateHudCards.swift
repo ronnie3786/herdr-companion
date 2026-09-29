@@ -292,7 +292,7 @@ private struct FirstMateHudMicButton: View {
     }
 }
 
-/// Rename a feature (24 characters at most) or change its emoji.
+/// Rename a feature (100 characters at most) or change its emoji.
 struct FirstMateHudEditorCard: View {
     @Bindable var controller: FirstMateHudController
     let item: FirstMateHudItem

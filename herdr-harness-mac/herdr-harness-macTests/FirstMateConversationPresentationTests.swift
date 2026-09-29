@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
@@ -43,6 +45,29 @@ struct FirstMateConversationPresentationTests {
         var unchanged = FirstMateConversationPresentationDraft(conversation: defaultName)
         unchanged.resetName()
         #expect(unchanged.changes(for: defaultName) == nil)
+    }
+
+    @Test("Editing only emoji never clips an unchanged long default title into a user label")
+    func emojiOnlyKeepsLongDefaultTitle() {
+        let current = conversation(title: String(repeating: "Synthetic long title ", count: 3))
+        var draft = FirstMateConversationPresentationDraft(conversation: current)
+        draft.setEmojiText("🪁")
+        let change = draft.changes(for: current)
+        #expect(change?.emoji == "🪁")
+        #expect(FirstMateConversationPresentationEditor.labelForSave(change?.label,
+                                                                     draftName: draft.name, conversation: current) == nil)
+    }
+
+    @Test("The hosted editor's emoji picker action uses the injected Character Viewer opener")
+    func emojiPickerAction() {
+        var opens = 0
+        let editor = FirstMateConversationPresentationEditor(conversation: conversation(), save: { _, _ in nil },
+                                                             openEmojiPicker: { opens += 1 })
+        let host = NSHostingView(rootView: editor)
+        host.frame = NSRect(x: 0, y: 0, width: 460, height: 440)
+        host.layoutSubtreeIfNeeded()
+        editor.chooseEmoji()
+        #expect(opens == 1)
     }
 
     @Test("Emoji input retains one emoji grapheme; explicit reset clears user provenance")

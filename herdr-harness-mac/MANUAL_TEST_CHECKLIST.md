@@ -54,6 +54,16 @@ Use a synthetic feature on a companion advertising `first-mate-skim-v1` with a f
 - [ ] **Text size and appearance:** At 100% and 160% text size, and in First Mate light, nothing clips and the caveat, chip, and next step stay readable.
 - [ ] **Off and older companions:** With `skim = false`, or connected to a companion without `first-mate-skim-v1`, every reply shows in full with no skim controls.
 
+## First Mate chat conversation names and emoji
+
+Use synthetic features in the standalone **Window → First Mate** chat and a disposable companion advertising `first-mate-fleet-v1`. Leave unperformed checks pending; the Mac updater does not install companion packages.
+
+- [ ] **Entry points:** Right-click a full conversation row, its narrow rail avatar, the feature chat header, and the transcript. Each has **Rename or Change Emoji…** above **Archive feature…** and opens the same window-modal sheet without changing the selected chat. Click the header avatar or name to open it too. The lead header does not offer editing. Cancel and confirm nothing changed.
+- [ ] **Title:** Edit the prefilled Title field, confirm the counter stops at 24 Unicode code points and blank text cannot save. Save a synthetic name; verify it appears in the row, rail tooltip/VoiceOver, header, capsules, mention picker and composer placeholder, and the First Mate HUD. Preview, time, status and the underlying feature title stay unchanged.
+- [ ] **Emoji:** Pick a quick-palette emoji, then use **Choose emoji…** to open macOS Character Viewer and select another. Confirm the selection lands in the focused emoji field as one grapheme and the emoji disc changes in the row, rail, header and capsules after Save.
+- [ ] **Reset and persistence:** Use **Use feature title** and **Use default** separately and together, then Save. Confirm each resets only its own field. Set a custom name and emoji again, reconnect and relaunch: both return from the owning companion and agree with the HUD.
+- [ ] **Offline error:** Disconnect the owning companion and try saving an edit. The sheet must stay open with an error and preserve both draft fields. Reconnect, retry and confirm Save succeeds without retargeting another machine.
+
 ## First Mate archive
 
 - [ ] Right-click an inactive feature in the First Mate sidebar and choose **Archive…**. Leave the reason at **No reason** and confirm. The dialog must say records are retained; the feature leaves the default list without changing its workflow status.

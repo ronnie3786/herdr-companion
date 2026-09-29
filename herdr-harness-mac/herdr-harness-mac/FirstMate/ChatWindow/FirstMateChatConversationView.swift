@@ -190,6 +190,7 @@ private struct FirstMateFeatureChat: View {
             FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing)
                 .id(id)
                 .contextMenu {
+                    Button("Rename or Change Emoji…", systemImage: "pencil") { session.requestPresentationEdit(id) }
                     Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(id) }
                 }
             FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
@@ -224,7 +225,7 @@ private struct FirstMateFeatureChat: View {
                             snapshot: snapshot,
                             canControl: store.controlAvailable && store.selectedFeatureID == id.featureID,
                             modelFavorites: modelFavorites,
-                            placeholder: "Message \(conversation?.title ?? snapshot.feature.title)",
+                            placeholder: "Message \(conversation?.name ?? snapshot.feature.title)",
                             focusRequest: focusRequest
                         ) { session.didMutate(machineID: id.machineID) }
                     }

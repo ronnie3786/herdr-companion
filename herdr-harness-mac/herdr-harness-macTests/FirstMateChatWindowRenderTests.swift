@@ -67,6 +67,31 @@ struct FirstMateChatWindowRenderTests {
         try await render("fmchat-chrome-receipts-1440.png", session: session)
     }
 
+    @Test("A demo rename and emoji change render in the row and header")
+    func renamedConversation() async throws {
+        let session = try await session(selecting: .feature(Self.receipts))
+        #expect(await session.savePresentation(Self.receipts, label: "Synthetic launch", emoji: "🪁") == nil)
+        #expect(session.selectedConversation?.name == "Synthetic launch")
+        #expect(session.selectedConversation?.emoji == "🪁")
+        try await render("fmchat-chrome-renamed-1440.png", session: session)
+    }
+
+    @Test("The editor content renders over dusk glass")
+    func presentationEditor() async throws {
+        let session = try await session(selecting: .feature(Self.receipts))
+        let conversation = try #require(session.selectedConversation)
+        let result = try await HerdrRenderHarness.renderWindow("fmchat-presentation-editor.png",
+                                                           size: CGSize(width: 520, height: 500)) {
+            ZStack {
+                HerdrDuskBackdrop()
+                FirstMateConversationPresentationEditor(conversation: conversation, save: { _, _ in nil },
+                                                        openEmojiPicker: {})
+            }
+            .environment(\.herdrFontScale, .medium)
+        }
+        result.expectSubstantial()
+    }
+
     @Test("At 1000 pt the inspector floats over chat without changing its column width")
     func overlay() async throws {
         let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: true)

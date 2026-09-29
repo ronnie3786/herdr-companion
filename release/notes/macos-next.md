@@ -7,6 +7,10 @@
 - Smart-input text and recordings are sent only to the selected companion's configured Pi and transcription services and are not published. Only **File report** files the reviewed title and description word for word; a submission is never started automatically and **File report** is unavailable while a draft or transcription is in progress. Missing Pi or transcription configuration reports an actionable error without losing typed text. AI drafting requires a companion advertising `issue-report-draft-v1`; an older companion disables only that optional action with upgrade guidance, while manual reporting, attachments, recording, and transcription keep working. See docs/issue-report-smart-input.md.
 - **Start the automated fix pipeline** labels the issue for the optional Code Factory daemon. Requires a companion server advertising `issue-reports-v1`; older servers show an update message.
 
+## First Mate conversation names
+
+- In the standalone Mac First Mate chat window, right-click a conversation row, rail avatar, header, or transcript for **Rename or Change Emoji…**, or click the feature header's avatar or name. A sheet edits the 24-character display name and emoji with a quick palette and macOS Character Viewer. The new name appears in the row, header, mentions, composer and First Mate HUD; the feature's underlying title stays unchanged. Cancel leaves both fields alone, reset restores defaults, and a failed save keeps the sheet open with an error. Saved presentation survives reconnect and relaunch on its owning companion.
+
 ## First Mate optimistic chat
 
 - Enter, Send, and First Mate dictation Stop now clear a sendable prompt immediately in the main Mac screen, standalone feature/lead window, and shared HUD lead conversation. Your outgoing bubble says **Sending…** before First Mate's working animation, then reconciles to the saved message without a duplicate or a disappearing accepted prompt.
@@ -119,6 +123,8 @@
 - This is Mac-only and needs no companion server update. The signed Mac feed installs only the app and does not configure upstream Herdr or deploy server packages. The installed listening matrix, notification-authorization toggles, and any separately installed upstream Herdr notification-sound setting are documented in [completion audio](docs/agent-completion-audio.md) and remain pending until actually performed.
 
 ## Companion compatibility
+
+The fleet's additive `label_source` field identifies user-set conversation names in the next companion package; older companions without it keep working through the same default-label clipping fallback. The Mac app updater does not install the separate server package.
 
 Configurable brief length is additive. The companion advertises `responseBriefs.lengthPolicyVersion` 2 with `lengthOptions`, and the Mac requires all three options before sending a new-policy request. Older clients that omit `responseBriefLength` keep the legacy prompt, budgets, and payloads byte-for-byte. A companion that only advertises `response-brief-v1` shows **Update the companion for configurable brief length…** with **Retry after updating**; the request is not sent, no generic-agent fallback is used, and existing accepted legacy runs remain reconcilable. Install and restart the updated companion separately on each machine where briefs are enabled: the Mac updater does not install or restart server packages, and **Reload brief support and models** rechecks the capability.
 

@@ -9,7 +9,11 @@
 
 ## First Mate conversation names
 
-- In the standalone Mac First Mate chat window, right-click a conversation row, rail avatar, header, or transcript for **Rename or Change Emoji…**, or click the feature header's avatar or name. A sheet edits the 24-character display name and emoji with a quick palette and macOS Character Viewer. The new name appears in the row, header, mentions, composer and First Mate HUD; the feature's underlying title stays unchanged. Cancel leaves both fields alone, reset restores defaults, and a failed save keeps the sheet open with an error. Saved presentation survives reconnect and relaunch on its owning companion.
+- In the standalone Mac First Mate chat window, right-click a conversation row, rail avatar, header, or transcript for **Rename or Change Emoji…**, or click the feature header's avatar or name. A sheet edits the display name and emoji with a quick palette and macOS Character Viewer. The new name appears in the row, header, mentions, composer and First Mate HUD; the feature's underlying title stays unchanged. Cancel leaves both fields alone, reset restores defaults, and a failed save keeps the sheet open with an error. Saved presentation survives reconnect and relaunch on its owning companion.
+
+## First Mate conversation name length
+
+- The **Rename or Change Emoji…** sheet and the HUD rename card now accept names of up to 100 characters, counted as Unicode code points, with a counter showing N/100. The default label for unnamed features is unchanged. Names longer than 24 characters require a companion with this change; older companions reject them, and the sheet displays the server's error without closing. The Mac updater does not install companion packages. Issue #118.
 
 ## First Mate optimistic chat
 

@@ -22,7 +22,9 @@ FLEET_VIEWS = ("active", "archived", "all")
 HUD_STATUSES = ("blocked", "turn", "ready", "working", "idle", "done")
 NEEDS_YOU = frozenset({"blocked", "turn", "ready"})
 
+# Default labels clip feature titles to 24; stored user labels have a separate bound.
 LABEL_LIMIT = 24
+USER_LABEL_LIMIT = 100
 EMOJI_LIMIT = 16
 NOW_LIMIT = 120
 LATEST_TEXT_LIMIT = 200
@@ -153,8 +155,8 @@ def normalize_label(value: Any) -> str | None:
         return None
     if _breaks_line(text):
         raise PresentationError("label must be one line without control characters")
-    if len(text) > LABEL_LIMIT:
-        raise PresentationError(f"label exceeds {LABEL_LIMIT} characters")
+    if len(text) > USER_LABEL_LIMIT:
+        raise PresentationError(f"label exceeds {USER_LABEL_LIMIT} characters")
     return text
 
 

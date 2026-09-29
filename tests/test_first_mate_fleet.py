@@ -114,11 +114,11 @@ class PresentationRuleTests(unittest.TestCase):
 
     def test_label_validation_counts_code_points_after_trim(self):
         self.assertEqual(fleet.normalize_label("  Receipt export  "), "Receipt export")
-        self.assertEqual(fleet.normalize_label("x" * 24), "x" * 24)
-        self.assertEqual(fleet.normalize_label(" " + "é" * 24 + " "), "é" * 24)
+        self.assertEqual(fleet.normalize_label("x" * 100), "x" * 100)
+        self.assertEqual(fleet.normalize_label(" " + "é" * 100 + " "), "é" * 100)
         for reset in (None, "", "   "):
             self.assertIsNone(fleet.normalize_label(reset))
-        for invalid in ("x" * 25, "Two\nlines", "Tab\there", "Line\u2028break", "Para\u2029break", 12,
+        for invalid in ("x" * 101, "Two\nlines", "Tab\there", "Line\u2028break", "Para\u2029break", 12,
                         ["Receipt"]):
             with self.assertRaises(fleet.PresentationError):
                 fleet.normalize_label(invalid)
@@ -387,9 +387,14 @@ class FleetStoreTests(FleetStoreFixture, unittest.TestCase):
         entry = fleet.entry(self.store.set_presentation(self.id, {"emoji": ""}))
         self.assertEqual((entry["label"], entry["label_source"], entry["emoji"], entry["emoji_source"]),
                          ("Receipts", "user", fleet.default_emoji(self.id), "default"))
+        long_label = "é" * 100
+        row = self.store.set_presentation(self.id, {"label": long_label})
+        self.assertEqual(row["label"], long_label)
+        entry = fleet.entry(self.store.fleet_row(self.id))
+        self.assertEqual((entry["label"], entry["label_source"]), (long_label, "user"))
         entry = fleet.entry(self.store.set_presentation(self.id, {"label": None}))
         self.assertEqual((entry["label"], entry["label_source"]), ("Receipt export", "default"))
-        for invalid in ({}, {"title": "x"}, {"label": "x" * 25}, {"emoji": "a b"}, {"label": 3}):
+        for invalid in ({}, {"title": "x"}, {"label": "x" * 101}, {"emoji": "a b"}, {"label": 3}):
             with self.assertRaises(FirstMateError) as error:
                 self.store.set_presentation(self.id, invalid)
             self.assertEqual(error.exception.status, 400, invalid)
@@ -614,11 +619,15 @@ class FleetHTTPTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual((data["feature"]["label"], data["feature"]["label_source"], data["feature"]["emoji_source"]),
                          ("Receipts", "user", "default"))
+        long_label = "é" * 100
+        code, data = self.request(path, {"label": long_label})
+        self.assertEqual(code, 200)
+        self.assertEqual((data["feature"]["label"], data["feature"]["label_source"]), (long_label, "user"))
         code, data = self.request(path, {"label": ""})
         self.assertEqual(code, 200)
         self.assertEqual((data["feature"]["label"], data["feature"]["label_source"]), ("Receipt export", "default"))
         for bad in ({}, {"title": "Receipts"}, {"label": "Receipts", "request_id": "hud-1"}, {"label": 5},
-                    {"label": "x" * 25}, {"emoji": "🧾" * 17}, {"emoji": "🧾 🚀"}):
+                    {"label": "x" * 101}, {"emoji": "🧾" * 17}, {"emoji": "🧾 🚀"}):
             code, error = self.request(path, bad)
             self.assertEqual(code, 400, bad)
             self.assertFalse(error["ok"])

@@ -33,7 +33,7 @@ It is on by default, but it only appears once a connected companion answers with
   - Words that name a feature are posted to that feature as your message.
   - Anything else gets a plain "I couldn't tell which feature that's for", with one of your own features as the example.
 - **Open session.** It opens the First Mate chat window on that feature when the window's preview is on, otherwise the main window's First Mate screen.
-- **Rename.** Right-click a row or orb to change its label (24 characters at most) or its emoji. This uses `POST /features/{id}/hud`.
+- **Rename.** Right-click a row or orb to change its label (100 characters at most) or its emoji. This uses `POST /features/{id}/hud`.
 - **Esc** steps back one layer at a time: the editor, then listening, then a card, then the chat, then the list.
 
 ## How it differs from the spec

@@ -310,8 +310,15 @@ struct FirstMateHudTests {
         }
     }
 
-    @Test("Labels stop at 24 characters; emoji keep whole graphemes")
+    @Test("Labels stop at 100 code points; emoji keep whole graphemes")
     func editing() {
+        #expect(FirstMateHudEditing.labelLimit == 100)
+        let composed = String(repeating: "e\u{301}", count: 50)
+        #expect(composed.count == 50)
+        #expect(FirstMateHudEditing.labelLength(composed) == 100)
+        #expect(FirstMateHudEditing.clippedLabel(composed) == composed)
+        #expect(FirstMateHudEditing.clippedLabel(composed + "x") == composed)
+        #expect(FirstMateHudEditing.clippedLabel(String(repeating: "x", count: 101)) == String(repeating: "x", count: 100))
         #expect(FirstMateHudEditing.firstEmoji(in: "abc 🧾 x") == "🧾")
         #expect(FirstMateHudEditing.firstEmoji(in: "👍🏽") == "👍🏽")
         #expect(FirstMateHudEditing.firstEmoji(in: "no emoji") == nil)

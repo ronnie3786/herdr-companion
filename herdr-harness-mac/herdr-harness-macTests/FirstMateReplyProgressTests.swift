@@ -28,11 +28,11 @@ struct FirstMateReplyProgressTests {
     }
 
     private func pending(
-        _ outgoing: [FirstMateOutgoingMessage], snapshot: FirstMateSnapshot?, awaiting: Bool = false,
+        _ outgoing: [FirstMateOutgoingMessage], snapshot: FirstMateSnapshot?,
         hostUpdatedAt: String? = nil, fleetLatest: String? = nil
     ) -> Bool {
         FirstMateReplyProgress.isLocalReplyPending(
-            outgoing: outgoing, isAwaitingSendResolution: awaiting, snapshot: snapshot,
+            outgoing: outgoing, snapshot: snapshot,
             hostFeatureUpdatedAt: hostUpdatedAt, fleetLatestFirstMateMessageID: fleetLatest
         )
     }
@@ -78,21 +78,45 @@ struct FirstMateReplyProgressTests {
 
     @Test("An unresolved send projects immediately, even without a snapshot")
     func unresolvedSend() {
-        #expect(pending([], snapshot: nil, awaiting: true))
+        #expect(pending([outgoing(state: .pending)], snapshot: nil))
         #expect(!pending([outgoing()], snapshot: nil))
     }
 
-    @Test("Only post-baseline queued or processing conversation user echoes bridge the send")
+    @Test("Unobserved receipts and post-baseline queued or processing conversation user echoes bridge the send")
     func echoedSend() {
         let baseline: Set<String> = ["demo-user-0", "demo-mate-0"]
         let entry = outgoing(baseline: baseline)
         #expect(pending([entry], snapshot: snapshot()))
         #expect(pending([entry], snapshot: snapshot(role: "human", status: "processing")))
         #expect(pending([outgoing(state: .pending, baseline: baseline)], snapshot: snapshot(status: "processing")))
-        #expect(!pending([entry], snapshot: snapshot(echoID: "demo-user-0")))
+        #expect(pending([entry], snapshot: snapshot(echoID: "demo-user-0")), "The receipt has not appeared beyond the baseline")
         #expect(!pending([entry], snapshot: snapshot(status: "done")))
         #expect(!pending([entry], snapshot: snapshot(role: "assistant")))
-        #expect(!pending([entry], snapshot: snapshot(visibility: "background")))
+        #expect(pending([entry], snapshot: snapshot(visibility: "background")),
+                "A background-only message does not confirm the user echo arrived")
+    }
+
+    @Test("A receipt without an observed echo bridges only until the fleet moves past its baseline")
+    func receiptWithoutSnapshotMessages() {
+        let cached = FirstMateDemo.features(step: 0)[0]
+        let entry = outgoing(state: .acceptedAwaitingSnapshot(messageID: "user-receipt"),
+                             baseline: ["demo-user-0", "demo-mate-0", "old-first-mate"])
+        #expect(pending([entry], snapshot: cached, hostUpdatedAt: cached.feature.updatedAt,
+                        fleetLatest: "old-first-mate"))
+        #expect(!pending([entry], snapshot: cached, hostUpdatedAt: "2030-01-01T00:00:00Z",
+                         fleetLatest: "old-first-mate"))
+        #expect(!pending([entry], snapshot: cached, hostUpdatedAt: cached.feature.updatedAt,
+                         fleetLatest: "new-first-mate"))
+    }
+
+    @Test("Fractional and whole-second timestamps compare chronologically, not lexically")
+    func mixedTimestampFormats() {
+        var cached = snapshot()
+        cached.feature.updatedAt = "2030-01-01T10:00:00.500Z"
+        let entry = outgoing(baseline: ["demo-user-0", "demo-mate-0", "old-first-mate"])
+        #expect(pending([entry], snapshot: cached, hostUpdatedAt: "2030-01-01T10:00:00Z"))
+        cached.feature.updatedAt = "2030-01-01T10:00:00Z"
+        #expect(!pending([entry], snapshot: cached, hostUpdatedAt: "2030-01-01T10:00:00.500Z"))
     }
 
     @Test("A rejected or unconfirmed submission cannot bridge a queued echo")
@@ -105,7 +129,7 @@ struct FirstMateReplyProgressTests {
     @Test("New fleet activity retires the local bridge; baseline fleet activity does not")
     func staleBridge() {
         let echo = snapshot()
-        let entry = outgoing(baseline: ["old-first-mate"])
+        let entry = outgoing(baseline: ["demo-user-0", "demo-mate-0", "old-first-mate"])
         #expect(pending([entry], snapshot: echo, hostUpdatedAt: echo.feature.updatedAt))
         #expect(!pending([entry], snapshot: echo, hostUpdatedAt: "2030-01-01T00:00:00Z"))
         #expect(!pending([entry], snapshot: echo, fleetLatest: "new-first-mate"))

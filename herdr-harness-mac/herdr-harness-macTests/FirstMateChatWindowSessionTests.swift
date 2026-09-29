@@ -223,6 +223,52 @@ struct FirstMateChatWindowSessionTests {
         #expect(store.snapshots["f1"]?.messages.last?.id == "um_2", "The unselected store still holds the old echo")
     }
 
+    @Test("A receipt-only send retires its working row after a reply, even when selection changes before a snapshot poll")
+    func switchedAwayFromReceiptOnlySend() async throws {
+        let (shell, session, client, store, lifecycle) = try await blockedConversation()
+        let id = FirstMateFleetFeatureID(machineID: "alpha", featureID: "f1")
+        var receiptFeature = try #require(store.snapshots["f1"]?.feature)
+        receiptFeature.updatedAt = "2030-01-01T10:01:00Z"
+        var receipt = FirstMateSnapshot(feature: receiptFeature)
+        receipt.hasDetails = false // POST returns only {ok, feature, message}, not the conversation arrays.
+        receipt.message = FirstMateMessage(id: "um_2", featureID: "f1", role: "user",
+                                           text: "Synthetic direction", status: "processing",
+                                           createdAt: "2030-01-01T10:01:00Z")
+        client.snapshots["f1"] = receipt
+
+        let handle = try #require(store.beginOutgoingMessage("Synthetic direction", expectedContext: store.operationContext))
+        #expect(session.conversations.first { $0.id == id }?.hudStatus == .working)
+        _ = await store.completeOutgoingMessage(handle)
+        #expect(store.outgoingMessages(for: "f1").first?.state == .acceptedAwaitingSnapshot(messageID: "um_2"))
+        #expect(store.isAwaitingSendResolution(featureID: "f1"))
+        #expect(store.snapshots["f1"]?.messages.map(\.id) == ["fmm_1"], "A mutation receipt does not update the cached messages")
+        #expect(session.conversations.first { $0.id == id }?.hudStatus == .working)
+        #expect(session.conversations.first { $0.id == id }?.showsDot == false)
+        #expect(session.badgeCount == 0)
+
+        session.select(.lead) // The window now polls only the lead, not f1.
+        var feature = try #require(try client.features.get().first)
+        feature.status = "awaiting_direction"
+        feature.updatedAt = "2030-01-01T10:05:00Z"
+        client.features = .success([feature])
+        var fleet = try #require(try client.fleet.get().first)
+        fleet.status = "awaiting_direction"
+        fleet.hudStatus = .turn
+        fleet.latestFirstMateMessageID = "fmm_3"
+        fleet.unread = true
+        fleet.workingOnReply = false
+        fleet.activityAt = "2030-01-01T10:05:00Z"
+        client.fleet = .success([fleet])
+        await shell.firstMateFleet.refresh(lifecycle: lifecycle)
+
+        let replied = try #require(session.conversations.first { $0.id == id })
+        #expect(replied.hudStatus == .turn)
+        #expect(!replied.isWorkingOnReply)
+        #expect(replied.showsDot)
+        #expect(session.badgeCount == 1)
+        #expect(store.isAwaitingSendResolution(featureID: "f1"), "The unselected store was never refreshed")
+    }
+
     @Test("A rejected send restores the waiting badge at once")
     func rejectedPrompt() async throws {
         let (_, session, client, store, _) = try await blockedConversation()

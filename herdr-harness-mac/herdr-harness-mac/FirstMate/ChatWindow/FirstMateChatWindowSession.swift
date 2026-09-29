@@ -133,7 +133,6 @@ final class FirstMateChatWindowSession {
                     .features.first { $0.id == featureID }?.updatedAt
                 localPending = FirstMateReplyProgress.isLocalReplyPending(
                     outgoing: store.outgoingMessages(for: featureID),
-                    isAwaitingSendResolution: store.isAwaitingSendResolution(featureID: featureID),
                     snapshot: store.snapshots[featureID],
                     hostFeatureUpdatedAt: hostUpdatedAt,
                     fleetLatestFirstMateMessageID: conversation.latestFirstMateMessageID

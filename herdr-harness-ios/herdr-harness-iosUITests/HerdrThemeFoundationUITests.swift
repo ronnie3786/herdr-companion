@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 @MainActor
 final class HerdrThemeFoundationUITests: XCTestCase {
@@ -9,6 +10,7 @@ final class HerdrThemeFoundationUITests: XCTestCase {
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["First Mate"].waitForExistence(timeout: 10))
         try capture("theme-dusk-simulator-402", app)
+        try assertFaceVisible(in: app)
         for title in ["Overview", "Agents", "Documents"] {
             let tab = app.buttons[title]
             assertTouchTarget(tab)
@@ -70,6 +72,38 @@ final class HerdrThemeFoundationUITests: XCTestCase {
             + (sample ? ["-HerdrThemeDuskSample"] : []) + extra
         app.launch()
         return app
+    }
+
+    private func assertFaceVisible(in app: XCUIApplication) throws {
+        // A live TimelineView must show the glyph, not just its violet disc.
+        // An offscreen render alone does not establish visibility during a live animation.
+        let header = app.staticTexts["theme-sample-header"].firstMatch.frame
+        XCTAssertGreaterThan(header.height, 0)
+        let screen = try XCTUnwrap(app.screenshot().image.cgImage)
+        let scale = CGFloat(screen.width) / app.frame.width
+        // The fixture has 20pt padding and a 52pt disc. The combined header's
+        // bounds can include its glow. Restrict the crop to the avatar column,
+        // above the tabs, so unrelated white text cannot satisfy the check.
+        let facePoints = CGRect(x: app.frame.minX + 20, y: header.minY, width: 52,
+                                height: min(header.maxY, app.buttons["Overview"].frame.minY) - header.minY)
+        XCTAssertGreaterThan(facePoints.height, 0)
+        let face = facePoints.applying(CGAffineTransform(scaleX: scale, y: scale))
+        let image = try XCTUnwrap(screen.cropping(to: face))
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let drew = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(data: bytes.baseAddress, width: image.width, height: image.height,
+                                          bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return true
+        }
+        XCTAssertTrue(drew)
+        let glyphPixels = stride(from: 0, to: pixels.count, by: 4).filter {
+            pixels[$0] > 180 && pixels[$0 + 1] > 180 && pixels[$0 + 2] > 180
+        }.count
+        print("HERDR_FACE_GLYPHS rect=\(face) pixels=\(glyphPixels)")
+        XCTAssertGreaterThan(glyphPixels, 30, "The eyes and smile must remain visible, including while blinking")
     }
 
     private func assertTouchTarget(_ element: XCUIElement) {

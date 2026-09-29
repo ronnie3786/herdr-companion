@@ -31,8 +31,12 @@ struct HerdrThemeFoundationTests {
         #expect(openPixels.width == 288 && openPixels.height == 288)
         #expect(!openPixels.isOpaque && !closedPixels.isOpaque)
         #expect(openPixels.sha256 != closedPixels.sha256)
-        let alpha = stride(from: 3, to: openPixels.bytes.count, by: 4).reduce(0) { $0 + Int(openPixels.bytes[$1]) }
-        #expect(alpha > 0, "Offscreen rendering must not cache an empty face")
+        for index in 0..<FirstMateFaceArtwork.frameCount {
+            let scale = 0.1 + 0.9 * CGFloat(index) / CGFloat(FirstMateFaceArtwork.frameCount - 1)
+            let pixels = try ThemeRaster(FirstMateFaceArtwork.image(eyeScale: scale))
+            let alpha = stride(from: 3, to: pixels.bytes.count, by: 4).reduce(0) { $0 + Int(pixels.bytes[$1]) }
+            #expect(alpha > 0, "Offscreen rendering must not cache an empty face at frame \(index)")
+        }
     }
 
     @Test("Breathing and blinking retain the shipped Mac timings")

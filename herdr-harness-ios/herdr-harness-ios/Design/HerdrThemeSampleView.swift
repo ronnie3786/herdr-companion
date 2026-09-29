@@ -39,6 +39,7 @@ struct HerdrThemeSampleContent: View {
                 }
             }
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("theme-sample-header")
 
             HerdrTabs(selection: $selection, tabs: ["Overview", "Agents", "Documents"].map {
                 .init(value: $0, title: $0)

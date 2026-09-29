@@ -1663,6 +1663,7 @@ final class HerdrAppModel: HudChatTransport {
             }
             let generation = connectionGeneration
             Task {
+                guard generation == connectionGeneration, !Task.isCancelled else { return }
                 if firstMateFleet.hosts.isEmpty {
                     firstMateFleet.activate(sources: firstMateSources(), connectionGeneration: generation)
                     await firstMateFleet.refreshAll()
@@ -1674,6 +1675,7 @@ final class HerdrAppModel: HudChatTransport {
                     guard generation == connectionGeneration else { return }
                     selectedTab = .firstMate
                 } else {
+                    guard generation == connectionGeneration, !Task.isCancelled else { return }
                     toastMessage = firstMateFleet.chat.routingError ?? "The feature could not be opened on its owning machine."
                 }
             }

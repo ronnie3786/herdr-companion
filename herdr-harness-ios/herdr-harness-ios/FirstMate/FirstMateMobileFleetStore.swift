@@ -579,7 +579,9 @@ final class FirstMateMobileFleetStore {
     }
 
     func refreshAll() async {
-        await refresh()
+        let expectedLifecycle = lifecycle
+        await refresh(lifecycle: expectedLifecycle)
+        guard !Task.isCancelled, expectedLifecycle == lifecycle else { return }
         await refreshChatIndex()
     }
 

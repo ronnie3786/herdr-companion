@@ -5,6 +5,22 @@ import Testing
 @Suite("Mobile route lifecycle fencing")
 @MainActor
 struct FirstMateMobileRouteLifecycleTests {
+    @Test("A queued cold-start link cannot initialize a replacement connection")
+    func queuedColdStartLink() async throws {
+        let suite = "ColdStartRoute.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = HerdrAppModel(credentials: TestCredentialStore(), arguments: ["-HerdrFirstMateDemo"],
+                                  userDefaults: defaults, bootstrapMachines: [])
+        model.selectedTab = .notes
+        model.open(url: try #require(URL(string: "herdr://first-mate?feature_id=demo-session-continuity")))
+        // Rotate synchronously before the route's queued MainActor task runs.
+        model.connectionGeneration += 1
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(model.firstMateFleet.hosts.isEmpty)
+        #expect(model.firstMateFleet.selectedTarget == nil && model.selectedTab == .notes)
+    }
+
     @Test("A deferred assignment read cannot publish after its connection rotates")
     func assignmentConnectionRotation() async throws {
         let fleet = FirstMateMobileFleetStore(defaults: UserDefaults(suiteName: "RouteLifecycle.\(UUID())")!)

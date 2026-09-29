@@ -22,16 +22,6 @@ enum SidebarTone {
         case .idle, .unknown: nil
         }
     }
-
-    /// The agent glyph on a session card's first line.
-    static func agentSymbol(for pane: HerdrPane) -> String {
-        let name = (pane.agent ?? pane.displayAgent ?? "").lowercased()
-        if pane.reservedShell || (pane.agentStatus == .unknown && name.isEmpty) { return "terminal" }
-        if name.contains("claude") { return "sparkle" }
-        if name.contains("codex") { return "hexagon" }
-        if name == "pi" { return "p.circle" }
-        return "cpu"
-    }
 }
 
 /// Where a row sits inside a workspace's folder group, which MonoCode draws as
@@ -347,13 +337,19 @@ struct SidebarSectionRow: View {
     }
 }
 
-/// A MonoCode session card.
-///
-/// `.full` (Unread, Starred, Recents): agent and status, the title, then
-/// machine · workspace. `.compact` (inside a folder group): the title over its
-/// status. Idle and shell sessions render quietly.
+/// Layout anchors let mounted-view tests verify the real text/control geometry.
+enum SidebarChatLayoutPart: Hashable { case title, star, footer }
+
+struct SidebarChatLayoutKey: PreferenceKey {
+    static let defaultValue: [SidebarChatLayoutPart: Anchor<CGRect>] = [:]
+    static func reduce(value: inout Value, nextValue: () -> Value) {
+        value.merge(nextValue(), uniquingKeysWith: { _, newer in newer })
+    }
+}
+
+/// A chat row shared by Recents, priority lists, and workspace folders.
 struct SidebarChatRow: View {
-    struct RecentContext {
+    struct LocationContext {
         let machine: String
         let workspace: String
         let tab: String
@@ -363,15 +359,9 @@ struct SidebarChatRow: View {
         }
     }
 
-    enum CardStyle: Equatable {
-        case compact
-        /// A full card with its "machine · workspace" line.
-        case full(location: String)
-    }
-
     let pane: HerdrPane
-    var recentContext: RecentContext?
-    var style: CardStyle = .compact
+    var locationContext: LocationContext?
+    var showsDivider = false
     var tabColor: ChatTabColor?
     var colorLabel: String?
     let isSelected: Bool
@@ -397,17 +387,14 @@ struct SidebarChatRow: View {
                 if differentiateWithoutColor, let tabColor {
                     Image(systemName: tabColor.symbol)
                         .foregroundStyle(tabColor.swatch)
+                        .frame(width: 16)
                         .accessibilityHidden(true)
                 }
-                if let location = fullCardLocation {
-                    fullCard(location: location)
-                } else {
-                    compactCard
-                }
+                cardContent
             }
             .padding(.leading, leadingPadding)
             .padding(.trailing, SidebarMetrics.rowTrailingPadding)
-            .padding(.vertical, isFullCard ? SidebarMetrics.cardVerticalPadding : SidebarMetrics.compactCardVerticalPadding)
+            .padding(.vertical, SidebarMetrics.compactCardVerticalPadding)
             .frame(maxWidth: .infinity, minHeight: SidebarMetrics.chatRowHeight, alignment: .leading)
             .contentShape(Rectangle())
             .background(rowBackground, in: .rect(cornerRadius: HerdrTheme.Radius.control))
@@ -420,6 +407,17 @@ struct SidebarChatRow: View {
             }
         }
         .buttonStyle(.herdrPlain)
+        .overlay(alignment: .top) {
+            if showsDivider {
+                Rectangle()
+                    .fill(HerdrTheme.hairline)
+                    .frame(height: SidebarMetrics.chatDividerHeight)
+                    .padding(.leading, leadingPadding + (differentiateWithoutColor && tabColor != nil ? 22 : 0))
+                    .padding(.trailing, SidebarMetrics.rowTrailingPadding)
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+            }
+        }
         .onHover { isHovering = $0 }
         .help(dragHelp)
         .accessibilityIdentifier("sidebar-pane-\(pane.id)")
@@ -432,22 +430,10 @@ struct SidebarChatRow: View {
         .modifier(SidebarConversationDragModifier(pane: pane))
     }
 
-    private var fullCardLocation: String? {
-        if let recentContext { return "\(recentContext.machine) · \(recentContext.workspace)" }
-        if case let .full(location) = style { return location }
-        return nil
-    }
-
-    private var isFullCard: Bool { fullCardLocation != nil }
-
     /// Idle and shell sessions step back: a medium title in secondary ink.
     private var isQuiet: Bool {
         !isSelected && !isUnread && !isManuallyUnread
             && (pane.agentStatus == .idle || pane.agentStatus == .unknown)
-    }
-
-    private var showsStatus: Bool {
-        isManuallyUnread || describesLastActivity || pane.agentStatus.needsAttention || pane.agentStatus == .working
     }
 
     private var cardStatus: SidebarCardStatus {
@@ -460,37 +446,61 @@ struct SidebarChatRow: View {
         )
     }
 
-    private func fullCard(location: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: SidebarTone.agentSymbol(for: pane))
-                        .herdrFont(size: 13)
-                        .foregroundStyle(HerdrTheme.iconTint)
-                        .accessibilityHidden(true)
-                    Text(pane.displayAgentName)
-                        .lineLimit(1)
-                }
-                .herdrFont(size: SidebarMetrics.metaLabelSize)
-                .foregroundStyle(metaColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if showsStatus { cardStatus }
-            }
+    private var cardContent: some View {
+        VStack(alignment: .leading, spacing: 3) {
             titleLine
-            HStack(spacing: 5) {
-                Image(systemName: "desktopcomputer")
-                    .herdrFont(size: 11)
-                    .foregroundStyle(HerdrTheme.iconTint)
-                    .accessibilityHidden(true)
-                Text(location)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .accessibilityLabel(recentContext?.accessibilityLabel ?? location)
-            }
-            .herdrFont(size: SidebarMetrics.metaLabelSize)
-            .foregroundStyle(metaColor)
             contextLines
+            footer
+                .anchorPreference(key: SidebarChatLayoutKey.self, value: .bounds) { [.footer: $0] }
         }
+    }
+
+    /// Prefer the complete location and tab on one line. If they do not fit,
+    /// keep status/age readable on the final line rather than compressing it.
+    @ViewBuilder
+    private var footer: some View {
+        if let locationContext {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 5) {
+                    location(locationContext, withTab: true).fixedSize()
+                    Spacer(minLength: 4)
+                    cardStatus
+                }
+                HStack(spacing: 5) {
+                    location(locationContext, withTab: false).fixedSize()
+                    Spacer(minLength: 4)
+                    cardStatus
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    location(locationContext, withTab: false)
+                    HStack(spacing: 5) {
+                        Text(locationContext.tab)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .foregroundStyle(metaColor)
+                        cardStatus
+                    }
+                    .herdrFont(size: SidebarMetrics.metaLabelSize)
+                }
+            }
+        } else {
+            cardStatus
+        }
+    }
+
+    private func location(_ context: LocationContext, withTab: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "desktopcomputer")
+                .foregroundStyle(HerdrTheme.iconTint)
+                .accessibilityHidden(true)
+            (Text(context.machine) + Text(" · ") + Text(context.workspace).bold()
+                + (withTab ? Text(" · \(context.tab)") : Text("")))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityLabel(context.accessibilityLabel)
+        }
+        .herdrFont(size: SidebarMetrics.metaLabelSize)
+        .foregroundStyle(metaColor)
     }
 
     /// Meta text lifts to secondary on a selected row: over sidebar glass,
@@ -499,23 +509,15 @@ struct SidebarChatRow: View {
         isSelected ? HerdrTheme.secondaryText : HerdrTheme.tertiaryText
     }
 
-    private var compactCard: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            titleLine
-            if showsStatus || isQuiet {
-                cardStatus
-            }
-            contextLines
-        }
-    }
-
     private var titleLine: some View {
         HStack(spacing: 6) {
-            Text(pane.displayTitle)
+            Text(Self.sidebarTitle(pane.displayTitle))
                 .herdrFont(size: SidebarMetrics.chatLabelSize, weight: isQuiet ? .medium : .semibold, relativeTo: .subheadline)
                 .foregroundStyle(isQuiet ? HerdrTheme.secondaryText : HerdrTheme.text)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .anchorPreference(key: SidebarChatLayoutKey.self, value: .bounds) { [.title: $0] }
             if let hierarchy, hierarchy.childCount > 0 {
                 Text("\(hierarchy.childCount)")
                     .herdrFont(size: SidebarMetrics.metaLabelSize)
@@ -604,6 +606,7 @@ struct SidebarChatRow: View {
             .help(isStarred ? "Unstar this chat" : "Star this chat")
             .accessibilityLabel(isStarred ? "Unstar \(pane.displayTitle)" : "Star \(pane.displayTitle)")
             .accessibilityIdentifier("sidebar-pane-star-\(pane.id)")
+            .anchorPreference(key: SidebarChatLayoutKey.self, value: .bounds) { [.star: $0] }
         } else if isStarred {
             Image(systemName: "star.fill")
                 .herdrFont(size: SidebarMetrics.hierarchyIconSize, relativeTo: .caption2)
@@ -614,13 +617,18 @@ struct SidebarChatRow: View {
         }
     }
 
+    /// Only the conventional decoration is omitted; never alter persisted titles.
+    static func sidebarTitle(_ title: String) -> String {
+        let prefix = "π - "
+        guard title.hasPrefix(prefix), title.count > prefix.count else { return title }
+        return String(title.dropFirst(prefix.count))
+    }
+
     private var accessibilityLabel: String {
-        var identity = "\(pane.displayTitle), \(pane.displayAgentName), \(pane.agentStatus.title)"
-        if let recentContext {
-            identity += ", \(recentContext.accessibilityLabel)"
-        } else if case let .full(location) = style {
-            // Unread and Starred cards name their place on the card itself.
-            identity += ", \(location)"
+        let spokenStatus = isManuallyUnread ? "Done, waiting for you" : pane.agentStatus.title
+        var identity = "\(pane.displayTitle), \(pane.displayAgentName), \(spokenStatus)"
+        if let locationContext {
+            identity += ", \(locationContext.accessibilityLabel)"
         }
         if let tabColor { identity += ", color group: \(colorLabel ?? tabColor.defaultLabel) (\(tabColor.defaultLabel))" }
         if let hierarchy {

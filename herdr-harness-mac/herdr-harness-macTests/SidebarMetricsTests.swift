@@ -41,6 +41,7 @@ struct SidebarMetricsTests {
         #expect(SidebarMetrics.containerLeadingPadding == 6)
         #expect(SidebarMetrics.containerTrailingPadding == 6)
         #expect(SidebarMetrics.chatRowLeadingPadding == 10)
+        #expect(SidebarMetrics.chatDividerHeight == 1)
         #expect(SidebarMetrics.cardVerticalPadding == 8)
         #expect(SidebarMetrics.compactCardVerticalPadding == 6)
         #expect(SidebarMetrics.folderCardInset == 4)

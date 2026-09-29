@@ -33,7 +33,7 @@ EMOJI_VECTORS = (
 ENTRY_FIELDS = {"feature_id", "title", "label", "label_source", "emoji", "emoji_source", "status", "hud_status", "step_index",
                 "step_fraction", "percent", "now", "latest_message", "latest_first_mate_message_id",
                 "read_through_message_id", "unread", "working_on_reply", "activity_at", "updated_at", "archived_at"}
-SKIM_KEY = {"format": "breath_tight", "prompt_version": "skim-v2", "segmenter_version": 1, "skim_version": 1,
+SKIM_KEY = {"format": "breath_tight", "prompt_version": "skim-v3", "segmenter_version": 1, "skim_version": 1,
             "model": "synthetic/skimmer", "thinking": "off", "reply_sha256": "0" * 64}
 SKIM_DOCUMENT = {"version": 1, "format": "breath_tight", "status": "answer", "blocks": [
     {"kind": "say", "tokens": [{"t": "text", "v": "Checkout  "},
@@ -62,9 +62,9 @@ class StatusMappingTests(unittest.TestCase):
         self.assertEqual(fleet.hud_status("awaiting_direction", step_index=4, attention_type="visit.awaiting_direction",
                                           visit_status="running"), "turn")
         self.assertEqual(fleet.hud_status("awaiting_direction"), "turn")
-        # A visible pull request is finished work waiting at any step.
-        self.assertEqual(fleet.hud_status("awaiting_direction", step_index=None, has_pull_request=True), "ready")
-        self.assertTrue(fleet.awaiting_direction_is_ready(attention_type=None, visit_status=None, step_index=None,
+        # A saved link may be a draft, closed PR, or an unrelated historical artifact.
+        self.assertEqual(fleet.hud_status("awaiting_direction", step_index=None, has_pull_request=True), "turn")
+        self.assertFalse(fleet.awaiting_direction_is_ready(attention_type=None, visit_status=None, step_index=None,
                                                           has_pull_request=True))
 
     def test_awaiting_turn_and_the_quiet_statuses(self):
@@ -81,29 +81,26 @@ class StatusMappingTests(unittest.TestCase):
 
 
 class StepMappingTests(unittest.TestCase):
-    def test_contract_examples(self):
-        for key, expected in (("code-review-pre-pr", 4), ("proof", 3), ("improve-copy", None), ("planning", 0),
-                              ("implementation", 1)):
-            self.assertEqual(fleet.step_index(key), expected, key)
+    def test_only_explicit_phase_names_are_classified(self):
+        for key, expected in (("plan", 0), ("planning", 0), ("implementation", 1),
+                              ("code-review", 2), ("qa", 3), ("pr", 4), ("merge", 5)):
+            self.assertEqual(fleet.step_index(key), expected)
+        for key in ("test-fixture-cleanup", "test-fluff-audit-2", "code-review-pre-pr", "proof",
+                    "testing", "review-then-merge", "plan_and_build", "phase-3", "", None, 7):
+            self.assertIsNone(fleet.step_index(key), key)
 
-    def test_prefix_matching_precedence_and_edges(self):
-        for key, expected in (
-            ("plan", 0), ("PLAN", 0), ("start-ticket", None), ("implement", 1), ("build", 1), ("building", 1),
-            ("rebuild", None), ("architect-code-review", 2), ("reviews", 2), ("qa", 3), ("qa-signoff", 3),
-            ("quality", None), ("testing", 3), ("contest", None), ("pr", 4), ("pr-triage", 4), ("Code_Review Pre PR", 4),
-            ("prepare", None), ("preflight", None), ("prototype", None), ("merge", 5), ("merged-review", 5),
-            ("review-then-merge", 5), ("plan_and_build", 1), ("", None), ("--", None), (None, None), (7, None),
-        ):
-            self.assertEqual(fleet.step_index(key), expected, key)
-
-    def test_fraction_and_percent_follow_the_visit(self):
-        self.assertEqual(fleet.step_progress("plan", "running"), (0, 0.0, 0))
-        self.assertEqual(fleet.step_progress("plan", "completed"), (0, 1.0, 17))
-        self.assertEqual(fleet.step_progress("proof", "completed"), (3, 1.0, 67))
-        self.assertEqual(fleet.step_progress("proof", "cancelled"), (3, 0.0, 50))
-        self.assertEqual(fleet.step_progress("merge", "completed"), (5, 1.0, 100))
-        self.assertEqual(fleet.step_progress("improve-copy", "completed"), (None, None, None))
-        self.assertEqual(fleet.step_progress(None, None), (None, None, None))
+    def test_active_work_overrides_an_old_phase_without_guessing_mixed_roles(self):
+        row = {"id": "synthetic", "status": "running", "stage_key": "qa", "visit_status": "running"}
+        self.assertEqual(fleet.entry(row)["step_index"], 3)
+        row["active_roles"] = ["coder"]
+        result = fleet.entry(row)
+        self.assertEqual((result["hud_status"], result["step_index"]), ("working", 1))
+        self.assertIsNone(result["percent"])
+        self.assertIsNone(result["step_fraction"])
+        for roles in (["coder", "reviewer"], ["custom"]):
+            self.assertIsNone(fleet.entry({**row, "active_roles": roles})["step_index"])
+        self.assertIsNone(fleet.entry({**row, "pending_human_message": True})["step_index"])
+        self.assertIsNone(fleet.entry({**row, "coordinator_owner": "coordinator"})["step_index"])
 
 
 class PresentationRuleTests(unittest.TestCase):
@@ -264,6 +261,13 @@ class FleetStoreFixture:
 
 
 class FleetStoreTests(FleetStoreFixture, unittest.TestCase):
+    def test_fixture_cleanup_uses_current_coder_and_new_direction_clears_phase(self):
+        visit = self.stage("test-fixture-cleanup")
+        self.running_assignment(visit)
+        self.assertEqual(self.entry()["step_index"], 1)
+        self.store.append_human_message(self.id, "Stop and review the proposed changes", "redirect")
+        self.assertIsNone(self.entry()["step_index"])
+
     def test_migration_adds_the_presentation_table_to_an_existing_store(self):
         self.store.close()
         with sqlite3.connect(self.path) as raw:
@@ -424,22 +428,22 @@ class FleetStoreTests(FleetStoreFixture, unittest.TestCase):
                                    "progress-1")
         entry = self.entry()
         self.assertEqual((entry["status"], entry["hud_status"]), ("running", "working"))
-        self.assertEqual((entry["step_index"], entry["step_fraction"], entry["percent"]), (1, 0.0, 17))
+        self.assertEqual((entry["step_index"], entry["step_fraction"], entry["percent"]), (1, None, None))
         self.assertEqual(entry["now"], "Wiring the receipt exporter.")
 
     def test_stage_result_at_review_is_ready_and_elsewhere_is_turn(self):
         self.finished_stage("code-review")
         entry = self.entry()
         self.assertEqual((entry["status"], entry["hud_status"]), ("awaiting_direction", "ready"))
-        self.assertEqual((entry["step_index"], entry["step_fraction"], entry["percent"]), (2, 1.0, 50))
+        self.assertEqual((entry["step_index"], entry["step_fraction"], entry["percent"]), (2, None, None))
         self.assertEqual(entry["now"], "Open the pull request next")
         self.assertTrue(entry["unread"])  # the checkpoint is a First Mate message
 
-    def test_stage_result_at_qa_is_turn_until_a_pull_request_is_visible(self):
+    def test_saved_pull_request_does_not_claim_review_readiness(self):
         self.finished_stage("proof")
         self.assertEqual(self.entry()["hud_status"], "turn")
         link = self.store.save_link(self.id, {"url": "https://github.com/synthetic/shop/pull/7", "request_id": "pr"})
-        self.assertEqual(self.entry()["hud_status"], "ready")
+        self.assertEqual(self.entry()["hud_status"], "turn")
         self.store.set_link_visibility(self.id, link["id"], {"hidden": True, "request_id": "hide-pr"})
         self.assertEqual(self.entry()["hud_status"], "turn")
 

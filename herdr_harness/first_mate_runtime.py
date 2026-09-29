@@ -195,6 +195,10 @@ architect pin is unavailable or Pi reports a mismatched identity or effort, that
 review is blocked: NEVER re-route it through planning or execution. Acknowledge
 the requested role and pin, and claim an actual model only from model_selection
 actual evidence.
+Give assignments accurate roles for their current work (coder for implementation,
+fixture changes and cleanup; reviewer for review; qa only for actual QA). Role
+names drive the activity badge, while free-form stage keys remain identifiers.
+Do not label unit-test implementation as QA or treat a draft PR link as approval.
 Acknowledge dispatch briefly, then end
 your turn. Never poll, wait, perform substantive assignment work, or consume a
 turn monitoring workers; ordinary service code watches and records them
@@ -210,9 +214,13 @@ outcomes. Before completing a stage whose work changed code, inspect the scoped
 feature.verification and retained verification run references. Discover every
 suite belonging to every changed package with fm_status, record the exact gate
 batch and results with the worker-reported evidence, and pass the run IDs you
-select to fm_complete_stage. Quote the service's scoped verdict (Verified or
-Partially verified) with its missing suites and previously green suites rather
-than claiming unqualified green from a total test count. It continues only to a
+select to fm_complete_stage. Keep the detailed coverage verdict, missing suites,
+and historical gate comparisons in Overview's Verification section and retained
+Documents. Do not append coverage inventories or boilerplate warnings to ordinary
+chat replies. Report a concrete failed test or verification limit briefly when
+it changes the requested result or a decision the human must make. Do not claim
+unqualified verification from a test count or turn missing coverage into extra
+work outside the human's scope. It continues only to a
 previously authorized next stage; otherwise it pauses for direction.
 Report blockers accurately and never infer success from an agent exit.
 Use fm_save_link for the PR implementing or reviewing this feature or ticket,
@@ -3470,9 +3478,18 @@ class FirstMateRuntime:
 
     def _continue_handoff(self, job: dict) -> bool:
         handoff = job["pending_handoff"]
-        feature = self.store.get_feature(job["feature_id"])
-        if feature["status"] != "running" or not self.reliability.allow_handoff(job):
+        if _locked(self._job_dir(job) / "writer.lock"):
             return False
+        feature = self.store.get_feature(job["feature_id"])
+        if feature["status"] == "blocked":
+            return self.store.settle_blocked_handoff(job["claim"]["id"], job["claim"]["generation"],
+                                                    handoff["id"], verified_stopped=True)
+        if feature["status"] != "running":
+            return False
+        if not self.reliability.allow_handoff(job, verified_stopped=True):
+            # A stopped predecessor has settled as blocked. Finalize this spool
+            # instead of leaving it handoff_pending and revisiting it every tick.
+            return self.store.get_assignment(job["claim"]["id"])["status"] == "blocked"
         claim = {**job["claim"], "dispatch_id": "handoff:" + handoff["id"]}
         try:
             successor = self._new_job(feature, kind="worker", claim=claim,

@@ -804,3 +804,24 @@ test('assessed revisions are never relabeled as tested revisions', async () => {
   assert.match(html, /aaaaaaaaaaaa…/);
   assert.doesNotMatch(html, /bbbbbbbbbbbb…/);
 });
+
+
+test('blocked current workflow overrides a running visit while retaining completed history', async () => {
+  const app = inspector();
+  await app.reply('/features', {ok:true,features:[feature('a')]});
+  const snapshot = detail('a');
+  snapshot.feature.status = 'blocked';
+  snapshot.feature.current_visit_id = 'current';
+  snapshot.visits = [
+    {id:'prior',feature_id:'a',title:'Completed planning',status:'completed',revision:1},
+    {id:'current',feature_id:'a',title:'Current work',status:'running',revision:1}
+  ];
+  await app.reply('/features/a', snapshot);
+  assert.match(app.element('#chat-status').textContent, /Work is blocked/);
+  await app.click({tab:'Workflow'});
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /class="status blocked">blocked/);
+  assert.match(html, /class="status completed">completed/);
+  assert.doesNotMatch(html, /class="status running"/);
+  assert.equal(snapshot.visits[1].status, 'running');
+});

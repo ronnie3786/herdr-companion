@@ -24,7 +24,7 @@ from typing import Any, Iterable, Mapping
 
 SEGMENTER_VERSION = 1
 SKIM_VERSION = 1
-PROMPT_VERSION = "skim-v2"
+PROMPT_VERSION = "skim-v3"
 DEFAULT_FORMAT = "breath_tight"
 
 # ECMAScript `\s`: WhiteSpace plus LineTerminator. Python's `\s` differs (it
@@ -529,9 +529,9 @@ def shape(limits: dict, format: str = "notes") -> str:
     if format == "card":
         return f"Each slot gets one short sentence, two at most. {cap}"
     if format == "breath_tight":
-        return f"Write exactly one sentence of at most 25 words, then the next-step line. {cap}"
+        return f"Write exactly one sentence of at most 25 words, include an optional next-step line only when the reply explicitly contains that question or suggestion. {cap}"
     if format.startswith("breath"):
-        return f"Write one or two sentences, then the next-step line. {cap}"
+        return f"Write one or two sentences, include an optional next-step line only when the reply explicitly contains that question or suggestion. {cap}"
     if limits["max"] <= 30:
         return f"Write the headline plus at most one more short line. {cap}"
     if limits["max"] <= 60:
@@ -938,7 +938,80 @@ def skim_from_output(*, reply: str, output: str, voice: str = "buddy", format: s
     """Segment a reply and normalize one model output against it."""
     document = segment(reply)
     parsed, syntax, notes = read_model_output(output)
-    return document, normalize(parsed, document, voice=voice, notes=notes, format=format), syntax
+    normalized = normalize(parsed, document, voice=voice, notes=notes, format=format)
+    return document, ground_followups(normalized, reply), syntax
+
+
+def ground_followups(document: Any, reply: str) -> Any:
+    """Malformed saved skims degrade to the original response, not a failed read."""
+    try:
+        return _ground_followups(document, reply)
+    except (TypeError, KeyError, AttributeError, ValueError):
+        return None
+
+
+def _ground_followups(document: Any, reply: str) -> Any:
+    """An optional next action must quote a real ask or suggestion in the reply.
+
+    Never change the original or generate a replacement action. Rebuild anchor
+    and rest bookkeeping when removing an unsupported optional block.
+    """
+    if not isinstance(document, dict):
+        return document
+    original_blocks = document.get("blocks", [])
+    if not any(b.get("kind") in {"ask", "next", "reply"} for b in original_blocks):
+        return document
+    segments = segment(reply).segments
+    def clean(text):
+        return " ".join(re.sub(r"[`*_]", "", text).split())
+    def supported(block):
+        text = clean(plain(block.get("tokens", [])))
+        if not text:
+            return False
+        for source in segments:
+            if source["kind"] in {"code", "table", "rule"}:
+                continue
+            original = clean(source["text"])
+            # Match a full sentence, not a fragment that changes a statement
+            # into a question or extracts an action from a negation.
+            sentences = re.split(r"(?<=[.!?])\s+", original)
+            for sentence in sentences:
+                sentence = re.sub(r"^(?:[-+>] |\d+[.)] )", "", sentence)
+                if text != sentence:
+                    continue
+                if sentence.endswith("?") or re.match(
+                        r"(?i)^(?:suggested next step:|next step:|I (?:suggest|recommend)|you (?:can|could|should)|please |let me know (?:which|whether|when|what))", sentence):
+                    return True
+        return False
+    original_blocks = document.get("blocks", [])
+    blocks = [b for b in original_blocks if b.get("kind") not in {"ask", "next", "reply"} or supported(b)]
+    if blocks == original_blocks:
+        return document
+    import copy
+    result = copy.deepcopy(document)
+    result["blocks"] = blocks
+    ids = set()
+    def collect(value):
+        if isinstance(value, dict):
+            if value.get("t") == "anchor": ids.add(value.get("id"))
+            for child in value.values(): collect(child)
+        elif isinstance(value, list):
+            for child in value: collect(child)
+    collect([result.get("headline", []), blocks])
+    result["anchors"] = [a for a in result.get("anchors", []) if a["id"] in ids]
+    covered = {ref for a in result["anchors"] for ref in a["refs"]}
+    covered.update(ref for drawer in result.get("drawers", []) for ref in drawer.get("refs", []))
+    result["rest"] = {"refs": [s["id"] for s in segments if s["kind"] != "rule" and s["id"] not in covered]}
+    stats = result.get("stats", {})
+    stats["skimWords"] = words(plain(result.get("headline", []))) + sum(
+        sum(words(plain(item)) for item in b.get("items", [])) if b.get("kind") == "list"
+        else words(plain(b.get("tokens", []))) for b in blocks)
+    stats["links"] = len(result["anchors"])
+    stats["coveredWords"] = sum(words(s["text"]) for s in segments if s["id"] in covered)
+    stats["coverage"] = stats["coveredWords"] / stats["totalWords"] if stats.get("totalWords") else 1
+    result["stats"] = stats
+    result.setdefault("warnings", []).append({"level": "info", "code": "unsupported_followup", "message": "Omitted a follow-up not stated in the reply."})
+    return result
 
 
 # ---------------------------------------------------------------- serving

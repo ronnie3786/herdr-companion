@@ -155,13 +155,17 @@ struct FirstMateConversationListTests {
 
     @Test("Status words: a working feature shows its step, otherwise the status label")
     func statusWords() {
+        #expect(FirstMateChatStatusStyle.word(for: ChatFixtures.conversation("a", hud: .idle, step: 3, featureStatus: "paused")) == "Paused")
+        #expect(FirstMateChatStatusStyle.word(for: ChatFixtures.conversation("a", hud: .idle, featureStatus: "cancelled")) == "Cancelled")
+        #expect(FirstMateChatStatusStyle.word(for: ChatFixtures.conversation("a", hud: .working, step: 3, featureStatus: "recovering")) == "Recovering")
+        #expect(FirstMateChatStatusStyle.word(for: ChatFixtures.conversation("a", hud: .working, step: 3, featureStatus: "coordinating")) == "Responding")
         #expect(FirstMateChatStatusStyle.word(for: ChatFixtures.conversation("a", hud: .working, step: 2)) == "In review")
         #expect(FirstMateChatStatusStyle.word(for: ChatFixtures.conversation("a", hud: .working)) == "Working")
         #expect(FirstMateChatStatusStyle.word(for: ChatFixtures.conversation("a", hud: .blocked, step: 3)) == "Blocked")
         #expect(FirstMateHudStatus.allCases.filter { $0 != .unknown }.map(FirstMateChatStatusStyle.label(for:))
             == ["Blocked", "Your turn", "Ready for review", "Working", "Ready to plan", "Complete"])
-        #expect(FirstMateChatStatusStyle.stepText(for: ChatFixtures.conversation("a", hud: .blocked, step: 3)) == "Step 4 of 6, QA")
+        #expect(FirstMateChatStatusStyle.stepText(for: ChatFixtures.conversation("a", hud: .blocked, step: 3)) == "QA")
         #expect(FirstMateChatStatusStyle.stepText(for: ChatFixtures.conversation("a", hud: .blocked)) == nil)
-        #expect(FirstMateChatStatusStyle.stepText(for: ChatFixtures.conversation("a", hud: .done)) == "All six steps done")
+        #expect(FirstMateChatStatusStyle.stepText(for: ChatFixtures.conversation("a", hud: .done)) == nil)
     }
 }

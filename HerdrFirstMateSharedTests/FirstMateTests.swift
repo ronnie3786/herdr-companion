@@ -9,6 +9,25 @@ import Testing
 @Suite("First Mate native contract", .serialized)
 @MainActor
 struct FirstMateTests {
+    @Test("Current stage reflects execution controls while completed history stays complete")
+    func currentStageExecutionStatus() {
+        var snapshot = FirstMateDemo.features(step: 3)[0]
+        let current = FirstMateVisit(id: "current", featureID: snapshot.feature.id, stageKey: "phase-three", title: "Current work", status: "running", revision: snapshot.feature.revision)
+        snapshot.feature.currentVisitID = current.id
+        for status in ["blocked", "paused", "recovering", "awaiting_direction", "cancelled"] {
+            snapshot.feature.status = status
+            #expect(snapshot.displayStatus(for: current) == status)
+            var historic = current
+            historic.id = "historical"
+            #expect(snapshot.displayStatus(for: historic) == "running")
+            var completed = current
+            completed.status = "completed"
+            #expect(snapshot.displayStatus(for: completed) == "completed")
+        }
+        snapshot.feature.status = "running"
+        #expect(snapshot.displayStatus(for: current) == "running")
+    }
+
     @Test("Workflow primary commit uses captured end identity even when commit dates go backward")
     func workflowPrimaryCommitUsesCapturedEnd() {
         let predecessor = FirstMateVisitCommit(sha: String(repeating: "a", count: 40), subject: "Earlier change", committedAt: "2026-02-02T12:00:00Z")

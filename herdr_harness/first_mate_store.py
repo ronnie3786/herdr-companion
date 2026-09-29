@@ -648,6 +648,16 @@ class FirstMateStore:
                      "assessment_json", "verification_selection_json", "git_baselines_json", "git_evidence_json"):
             if name in result:
                 result[name[:-5]] = json.loads(result.pop(name))
+        if result.get("role") == "assistant" and isinstance(result.get("text"), str):
+            metadata = result.get("metadata")
+            verification = metadata.get("verification") if isinstance(metadata, dict) else None
+            if isinstance(verification, dict) and verification.get("status") != "verified":
+                try:
+                    suffix = "\n\n" + FirstMateStore._coverage_note(verification)
+                except (TypeError, AttributeError):
+                    suffix = None  # Malformed legacy metadata cannot alter the response.
+                if suffix and result["text"].endswith(suffix):
+                    result["text"] = result["text"][:-len(suffix)]
         return result
 
     def _one(self, table: str, identity: str) -> dict:
@@ -1098,6 +1108,10 @@ class FirstMateStore:
         with self._read():
             rows = self._db.execute(f"""SELECT f.id,f.title,f.status,f.coordinator_owner,f.archived_at,f.updated_at,
                 v.stage_key,v.status AS visit_status,e.type AS attention_type,
+                (SELECT json_group_array(DISTINCT a.role) FROM fm_assignment_memberships x
+                    JOIN fm_assignments a ON a.id=x.assignment_id
+                    WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision
+                    AND a.status IN ('queued','dispatching','running','waiting_children','handoff_pending','awaiting_ack','recovering')) AS active_roles,
                 substr(CASE WHEN e.created_at>=COALESCE(v.created_at,f.created_at) THEN
                     CASE WHEN e.type='visit.awaiting_direction' THEN COALESCE(NULLIF(v.recommendation,''),e.summary) ELSE e.summary END
                     ELSE v.recommendation END,1,600) AS needs_user_prompt,
@@ -1130,7 +1144,7 @@ class FirstMateStore:
                     AND role IN ('user','human','assistant') AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
                 LEFT JOIN fm_messages m ON m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
                     AND role='assistant' AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
-                LEFT JOIN fm_message_skims k ON k.message_id=m.id AND k.status='ready'
+                LEFT JOIN fm_message_skims k ON k.message_id=m.id AND k.status='ready' AND k.prompt_version='{skim_format.PROMPT_VERSION}'
                 LEFT JOIN fm_events e ON e.sequence=(SELECT max(sequence) FROM fm_events WHERE feature_id=f.id
                     AND {JOURNAL_EVENT_SQL} AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
                 LEFT JOIN fm_feature_presentation p ON p.feature_id=f.id
@@ -1138,6 +1152,7 @@ class FirstMateStore:
         result = []
         for row in rows:
             item = dict(row)
+            item["active_roles"] = json.loads(item["active_roles"])
             item["awaiting_turn"] = self._awaiting_turn(item["status"], item["coordinator_owner"],
                                                         item.pop("running_assignment_count"),
                                                         item["pending_human_message"], item.pop("assistant_spoke_last"))
@@ -1606,7 +1621,9 @@ class FirstMateStore:
             raise FirstMateError("First Mate record not found", code="not_found", status=404)
         marker = dict(row)
         marker.pop("updated_at")
-        return "b1-" + hashlib.sha256(_json(marker).encode()).hexdigest()[:20]
+        # Invalidate pre-cleanup projections after a server upgrade even when
+        # no user data changed. This is a presentation version, not a migration.
+        return "b2-" + hashlib.sha256(_json(marker).encode()).hexdigest()[:20]
 
     def board(self, feature_id: str, *, messages: int = 60, journal: int = 40, if_version: str | None = None) -> dict:
         """Bounded Agent view projection built from SQLite alone.
@@ -1730,8 +1747,6 @@ class FirstMateStore:
                     text = reply
                     if verification and verification.get("evidence_present"):
                         metadata["verification"] = self.verification_message_projection(verification)
-                        if verification.get("status") != "verified":
-                            text += "\n\n" + self._coverage_note(verification)
                     created = self._message(
                         message["feature_id"], "assistant", text, status="done",
                         metadata=metadata,
@@ -2262,9 +2277,9 @@ class FirstMateStore:
             "gate_set": [{key: entry.get(key) for key in
                           ("key", "label", "workspace", "outcome", "tested_revision", "run_id", "fresh")}
                          for entry in assessment.get("gate_set", [])],
-            "missing_suites": [item.get("label") for item in assessment.get("missing_suites", [])],
-            "previously_green_missing": [item.get("label") for item in assessment.get("previously_green_missing", [])],
-            "failing_suites": [item.get("label") for item in assessment.get("failing_suites", [])],
+            "missing_suites": [item.get("label") if isinstance(item, dict) else item for item in assessment.get("missing_suites", [])],
+            "previously_green_missing": [item.get("label") if isinstance(item, dict) else item for item in assessment.get("previously_green_missing", [])],
+            "failing_suites": [item.get("label") if isinstance(item, dict) else item for item in assessment.get("failing_suites", [])],
             "stale_evidence": assessment.get("stale_evidence", []),
             "coverage_reasons": assessment.get("coverage_reasons", []),
         }
@@ -2316,9 +2331,9 @@ class FirstMateStore:
             return shown
 
         label = assessment.get("label") or assessment.get("status")
-        missing = [item.get("label") for item in assessment.get("missing_suites", [])]
-        prior = [item.get("label") for item in assessment.get("previously_green_missing", [])]
-        failing = [item.get("label") for item in assessment.get("failing_suites", [])]
+        missing = [item.get("label") if isinstance(item, dict) else item for item in assessment.get("missing_suites", [])]
+        prior = [item.get("label") if isinstance(item, dict) else item for item in assessment.get("previously_green_missing", [])]
+        failing = [item.get("label") if isinstance(item, dict) else item for item in assessment.get("failing_suites", [])]
         parts = [f"Verification coverage: {label}."]
         if failing:
             parts.append(f"Failing suites ({len(failing)}): " + named(failing) + ".")
@@ -2365,12 +2380,9 @@ class FirstMateStore:
             if turn_id:
                 # The checkpoint is this turn's report; its closing reply is not.
                 message_metadata["turn_id"] = turn_id
-            note = ""
             if verification and verification.get("evidence_present"):
                 self._save_verification_assessment(feature["id"], verification, visit_id=visit_id)
                 message_metadata["verification"] = self.verification_message_projection(verification)
-                if verification.get("status") != "verified":
-                    note = "\n\n" + self._coverage_note(verification)
             if selection is not None:
                 # An explicit gate selection survives live reads, later informal
                 # parks, and restarts until a newer completion supersedes it.
@@ -2378,7 +2390,7 @@ class FirstMateStore:
                                  (_json(list(selection)), feature["id"]))
             next_step = (f"\n\nContinuing with the previously authorized {visit['followup_stages'][0]} stage." if continuing else
                          (f"\n\nSuggested next step: {recommendation}" if recommendation else "") + "\n\nAwaiting your direction.")
-            self._message(feature["id"], "assistant", summary + next_step + note, status="done", metadata=message_metadata,
+            self._message(feature["id"], "assistant", summary + next_step, status="done", metadata=message_metadata,
                           source={"source_kind": "checkpoint", "in_reply_to": None,
                                   "visit_id": visit_id, "feature_revision": visit["revision"],
                                   "native_session_id": native_session_id})
@@ -2683,6 +2695,34 @@ class FirstMateStore:
             self._message(feature_id, "system", "Automatic recovery needs direction: " + reason, metadata={"attention": "human"})
             self._event(feature_id, "reliability.blocked", reason, {"revision": revision})
             return self._save_receipt(f"reliability_block:{feature_id}", request_id, payload, self._one("fm_features", feature_id))
+
+    def settle_blocked_handoff(self, assignment_id: str, generation: int, handoff_id: str,
+                               *, verified_stopped: bool = False) -> bool:
+        """Reconcile a stopped checkpoint left pending by an older runtime.
+
+        This never restarts work or changes feature authorization. A live writer
+        must still be stopped by the runtime before its ownership is released.
+        """
+        if not verified_stopped:
+            raise FirstMateError("The handoff predecessor must be stopped", code="writer_not_stopped")
+        with self._transaction():
+            assignment = self._execution(assignment_id, generation)
+            feature = self._one("fm_features", assignment["feature_id"])
+            if feature["status"] != "blocked":
+                return False
+            if assignment["status"] == "blocked":
+                return True
+            handoff = self._one("fm_handoffs", handoff_id)
+            if (assignment["status"] != "handoff_pending" or handoff["assignment_id"] != assignment_id
+                    or handoff["predecessor_generation"] != generation or handoff["status"] != "checkpointed"
+                    or not self.assignment_is_in_current_visit(assignment_id)):
+                return False
+            now, reason = _now(), "Handoff stopped because the feature is blocked. The saved checkpoint is retained."
+            self._db.execute("UPDATE fm_assignments SET status='blocked',owner=NULL,summary=?,updated_at=? WHERE id=?", (reason, now, assignment_id))
+            self._db.execute("UPDATE fm_attempts SET status='interrupted',summary=?,updated_at=? WHERE assignment_id=? AND generation=?", (reason, now, assignment_id, generation))
+            self._db.execute("UPDATE fm_sessions SET status='retained',updated_at=? WHERE assignment_id=? AND generation=?", (now, assignment_id, generation))
+            self._event(feature["id"], "handoff.blocked", reason, {"assignment_id": assignment_id, "handoff_id": handoff_id})
+            return True
 
     def request_human_gate(self, assignment_id: str, generation: int, native_session_id: str, reason: str, request_id: str) -> dict:
         """Pause an internal checkpoint without claiming the major stage is done."""
@@ -3085,14 +3125,21 @@ class FirstMateStore:
                                         f"WHERE message_id IN ({marks})", chunk):
                 if len(self._skim_documents) >= _SKIM_CACHE_LIMIT:
                     self._skim_documents.pop(next(iter(self._skim_documents)))
-                self._skim_documents[row["message_id"]] = (row["updated_at"], json.loads(row["document_json"]),
-                                                           json.loads(row["segments_json"]))
+                source = next(message["text"] for message in messages if message["id"] == row["message_id"])
+                document = skim_format.ground_followups(json.loads(row["document_json"]), source)
+                self._skim_documents[row["message_id"]] = (row["updated_at"], document, json.loads(row["segments_json"]))
         for message in messages:
             state = states.get(message["id"])
             if state is None:
                 continue
             if state["status"] == "ready" and message["id"] in self._skim_documents:
                 _, state["document"], state["segments"] = self._skim_documents[message["id"]]
+            if state["status"] == "ready":
+                source_hash = hashlib.sha256(skim_format.canonicalize(message["text"]).encode()).hexdigest()
+                if state.get("reply_sha256") != source_hash:
+                    # Never attach anchors or summaries made from a legacy appendix.
+                    message["skim"] = {"status": "unavailable"}
+                    continue
             message["skim"] = skim_format.served(state)
         return messages
 

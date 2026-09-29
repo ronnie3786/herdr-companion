@@ -41,7 +41,7 @@ struct FirstMateOverviewView: View {
                             .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                             .foregroundStyle(palette.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        FirstMateStatusLabel(status: visit.status)
+                        FirstMateStatusLabel(status: snapshot.displayStatus(for: visit))
                     }
                     .padding(.top, 6)
                     FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)

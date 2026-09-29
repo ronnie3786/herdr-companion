@@ -76,6 +76,15 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         feature.status == "recovering" || assignments.contains { $0.status == "recovering" }
     }
 
+    func displayStatus(for visit: FirstMateVisit) -> String {
+        guard visit.featureID == feature.id, visit.id == feature.currentVisitID,
+              visit.revision == feature.revision, visit.status == "running" else { return visit.status }
+        switch feature.status {
+        case "blocked", "paused", "recovering", "awaiting_direction", "cancelled": return feature.status
+        default: return visit.status
+        }
+    }
+
     var currentVisit: FirstMateVisit? { visits.first { $0.id == feature.currentVisitID } }
     var conversationEntries: [FirstMateConversationEntry] { FirstMateConversationEntry.make(messages: messages) }
 

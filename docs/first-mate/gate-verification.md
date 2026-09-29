@@ -134,10 +134,13 @@ assessment time. `tested_revisions` (also returned as `source_revisions`) comes
 only from the selected runs; current HEAD is never relabeled as a tested
 revision.
 
-Human-facing summaries render the same list. A checkpoint or informal park whose
-assessment is not **Verified** appends a deterministic
-`Verification coverage: <label>` note naming failing, missing, and previously
-passing dropped suites, so the warning travels with the conversation itself.
+Overview's Verification section renders the full assessment. Checkpoints and
+informal parks retain the same structured metadata without appending coverage
+inventories to the conversation. Concrete failures or limits that affect the
+requested outcome still belong in a concise reply. Exact legacy server-added
+appendices are hidden on reads when their retained metadata reproduces the
+suffix; stored responses and feedback evidence remain intact. Skims built from
+those removed appendices are withheld so their text and anchors cannot mislead.
 
 ## Synthetic reproduction
 
@@ -211,7 +214,7 @@ Covered by
 | --- | --- |
 | Mac and iOS First Mate **Overview** | A Verification section separate from workflow status: status, tested revision(s), the full package-qualified gate set with per-suite outcomes, and named missing, previously passing dropped, failing, and stale evidence. Long lists disclose their remainder instead of truncating. Offline cached evidence is badged **Last reported** and is never silently refreshed into green. |
 | Browser `/first-mate/` Overview | The same section, tones, disclosure, and last-reported badge. |
-| Checkpoint and park messages | The canonical `Verification coverage: …` line naming failing, missing, and previously passing dropped suites; the message metadata carries the compact gate set. |
+| Checkpoint and park messages | The original concise reply, with the compact gate set retained in message metadata. Detailed coverage stays in Overview. |
 | Authenticated feature detail and CLI | `feature.verification` on summaries and detail; detail also returns `verification_runs` and `suite_inventories`; `herdr-first-mate get` passes them through unchanged. |
 | Managed `fm_status` | The scoped `verification` assessment and a bounded `verification_runs` list for the coordinator, worker, or advisor. |
 | Workflow badges | Workflow only. A parked green badge is an attention signal, not test evidence. |

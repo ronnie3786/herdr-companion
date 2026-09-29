@@ -144,38 +144,73 @@ class FirstMateReliability:
         data = {}
         if job.get('workspace_mode') == 'isolated':
             try:
-                cwd = Path(job['cwd']).resolve()
-                def inspect(*args, limit):
-                    return git_bytes(str(cwd), '--no-pager', '-c', 'core.fsmonitor=false', *args, limit=limit)
-                data['head'] = inspect('rev-parse', 'HEAD', limit=1024).decode().strip()
-                data['diff'] = hashlib.sha256(inspect('diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', limit=8 * 1024 * 1024)).hexdigest()
-                names = inspect('ls-files', '--others', '--exclude-standard', '-z', limit=1024 * 1024).split(b'\0')
-                if len(names) > 10000:
-                    return None
-                untracked, remaining = [], 8 * 1024 * 1024
-                for name in sorted(filter(None, names)):
-                    relative = Path(os.fsdecode(name))
-                    path = cwd / relative
-                    if relative.is_absolute() or '..' in relative.parts or not path.parent.resolve().is_relative_to(cwd):
-                        return None
-                    info = path.lstat()
-                    if stat.S_ISLNK(info.st_mode):
-                        untracked.append((os.fsdecode(name), 'symlink', os.readlink(path)))
-                        continue
-                    if not stat.S_ISREG(info.st_mode) or info.st_size > remaining:
-                        return None
-                    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-                    with os.fdopen(descriptor, 'rb') as source:
-                        actual = os.fstat(source.fileno())
-                        if not stat.S_ISREG(actual.st_mode) or (actual.st_ino, actual.st_size, actual.st_mtime_ns) != (info.st_ino, info.st_size, info.st_mtime_ns):
-                            return None
-                        content = source.read(remaining + 1)
-                        after = os.fstat(source.fileno())
-                        if len(content) > remaining or (after.st_size, after.st_mtime_ns) != (actual.st_size, actual.st_mtime_ns):
-                            return None
-                    remaining -= len(content)
-                    untracked.append((os.fsdecode(name), hashlib.sha256(content).hexdigest()))
-                data['untracked'] = untracked
+                root = Path(job['cwd']).resolve()
+                remaining, files_left, repositories_left = 8 * 1024 * 1024, 10000, 8
+                deadline = time.monotonic() + 15
+
+                def workspace(cwd):
+                    nonlocal remaining, files_left, repositories_left
+                    repositories_left -= 1
+                    if repositories_left < 0:
+                        raise BackupUnavailable('Nested workspace inspection limit reached')
+
+                    def inspect(*args, limit):
+                        if time.monotonic() >= deadline:
+                            raise BackupUnavailable('Workspace progress inspection deadline reached')
+                        return git_bytes(str(cwd), '--no-pager', '-c', 'core.fsmonitor=false', *args, limit=limit)
+
+                    # Git lists an untracked nested repository as one directory,
+                    # not its files. Inspect that exact root, never the parent
+                    # repository again or a path inferred from an agent summary.
+                    observed_root = Path(os.fsdecode(inspect('rev-parse', '--show-toplevel', limit=4096)).strip()).resolve()
+                    if observed_root != cwd or not cwd.is_relative_to(root):
+                        raise BackupUnavailable('Nested workspace escaped its isolated root')
+                    result = {'head': inspect('rev-parse', 'HEAD', limit=1024).decode().strip()}
+                    diff = inspect('diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', limit=remaining)
+                    remaining -= len(diff)
+                    result['diff'] = hashlib.sha256(diff).hexdigest()
+                    names = sorted(filter(None, inspect('ls-files', '--others', '--exclude-standard', '-z', limit=1024 * 1024).split(b'\0')))
+                    files_left -= len(names)
+                    if files_left < 0:
+                        raise BackupUnavailable('Workspace source count exceeds the inspection limit')
+                    untracked = []
+                    for name in names:
+                        if time.monotonic() >= deadline:
+                            raise BackupUnavailable('Workspace progress inspection deadline reached')
+                        relative = Path(os.fsdecode(name))
+                        path = cwd / relative
+                        if relative.is_absolute() or '..' in relative.parts or not path.parent.resolve().is_relative_to(cwd):
+                            raise BackupUnavailable('Source path escaped its workspace')
+                        info = path.lstat()
+                        if stat.S_ISLNK(info.st_mode):
+                            untracked.append((os.fsdecode(name), 'symlink', os.readlink(path)))
+                            continue
+                        if stat.S_ISDIR(info.st_mode):
+                            nested = path.resolve()
+                            if nested == cwd or not nested.is_relative_to(cwd):
+                                raise BackupUnavailable('Invalid nested workspace')
+                            untracked.append((os.fsdecode(name), 'repository', workspace(nested)))
+                            after = path.lstat()
+                            if not stat.S_ISDIR(after.st_mode) or after.st_ino != info.st_ino:
+                                raise BackupUnavailable('Nested workspace changed during inspection')
+                            continue
+                        if not stat.S_ISREG(info.st_mode) or info.st_size > remaining:
+                            raise BackupUnavailable('Source exceeds the bounded inspection limit')
+                        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                        with os.fdopen(descriptor, 'rb') as source:
+                            actual = os.fstat(source.fileno())
+                            if not stat.S_ISREG(actual.st_mode) or (actual.st_ino, actual.st_size, actual.st_mtime_ns) != (info.st_ino, info.st_size, info.st_mtime_ns):
+                                raise BackupUnavailable('Source changed during inspection')
+                            content = source.read(remaining + 1)
+                            after = os.fstat(source.fileno())
+                            if len(content) > remaining or (after.st_size, after.st_mtime_ns) != (actual.st_size, actual.st_mtime_ns):
+                                raise BackupUnavailable('Source changed during inspection')
+                        remaining -= len(content)
+                        untracked.append((os.fsdecode(name), hashlib.sha256(content).hexdigest()))
+                    result['untracked'] = untracked
+                    return result
+
+                data = workspace(root)
             except (OSError, ValueError, BackupUnavailable):
                 return None
         children = [a for a in self.store.list_assignments(feature_id=job['feature_id'])
@@ -522,7 +557,7 @@ class FirstMateReliability:
         self.runtime._event(feature['id'], 'reliability.coordinator_kickstarted', 'Woke the stranded coordinator to settle the current stage.', {'visit_id': feature['current_visit_id']}, identity)
         _write_json(path, {'attempts': record['attempts'] + 1, 'at': iso(now)})
 
-    def allow_handoff(self, job):
+    def allow_handoff(self, job, *, verified_stopped=False):
         if not self.enabled:
             return True
         assignment = self.store.get_assignment(job['claim']['id'])
@@ -536,7 +571,7 @@ class FirstMateReliability:
             history.append({'job_id': job['id'], 'generation': job['claim']['generation'], 'at': now, 'fingerprint': fingerprint})
             _write_json(path, history[-20:])
         if len(history) >= 5 and len({r['fingerprint'] for r in history[-5:]}) == 1:
-            self._block(self.store.get_feature(job['feature_id']), 'A bounded repair continuation still repeated the same work after four handoffs. The latest checkpoint is retained. Obtain revised human direction, then use fm_recover with reset_budget=true, or fm_revise to change the approach.', 'handoff-churn:' + job['id'])
+            self._block(self.store.get_feature(job['feature_id']), 'Work stopped after repeated handoffs made no observable progress, including one focused repair attempt. Your checkpoint is saved. Tell First Mate what to change before trying again.', 'handoff-churn:' + job['id'], job=job if verified_stopped else None)
             return False
         if len(history) >= 4 and len({r['fingerprint'] for r in history[-4:]}) == 1:
             history[-1]['repair_guidance'] = ('Automatic loop repair within the current authorized assignment. Finish required acknowledgement using only the latest checkpoint and targeted missing evidence. '

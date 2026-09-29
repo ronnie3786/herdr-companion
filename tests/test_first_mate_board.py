@@ -75,7 +75,7 @@ class FirstMateBoardStoreTests(BoardFixture, unittest.TestCase):
         board = self.store.board(self.id, messages=2, journal=3)
         self.assertEqual(set(board), BOARD_FIELDS)
         self.assertFalse(board["unchanged"])
-        self.assertTrue(board["version"].startswith("b1-"))
+        self.assertTrue(board["version"].startswith("b2-"))
         self.assertEqual(board["feature"], self.store.list_features()[0])
         self.assertIn("dashboard_summary", board["feature"])
         snapshot = self.store.snapshot(self.id)

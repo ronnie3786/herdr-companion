@@ -2,6 +2,7 @@
 import fcntl
 import json
 from pathlib import Path
+import subprocess
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -528,6 +529,40 @@ class FirstMateReliabilityTests(unittest.TestCase):
         launch.assert_called_once()
         self.assertEqual(job['recovery_backup']['status'], 'saved')
 
+    def test_legacy_blocked_handoff_reconciles_only_after_the_writer_stops(self):
+        feature, assignment, job, lock, now = self.stalled()
+        handoff = self.store.begin_handoff(assignment["id"], 1, "legacy-checkpoint", "Retained source and next action")
+        job["pending_handoff"] = handoff
+        self.store.block_reliability(feature["id"], feature["revision"], "Retained loop blocker", "old-blocker")
+        with patch.object(self.runtime, "_launch") as launch:
+            self.runtime._finish(job, {"ended": True})
+            self.assertEqual(self.store.get_assignment(assignment["id"])["status"], "handoff_pending")
+            self.assertFalse((self.runtime._job_dir(job) / "finalized.json").exists())
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            self.runtime._finish(job, {"ended": True})
+        launch.assert_not_called()
+        self.assertEqual(self.store.get_assignment(assignment["id"])["status"], "blocked")
+        self.assertEqual(self.store.get_feature(feature["id"])["status"], "blocked")
+        self.assertTrue((self.runtime._job_dir(job) / "finalized.json").exists())
+        self.assertEqual(self.store.snapshot(feature["id"])["handoffs"][0]["summary"], handoff["summary"])
+
+    def test_churn_settles_the_stopped_assignment_and_finalizes_without_launch(self):
+        feature, assignment, job = self.worker()
+        job["pending_handoff"] = self.store.begin_handoff(assignment["id"], 1, "checkpoint", "Inspect the retained change")
+        for index in range(4):
+            self.assertTrue(self.runtime.reliability.allow_handoff({**job, "id": f"previous-{index}"}))
+        with patch.object(self.runtime, "_launch") as launch:
+            self.runtime._finish(job, {"ended": True})
+        launch.assert_not_called()
+        self.assertEqual(self.store.get_feature(feature["id"])["status"], "blocked")
+        stopped = self.store.get_assignment(assignment["id"])
+        self.assertEqual(stopped["status"], "blocked")
+        self.assertIsNone(stopped["owner"])
+        self.assertEqual(self.store.list_attempts(assignment["id"])[-1]["status"], "interrupted")
+        self.assertTrue((self.runtime._job_dir(job) / "finalized.json").exists())
+        self.assertEqual(self.store.get_session(job["native_session_id"])["status"], "retained")
+        self.assertTrue(job["pending_handoff"]["summary"])
+
     def test_handoff_churn_gets_one_focused_repair_before_blocking_repeated_rotation(self):
         feature, assignment, job = self.worker()
         for index in range(4):
@@ -554,6 +589,52 @@ class FirstMateReliabilityTests(unittest.TestCase):
         self.assertNotEqual(untracked, controller.recovery_progress_key(assignment, job))
         with patch('herdr_harness.first_mate_reliability.git_bytes', side_effect=BackupUnavailable('Bounded inspection unavailable')):
             self.assertIsNone(controller.recovery_progress_key(assignment, job))
+
+    def test_nested_worktree_progress_does_not_trip_the_handoff_loop_guard(self):
+        feature, assignment, job = self.isolated()
+        nested = Path(job['cwd']) / 'nested-implementation'
+        # A real linked worktree reproduces Git's directory-only untracked entry.
+        subprocess.run(['git', '-C', job['cwd'], 'worktree', 'add', '--detach', str(nested), 'HEAD'],
+                       check=True, capture_output=True)
+        controller = self.runtime.reliability
+        previous = controller.recovery_progress_key(assignment, job)
+        self.assertIsNotNone(previous)
+        for index in range(6):
+            (nested / 'README.md').write_text(f'Implementation step {index}\n')
+            (nested / 'new-fixture.txt').write_text(f'Fixture step {index}\n')
+            key = controller.recovery_progress_key(assignment, job)
+            self.assertIsNotNone(key)
+            self.assertNotEqual(previous, key)
+            self.assertTrue(controller.allow_handoff({**job, 'id': f'progress-{index}'}))
+            previous = key
+        subprocess.run(['git', '-C', str(nested), 'add', '.'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(nested), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '-m', 'Finish implementation'], check=True, capture_output=True)
+        self.assertNotEqual(previous, controller.recovery_progress_key(assignment, job))
+        self.assertTrue(controller.allow_handoff({**job, 'id': 'committed-progress'}))
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'running')
+        # Once the nested source stops changing, the existing bounded repair and
+        # eventual blocker still apply. Real progress never disables the guard.
+        for index in range(3):
+            self.assertTrue(controller.allow_handoff({**job, 'id': f'stalled-{index}'}))
+        self.assertFalse(controller.allow_handoff({**job, 'id': 'stalled-final'}))
+
+    def test_nested_progress_bounds_and_symlinks_do_not_read_outside_the_workspace(self):
+        feature, assignment, job = self.isolated()
+        outside = Path(job['cwd']).parent / 'outside-source'
+        outside.mkdir()
+        source = outside / 'large-source'
+        source.write_bytes(b'x' * (8 * 1024 * 1024 + 1))
+        (Path(job['cwd']) / 'outside-link').symlink_to(outside, target_is_directory=True)
+        key = self.runtime.reliability.recovery_progress_key(assignment, job)
+        self.assertIsNotNone(key)  # The symlink itself is evidence; its target is not read.
+        source.write_text('Different external content')
+        self.assertEqual(key, self.runtime.reliability.recovery_progress_key(assignment, job))
+        nested = Path(job['cwd']) / 'nested-implementation'
+        subprocess.run(['git', '-C', job['cwd'], 'worktree', 'add', '--detach', str(nested), 'HEAD'],
+                       check=True, capture_output=True)
+        (nested / 'too-large').write_bytes(b'x' * (8 * 1024 * 1024 + 1))
+        self.assertIsNone(self.runtime.reliability.recovery_progress_key(assignment, job))
 
     def test_reworded_progress_cannot_evade_the_handoff_loop_budget(self):
         feature, assignment, job = self.worker()

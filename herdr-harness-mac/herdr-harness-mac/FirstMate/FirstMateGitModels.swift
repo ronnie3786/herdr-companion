@@ -37,13 +37,18 @@ enum FirstMateGitDemo {
     static let workspaces = [
         FirstMateGitWorkspace(
             id: "project",
-            title: "Project workspace",
+            title: "Project checkout · main",
             path: "/demo/herdr-companion"
         ),
         FirstMateGitWorkspace(
             id: "demo-worker",
-            title: "Implementation worker",
+            title: "Feature branch · feature/demo-worker",
             path: "/demo/worktrees/implementation"
+        ),
+        FirstMateGitWorkspace(
+            id: "demo-earlier-worker",
+            title: "feature/earlier-approach",
+            path: "/demo/worktrees/earlier-approach"
         ),
     ]
 

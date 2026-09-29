@@ -123,9 +123,13 @@ struct FirstMateGitView: View {
                         }
                     }
                 } label: {
-                    Text(catalog.selectedWorkspace?.title ?? "Choose checkout…")
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    HStack(spacing: 6) {
+                        Text(catalog.selectedWorkspace?.title ?? "Choose checkout…")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Image(systemName: "chevron.down")
+                            .imageScale(.small)
+                    }
                 }
                 .controlSize(.small)
                 .frame(maxWidth: 360)

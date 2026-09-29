@@ -29,6 +29,9 @@ struct HerdrHudSessionChipsView: View {
     var onHoverHud: (Bool, String) -> Void = { _, _ in }
     var maximumHeight: CGFloat?
     var measureContent: (HerdrHudSessionStackMeasurement) -> Void = { _ in }
+    /// The agents' share of the resting-circle morph, 0 hidden to 1 settled.
+    /// Rows unfurl top-first with a short stagger; see `HerdrHudMorph`.
+    var revealProgress: Double = 1
 
     @State private var measurement: HerdrHudSessionStackMeasurement?
     @State private var hoveredChipID: String?
@@ -68,19 +71,29 @@ struct HerdrHudSessionChipsView: View {
             : 0)
     }
 
+    /// Rows in display order, so the morph can stagger them from the top.
+    private var revealRowCount: Int { totalChipCount + (overflow > 0 ? 1 : 0) }
+
+    private func reveal(forRow index: Int) -> Double {
+        HerdrHudMorph.chipReveal(agents: revealProgress, index: index, count: revealRowCount)
+    }
+
     private var chipRows: some View {
         VStack(alignment: .trailing, spacing: HerdrHudPlacement.chipSpacing) {
             if let chatController {
-                ForEach(hudChats) { chat in
+                ForEach(Array(hudChats.enumerated()), id: \.element.id) { index, chat in
                     HerdrHudChatBubbleView(chat: chat, model: model, controller: chatController)
                         .herdrHudHoverRegion("hud-chat-\(chat.id)", action: onHoverHud)
+                        .herdrHudMorphChipReveal(reveal(forRow: index))
                 }
             }
-            ForEach(chips) { chip in
+            ForEach(Array(chips.enumerated()), id: \.element.id) { index, chip in
                 sessionRow(chip)
+                    .herdrHudMorphChipReveal(reveal(forRow: hudChats.count + index))
             }
             if overflow > 0 {
                 overflowButton
+                    .herdrHudMorphChipReveal(reveal(forRow: totalChipCount))
             }
         }
         .fixedSize(horizontal: false, vertical: true)

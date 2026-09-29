@@ -136,7 +136,7 @@ final class HerdrHudSession {
     static let maxAttachments = 4
     static let maxCombinedAttachmentBytes: Int64 = 21 * 1024 * 1024
 
-    private let controller = HeadlessAgentController()
+    private let controller = HeadlessAgentController(reportsCompletionFeedback: true)
     private let userDefaults: UserDefaults
     @ObservationIgnored private let injectedHostIdentity: HerdrHudHostIdentity?
     @ObservationIgnored private let hostIdentityProvider: HostIdentityProvider?

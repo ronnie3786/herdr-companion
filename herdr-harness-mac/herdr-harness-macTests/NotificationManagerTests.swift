@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UserNotifications
 @testable import herdr_harness_mac
 
 @Suite("Notification metadata", .serialized)
@@ -24,6 +25,48 @@ struct NotificationManagerTests {
             "alert_id": alert.id,
             "machine_id": "machine-1",
         ])
+    }
+
+    @Test("Done notifications are silent; blocked notifications retain attention sound and routing")
+    func doneNotificationsAreSilentAndBlockedNotificationsKeepSound() {
+        let alert = HerdrAlert(
+            id: "alert-1",
+            workspaceID: "workspace-1",
+            paneID: "workspace-1:pane-1",
+            status: .done,
+            title: "Agent finished",
+            message: "Work completed in workspace-1.",
+            createdAt: "2026-08-25T12:00:00Z",
+            isRead: false
+        ).stamped(machineID: "machine-1")
+
+        let content = NotificationManager.content(for: alert)
+
+        // Completion audio belongs to the process-owned companion cue.
+        #expect(content.sound == nil)
+        #expect(content.title == "Agent finished")
+        #expect(content.body == "Work completed in workspace-1.")
+        #expect(content.interruptionLevel == .active)
+        #expect(content.userInfo["pane_id"] as? String == "workspace-1:pane-1")
+        #expect(content.userInfo["machine_id"] as? String == "machine-1")
+
+        let blocked = HerdrAlert(
+            id: "alert-2",
+            workspaceID: "workspace-1",
+            paneID: "workspace-1:pane-1",
+            status: .blocked,
+            title: "Needs input",
+            message: "Confirm deployment",
+            createdAt: "2026-08-25T12:00:00Z",
+            isRead: false
+        ).stamped(machineID: "machine-1")
+        let blockedContent = NotificationManager.content(for: blocked)
+        #expect(blockedContent.sound == .default)
+        #expect(blockedContent.title == "Needs input")
+        #expect(blockedContent.body == "Confirm deployment")
+        #expect(blockedContent.interruptionLevel == .timeSensitive)
+        #expect(blockedContent.userInfo["pane_id"] as? String == "workspace-1:pane-1")
+        #expect(blockedContent.userInfo["machine_id"] as? String == "machine-1")
     }
 
     @Test("Notification pane routing scopes current notifications and preserves legacy pane IDs")

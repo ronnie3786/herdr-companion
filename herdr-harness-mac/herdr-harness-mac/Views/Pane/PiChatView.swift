@@ -114,10 +114,8 @@ struct PiChatView: View {
         // Read acknowledgement belongs to explicit session navigation and
         // interaction in PaneSessionView. A mounted chat, incoming document,
         // or completed response alone does not mean the user has read it.
-        .onChange(of: store.phase) { oldPhase, newPhase in
-            if oldPhase == .working, newPhase == .idle {
-                hapticPulse.fire(.completed)
-            } else if newPhase == .failed {
+        .onChange(of: store.phase) { _, newPhase in
+            if newPhase == .failed {
                 hapticPulse.fire(.failed)
             }
             responseAudioPlayer.responseDidChange(

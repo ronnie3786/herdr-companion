@@ -463,6 +463,7 @@ def api_description() -> dict:
             "pr-review-comparison-v1",
             "response-audio-captions-v1",
             "pi-session-context-v1",
+            "pi-readable-history-v1",
             "agent-control-v1",
             "agent-profiles-v1",
             "discovery-v1",

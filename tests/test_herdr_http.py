@@ -627,6 +627,7 @@ class HerdrHTTPTests(unittest.TestCase):
     def test_pi_session_context_route_decodes_validates_and_maps_errors(self):
         description = self.request("/api/v1")[2]
         self.assertIn("pi-session-context-v1", description["capabilities"])
+        self.assertIn("pi-readable-history-v1", description["capabilities"])
         self.assertEqual(
             description["endpoints"]["piSessionContext"],
             "/api/v1/workspaces/{workspaceId}/pi/sessions/{sessionId}/context",

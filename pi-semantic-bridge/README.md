@@ -242,11 +242,19 @@ created inside a dedicated user-only directory, and the harness independently
 verifies its type, owner, and mode. Stale sockets are removed only when their
 device and inode still match the failed connection probe.
 
-The bridge sends forward-compatible protocol version 1 NDJSON. It projects the
-active, compaction-aware session branch, strips provider signatures and private
-agent setup data, and checkpoints the current transcript after every settled
-agent run and before shutdown. The harness journals those checkpoints and a
-bounded, contiguous suffix of ordered events in SQLite. Production starts use
+The bridge sends forward-compatible protocol version 1 NDJSON. Its bounded live
+checkpoint projects the active, compaction-aware context and removes provider
+signatures and large binary payloads. The companion's reader-history path uses
+the checkpoint's exact saved session file, session ID, and leaf ID to restore the
+complete visible branch, including messages before compaction. It excludes
+system prompts, hidden extension messages, and private extension state. Reader
+history does not change model context, checkpoint/event cursors, or the stored
+session. This also works with existing running bridges; see
+[reader history](../docs/pi-readable-history.md).
+
+The bridge checkpoints after every settled agent run and before shutdown. The
+harness journals those checkpoints and a bounded, contiguous suffix of ordered
+events in SQLite. Production starts use
 `~/.local/share/herdr-companion/pi-semantic.sqlite3`; tests that inject an explicit
 empty environment stay in memory. Records are namespaced by the normalized
 Herdr socket path so identically named panes in different Herdr sessions cannot

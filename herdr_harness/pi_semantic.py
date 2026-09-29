@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from .alerts import utc_now
+from .pi_history import PiSavedHistory
 
 
 PI_SEMANTIC_PROTOCOL = {"name": "herdr.pi.semantic", "version": 1}
@@ -1226,6 +1227,7 @@ class PiSemanticManager:
             ),
         )
         self._on_event = on_event
+        self._saved_history = PiSavedHistory()
         self._lock = threading.RLock()
         self._started = False
         self._known_pi_panes: set[str] = set()
@@ -1511,7 +1513,9 @@ class PiSemanticManager:
         response["available"] = capability["available"]
         response["connected"] = capability["connected"]
         response["capabilities"] = copy.deepcopy(capability["capabilities"])
-        return response
+        # Keep the bounded bridge checkpoint/cursor for live replay, but give
+        # readers the saved branch rather than the model's compacted context.
+        return self._saved_history.restore(response)
 
     def session_context(self, workspace_id: str, session_id: str) -> dict:
         if not valid_pi_session_id(session_id):

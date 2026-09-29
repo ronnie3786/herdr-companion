@@ -141,6 +141,17 @@ class FirstMateStoreTests(unittest.TestCase):
         self.assertEqual(restored["status"], before["feature"]["status"])
         self.assertEqual(len(self.store.list_features()), 1)
 
+    def test_completed_archive_reason_is_retained_without_changing_workflow_status(self):
+        before = self.store.get_feature(self.feature["id"])
+        archived = self.store.set_archived(self.feature["id"], True, {
+            "request_id": "archive-completed", "reason": "completed",
+        })
+        self.assertEqual(archived["archive_reason"], "completed")
+        self.assertEqual(archived["status"], before["status"])
+        self.assertIsNotNone(archived["archived_at"])
+        self.assertEqual(self.store.list_features(), [])
+        self.assertEqual(self.store.list_features("archived")[0]["archive_reason"], "completed")
+
     def test_archive_reason_and_list_view_are_validated(self):
         self.assert_code("invalid_request", lambda: self.store.set_archived(
             self.feature["id"], True, {"request_id": "archive-invalid", "reason": "finished"}

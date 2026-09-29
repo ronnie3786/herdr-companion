@@ -61,7 +61,7 @@ def _text(value: Any, name: str, maximum: int = 200000, optional: bool = False) 
     return value
 
 
-ARCHIVE_REASONS = {"test/synthetic", "duplicate", "no longer relevant", "superseded", "other"}
+ARCHIVE_REASONS = {"completed", "test/synthetic", "duplicate", "no longer relevant", "superseded", "other"}
 
 # A feature row is a feature unless it is the machine's one lead First Mate
 # (first-mate-lead-v1): a long-lived conversation across every feature. The

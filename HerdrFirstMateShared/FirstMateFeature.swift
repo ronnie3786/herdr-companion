@@ -1,6 +1,7 @@
 import Foundation
 
 enum FirstMateArchiveReason: String, CaseIterable, Codable, Identifiable, Sendable {
+    case completed
     case testSynthetic = "test/synthetic"
     case duplicate
     case noLongerRelevant = "no longer relevant"

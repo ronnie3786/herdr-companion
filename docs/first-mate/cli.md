@@ -41,7 +41,7 @@ The default list contains active features. `list --archived` returns only archiv
 features and `list --all` returns both in deterministic update order. Archive is
 not a lifecycle action: it retains status, workflow revision, visits, assignments,
 documents, saved sessions, events, Active Work linkage and `work_item_id`. Running
-work continues. Reasons are optional; supported values are `test/synthetic`,
+work continues. Reasons are optional; supported values are `completed`, `test/synthetic`,
 `duplicate`, `no longer relevant`, `superseded`, and `other`.
 
 `open` verifies the feature exists, then asks macOS to navigate the installed

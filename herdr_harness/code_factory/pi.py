@@ -112,6 +112,8 @@ class _StreamState:
 class PiRunner:
     """Run one ``pi -p --mode json`` session to completion (or timeout) and summarize it."""
 
+    runner_name = "Pi"
+
     def __init__(
         self,
         binary: str = "pi",
@@ -245,7 +247,7 @@ class PiRunner:
                     start_new_session=True,
                 )
             except OSError as exc:
-                message = f"Pi could not start: {str(exc)[:240]}"
+                message = f"{self.runner_name} could not start: {str(exc)[:240]}"
                 log.write(_dump({"type": "herdr_runner_end", "exitCode": -1, "error": message}) + "\n")
                 return PiResult(
                     text="", exit_code=-1, cost_usd=0.0, session_id=session_id, session_file=None,
@@ -274,7 +276,7 @@ class PiRunner:
             elif state.error is not None:
                 error = state.error or "model reported an error"
             elif exit_code != 0:
-                error = f"pi exited with status {exit_code}"
+                error = f"{self.runner_name.lower()} exited with status {exit_code}"
                 if stderr_text.strip():
                     error += ": " + stderr_text.strip()[-300:]
             else:

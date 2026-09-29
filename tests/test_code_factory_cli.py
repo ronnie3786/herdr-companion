@@ -657,6 +657,38 @@ class DoctorTests(CliTestCase):
         self.assertEqual(pi_calls[0]["env"]["PI_SKIP_VERSION_CHECK"], "1")
         self.assertEqual(self.builders, [])
 
+    def test_doctor_probes_claude_subscription_models(self):
+        self.script_healthy()
+        self.runner.on("claude", "--version", stdout="2.1.280 (Claude Code)\n")
+        self.runner.on("claude", "auth", "status", "--json",
+                       stdout=json.dumps({"loggedIn": True, "authMethod": "claude.ai"}))
+        for model in ("claude-fable-5-1", "claude-opus-5-5"):
+            self.runner.on("claude", "-p", "Reply with OK.", "--model", model,
+                           stdout=json.dumps({"subtype": "success", "is_error": False,
+                                              "modelUsage": {model: {}}}))
+        env = dict(self.environ, HERDR_CODE_FACTORY_ANTHROPIC_RUNNER="claude")
+        self.assertEqual(self.run_cli("doctor", environ=env), 0)
+        _, checks = self.checks()
+        self.assertTrue(checks["claude_binary"]["ok"])
+        self.assertTrue(checks["claude_auth"]["ok"])
+        self.assertTrue(checks["planner_model"]["ok"])
+        self.assertTrue(checks["reviewer_model"]["ok"])
+        self.assertIn("through Claude Code", checks["planner_model"]["detail"])
+        self.assertEqual(len(self.runner.argv_with("pi", "--list-models")), 1)
+
+    def test_doctor_rejects_claude_usage_failure(self):
+        self.script_healthy()
+        self.runner.on("claude", "--version", stdout="2.1.280 (Claude Code)\n")
+        self.runner.on("claude", "auth", "status", "--json",
+                       stdout=json.dumps({"loggedIn": True, "authMethod": "claude.ai"}))
+        self.runner.on("claude", "-p", stdout=json.dumps({"subtype": "error_during_execution",
+                                                            "is_error": True, "result": "usage exhausted"}))
+        env = dict(self.environ, HERDR_CODE_FACTORY_ANTHROPIC_RUNNER="claude")
+        self.assertEqual(self.run_cli("doctor", environ=env), 1)
+        _, checks = self.checks()
+        self.assertFalse(checks["planner_model"]["ok"])
+        self.assertFalse(checks["reviewer_model"]["ok"])
+
     def test_doctor_uses_tailscale_when_configured(self):
         self.script_healthy()
         environ = dict(self.environ, HERDR_CODE_FACTORY_DASHBOARD_HOST="tailscale",

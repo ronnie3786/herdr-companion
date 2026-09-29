@@ -34,7 +34,8 @@ This is an experimental personal automation. Read the safety section before enab
 4. **Isolated worktree.** Each issue gets `codefactory/issue-<n>` in its own git worktree
    under the configured worktree root, based on `origin/main`. Issues never share a
    checkout, and your working checkout is never touched.
-5. **Fable plans.** A headless Pi session on `anthropic/claude-fable-5-1` reads the issue and
+5. **Fable plans.** A headless session on `anthropic/claude-fable-5-1` (Claude Code when
+   `anthropic_runner = "claude"`) reads the issue and
    the attachments (images included), inspects the repository read-only, and returns a
    bounded JSON plan. The plan carries stable requirement IDs that preserve excerpts from
    the original request, observable outcomes, required evidence, and explicit confirmed or
@@ -59,7 +60,7 @@ This is an experimental personal automation. Read the safety section before enab
 7. **Pull request and CI.** The daemon pushes the branch, opens a PR that references the
    issue (`Refs #n`, never `Closes`, so the issue stays open until released), and waits
    for the **Verify** workflow on the exact head commit.
-8. **Opus reviews.** A Pi session on `anthropic/claude-opus-5-5` with thinking `high`
+8. **Opus reviews.** A session on `anthropic/claude-opus-5-5` with thinking `high`
    receives the bounded original issue body and the downloaded
    image attachments again, independently derives observable outcomes, and compares the
    request with both the plan and diff. Each planned requirement must have a unique review
@@ -149,8 +150,16 @@ This is an experimental personal automation. Read the safety section before enab
 - The companion server package built from a revision that advertises
   `issue-reports-v1` (`GET /api/v1` lists it), installed and running as usual.
 - `gh` authenticated with `repo` and `workflow` scopes for the repository.
-- Pi with Anthropic access for Fable and Opus, plus the `openai-codex` login for Sol.
-  Check all three exact model IDs with `herdr-code-factory doctor`.
+- Pi with the `openai-codex` login for Sol. For Fable and Opus, set
+  `anthropic_runner = "claude"` and sign in to Claude Code with the operator's
+  Claude subscription (`claude auth login`). Claude Code and Pi keep separate
+  OAuth credentials, so a working Claude Code login does not authenticate Pi.
+  Run `claude auth status --json` in the same GUI user session as the LaunchAgent.
+  Code Factory starts Claude Code in restricted, noninteractive plan mode with
+  file reading, search, and shell tools for planning and review. It does not load project hooks,
+  plugins, MCP servers, or skills. It passes attachments as readable files.
+  Do not use Claude Code's `--bare` mode for subscription auth: that mode requires
+  an API key. Check all three exact model IDs with `herdr-code-factory doctor`.
 
 - A git checkout of the repository whose `origin` is the GitHub repository. The daemon
   only creates and removes worktrees from it; it does not modify its working tree.
@@ -177,6 +186,8 @@ dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token
 dashboard_link = "https://factory.example.invalid:9097/" # Canonical private URL for Message Me.
 release_enabled = true
 release_channel = "preview"
+anthropic_runner = "claude" # Use the Claude Code subscription login for Fable and Opus.
+# claude_binary = "/path/to/claude" # Set this if LaunchAgent PATH cannot find it.
 # session_timeout_seconds = 3600 # Planners, implementers and reviewers.
 # reviser_session_timeout_seconds = 7200 # Revision sessions legitimately run longer.
 # max_rebase_attempts = 2 # Conflict-resolution rebases; a rebase does not consume review/CI budget.
@@ -204,8 +215,11 @@ herdr-code-factory --config ~/.config/herdr-companion/config.toml --machine desk
 ```
 
 `doctor` verifies the repository, checkout, `gh` login, labels (`--fix` creates
-`herdr-autofix`, `herdr-app-report`, and `released`), the Pi binary and both models,
-the Ollama key, release settings, the dashboard bind address, and free disk space under
+`herdr-autofix`, `herdr-app-report`, and `released`), the Pi and Claude Code
+binaries, Claude subscription login, and all configured models. For Claude Code
+models it makes a tiny, tool-free request to catch expired login, usage limits,
+and unavailable models. It also checks the Ollama key when configured, release
+settings, the dashboard bind address, and free disk space under
 the worktree root.
 
 ### Run it

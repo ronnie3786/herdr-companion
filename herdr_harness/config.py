@@ -148,6 +148,8 @@ ENVIRONMENT_FIELDS = {
         "comment_on_issues": "HERDR_CODE_FACTORY_COMMENT_ON_ISSUES",
         "base_branch": "HERDR_CODE_FACTORY_BASE_BRANCH",
         "pi_binary": "HERDR_CODE_FACTORY_PI_BIN",
+        "claude_binary": "HERDR_CODE_FACTORY_CLAUDE_BINARY",
+        "anthropic_runner": "HERDR_CODE_FACTORY_ANTHROPIC_RUNNER",
         "python": "HERDR_CODE_FACTORY_PYTHON",
     },
     "apple": {"app_ids": "HERDR_HARNESS_APP_IDS"},

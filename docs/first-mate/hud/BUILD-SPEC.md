@@ -83,7 +83,7 @@ A small summary for every feature that isn't `completed` or `cancelled`, plus an
 }
 ```
 
-- **`label`**: a short name, 24 characters at most. Default to `title`, trimmed.
+- **`label`**: the user's name, 100 characters at most; when none is set, the title trimmed and clipped to 24 characters.
 - **`emoji`**: user-chosen, with a server-side default, for example picked from a small set by hashing the feature id.
 - **`now`**: one line, 120 characters at most. Use the latest progress summary (`assignment.metadata.progress.summary`) or the latest First Mate message.
 - **`step_index`** (0 to 5), **`step_fraction`** and **`percent`**: see section 4. Send `null` when unknown; the HUD then shows an empty ring and hides the percent.
@@ -206,7 +206,7 @@ Put the overflow decisions in one pure function: features in, and out come slots
 | Click a row | Opens that feature's session in the main app |
 | Click an orb | Opens its message if it has the dashed unread ring; otherwise opens its session |
 | Click the speech bubble | Message card in place: the text, one-tap reply buttons, a reply box with a mic, and Open session. Opening it marks the message read |
-| Right-click a row or First Mate | Change the emoji and label (24 characters max) |
+| Right-click a row or First Mate | Change the emoji and user label (100 characters max) |
 | Chevron | Collapse or expand |
 | Esc | Steps back: editor, then listening, then card, then chat |
 

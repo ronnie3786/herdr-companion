@@ -498,8 +498,10 @@ from a racing window are no-ops and no `request_id` is needed. The response is
 marker.
 
 POST `/features/{id}/hud` accepts `label` and/or `emoji` (at least one; no other
-fields), each a string or null. `label` is at most 24 code points after
-trimming, on one line. `emoji` is at most 16 code points with no whitespace or
+fields), each a string or null. `label` is at most 100 code points after
+trimming, on one line. The default label's 24-code-point title clip above is
+unchanged; companions before this change reject user labels longer than 24 code
+points with HTTP 400. `emoji` is at most 16 code points with no whitespace or
 control characters (a bound, not an emoji check). Null or empty resets that
 field to its default. The response is `{ok:true,feature:<fleet entry>}`.
 

@@ -93,7 +93,6 @@ struct FirstMateHTTPTests {
         #expect(object["request_id"] as? String == "model-123")
     }
 
-    #if os(macOS)
     @Test("Feature attachments use the bounded authenticated feature route")
     func featureAttachment() async throws {
         let (client, session) = try makeClient()
@@ -120,7 +119,6 @@ struct FirstMateHTTPTests {
         #expect(object["workspace_id"] == nil)
         #expect(object["path"] == nil)
     }
-    #endif
 
     @Test("Reading a retained session sends the exact identity and earlier-page cursor")
     func savedSessionAndDocuments() async throws {
@@ -177,7 +175,6 @@ struct FirstMateHTTPTests {
         #expect(FirstMateURLProtocol.recorder.requests().isEmpty)
     }
 
-    #if os(macOS)
     @Test("Feature links post to the authenticated feature route with stable request identity")
     func featureLinks() async throws {
         let (client, session) = try makeClient()
@@ -225,7 +222,6 @@ struct FirstMateHTTPTests {
         #expect(visibilityObject["request_id"] as? String == "link-hide-1")
         #expect(visibilityObject["provenance"] == nil)
     }
-    #endif
 
     @Test("Fleet summary, read markers, and HUD edits use authenticated additive routes")
     func fleetRoutes() async throws {

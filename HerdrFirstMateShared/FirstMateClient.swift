@@ -99,6 +99,13 @@ struct FirstMateLeadSummary: Decodable, Equatable, Sendable {
         var url: String
     }
 
+    /// Display metadata from the answering server's roster, never a saved
+    /// client identity or authority to retarget requests.
+    struct Machine: Decodable, Equatable, Sendable {
+        var id: String
+        var name: String
+    }
+
     var feature: FirstMateFeature
     /// The lead's newest reply is past its read marker.
     var unread: Bool
@@ -108,9 +115,10 @@ struct FirstMateLeadSummary: Decodable, Equatable, Sendable {
     /// The machines the lead reaches itself; the Mac's snapshot of other
     /// machines leaves them out. Nil from an older companion.
     var peers: [Peer]? = nil
+    var machine: Machine? = nil
 
     enum CodingKeys: String, CodingKey {
-        case feature, unread, peers
+        case feature, unread, peers, machine
         case workingOnReply = "working_on_reply"
         case latestMessage = "latest_message"
     }

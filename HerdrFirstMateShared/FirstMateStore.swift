@@ -146,7 +146,7 @@ final class FirstMateStore {
     /// timestamp.
     private var demoUsesWallClock = false
     @ObservationIgnored private var client: (any FirstMateClient)?
-    @ObservationIgnored private var journalEventSnapshotsSupported = false
+    @ObservationIgnored private(set) var journalEventSnapshotsSupported = false
     #if os(macOS)
     @ObservationIgnored let composerDrafts = FirstMateComposerDraftStore()
     #endif

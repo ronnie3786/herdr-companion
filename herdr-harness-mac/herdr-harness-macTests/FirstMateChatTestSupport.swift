@@ -23,6 +23,19 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     private var _ensureCalls = 0
     private var _sent: [(featureID: String, text: String)] = []
     private var _sentContexts: [FirstMateLeadContext] = []
+    private var _sentRequestIDs: [String] = []
+    private var _beforeSend: (@Sendable () async throws -> Void)?
+    private var _beforeEnsure: (@Sendable () async throws -> Void)?
+
+    var sentRequestIDs: [String] { lock.withLock { _sentRequestIDs } }
+    var beforeSend: (@Sendable () async throws -> Void)? {
+        get { lock.withLock { _beforeSend } }
+        set { lock.withLock { _beforeSend = newValue } }
+    }
+    var beforeEnsure: (@Sendable () async throws -> Void)? {
+        get { lock.withLock { _beforeEnsure } }
+        set { lock.withLock { _beforeEnsure = newValue } }
+    }
 
     init(
         capabilities: Result<[String], APIError> = .success(["first-mate-v1", "first-mate-fleet-v1"]),
@@ -107,8 +120,10 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
         let snapshot = lock.withLock { () -> FirstMateSnapshot? in
             _sent.append((featureID, text))
+            _sentRequestIDs.append(requestID)
             return _snapshots[featureID]
         }
+        try await beforeSend?()
         guard let snapshot else { throw APIError.invalidResponse }
         return snapshot
     }
@@ -123,6 +138,7 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     }
     func ensureFirstMateLead(requestID: String) async throws -> FirstMateLeadResponse {
         let lead = lock.withLock { _ensureCalls += 1; return _lead }
+        try await beforeEnsure?()
         guard let lead else { throw APIError.invalidResponse }
         return FirstMateLeadResponse(ok: true, lead: lead)
     }

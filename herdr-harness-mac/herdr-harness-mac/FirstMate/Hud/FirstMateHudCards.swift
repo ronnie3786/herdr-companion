@@ -26,6 +26,10 @@ struct FirstMateHudCardView: View {
                 }
             case .chat:
                 FirstMateHudChatCard(controller: controller)
+            case .delivery:
+                if let delivery = controller.delivery {
+                    FirstMateHudDeliveryCard(controller: controller, delivery: delivery)
+                }
             case .latestLine:
                 FirstMateHudLatestLineCard(controller: controller)
             }

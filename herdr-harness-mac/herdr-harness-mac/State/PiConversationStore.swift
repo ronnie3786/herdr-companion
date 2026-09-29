@@ -124,6 +124,15 @@ final class PiConversationStore {
     private(set) var transport: PiStreamTransport = .liveStream
 
     @ObservationIgnored private var reducer = PiConversationReducer()
+    /// The process-owned completion owner, captured from the followed model so
+    /// committed settlement reaches it without a view. Never used for private
+    /// recovery candidates: only the committed reducer publishes work.
+    @ObservationIgnored private var completionFeedback: AgentCompletionFeedbackCoordinator?
+    @ObservationIgnored private var completionPaneScope: AgentCompletionFeedbackCoordinator.PaneScope?
+    /// Identifiable provenance for the committed work start whose publication
+    /// is still pending, captured from the envelope so the coordinator can
+    /// order a replayed start against a receipted completion.
+    @ObservationIgnored private var pendingWorkStartEvidence: AgentCompletionFeedbackCoordinator.PiWorkEvidence?
     /// Live `session_compact` success evidence captured before an authoritative
     /// recovery. It is carried through the private candidate until the matching
     /// commit publishes it, and never mutates a committed cursor by itself.
@@ -468,6 +477,7 @@ final class PiConversationStore {
         sessionBoundaryRevision = 0
         flushTask?.cancel()
         flushTask = nil
+        pendingWorkStartEvidence = nil
         for id in streamingBlockIDs {
             PiMarkdownDocumentCache.shared.evictStreaming(id: id)
             PiMarkdownInlineCache.shared.evictStreaming(id: id)
@@ -543,10 +553,13 @@ final class PiConversationStore {
         return await model.piConversationEvents(for: pane, after: cursor)
     }
 
-    private func publishReducerState() {
+    private func publishReducerState(
+        workStartEvidence: AgentCompletionFeedbackCoordinator.PiWorkEvidence? = nil
+    ) {
         HerdrPerfDiagnostics.checkpoint("pi.publish")
         os_signpost(.event, log: piStreamLog, name: "publish")
         let previousStructureRevision = structureRevision
+        let previousPhase = phase
         retainClosedSession(nextSessionID: reducer.sessionID)
         reconcileStreamingCaches(with: reducer.turns)
         turns = reducer.turns
@@ -569,6 +582,26 @@ final class PiConversationStore {
         thinkingLevel = reducer.thinkingLevel
         revision &+= 1
         publishObserver?(sessionCost, revision)
+        armCompletionIfWorkStarted(previousPhase: previousPhase, evidence: workStartEvidence)
+    }
+
+    /// Committed work start evidence. A published working phase covers an
+    /// accepted prompt, a live agent start, and a snapshot that restored an
+    /// already-active run. Submission itself is silent and does not arm by
+    /// itself, so an old done result cannot be mistaken for new work.
+    private func armCompletionIfWorkStarted(
+        previousPhase: PiConversationPhase,
+        evidence: AgentCompletionFeedbackCoordinator.PiWorkEvidence?
+    ) {
+        guard previousPhase != .working,
+              phase == .working,
+              let completionFeedback,
+              let completionPaneScope
+        else { return }
+        completionFeedback.piWorkStarted(
+            scope: completionPaneScope,
+            evidence: evidence ?? AgentCompletionFeedbackCoordinator.PiWorkEvidence(sessionID: sessionID)
+        )
     }
 
     private func retainClosedSession(nextSessionID: String?) {
@@ -662,14 +695,20 @@ final class PiConversationStore {
         }
     }
 
-    private func schedulePublish(_ trigger: PiStreamCoalescer.Trigger) {
+    private func schedulePublish(
+        _ trigger: PiStreamCoalescer.Trigger,
+        workStartEvidence: AgentCompletionFeedbackCoordinator.PiWorkEvidence? = nil
+    ) {
+        if let workStartEvidence { pendingWorkStartEvidence = workStartEvidence }
         let clock = ContinuousClock()
         let generation = projectionGeneration
         switch coalescer.register(trigger, now: clock.now) {
         case .flushNow:
             flushTask?.cancel()
             flushTask = nil
-            publishReducerState()
+            let evidence = pendingWorkStartEvidence
+            pendingWorkStartEvidence = nil
+            publishReducerState(workStartEvidence: evidence)
             coalescer.markFlushed()
         case let .coalesce(deadline):
             guard flushTask == nil else { return }
@@ -686,7 +725,9 @@ final class PiConversationStore {
                 // congestion: the sleep ended on time, but the main thread was
                 // still inside a layout pass. Widen the window accordingly.
                 self.coalescer.noteFlushLateness(deadline.duration(to: clock.now))
-                self.publishReducerState()
+                let evidence = self.pendingWorkStartEvidence
+                self.pendingWorkStartEvidence = nil
+                self.publishReducerState(workStartEvidence: evidence)
                 self.coalescer.markFlushed()
                 self.flushTask = nil
             }
@@ -697,6 +738,12 @@ final class PiConversationStore {
     /// reconnects resume the committed reducer; only semantic reset boundaries
     /// enter transactional snapshot recovery.
     func follow(model: HerdrAppModel, pane: HerdrPane) async {
+        completionFeedback = model.agentCompletionFeedback
+        completionPaneScope = AgentCompletionFeedbackCoordinator.PaneScope(
+            machineID: pane.machineID,
+            paneID: pane.paneID,
+            terminalID: pane.terminalID
+        )
         if let archiveScope, archiveScope != pane.id { reset() }
         if archiveScope != pane.id {
             archiveScope = pane.id
@@ -1085,9 +1132,25 @@ final class PiConversationStore {
             let previousTurnCount = reducer.turns.count
             let previousPendingInteractions = reducer.pendingInteractions
             let previousBridgeConnected = reducer.bridgeConnected
+            let evidence = AgentCompletionFeedbackCoordinator.PiWorkEvidence(
+                sessionID: envelope.sessionID ?? reducer.sessionID,
+                observedAt: envelope.generatedAt,
+                cursor: envelope.cursor
+            )
             os_signpost(.begin, log: piStreamLog, name: "reducer.apply")
             let effect = reducer.apply(envelope)
             os_signpost(.end, log: piStreamLog, name: "reducer.apply")
+            // Committed settlement only. The private recovery candidate above
+            // replays the same events without ever reaching this point, so a
+            // refetched history can never play a completion cue.
+            if let completionFeedback, let completionPaneScope {
+                if effect == .completed {
+                    completionFeedback.piWorkSettled(scope: completionPaneScope, evidence: evidence)
+                } else if effect == .failed, previousPhase == .working, reducer.phase == .failed {
+                    completionFeedback.piWorkFailed(scope: completionPaneScope, evidence: evidence)
+                }
+            }
+            let workStarted = previousPhase != .working && reducer.phase == .working
             schedulePublish(trigger(
                 for: effect,
                 previousPhase: previousPhase,
@@ -1095,7 +1158,7 @@ final class PiConversationStore {
                 previousTurnCount: previousTurnCount,
                 previousPendingInteractions: previousPendingInteractions,
                 previousBridgeConnected: previousBridgeConnected
-            ))
+            ), workStartEvidence: workStarted ? evidence : nil)
             let nextConnection: PiConversationConnection = reducer.bridgeConnected ? .connected : .bridgeOffline
             let nextError = reducer.bridgeConnected ? nil : "Pi is offline. The saved transcript is still available."
             if connection != nextConnection { connection = nextConnection }
@@ -1349,7 +1412,16 @@ final class PiConversationStore {
         reducer = candidate
         pendingCompactionCompletion = nil
         hasLoadedSnapshot = true
-        publishReducerState()
+        // A snapshot can restore an already-active run after the fleet has
+        // receipted its completion. Publish its committed cursor and server
+        // time so the completion owner can recognize the restored start as
+        // covered instead of clearing the receipt and replaying the cue when
+        // the settlement arrives.
+        publishReducerState(workStartEvidence: AgentCompletionFeedbackCoordinator.PiWorkEvidence(
+            sessionID: candidate.sessionID,
+            observedAt: snapshot.generatedAt,
+            cursor: candidate.cursor ?? snapshot.cursor
+        ))
         connection = snapshot.connected ? .connected : .bridgeOffline
         lastError = snapshot.connected ? nil : "Pi is offline. The saved transcript is still available."
     }
@@ -1366,6 +1438,7 @@ final class PiConversationStore {
     private func cancelPendingPublish() {
         flushTask?.cancel()
         flushTask = nil
+        pendingWorkStartEvidence = nil
         coalescer = PiStreamCoalescer()
     }
 

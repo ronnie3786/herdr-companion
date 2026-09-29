@@ -63,10 +63,85 @@ struct PiCompactionCompletionTests {
 
         let completion = try #require(reducer.compactionCompletion)
         #expect(completion.evidence == .entry("compact-1"))
+        #expect(!completion.isAcknowledged)
         #expect(reducer.turns.flatMap(\.items).contains { item in
             guard case let .notice(notice) = item else { return false }
             return notice.id == "compact-1" && notice.title == "Context compacted"
         })
+    }
+
+    @Test("A user message after the compaction entry acknowledges the cue on a fresh reducer")
+    func snapshotUserAcknowledgesCue() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try snapshot(entries: entries([
+            compactionRecord(id: "compact-1"), persistedMessageEntry(id: "u2", role: "user"),
+        ])))
+
+        #expect(reducer.compactionCompletion?.isAcknowledged == true)
+        #expect(reducer.acknowledgedCompactionEvidence == .entry("compact-1"))
+        #expect(reducer.acknowledgedCompactionSessionID == "s1")
+        #expect(PiCompactionStatusPresentation.resolve(
+            activity: nil, completion: reducer.compactionCompletion, readiness: readyReadiness
+        ) == nil)
+        #expect(transcriptNoticeCount(in: reducer) == 1)
+    }
+
+    @Test("Assistant-only continuation keeps the cue")
+    func assistantContinuationKeepsCue() throws {
+        var reducer = PiConversationReducer()
+        reducer.replace(with: try snapshot(entries: entries([
+            compactionRecord(id: "compact-1"),
+            persistedMessageEntry(id: "a2", role: "assistant"),
+            persistedMessageEntry(id: "t2", role: "toolResult"),
+        ])))
+
+        #expect(reducer.compactionCompletion?.isAcknowledged == false)
+        #expect(PiCompactionStatusPresentation.resolve(
+            activity: nil, completion: reducer.compactionCompletion, readiness: readyReadiness
+        )?.kind == .completed)
+    }
+
+    @Test("Acknowledgement derived from history survives refreshes and a newer compaction resets it")
+    func historyAcknowledgementSurvivesRefresh() throws {
+        var reducer = PiConversationReducer()
+        let history = entries([compactionRecord(id: "compact-1"), persistedMessageEntry(id: "u2", role: "user")])
+        reducer.replace(with: try snapshot(entries: history))
+        reducer.replace(with: try snapshot(entries: history, cursor: "6"))
+
+        #expect(reducer.compactionCompletion?.isAcknowledged == true)
+        #expect(reducer.acknowledgedCompactionEvidence == .entry("compact-1"))
+        // Even a refresh that omits the user entry must not revive the cue.
+        reducer.replace(with: try snapshot(entries: compactionEntry(id: "compact-1"), cursor: "6b"))
+        #expect(reducer.compactionCompletion?.isAcknowledged == true)
+        reducer.replace(with: try snapshot(entries: entries([
+            compactionRecord(id: "compact-1"), persistedMessageEntry(id: "u2", role: "user"),
+            compactionRecord(id: "compact-2"),
+        ]), cursor: "7"))
+        #expect(reducer.compactionCompletion?.evidence == .entry("compact-2"))
+        #expect(reducer.compactionCompletion?.isAcknowledged == false)
+        #expect(PiCompactionStatusPresentation.resolve(
+            activity: nil, completion: reducer.compactionCompletion, readiness: readyReadiness
+        )?.kind == .completed)
+    }
+
+    @Test("A live user message acknowledges the cue without a local submission")
+    func liveUserAcknowledgesCue() throws {
+        for eventType in ["message_start", "message_end"] {
+            var reducer = PiConversationReducer()
+            reducer.replace(with: try snapshot(entries: compactionEntry(id: "compact-1")))
+            let event = try envelope(1, #"{"type":"\#(eventType)","message":{"role":"user","content":"Synthetic remote prompt"}}"#)
+
+            #expect(reducer.apply(event) == .compactionChanged)
+            #expect(reducer.compactionCompletion?.isAcknowledged == true)
+            #expect(reducer.apply(try envelope(2, #"{"type":"message_end","message":{"role":"user","content":"Synthetic remote prompt"}}"#)) == .none)
+            reducer.replace(with: try snapshot(entries: entries([
+                compactionRecord(id: "compact-1"), persistedMessageEntry(id: "u2", role: "user"),
+            ]), cursor: "3"))
+            #expect(reducer.compactionCompletion?.isAcknowledged == true)
+            #expect(PiCompactionStatusPresentation.resolve(
+                activity: nil, completion: reducer.compactionCompletion, readiness: readyReadiness
+            ) == nil)
+        }
     }
 
     @Test("Duplicate snapshots do not duplicate the cue or its transcript notice")
@@ -405,7 +480,15 @@ struct PiCompactionCompletionTests {
     }
 
     private func transcriptNoticeCount(in store: PiConversationStore) -> Int {
-        store.turns.flatMap(\.items).filter { item in
+        transcriptNoticeCount(in: store.turns)
+    }
+
+    private func transcriptNoticeCount(in reducer: PiConversationReducer) -> Int {
+        transcriptNoticeCount(in: reducer.turns)
+    }
+
+    private func transcriptNoticeCount(in turns: [PiConversationTurn]) -> Int {
+        turns.flatMap(\.items).filter { item in
             guard case let .notice(notice) = item else { return false }
             return notice.title == "Context compacted"
         }.count
@@ -437,24 +520,24 @@ struct PiCompactionCompletionTests {
         )
     }
 
+    private func entries(_ records: [String]) -> String {
+        "[" + records.joined(separator: ",") + "]"
+    }
+
+    private func compactionRecord(id: String) -> String {
+        #"{"type":"compaction","id":"\#(id)","timestamp":"2030-01-01T12:00:00Z","summary":"Synthetic summary","firstKeptEntryId":"u1"}"#
+    }
+
+    private func persistedMessageEntry(id: String, role: String) -> String {
+        #"{"type":"message","id":"\#(id)","timestamp":"2030-01-01T12:01:00Z","message":{"role":"\#(role)","content":"Synthetic next prompt"}}"#
+    }
+
     private func compactionEntry(id: String) -> String {
-        """
-        [
-          {
-            "type":"compaction",
-            "id":"\(id)",
-            "timestamp":"2030-01-01T12:00:00Z",
-            "summary":"Synthetic summary",
-            "firstKeptEntryId":"u1"
-          }
-        ]
-        """
+        entries([compactionRecord(id: id)])
     }
 
     private func compactionEntries(ids: [String]) -> String {
-        "[" + ids.map { id in
-            #"{"type":"compaction","id":"\#(id)","timestamp":"2030-01-01T12:00:00Z","summary":"Synthetic summary","firstKeptEntryId":"u1"}"#
-        }.joined(separator: ",") + "]"
+        entries(ids.map { compactionRecord(id: $0) })
     }
 
     private func snapshot(

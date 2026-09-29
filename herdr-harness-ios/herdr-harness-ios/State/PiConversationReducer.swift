@@ -30,9 +30,8 @@ struct PiConversationReducer: Sendable {
     /// later snapshot that still projects only this evidence must not revive
     /// the old cue as the newer attempt's success.
     private(set) var suppressedCompactionEvidence: PiCompactionCompletion.Evidence?
-    /// In-memory, session-scoped acknowledgement. A successful local
-    /// submission sets it so repeated snapshots cannot restore the composer
-    /// cue the user already dismissed.
+    /// Session-scoped acknowledgement from an accepted local submission or a
+    /// following user message. Repeated snapshots cannot restore that cue.
     private(set) var acknowledgedCompactionEvidence: PiCompactionCompletion.Evidence?
     private(set) var acknowledgedCompactionSessionID: String?
 
@@ -78,15 +77,22 @@ struct PiConversationReducer: Sendable {
             : nil
 
         var snapshotCompactionCompletion: PiCompactionCompletion?
+        var userMessageAfterCompaction = false
         for entry in snapshot.entries {
             if let completion = PiCompactionCompletion(entry: entry, sessionID: sessionID) {
                 // Entries are chronological, so the newest compaction wins.
                 snapshotCompactionCompletion = completion
+                userMessageAfterCompaction = false
+            } else if snapshotCompactionCompletion != nil,
+                      entry.string(for: "type") == "message",
+                      entry["message"]?.string(for: "role") == "user" {
+                userMessageAfterCompaction = true
             }
             projectSessionEntry(entry)
         }
         reconcileCompactionCompletion(
             snapshot: snapshotCompactionCompletion,
+            userMessageAfterCompaction: userMessageAfterCompaction,
             previous: previousCompactionCompletion,
             previousSessionID: previousSessionID,
             allowsCarryOver: allowsCompactionCarryOver
@@ -216,7 +222,12 @@ struct PiConversationReducer: Sendable {
             if wasWorking { return .completed }
             return hadCompaction ? .compactionChanged : .none
         case "message_start":
-            projectLiveMessage(event["message"], envelope: envelope, final: false)
+            let message = event["message"]
+            projectLiveMessage(message, envelope: envelope, final: false)
+            if message?.string(for: "role") == "user", compactionCompletion?.isAcknowledged == false {
+                acknowledgeCompactionCompletion()
+                return .compactionChanged
+            }
             return .none
         case "message_update":
             projectMessageUpdate(event, envelope: envelope)
@@ -228,6 +239,10 @@ struct PiConversationReducer: Sendable {
                 phase = .failed
                 compactionActivity = nil
                 return .failed
+            }
+            if message?.string(for: "role") == "user", compactionCompletion?.isAcknowledged == false {
+                acknowledgeCompactionCompletion()
+                return .compactionChanged
             }
             return .none
         case "tool_execution_start":
@@ -273,9 +288,9 @@ struct PiConversationReducer: Sendable {
         return .compactionChanged
     }
 
-    /// Records the in-memory acknowledgement that dismisses the composer cue.
-    /// Only an accepted local submission calls this; typing, failed sends,
-    /// refreshes, and elapsed time do not.
+    /// Records the session-scoped acknowledgement that dismisses the composer
+    /// cue. Accepted local submissions and subsequent user messages call this;
+    /// typing, failed sends, refreshes, and elapsed time do not.
     mutating func acknowledgeCompactionCompletion() {
         guard let completion = compactionCompletion else { return }
         acknowledgedCompactionEvidence = completion.evidence
@@ -324,6 +339,7 @@ struct PiConversationReducer: Sendable {
     /// projects exactly the superseded evidence stays hidden.
     private mutating func reconcileCompactionCompletion(
         snapshot completion: PiCompactionCompletion?,
+        userMessageAfterCompaction: Bool,
         previous: PiCompactionCompletion?,
         previousSessionID: String?,
         allowsCarryOver: Bool
@@ -345,6 +361,9 @@ struct PiConversationReducer: Sendable {
             let acknowledged = completion.evidence == acknowledgedCompactionEvidence
                 && acknowledgedCompactionSessionID == sessionID
             compactionCompletion = completion.acknowledged(acknowledged)
+            if userMessageAfterCompaction {
+                acknowledgeCompactionCompletion()
+            }
             suppressedCompactionEvidence = nil
             return
         }

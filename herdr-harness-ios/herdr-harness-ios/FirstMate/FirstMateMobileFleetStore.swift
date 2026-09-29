@@ -393,12 +393,14 @@ final class FirstMateMobileFleetStore {
     /// Opens a feature on its owning store while preserving the browsing
     /// scope. Returns false when the owning machine is not configured.
     @discardableResult
-    func open(_ target: FirstMateFeatureTarget) -> Bool {
+    func open(_ target: FirstMateFeatureTarget, navigationIntent: UUID? = nil) -> Bool {
+        if let navigationIntent, !chat.isCurrentNavigation(navigationIntent) { return false }
         guard let store = stores[target.machineID] else { return false }
         if store.snapshots[target.featureID]?.feature.isArchived == true { setShowArchived(true) }
         selectedTarget = target
         store.select(target.featureID)
-        chat.select(store.snapshots[target.featureID]?.feature.isLead == true ? .lead : .feature(target))
+        chat.select(store.snapshots[target.featureID]?.feature.isLead == true ? .lead : .feature(target),
+                    navigationIntent: navigationIntent)
         return true
     }
 
@@ -546,6 +548,7 @@ final class FirstMateMobileFleetStore {
         let expectedLifecycle = lifecycle
         await chat.index.refresh()
         guard !Task.isCancelled, expectedLifecycle == lifecycle else { return }
+        chat.reconcileLeadReadConfirmations(fleet: self)
         for value in chat.index.hosts {
             guard let index = hosts.firstIndex(where: { $0.machineID == value.machineID }) else { continue }
             var host = hosts[index]

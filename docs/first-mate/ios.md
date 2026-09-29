@@ -66,15 +66,23 @@ Shared Mac rules/tests were mechanically extracted before phone behavior work;
 Mac views and local-host preference policy remain unchanged. Phone-owned read,
 lead and routing state fences asynchronous results to the saved connection and
 feature. New replies survive older read acknowledgements; read failures roll back
-with 8–180-second backoff. Lead choice/ensure/context and the new chat route types
+with 8–180-second backoff. Lead reads track the observed assistant marker even
+when the newest conversation row is a user message; new assistant identities and
+post-confirmation unread transitions are not hidden by the old local override.
+Lead choice/ensure/context and the new chat route types
 are ready for later screens; no prompt is resent or moved on failover.
 
 `herdr://first-mate?feature_id=…[&assignment_id=…][&server_url=…]` and
 `herdr://first-mate/lead` are additive phone links. A supplied server origin must
 match exactly one configured machine, with no fallback if unknown/ambiguous.
 Otherwise an in-chat link uses its captured owner, and an external feature link
-needs one unique listed owner. Names, roster ordering and lead metadata never
-establish identity. Invalid/duplicate/security-bearing fields are rejected; pane
+needs one unique listed owner across complete, successful host inventories. A
+partially discovered, failed or missing inventory is not proof of absence: the
+phone explicitly asks for a server-URL link or opening the feature on its machine,
+without guessing a first responder or silently queuing a retry. Exact-owner links
+remain independent of other hosts' discovery. One navigation intent is established
+before app bootstrap; newer links or manual selections fence older results and
+errors. Names, roster ordering and lead metadata never establish identity. Invalid/duplicate/security-bearing fields are rejected; pane
 and car links retain their existing behavior. Valid agent links open the current
 Agents inspector; pushed info/highlighting arrives in Phases 3/6.
 

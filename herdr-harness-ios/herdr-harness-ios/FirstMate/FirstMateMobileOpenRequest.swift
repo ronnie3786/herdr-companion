@@ -46,6 +46,11 @@ struct FirstMateMobileOpenRequest: Equatable, Sendable {
         if destination == .lead, (assignmentID != nil || (inspector != nil && inspector != .overview) || graph) { return nil }
     }
 
+    var requiresFleetOwnership: Bool {
+        if case .feature = destination { return origin == nil }
+        return false
+    }
+
     func resolve(machines: [HerdrMachine], hosts: [FirstMateFleetHost], owner: FirstMateFeatureTarget?) -> Resolution {
         let explicit: String?
         if let origin {
@@ -62,6 +67,15 @@ struct FirstMateMobileOpenRequest: Equatable, Sendable {
                 return .feature(.init(machineID: owner.machineID, featureID: featureID))
             }
             let configured = Set(machines.map(\.id))
+            // A first responder is not a unique owner. Missing, loading or
+            // failed inventories cannot establish absence on the other hosts.
+            guard !configured.isEmpty, configured.allSatisfy({ machineID in
+                let evidence = hosts.filter { $0.machineID == machineID }
+                return evidence.count == 1 && evidence[0].lastUpdated != nil
+                    && !evidence[0].isLoading && evidence[0].error == nil && !evidence[0].unsupported
+            }) else {
+                return .failure("Feature ownership is still unknown. Open the feature from its machine, or use a link with a server URL.")
+            }
             let owners = Set(hosts.filter { host in
                 configured.contains(host.machineID) && (host.features.contains { $0.id == featureID }
                     || host.fleetEntries?[featureID] != nil || host.lead?.feature.id == featureID)

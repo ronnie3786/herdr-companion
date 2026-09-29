@@ -9,6 +9,7 @@ final class FirstMateMobileChatState {
     let index = FirstMateFleetIndex()
     private(set) var selection: Selection?
     private(set) var readState = FirstMateReadState()
+    private var leadReadObservations: [FirstMateFleetFeatureID: LeadReadObservation] = [:]
     private(set) var pinnedMachineID: String?
     private(set) var route: FirstMateMobileNavigation?
     private(set) var routingError: String?
@@ -33,6 +34,12 @@ final class FirstMateMobileChatState {
     @ObservationIgnored var clock: () -> Date = Date.init
     static let pinnedKey = "herdr.ios.firstMate.lead.pinned"
 
+    private struct LeadReadObservation {
+        let messageID: String
+        let summaryMessageID: String?
+        let coveredAssistantIDs: Set<String>
+    }
+
     private struct FailedRead {
         let messageID: String
         let retryAt: Date
@@ -56,7 +63,12 @@ final class FirstMateMobileChatState {
             nextTokens[id] = unchanged ? tokens[id] ?? UUID() : UUID()
         }
         let retained = Set(nextTokens.keys.filter { nextTokens[$0] == tokens[$0] })
+        if !sources.isEmpty, self.generation != generation || retained.count != sources.count
+            || Set(nextTokens.keys) != Set(sources.keys) {
+            beginNavigation()
+        }
         readState.overrides = readState.overrides.filter { retained.contains($0.key.machineID) }
+        leadReadObservations = leadReadObservations.filter { retained.contains($0.key.machineID) }
         failedReads = failedReads.filter { retained.contains($0.key.machineID) }
         openingLeads = openingLeads.filter { retained.contains($0.key) }
         tokens = nextTokens
@@ -79,13 +91,29 @@ final class FirstMateMobileChatState {
     }
 
     func retire() {
+        beginNavigation()
+        leadReadObservations = [:]
         index.activate(sources: [], connectionGeneration: generation + 1)
         sources = [:]; tokens = [:]; failedReads = [:]; openingLeads = [:]
         readState = FirstMateReadState(); selection = nil; route = nil
     }
 
-    func select(_ selection: Selection?) {
+    /// Established synchronously by the app boundary, before bootstrap awaits.
+    /// Manual selection uses the same identity; applying a route retains its
+    /// own identity instead of accidentally superseding itself.
+    @discardableResult
+    func beginNavigation() -> UUID {
         navigationToken = UUID()
+        routingError = nil
+        return navigationToken
+    }
+
+    func isCurrentNavigation(_ intent: UUID) -> Bool { navigationToken == intent }
+
+    func select(_ selection: Selection?, navigationIntent: UUID? = nil) {
+        if let navigationIntent {
+            guard isCurrentNavigation(navigationIntent) else { return }
+        } else { beginNavigation() }
         route = nil
         self.selection = selection
     }
@@ -140,8 +168,45 @@ final class FirstMateMobileChatState {
     }
 
     func leadIsUnread(machineID: String, fleet: FirstMateMobileFleetStore) -> Bool {
-        guard let lead = hosts(fleet: fleet).first(where: { $0.machineID == machineID })?.lead else { return false }
-        return lead.unread && readState.overrides[.init(machineID: machineID, featureID: lead.feature.id)] != lead.latestMessage?.id
+        guard let lead = hosts(fleet: fleet).first(where: { $0.machineID == machineID })?.lead, lead.unread else { return false }
+        let id = FirstMateFleetFeatureID(machineID: machineID, featureID: lead.feature.id)
+        guard let observation = leadReadObservations[id], readState.overrides[id] == observation.messageID else { return true }
+        let messages = fleet.store(forMachineID: machineID)?.snapshots[lead.feature.id]?.messages.filter(\.isConversation) ?? []
+        if let assistant = messages.last(where: { $0.role == "assistant" && !FirstMateOutgoingMessage.isLocalID($0.id) }),
+           !observation.coveredAssistantIDs.contains(assistant.id) { return true }
+        if let latest = lead.latestMessage {
+            if latest.role == "assistant" { return !observation.coveredAssistantIDs.contains(latest.id) }
+            // A user row is not the assistant read marker. If the summary has
+            // advanced to an unseen user row, however, do not assume there
+            // was no intervening assistant reply until the snapshot catches up.
+            if latest.id != observation.summaryMessageID, !messages.contains(where: { $0.id == latest.id }) { return true }
+        }
+        return false
+    }
+
+    /// Once a successful summary confirms read state, the local observation
+    /// must not mask a later unread transition whose latest row is still user U.
+    func reconcileLeadReadConfirmations(fleet: FirstMateMobileFleetStore) {
+        for host in hosts(fleet: fleet) {
+            guard let lead = host.lead, !lead.unread else { continue }
+            let id = FirstMateFleetFeatureID(machineID: host.machineID, featureID: lead.feature.id)
+            if leadReadObservations[id] != nil { leadReadObservations[id] = nil }
+        }
+    }
+
+    private func observeLeadRead(_ target: FirstMateFeatureTarget, through messageID: String,
+                                 lead: FirstMateLeadSummary, fleet: FirstMateMobileFleetStore) -> LeadReadObservation {
+        let messages = fleet.store(for: target)?.snapshots[target.featureID]?.messages.filter(\.isConversation) ?? []
+        var covered: Set<String> = [messageID]
+        if let through = messages.firstIndex(where: { $0.id == messageID }) {
+            covered.formUnion(messages[...through].filter { $0.role == "assistant" && !FirstMateOutgoingMessage.isLocalID($0.id) }.map(\.id))
+        }
+        return .init(messageID: messageID, summaryMessageID: lead.latestMessage?.id, coveredAssistantIDs: covered)
+    }
+
+    private func rollBackRead(_ id: FirstMateFleetFeatureID, messageID: String) {
+        readState.rollBack(id, messageID: messageID)
+        if leadReadObservations[id]?.messageID == messageID { leadReadObservations[id] = nil }
     }
 
     /// Optimistic feature and lead markers share phone-owned rollback/backoff.
@@ -156,6 +221,9 @@ final class FirstMateMobileChatState {
         let id = FirstMateFleetFeatureID(machineID: target.machineID, featureID: target.featureID)
         guard readState.overrides[id] != messageID else { return }
         if let failed = failedReads[id], failed.messageID == messageID, clock() < failed.retryAt { return }
+        if isLead, let lead = host.lead {
+            leadReadObservations[id] = observeLeadRead(target, through: messageID, lead: lead, fleet: fleet)
+        }
         readState.markRead(id, messageID: messageID)
         if source.isDemo { return }
         do {
@@ -166,13 +234,13 @@ final class FirstMateMobileChatState {
                   let acknowledged = response.readThroughMessageID, !FirstMateOutgoingMessage.isLocalID(acknowledged) else {
                 throw APIError.invalidResponse
             }
-            if response.unread { readState.rollBack(id, messageID: messageID) }
+            if response.unread { rollBackRead(id, messageID: messageID) }
             if failedReads[id]?.messageID == messageID { failedReads[id] = nil }
             // Do not overwrite the index summary: a newer reply may have
             // arrived while this marker was in flight.
         } catch {
             guard tokens[target.machineID] == token, readState.overrides[id] == messageID else { return }
-            readState.rollBack(id, messageID: messageID)
+            rollBackRead(id, messageID: messageID)
             let previous = failedReads[id].flatMap { $0.messageID == messageID ? $0.delay : nil }
             let delay = previous.map { min($0 * 2, 180) } ?? 8
             failedReads[id] = .init(messageID: messageID, retryAt: clock().addingTimeInterval(delay), delay: delay)
@@ -182,18 +250,19 @@ final class FirstMateMobileChatState {
     /// Ensures an empty lead only on its captured owner. Never resends or
     /// migrates a prompt on failover, and never selects a delayed result over a
     /// newly selected feature or a replaced store.
-    func openLead(on machineID: String? = nil, fleet: FirstMateMobileFleetStore,
+    func openLead(on machineID: String? = nil, intent suppliedIntent: UUID? = nil, fleet: FirstMateMobileFleetStore,
                   canControl: (String) -> Bool = { _ in false }) async -> FirstMateFeatureTarget? {
+        let intent = suppliedIntent ?? beginNavigation()
+        guard !Task.isCancelled, isCurrentNavigation(intent) else { return nil }
         selection = .lead
-        let intent = UUID()
-        navigationToken = intent
+        route = nil
         guard let machineID = machineID ?? leadChoice(fleet: fleet).current,
               let source = sources[machineID], let token = tokens[machineID],
               hosts(fleet: fleet).contains(where: { $0.machineID == machineID && $0.supportsLead }),
               let store = fleet.store(forMachineID: machineID) else { return nil }
         if let snapshot = store.leadSnapshot {
             let target = FirstMateFeatureTarget(machineID: machineID, featureID: snapshot.feature.id)
-            return fleet.open(target) ? target : nil
+            return fleet.open(target, navigationIntent: intent) ? target : nil
         }
         guard canControl(machineID), openingLeads[machineID] == nil, let client = source.client else { return nil }
         let operation = UUID(), context = store.operationContext
@@ -213,21 +282,25 @@ final class FirstMateMobileChatState {
             store.receive(snapshot)
             index.noteLead(lead, machineID: machineID)
             let target = FirstMateFeatureTarget(machineID: machineID, featureID: lead.feature.id)
-            return fleet.open(target) ? target : nil
+            return fleet.open(target, navigationIntent: intent) ? target : nil
         } catch { return nil }
     }
 
-    func navigate(_ request: FirstMateMobileOpenRequest, owner: FirstMateFeatureTarget? = nil,
+    func navigate(_ request: FirstMateMobileOpenRequest, owner: FirstMateFeatureTarget? = nil, intent suppliedIntent: UUID? = nil,
                   fleet: FirstMateMobileFleetStore, canControl: (String) -> Bool = { _ in false }) async -> Bool {
+        let intent = suppliedIntent ?? beginNavigation()
+        guard !Task.isCancelled, isCurrentNavigation(intent) else { return false }
         routingError = nil
-        let intent = UUID()
-        navigationToken = intent
         let resolution = request.resolve(machines: fleet.availableMachineIDs.compactMap { sources[$0]?.machine },
                                          hosts: hosts(fleet: fleet), owner: owner)
         switch resolution {
         case .failure(let reason): routingError = reason; return false
         case .lead(let machineID):
-            guard let target = await openLead(on: machineID, fleet: fleet, canControl: canControl) else {
+            let owner = machineID ?? leadChoice(fleet: fleet).current
+            let token = owner.flatMap { tokens[$0] }
+            let target = await openLead(on: machineID, intent: intent, fleet: fleet, canControl: canControl)
+            guard !Task.isCancelled, isCurrentNavigation(intent), owner.flatMap({ tokens[$0] }) == token else { return false }
+            guard let target else {
                 // Older companions keep the lead selection ready for the
                 // briefing screen added by the conversation UI phases.
                 return selection == .lead
@@ -250,14 +323,19 @@ final class FirstMateMobileChatState {
                         routingError = "This agent does not belong to the feature."; return false
                     }
                     store.receive(snapshot)
-                } catch { routingError = "The feature could not be opened on its owning machine."; return false }
+                } catch {
+                    guard !Task.isCancelled, isCurrentNavigation(intent), tokens[target.machineID] == token,
+                          fleet.store(for: target) === store, store.operationContext == context else { return false }
+                    routingError = "The feature could not be opened on its owning machine."
+                    return false
+                }
             }
             guard let snapshot = store.snapshots[target.featureID] else { return false }
             if let assignment = request.assignmentID,
                !snapshot.assignments.contains(where: { $0.id == assignment && $0.featureID == target.featureID }) {
                 routingError = "This agent does not belong to the feature."; return false
             }
-            guard fleet.open(target) else { return false }
+            guard fleet.open(target, navigationIntent: intent) else { return false }
             route = .init(target: target, assignmentID: request.assignmentID,
                           inspector: request.assignmentID == nil ? request.inspector : .agents, graph: request.graph)
             return true

@@ -49,7 +49,11 @@ struct FirstMateMobileDeepLinkTests {
         guard case .failure = unqualified.resolve(machines: machines.reversed(), hosts: hosts.reversed(), owner: nil) else { Issue.record("Roster order is not identity"); return }
         let owner = FirstMateFeatureTarget(machineID: "beta", featureID: "current")
         #expect(unqualified.resolve(machines: machines, hosts: hosts, owner: owner) == .feature(.init(machineID: "beta", featureID: "same-id")))
-        #expect(unqualified.resolve(machines: machines, hosts: [hosts[0]], owner: nil) == .feature(.init(machineID: "alpha", featureID: "same-id")))
+        let knownUnique = [hosts[0], ChatFixtures.host("beta", features: [])]
+        #expect(unqualified.resolve(machines: machines, hosts: knownUnique, owner: nil) == .feature(.init(machineID: "alpha", featureID: "same-id")))
+        guard case .failure = unqualified.resolve(machines: machines, hosts: [hosts[0]], owner: nil) else {
+            Issue.record("A missing inventory is unknown, not evidence that its machine cannot own the feature"); return
+        }
         let explicit = try parse("herdr://first-mate?feature_id=same-id&server_url=https%3A%2F%2Falpha.example.invalid")
         #expect(explicit.resolve(machines: machines, hosts: hosts, owner: owner) == .feature(.init(machineID: "alpha", featureID: "same-id")))
         let duplicateOrigin = machines + [.init(id: "other", name: "Other", urlString: "https://alpha.example.invalid")]

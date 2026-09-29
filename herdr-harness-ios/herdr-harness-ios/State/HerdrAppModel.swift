@@ -1658,27 +1658,11 @@ final class HerdrAppModel: HudChatTransport {
     func open(url: URL) {
         if url.scheme?.lowercased() == "herdr", url.host?.lowercased() == "first-mate" {
             guard let request = FirstMateMobileOpenRequest(url: url), hasCompletedSetup else {
+                firstMateFleet.chat.beginNavigation()
                 toastMessage = "This First Mate link is invalid or no machine is configured."
                 return
             }
-            let generation = connectionGeneration
-            Task {
-                guard generation == connectionGeneration, !Task.isCancelled else { return }
-                if firstMateFleet.hosts.isEmpty {
-                    firstMateFleet.activate(sources: firstMateSources(), connectionGeneration: generation)
-                    await firstMateFleet.refreshAll()
-                }
-                guard generation == connectionGeneration, !Task.isCancelled else { return }
-                if await firstMateFleet.chat.navigate(request, fleet: firstMateFleet, canControl: { [weak self] in
-                    self?.firstMateCanControl(machineID: $0) ?? false
-                }) {
-                    guard generation == connectionGeneration else { return }
-                    selectedTab = .firstMate
-                } else {
-                    guard generation == connectionGeneration, !Task.isCancelled else { return }
-                    toastMessage = firstMateFleet.chat.routingError ?? "The feature could not be opened on its owning machine."
-                }
-            }
+            openFirstMate(request, sources: firstMateSources())
             return
         }
         if Self.opensCarMode(url) {
@@ -1687,6 +1671,41 @@ final class HerdrAppModel: HudChatTransport {
         }
         if let paneID = Self.paneID(from: url) {
             openPane(id: paneID)
+        }
+    }
+
+    /// The app boundary for a validated First Mate URL. Captured sources make
+    /// bootstrap ownership explicit and allow deterministic client-backed tests.
+    @discardableResult
+    func openFirstMate(_ request: FirstMateMobileOpenRequest, sources: [FirstMateMobileFleetSource]) -> Task<Void, Never> {
+        let generation = connectionGeneration
+        let intent = firstMateFleet.chat.beginNavigation()
+        toastMessage = nil
+        return Task {
+            guard generation == connectionGeneration, !Task.isCancelled,
+                  firstMateFleet.chat.isCurrentNavigation(intent) else { return }
+            if firstMateFleet.hosts.isEmpty {
+                firstMateFleet.activate(sources: sources, connectionGeneration: generation)
+                // Exact feature origins do not depend on discovering other
+                // hosts. Unqualified features get one inventory pass; lead
+                // routes still discover capability/choice before opening.
+                if request.requiresFleetOwnership || request.destination == .lead {
+                    await firstMateFleet.refreshChatIndex()
+                }
+            }
+            guard generation == connectionGeneration, !Task.isCancelled,
+                  firstMateFleet.chat.isCurrentNavigation(intent) else { return }
+            if await firstMateFleet.chat.navigate(request, intent: intent, fleet: firstMateFleet, canControl: { [weak self] in
+                self?.firstMateCanControl(machineID: $0) ?? false
+            }) {
+                guard generation == connectionGeneration, !Task.isCancelled,
+                      firstMateFleet.chat.isCurrentNavigation(intent) else { return }
+                selectedTab = .firstMate
+            } else {
+                guard generation == connectionGeneration, !Task.isCancelled,
+                      firstMateFleet.chat.isCurrentNavigation(intent) else { return }
+                toastMessage = firstMateFleet.chat.routingError ?? "The feature could not be opened on its owning machine."
+            }
         }
     }
 

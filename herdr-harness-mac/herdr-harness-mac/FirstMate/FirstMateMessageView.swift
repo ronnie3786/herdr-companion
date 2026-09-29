@@ -39,7 +39,7 @@ struct FirstMateMessageView: View {
                     in: HerdrBubbleShape(singleLineHeight: (HerdrProse.Role.userBubble.lineHeight + 16) * fontScale.rawValue)
                 )
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("You: \(message.text)")
+                .accessibilityLabel("You: \(message.text)\(message.status == "sending" ? ", Sending" : message.status == "failed" ? ", Not sent" : message.status == "unconfirmed" ? ", Delivery unconfirmed" : "")")
                 .piCopyAffordance(
                     message.text,
                     label: "Copy message",
@@ -48,10 +48,11 @@ struct FirstMateMessageView: View {
                     offset: CGSize(width: -28, height: 4)
                 )
                 .frame(maxWidth: 576 * fontScale.rawValue, alignment: .trailing)
-            if message.status == "queued" {
-                Text("Queued")
+            if ["queued", "sending", "failed", "unconfirmed"].contains(message.status) {
+                Text(message.status == "sending" ? "Sending…" : message.status == "queued" ? "Queued" : message.status == "failed" ? "Not sent" : "Delivery unconfirmed")
                     .herdrFont(size: HerdrTheme.TextSize.caption)
-                    .foregroundStyle(palette.tertiaryText)
+                    .foregroundStyle(["failed", "unconfirmed"].contains(message.status) ? HerdrTheme.alert : palette.tertiaryText)
+                    .accessibilityIdentifier("first-mate-send-status-\(message.id)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)

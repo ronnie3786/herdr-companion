@@ -378,6 +378,7 @@ struct FirstMateHudLeadChatCard: View {
             if let store = controller.leadStore, let snapshot = store.leadSnapshot,
                let model = controller.appModel, let favorites = controller.modelFavorites {
                 FirstMateHudLeadTranscript(controller: controller, store: store, snapshot: snapshot)
+                FirstMateSendErrorView(store: store, featureID: snapshot.feature.id)
                 FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
                 if controller.voicePhase.showsCaption {
                     FirstMateHudVoiceCaption(controller: controller)
@@ -475,10 +476,10 @@ private struct FirstMateHudLeadTranscript: View {
     static let bubbleWidth: CGFloat = 296
 
     var body: some View {
-        let messages = snapshot.messages.filter(\.isConversation)
+        let messages = FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot)
         let typing = FirstMateTranscriptLayout.isTyping(
             messages: messages,
-            isSending: store.isSending,
+            isSending: FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot),
             isWorkingOnReply: snapshot.feature.coordinatorOwner != nil
         )
         let rows = FirstMateTranscriptLayout.recentRows(for: messages, limit: Self.messageLimit, typing: typing,

@@ -57,6 +57,97 @@ struct FirstMateTests {
         #expect(!decoded.visits.contains { ["checkpoint", "handoff"].contains($0.stageKey) })
     }
 
+    @Test("A send receipt decodes its singular message without becoming a full snapshot")
+    func decodeSendReceipt() throws {
+        let base = FirstMateDemo.features(step: 0)[0]
+        let accepted = FirstMateMessage(
+            id: "fmm_receipt",
+            featureID: base.feature.id,
+            role: "user",
+            text: "Ship the fix",
+            status: "queued",
+            createdAt: "2030-01-01T12:00:00Z"
+        )
+        let object: [String: Any] = [
+            "ok": true,
+            "feature": try JSONSerialization.jsonObject(with: JSONEncoder().encode(base.feature)),
+            "message": try JSONSerialization.jsonObject(with: JSONEncoder().encode(accepted)),
+        ]
+        let receipt = try JSONDecoder().decode(
+            FirstMateSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(receipt.message == accepted)
+        #expect(!receipt.hasDetails)
+        #expect(receipt.messages.isEmpty)
+        #expect(receipt.feature.id == base.feature.id)
+
+        // Older companions omit the singular message entirely.
+        let older = try JSONDecoder().decode(
+            FirstMateSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: [
+                "ok": true,
+                "feature": try JSONSerialization.jsonObject(with: JSONEncoder().encode(base.feature)),
+            ])
+        )
+        #expect(older.message == nil)
+        #expect(!older.hasDetails)
+
+        // A malformed or unexpected singular message degrades to absent
+        // instead of failing an otherwise usable receipt.
+        let malformed = try JSONDecoder().decode(
+            FirstMateSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: [
+                "ok": true,
+                "feature": try JSONSerialization.jsonObject(with: JSONEncoder().encode(base.feature)),
+                "message": "not an accepted message",
+            ])
+        )
+        #expect(malformed.message == nil)
+        #expect(!malformed.hasDetails)
+    }
+
+    @Test("hasDetails depends only on the full-snapshot arrays")
+    func fullSnapshotWithAcceptedMessage() throws {
+        var full = FirstMateDemo.features(step: 0)[0]
+        full.message = FirstMateMessage(
+            id: "fmm_receipt",
+            featureID: full.feature.id,
+            role: "user",
+            text: "Ship the fix",
+            status: "queued",
+            createdAt: "2030-01-01T12:00:00Z"
+        )
+        let decoded = try JSONDecoder().decode(FirstMateSnapshot.self, from: JSONEncoder().encode(full))
+        #expect(decoded.hasDetails)
+        #expect(decoded.message?.id == "fmm_receipt")
+        #expect(decoded.messages == full.messages)
+    }
+
+    @Test("A receipt never replaces the authoritative conversation")
+    func receiptPreservesConversation() throws {
+        let store = FirstMateStore()
+        let full = FirstMateDemo.features(step: 0)[0]
+        store.receive(full)
+        store.select(full.feature.id)
+        let accepted = FirstMateMessage(
+            id: "fmm_receipt",
+            featureID: full.feature.id,
+            role: "user",
+            text: "Ship the fix",
+            status: "queued",
+            createdAt: "2030-01-01T12:00:00Z"
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "ok": true,
+            "feature": try JSONSerialization.jsonObject(with: JSONEncoder().encode(full.feature)),
+            "message": try JSONSerialization.jsonObject(with: JSONEncoder().encode(accepted)),
+        ])
+        store.receive(try JSONDecoder().decode(FirstMateSnapshot.self, from: data))
+        #expect(store.snapshot?.messages == full.messages)
+        #expect(store.snapshot?.message == nil, "The receipt never becomes the cached conversation")
+    }
+
     @Test("Stale snapshots cannot overwrite a newer revision")
     func ignoresStaleSnapshot() {
         let store = FirstMateStore()

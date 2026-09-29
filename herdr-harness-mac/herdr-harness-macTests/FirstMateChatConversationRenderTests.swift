@@ -86,6 +86,87 @@ struct FirstMateChatConversationRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("An empty lead mounts the outgoing bubble before its working row")
+    func emptyLeadPending() async throws {
+        let (session, model) = try await demoSession()
+        session.select(.lead)
+        let store = try #require(session.leadStore)
+        #expect(await store.openLead())
+        var snapshot = try #require(store.leadSnapshot)
+        snapshot.messages = []
+        store.receive(snapshot)
+        let handle = try #require(store.beginOutgoingMessage("Synthetic lead direction", expectedContext: store.operationContext))
+        let current = try #require(store.leadSnapshot)
+        let messages = FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: current)
+        let rows = FirstMateTranscriptLayout.rows(for: messages, typing: true, now: .now, calendar: .current)
+        #expect(messages.map(\.id) == [handle.messageID])
+        #expect(rows.last?.speaker == .user)
+        #expect(FirstMateTranscriptLayout.typingStartsGroup(rows))
+        #expect(FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: current))
+        let result = try await HerdrRenderHarness.render("fmchat-empty-lead-sending.png", size: Self.size) {
+            column(session, model: model)
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("Main First Mate screen puts the pending user row before its working feedback")
+    func mainPending() async throws {
+        let (session, model) = try await demoSession()
+        session.select(.feature(Self.receipts))
+        let store = try #require(session.selectedStore)
+        let snapshot = try #require(session.selectedSnapshot)
+        let handle = try #require(store.beginOutgoingMessage("Synthetic pending direction", expectedContext: store.operationContext))
+        let messages = FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot)
+        #expect(messages.last?.id == handle.messageID)
+        #expect(FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot))
+        let result = try await HerdrRenderHarness.render("fmchat-main-sending.png", size: Self.size) {
+            FirstMateChatView(store: store, model: model, snapshot: snapshot,
+                              canControl: true, modelFavorites: ModelFavoritesStore())
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("Rejected send draws the red textual error, not only a warning banner")
+    func failedSendRed() async throws {
+        let client = DeferredClient()
+        let store = FirstMateStore()
+        store.configure(client: client, demo: false)
+        await store.refresh()
+        _ = store.acquireControlLease(available: true)
+        let context = store.operationContext
+        let snapshot = try #require(store.snapshot(for: context))
+        let handle = try #require(store.beginOutgoingMessage("Synthetic rejection", expectedContext: context))
+        let sending = Task { await store.completeOutgoingMessage(handle) }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while await client.requests.isEmpty {
+            guard clock.now < deadline else { throw APIError.invalidResponse }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        await client.resolve(.failure(APIError.server(status: 401, message: "Synthetic rejected request")))
+        #expect((await sending.value)?.isFailure == true)
+        #expect(!FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot))
+        #expect(store.sendFailure(for: snapshot.feature.id)?.failureMessage != nil)
+        let result = try await HerdrRenderHarness.render("fmchat-send-error.png", size: CGSize(width: 700, height: 110)) {
+            FirstMateSendErrorView(store: store, featureID: snapshot.feature.id)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(HerdrTheme.ink)
+        }
+        result.expectSubstantial(minimumBytes: 900)
+        let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: result.url)))
+        let alert = HerdrTheme.resolved(HerdrTheme.alert)
+        var alertPixels = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                if abs(color.redComponent - alert.redComponent) < 0.14,
+                   abs(color.greenComponent - alert.greenComponent) < 0.14,
+                   abs(color.blueComponent - alert.blueComponent) < 0.14 { alertPixels += 1 }
+            }
+        }
+        #expect(alertPixels > 25)
+    }
+
     @Test("A capsule's readout for Receipt export")
     func readout() async throws {
         let (session, _) = try await demoSession()

@@ -115,6 +115,26 @@ struct FirstMateHudRenderTests {
         try await render("fmhud-card-\(kind).png", hud)
     }
 
+    @Test("HUD lead shows its outgoing row before speculative working feedback")
+    func leadPending() async throws {
+        let hud = try await controller(count: nil, expanded: true)
+        hud.modelFavorites = ModelFavoritesStore()
+        hud.openExplicit(.chat)
+        let store = try #require(hud.currentLeadStore())
+        #expect(await store.openLead())
+        let snapshot = try #require(store.leadSnapshot)
+        let handle = try #require(store.beginOutgoingMessage("Synthetic HUD question", expectedContext: store.operationContext))
+        let messages = FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot)
+        let rows = FirstMateTranscriptLayout.recentRows(for: messages, limit: 40, typing: true,
+                                                       now: .now, calendar: .current)
+        #expect(messages.last?.id == handle.messageID)
+        #expect(rows.last?.speaker == .user)
+        #expect(FirstMateTranscriptLayout.typingStartsGroup(rows))
+        #expect(FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot))
+        #expect(hud.visibleCard == .chat)
+        try await render("fmhud-lead-sending.png", hud)
+    }
+
     @Test("Listening: rose face, level meter, and the caption")
     func listening() async throws {
         let hud = try await controller(count: nil, expanded: false)

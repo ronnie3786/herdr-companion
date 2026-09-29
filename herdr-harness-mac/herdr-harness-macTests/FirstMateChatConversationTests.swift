@@ -74,6 +74,25 @@ struct FirstMateChatConversationTests {
         #expect(!FirstMateTranscriptLayout.isTyping(messages: [Self.message("a", status: "queued")], isSending: false, isWorkingOnReply: false))
     }
 
+    @Test("A partial reply stays after its optimistic user row and ends speculative typing")
+    func partialReplyOrdering() throws {
+        let store = FirstMateStore()
+        store.configure(client: nil, demo: true)
+        let context = store.operationContext
+        var snapshot = try #require(store.snapshot(for: context))
+        let handle = try #require(store.beginOutgoingMessage("Synthetic direction", expectedContext: context))
+        let reply = FirstMateMessage(id: "synthetic-new-reply", featureID: snapshot.feature.id,
+                                     role: "assistant", text: "Working on it", status: "delivered",
+                                     createdAt: "2030-03-06T12:01:00Z")
+        snapshot.messages.append(reply)
+        store.receive(snapshot)
+        let ordered = FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot)
+        let localIndex = try #require(ordered.firstIndex(where: { $0.id == handle.messageID }))
+        let replyIndex = try #require(ordered.firstIndex(where: { $0.id == reply.id }))
+        #expect(localIndex < replyIndex)
+        #expect(!FirstMateTranscriptLayout.isAwaitingReply(store: store, snapshot: snapshot))
+    }
+
     @Test("The chat window presents one checkpoint and retains its closing reply and crew identity")
     func canonicalCheckpointRows() throws {
         let snapshot = try #require(FirstMateDemo.chatWindowFeatures().first { $0.feature.id == "demo-receipts" })

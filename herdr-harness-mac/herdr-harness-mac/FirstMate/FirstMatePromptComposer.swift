@@ -28,14 +28,17 @@ struct FirstMatePromptComposer: View {
     @State private var appearFocus = 0
 
     var body: some View {
-        let destination = PromptComposerDestination.firstMate(
-            store: store,
-            model: model,
-            snapshot: snapshot,
-            canControl: canControl,
-            placeholder: placeholder,
-            didSubmit: didSubmit
-        )
+        productionView
+            .equatable()
+            .id(destination.id)
+            .task(id: destination.id) {
+                if focusOnAppear { appearFocus &+= 1 }
+            }
+    }
+
+    /// The exact view and bindings used by the mounted composer. Tests can
+    /// drive its submit path while a deferred transport remains suspended.
+    var productionView: PromptComposerView {
         PromptComposerView(
             model: model,
             destination: destination,
@@ -48,11 +51,11 @@ struct FirstMatePromptComposer: View {
             contextAccessory: contextAccessory,
             toolbarAccessory: modelAccessory
         )
-        .equatable()
-        .id(destination.id)
-        .task(id: destination.id) {
-            if focusOnAppear { appearFocus &+= 1 }
-        }
+    }
+
+    private var destination: PromptComposerDestination {
+        .firstMate(store: store, model: model, snapshot: snapshot, canControl: canControl,
+                   placeholder: placeholder, didSubmit: didSubmit)
     }
 
     private struct ContextKey: Equatable {
@@ -122,7 +125,11 @@ struct FirstMatePromptComposer: View {
         let context = store.operationContext
         return Binding(
             get: { store.composerDraft(for: context) },
-            set: { store.setComposerDraft($0, for: context) }
+            set: {
+                guard store.isDestinationAlive(context) else { return }
+                store.setComposerDraft($0, for: context)
+                store.composerDrafts.noteDraftEdit(for: snapshot.feature.id)
+            }
         )
     }
 

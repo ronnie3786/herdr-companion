@@ -12,6 +12,10 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     var sessions: [FirstMateSession]
     var sessionsTruncated: Bool
     var links: [FirstMateLink]
+    /// The single message a send receipt accepted, when the companion's
+    /// response names it. Older companions omit it and full snapshots carry
+    /// their conversation in ``messages``. It never changes ``hasDetails``.
+    var message: FirstMateMessage? = nil
     /// Distinguishes a server that omits `links` from one that explicitly
     /// reports an empty collection. The key is never encoded.
     var includesLinks = true
@@ -40,7 +44,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case ok, feature, visits, assignments, documents, messages, events, sessions, links
+        case ok, feature, visits, assignments, documents, messages, message, events, sessions, links
         case sessionsTruncated = "sessions_truncated"
         case runtimeHealth = "runtime_health"
         case eventCursor = "event_cursor"
@@ -54,6 +58,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         assignments = try c.decodeIfPresent([FirstMateAssignment].self, forKey: .assignments) ?? []
         documents = try c.decodeIfPresent([FirstMateDocument].self, forKey: .documents) ?? []
         messages = try c.decodeIfPresent([FirstMateMessage].self, forKey: .messages) ?? []
+        message = try? c.decodeIfPresent(FirstMateMessage.self, forKey: .message)
         events = try c.decodeIfPresent([FirstMateEvent].self, forKey: .events) ?? []
         hasDetails = c.contains(.visits) && c.contains(.messages) && c.contains(.events)
         sessions = try c.decodeIfPresent([FirstMateSession].self, forKey: .sessions) ?? []

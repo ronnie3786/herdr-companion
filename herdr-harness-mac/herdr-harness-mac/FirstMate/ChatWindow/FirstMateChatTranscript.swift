@@ -28,6 +28,34 @@ enum FirstMateTranscriptLayout {
         var id: String { message.id }
     }
 
+    /// A partially refreshed companion may report a reply before its user
+    /// echo. Keep the still-local user row before newly reported replies;
+    /// canonical server identity and order take over once the echo arrives.
+    @MainActor static func orderedMessages(store: FirstMateStore, snapshot: FirstMateSnapshot) -> [FirstMateMessage] {
+        var messages = store.conversationMessages(for: snapshot)
+        for outgoing in store.outgoingMessages(for: snapshot.feature.id) {
+            guard let localIndex = messages.firstIndex(where: { $0.id == outgoing.id }),
+                  let replyIndex = messages[..<localIndex].firstIndex(where: {
+                      $0.role == "assistant" && !outgoing.baselineMessageIDs.contains($0.id)
+                  }) else { continue }
+            let local = messages.remove(at: localIndex)
+            messages.insert(local, at: replyIndex)
+        }
+        return messages
+    }
+
+    /// Speculative working ends on a failed send or when a real reply has
+    /// arrived; existing server-reported queued work remains independent.
+    @MainActor static func isAwaitingReply(store: FirstMateStore, snapshot: FirstMateSnapshot) -> Bool {
+        store.outgoingMessages(for: snapshot.feature.id).contains { outgoing in
+            (outgoing.state.isPending || outgoing.state.isAcceptedAwaitingSnapshot)
+                && !snapshot.messages.contains(where: {
+                    $0.role == "assistant" && $0.isConversation && !outgoing.baselineMessageIDs.contains($0.id)
+                })
+                && store.isAwaitingSendResolution(featureID: snapshot.feature.id)
+        }
+    }
+
     static func speaker(for message: FirstMateMessage) -> Speaker {
         if message.role == "user" || message.role == "human" { return .user }
         if let assignmentID = message.assignmentID, !assignmentID.isEmpty { return .agent(assignmentID) }
@@ -234,7 +262,7 @@ struct FirstMateChatTranscript: View {
     nonisolated static let maxContentWidth: CGFloat = 720
     nonisolated static let gutter: CGFloat = 24
 
-    private var messages: [FirstMateMessage] { snapshot.messages.filter(\.isConversation) }
+    private var messages: [FirstMateMessage] { FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot) }
 
     nonisolated static func bubbleMaxWidth(forWidth width: CGFloat) -> CGFloat {
         let content = min(max(width - gutter * 2, 200), maxContentWidth)
@@ -309,7 +337,7 @@ struct FirstMateChatTranscript: View {
         .onChange(of: FirstMateTranscriptLayout.ReadKey(
             followsLatest: followsLatest,
             isKey: controlActiveState == .key,
-            newest: messages.last?.id,
+            newest: store.newestServerMessageID(for: snapshot),
             conversation: session.conversations.first { $0.id == conversationID }
         )) { _, _ in
             markRead()
@@ -326,7 +354,7 @@ struct FirstMateChatTranscript: View {
         session.markReadIfNeeded(
             featureID: conversationID.featureID,
             machineID: conversationID.machineID,
-            newestMessageID: messages.last?.id,
+            newestMessageID: store.newestServerMessageID(for: snapshot),
             isKeyWindow: controlActiveState == .key,
             isAtBottom: followsLatest
         )

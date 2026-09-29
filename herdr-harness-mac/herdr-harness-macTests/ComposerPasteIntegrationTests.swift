@@ -69,6 +69,8 @@ struct ComposerPasteIntegrationTests {
         if route.contains("button") {
             // Both composers show Paste code in the `+` popover's window.
             let (target, targetView) = try await popoverWindow(for: window, excluding: earlierWindows)
+            // Hit the last row directly rather than OCR'ing an offscreen snapshot
+            // (which can be blank in the hosted CI test process).
             let location = try pasteButtonLocation(in: targetView)
             let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [], timestamp: 0,
                 windowNumber: target.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))

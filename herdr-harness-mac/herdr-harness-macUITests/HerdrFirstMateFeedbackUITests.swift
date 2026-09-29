@@ -17,10 +17,12 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
 
         let up = app.control(identifier: "first-mate-feedback-up-\(Self.firstMessage)")
         let down = app.control(identifier: "first-mate-feedback-down-\(Self.firstMessage)")
+        let copy = app.control(identifier: "first-mate-copy-\(Self.firstMessage)")
         let status = app.control(identifier: "first-mate-feedback-status-\(Self.firstMessage)")
         XCTAssertTrue(up.waitForExistence(timeout: 10), "A completed response should offer thumbs up")
         XCTAssertTrue(down.exists, "A completed response should offer thumbs down")
-        XCTAssertTrue(status.exists, "A completed response should show its rating state")
+        XCTAssertTrue(copy.exists, "A completed response should offer Copy without hover")
+        XCTAssertFalse(status.exists, "An unrated response should not show a rating label")
         XCTAssertFalse(
             app.control(identifier: "first-mate-feedback-up-\(Self.userMessage)").exists,
             "A user message must not offer response feedback"
@@ -115,7 +117,7 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         let remove = app.control(identifier: "first-mate-feedback-remove-\(Self.firstMessage)")
         XCTAssertTrue(remove.waitForExistence(timeout: 5), "A saved rating should offer Remove rating")
         remove.click()
-        XCTAssertTrue(waitForLabel("Rate this response", of: status))
+        XCTAssertTrue(status.waitForNonExistence(timeout: 5), "Removing a rating should remove its saved-state label")
         XCTAssertTrue(waitForLabel("Helpful response", of: up))
         XCTAssertTrue(waitForLabel("Not helpful response", of: down))
         saveScreenshot("first-mate-feedback-05-cleared-rating", app: app, directory: screenshotDirectory)
@@ -225,7 +227,7 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         XCTAssertTrue(custom.waitForExistence(timeout: 5), "A confirmed reason stays in the companion's catalog")
         XCTAssertTrue(waitForValue("Not selected", of: custom), "Cancel must not resurrect the discarded draft")
         let status = app.control(identifier: "first-mate-feedback-status-\(Self.firstMessage)")
-        XCTAssertTrue(waitForLabel("Rate this response", of: status))
+        XCTAssertFalse(status.exists, "Cancelling an unrated edit must not add a rating label")
         app.control(identifier: "first-mate-feedback-cancel").click()
     }
 

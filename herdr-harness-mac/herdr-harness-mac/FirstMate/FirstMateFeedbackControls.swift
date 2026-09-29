@@ -131,12 +131,14 @@ struct FirstMateResponseFeedbackFooter: View {
                     PiCopyButton(text: copyText, label: "Copy response", accessibilityIdentifier: "first-mate-copy-\(messageID)")
                 }
 
-                Text(presentation.statusText ?? "Rate this response")
-                    .herdrFont(size: HerdrTheme.TextSize.caption)
-                    .foregroundStyle(palette.tertiaryText)
-                    .lineLimit(1)
-                    .padding(.leading, 6)
-                    .accessibilityIdentifier("first-mate-feedback-status-\(messageID)")
+                if let statusText = presentation.statusText {
+                    Text(statusText)
+                        .herdrFont(size: HerdrTheme.TextSize.caption)
+                        .foregroundStyle(palette.tertiaryText)
+                        .lineLimit(1)
+                        .padding(.leading, 6)
+                        .accessibilityIdentifier("first-mate-feedback-status-\(messageID)")
+                }
 
                 if presentation.isSaving {
                     ProgressView()
@@ -173,8 +175,6 @@ struct FirstMateResponseFeedbackFooter: View {
                         .accessibilityLabel("Remove rating")
                         .help("Remove this response's rating")
                 }
-
-                Spacer(minLength: 0)
             }
 
             if let saveErrorMessage = presentation.saveErrorMessage {
@@ -224,9 +224,26 @@ struct FirstMateResponseFeedbackFooter: View {
         .buttonStyle(FirstMateActionButtonStyle(isSelected: selected))
         .disabled(!presentation.isWritable || presentation.isSaving || (up && selected))
         .accessibilityIdentifier("first-mate-feedback-\(up ? "up" : "down")-\(messageID)")
-        .accessibilityLabel(selected ? "\(title), selected" : title)
+        .accessibilityLabel(thumbAccessibilityLabel(title: title, selected: selected))
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(selected ? "\(title) — selected" : title)
+        .help(thumbHelp(title: title, selected: selected))
+    }
+
+    private func thumbAccessibilityLabel(title: String, selected: Bool) -> String {
+        var states: [String] = []
+        if selected { states.append("selected") }
+        if presentation.isSaving {
+            states.append("saving")
+        } else if !presentation.isWritable {
+            states.append("unavailable")
+        }
+        return ([title] + states).joined(separator: ", ")
+    }
+
+    private func thumbHelp(title: String, selected: Bool) -> String {
+        if presentation.isSaving { return "Saving response feedback" }
+        if !presentation.isWritable { return "Response feedback is unavailable" }
+        return selected ? "\(title) — selected" : title
     }
 }
 

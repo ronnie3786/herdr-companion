@@ -62,9 +62,11 @@ struct FirstMateMessageView: View {
         .padding(.leading, 48)
     }
 
-    /// A bubble-less reply under a "First Mate" label, with its action row.
+    /// A completed reply keeps thumbs up, thumbs down, and Copy inside its
+    /// response bubble. The feedback presentation still owns every capability,
+    /// load, write, and saved-state gate.
     private var assistantRow: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "sailboat.fill")
                     .herdrFont(size: 12)
@@ -87,53 +89,69 @@ struct FirstMateMessageView: View {
                 SkimPendingLabel(skim: message.skim)
                     .environment(\.chatProsePalette, prosePalette)
             }
-            .padding(.top, 2)
-            .padding(.horizontal, 16)
 
-            // A long reply shows its skim when one is ready; the full reply is
-            // one click away and stays what Copy, quotes, and feedback act on.
-            SkimmableReply(messageID: message.id, reply: message.text, skim: message.skim) {
-                PiMarkdownMessageView(
-                    source: message.text,
-                    isStreaming: false,
-                    id: "first-mate-\(message.featureID)-\(message.id)",
-                    detectsPaneLinks: false
-                )
-            }
-            // Issue #73: quoting stays on the rendered reply only.
-            .environment(\.saveChatQuote, canQuote ? saveQuote : nil)
-            .environment(\.chatQuoteSource, quoteSource)
-            .environment(\.chatProsePalette, prosePalette)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 6)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
+            VStack(alignment: .leading, spacing: 0) {
+                // A long reply shows its skim when one is ready; the full reply
+                // stays what Copy, quotes, and feedback act on.
+                SkimmableReply(messageID: message.id, reply: message.text, skim: message.skim) {
+                    PiMarkdownMessageView(
+                        source: message.text,
+                        isStreaming: false,
+                        id: "first-mate-\(message.featureID)-\(message.id)",
+                        detectsPaneLinks: false
+                    )
+                }
+                // Issue #73: quoting stays on the rendered reply only.
+                .environment(\.saveChatQuote, canQuote ? saveQuote : nil)
+                .environment(\.chatQuoteSource, quoteSource)
+                .environment(\.chatProsePalette, prosePalette)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+                .padding(.horizontal, 13)
+                .padding(.bottom, 4)
 
-            if let feedback {
-                FirstMateResponseFeedbackFooter(
-                    messageID: message.id,
-                    presentation: feedback,
-                    copyText: message.text,
-                    onRateUp: { rateFeedback(.up) },
-                    onEditFeedback: editFeedback,
-                    onRemoveRating: removeFeedback,
-                    onRetry: retryFeedback,
-                    onResolveConflict: resolveFeedbackConflict
-                )
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+                if FirstMateFeedbackEligibility.isEligible(message) {
+                    responseActions
+                        .padding(.horizontal, 9)
+                        .padding(.bottom, 4)
+                }
             }
+            .background(HerdrTheme.inkFill(0.06), in: .rect(cornerRadius: 17))
+            .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(HerdrTheme.hairline, lineWidth: 1))
+            // Keep the existing right-click route without drawing a second,
+            // floating copy button outside the response bubble.
+            .piCopyAffordance(
+                message.text,
+                label: "Copy response",
+                identifier: "first-mate-copy-context-\(message.id)",
+                showsButton: false
+            )
         }
+        .padding(.top, 2)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 14)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("First Mate")
-        // Replies without a feedback row keep the floating copy control.
-        .piCopyAffordance(
-            message.text,
-            label: "Copy response",
-            identifier: "first-mate-copy-\(message.id)",
-            inset: 0,
-            offset: CGSize(width: -8, height: 0),
-            showsButton: feedback == nil
-        )
+    }
+
+    @ViewBuilder private var responseActions: some View {
+        if let feedback {
+            FirstMateResponseFeedbackFooter(
+                messageID: message.id,
+                presentation: feedback,
+                copyText: message.text,
+                onRateUp: { rateFeedback(.up) },
+                onEditFeedback: editFeedback,
+                onRemoveRating: removeFeedback,
+                onRetry: retryFeedback,
+                onResolveConflict: resolveFeedbackConflict
+            )
+        } else {
+            PiCopyButton(
+                text: message.text,
+                label: "Copy response",
+                accessibilityIdentifier: "first-mate-copy-\(message.id)"
+            )
+        }
     }
 }

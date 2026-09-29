@@ -1,23 +1,27 @@
 # First Mate response feedback on Mac
 
 Every completed text-bearing First Mate assistant response in the Mac
-conversation offers compact thumbs-up and thumbs-down controls. The saved rating
-is shown next to them, with an explicit label and selected state rather than
-color alone. Feedback is local data collection for later manual review; nothing
-in this feature changes prompts, preferences, models, or workflows.
+conversation keeps compact thumbs-up, thumbs-down, and Copy controls visible
+inside its response bubble. An unrated response has no “Rate this response”
+label; a saved rating is shown next to the controls with an explicit label and
+selected state rather than color alone. Feedback is local data collection for
+later manual review; nothing in this feature changes prompts, preferences,
+models, or workflows.
 
 ## Interaction
 
-- Controls appear under completed assistant responses only. User, human, and
-  system messages have none.
+- The three response actions appear inside completed assistant response bubbles
+  on both the main and popped-out Mac chat surfaces. They do not depend on hover.
+  User, human, system, and in-flight responses have no rating controls.
 - Older responses, checkpoint summaries, and responses inside closed or
   archived features remain rateable. This policy is independent of the
   three-reply quote window and of workflow status.
 - **Thumbs up** saves immediately and shows **Helpful**.
-- Rating controls are disabled until the retained ratings for that feature have
-  loaded completely. The cached rating stays visible while loading, and no
-  draft is seeded from the empty cache, so an early click can never overwrite a
-  record that has not arrived yet.
+- Rating controls are disabled and expose an unavailable accessibility state
+  until the retained ratings for that feature have loaded completely. The
+  cached rating stays visible while loading, and no draft is seeded from the
+  empty cache, so an early click can never overwrite a record that has not
+  arrived yet. Copy remains available because it is entirely local.
 - **Thumbs down** opens a small editor pinned to that exact response:
   - The three starting reasons appear with the exact requested wording:
     **Longer than it needed to be**, **Unnecessary message**, and

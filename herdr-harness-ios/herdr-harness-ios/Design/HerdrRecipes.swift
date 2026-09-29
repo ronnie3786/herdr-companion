@@ -35,9 +35,9 @@ extension View {
     }
 
     func herdrRowBackground(
-        selected: Bool, pressed: Bool = false, radius: CGFloat = HerdrTheme.Radius.control
+        selected: Bool, pressed: Bool = false, radius: CGFloat = HerdrTheme.Radius.row
     ) -> some View {
-        background(selected ? HerdrTheme.selectedFill : pressed ? HerdrTheme.hoverFill : .clear,
+        background(selected || pressed ? HerdrTheme.rowHighlightFill : .clear,
                    in: .rect(cornerRadius: radius))
     }
 
@@ -298,8 +298,8 @@ struct HerdrRowButtonStyle: ButtonStyle {
                 .foregroundStyle(tint)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .herdrCard(radius: HerdrTheme.Radius.control,
-                           fill: configuration.isPressed ? HerdrTheme.hoverFill : .clear)
+                .herdrCard(radius: HerdrTheme.Radius.row,
+                           fill: configuration.isPressed ? HerdrTheme.rowHighlightFill : .clear)
                 .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
                 .contentShape(.rect)
         }

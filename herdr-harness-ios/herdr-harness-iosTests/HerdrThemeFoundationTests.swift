@@ -19,6 +19,15 @@ struct HerdrThemeFoundationTests {
         #expect(HerdrFont.ramp(.headline).size == 17)
     }
 
+    @Test("Conversation row highlights share the quiet bubble fill but not its radius")
+    func rowHighlights() {
+        #expect(HerdrTheme.rowHighlightFill == HerdrTheme.codeFill)
+        #expect(HerdrTheme.rowHighlightFill == HerdrTheme.inkFill(0.06))
+        #expect(HerdrTheme.Radius.row == 10)
+        #expect(HerdrTheme.Radius.bubble == 18)
+        #expect(HerdrTheme.maximumDynamicTypeSize == .xxxLarge)
+    }
+
     @Test("The face glow is cached, transparent and bounded across blink frames")
     func faceArtwork() throws {
         #expect(FirstMateFaceArtwork.frameCount == 31)

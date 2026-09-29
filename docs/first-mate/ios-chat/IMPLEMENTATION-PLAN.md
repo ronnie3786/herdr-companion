@@ -1,14 +1,20 @@
 # First Mate for iPhone: end-to-end implementation plan
 
-**Date:** 2026-09-28 · **Product baseline:** `origin/main` at `30627dc` (companion 0.64.1b1, macOS 0.64.1-beta.1, iOS release/ios.json 0.16.0 build 39) · **Status:** plan only, nothing implemented.
+**Updated:** 2026-09-29 · **Historical research baseline (2026-09-28):** `origin/main` at `30627dc` (companion 0.64.1b1, macOS 0.64.1-beta.1, iOS release/ios.json 0.16.0 build 39) · **Implementation status:** Phase 0 foundation implemented; Phases 1–6 remain planned. Phase 7 is deferred and outside this delivery.
+
+**Current delivery decisions (supersede the original kickoff):**
+- Selected and pressed conversation rows use `rowHighlightFill` = `codeFill` (6% ink) and a 10 pt row radius. Bubbles keep their 18 pt radius; no Mac token or view changes.
+- New First Mate chrome caps Dynamic Type at `.xxxLarge`; Phase 6 applies the same cap app-wide. This limits **text scaling, not message length**: complete messages remain readable and scrollable, never ellipsized to enforce the cap. Controls keep at least 44 pt hit targets.
+- Working passive Reduce Motion / Reduce Transparency fallbacks remain supported. They are not separate workstreams or independent release gates; no dedicated reduction-settings matrix is required.
+- Phases 0–6 retain one branch/PR per phase and their automated verification, review, privacy and landing gates. The first-push approval gate is removed; there are no per-phase push-permission or phone-test pauses.
+- Deliver **one final signed iOS build after Phase 6** for device testing, not seven intermediate phone builds. Final release metadata belongs to that delivery. No Phase 7, Mac release, server deployment or companion package publication is included.
 
 **What this folder holds**
 
 | File | What it is |
 |---|---|
 | `IMPLEMENTATION-PLAN.md` | This plan: as-is findings, the target design, the theme port, architecture, phases, verification, decisions |
-| `PROMPT-FULL-REFACTOR.md` | The kickoff prompt for the whole iOS refactor (Phases 0 to 6, one PR per phase) |
-| `PROMPT.md` | A narrower prompt for Phases 0 and 1 only |
+| Original kickoff prompts (not included) | Historical planning inputs; current delivery decisions above take precedence |
 | `research/mac-chat-window.md` | Exhaustive inventory of the Mac chat window (the port's source of truth: every view, size, color, rule, test) |
 | `research/ios-app.md` | The iOS app as it stands: project settings, tabs, First Mate tab, theme, reusable pieces, networking, push, tests, CI |
 | `research/server-contract.md` | Every First Mate route, the fleet and lead contracts, the shared Swift client, demo data, gotchas |
@@ -22,7 +28,7 @@ The Mac design reference is unchanged: `docs/first-mate/chat-window/reference.ht
 
 **The ask.** Bring the Mac's standalone First Mate chat app to the iPhone with the layout of the Grok Bot app (Telegram/iMessage-style): a compact bar, a row of big pinned avatars with "My First Mate" first, two-line conversation rows with a one-line preview of the last message and unread dots; tapping a conversation opens the chat; a further screen holds the inspector detail (Overview, Agents, Documents, Workflow). Keep Herdr's dark "dusk glass" theme, and port the full First Mate (lead) functionality and the per-feature "second mate" chats, all inside the First Mates tab.
 
-**The approach, in one paragraph.** The Mac chat window is built from three kinds of code: pure rules (dot, badge, sorting, preview text, time labels, transcript grouping, briefing text, lead machine choice, mention linking), platform views (SwiftUI over AppKit hover/keyboard/window chrome), and a theme (`HerdrTheme` + `HerdrGlass` + `HerdrRecipes`). The plan moves the pure rules into `HerdrFirstMateShared/` so the Mac and iPhone run the same logic (the Mac keeps its 150+ existing tests), ports the theme to UIKit-backed SwiftUI, and writes touch-first views that reproduce the Mac look and numbers. The server needs **no change** until the last phase (push and app badge); every route the phone needs already exists behind `first-mate-fleet-v1` and `first-mate-lead-v1`, and the iOS client already decodes the fleet types. The current iOS First Mate tab is **replaced**, not kept beside the new one; its stores, create sheet, archive sheet, inspector, resource sheets and tests are reused and restyled.
+**The approach, in one paragraph.** The Mac chat window is built from three kinds of code: pure rules (dot, badge, sorting, preview text, time labels, transcript grouping, briefing text, lead machine choice, mention linking), platform views (SwiftUI over AppKit hover/keyboard/window chrome), and a theme (`HerdrTheme` + `HerdrGlass` + `HerdrRecipes`). The plan moves the pure rules into `HerdrFirstMateShared/` so the Mac and iPhone run the same logic (the Mac keeps its 150+ existing tests), ports the theme to UIKit-backed SwiftUI, and writes touch-first views that reproduce the Mac look and numbers. The server needs **no change for Phases 0–6** (push and app badge belong to the deferred Phase 7); every route the phone needs already exists behind `first-mate-fleet-v1` and `first-mate-lead-v1`, and the iOS client already decodes the fleet types. The current iOS First Mate tab is **replaced**, not kept beside the new one; its stores, create sheet, archive sheet, inspector, resource sheets and tests are reused and restyled.
 
 **Phases at a glance** (details in §5)
 
@@ -34,8 +40,8 @@ The Mac design reference is unchanged: `docs/first-mate/chat-window/reference.ht
 | 3 | Chat screen for second mates: grouped bubbles, skims, mentions, file cards, suggested replies, notices, read markers, text composer with drafts | none | L |
 | 4 | My First Mate: real lead chat, machine choice and failover, lead context, briefing fallback, lead Overview | none | M |
 | 5 | Composer parity: attachments, hold-to-talk voice, model + thinking pill, context line, @ picker, rate/copy | none | M |
-| 6 | Info screen restyle, iPad three-column layout, app-wide dusk sweep, accessibility and motion polish | none | M |
-| 7 | Freshness: app icon badge, background refresh, First Mate push (companion release) | yes | M |
+| 6 | Info screen restyle, iPad three-column layout, app-wide dusk and text-scaling cap, accessibility polish | none | M |
+| 7 (deferred) | Freshness: app icon badge, background refresh, First Mate push (separate future authorization) | yes | M |
 
 **Assumptions (say so if any is wrong)**
 1. **Confirmed 2026-09-29:** the layout reference is the Grok Bot iPhone app (App Store id6794501026). §2.0 lists what is borrowed from its five store screenshots. Only the layout; the theme stays Herdr's dusk glass.
@@ -46,7 +52,9 @@ The Mac design reference is unchanged: `docs/first-mate/chat-window/reference.ht
 
 ---
 
-## 1. Where things stand
+## 1. Historical as-is findings (2026-09-28)
+
+This section and `research/` preserve the pre-implementation inventory, including its version numbers, counts and source locations. They are historical facts, not the current implementation status. Phase 0 now provides the theme foundation described in §3; the conversation/data-layer gaps remain for Phases 1–6.
 
 ### 1.1 The Mac First Mate chat window (the source)
 
@@ -185,7 +193,7 @@ iPad (Phase 6): `NavigationSplitView` with the same three screens as columns (si
 
 Rules (unchanged from the Mac, all in shared code): dot only when `hudStatus.needsYou && isUnread`; dot color = reason (blocked `alert` #E2A7B6, your turn `attentionBadge` #FF9F0A, ready for review `signal` #9CCDB9); preview text rules; machines are one flat list with no group labels (the machine name shows in the chat bar's subtitle and matches search). The lead is **not** repeated as a row; it lives in the pinned row (decision 15).
 
-**Touch interactions.** Tap opens the chat. Swipe trailing: **Archive…** (the existing archive-reason sheet; `POST /actions {archive, reason}`; the row leaves the list locally first). Long-press context menu: Open info, Archive…, Copy feature ID. Pressed rows show `selectedFill` (10%) through a custom `ButtonStyle`; no hover states.
+**Touch interactions.** Tap opens the chat. Swipe trailing: **Archive…** (the existing archive-reason sheet; `POST /actions {archive, reason}`; the row leaves the list locally first). Long-press context menu: Open info, Archive…, Copy feature ID. Selected and pressed rows share `rowHighlightFill` (`codeFill`, 6% ink) with `Radius.row` (10 pt), through `herdrRowBackground` / the row button recipe; no hover states. Phase 2 must reuse this quiet highlight rather than the 10% generic `selectedFill`.
 
 **Tab badge.** `Tab(...)` gets `.badge(fleet.badgeCount)` = the number of conversations showing a dot across all machines (the Mac's `FirstMateBadge.count`, ported unchanged). The Attention tab keeps its own badge.
 
@@ -247,11 +255,10 @@ A pushed `FirstMateInfoScreen(target)` replaces today's `.large` sheet on iPhone
 - **Touch behavior:** tapping a capsule opens its **readout** as a popover (`.popover` + `.presentationCompactAdaptation(.popover)`, 300 pt wide: `FirstMateEmojiDisc(32)`, title 16 semibold, status word 13, the `now` line 15, six 3 pt step bars, "Step n of 6, Name", **Open chat**). Tapping a mention run in a message opens the chat directly (a feature) or the Info screen on Agents with the row highlighted (an agent); long-press shows the readout. This replaces hover.
 - **Routing:** `herdr://first-mate?feature_id=…&assignment_id=…` is resolved on the current chat's machine first, then any machine listing that feature (the Mac `openMention` rule), and pushed on the First Mates stack.
 
-### 2.8 Motion, accessibility, transparency
+### 2.8 Text scaling and accessibility
 
-- Reduce Motion: no breathing (labels at 1.0), static typing dots at 0.6, no mic pulse, no blink.
-- Reduce Transparency: glass off; opaque `base` surfaces (same rule as the Mac `HerdrGlass.isActive`).
-- Dynamic Type: every size above is relative to a text style (see §3.3); at accessibility sizes the pinned row's captions wrap to two lines, rows drop the time to a second line, and bubbles take the full width (the current iOS chat already does this for `Spacer(minLength: 28)`).
+- Dynamic Type: every size above is relative to a text style (see §3.3), capped at `.xxxLarge` by new First Mate chrome now and app-wide in Phase 6. Requests such as accessibility3 resolve to that cap. Layout must still wrap or scroll as needed at the cap, without clipped controls; retain 44 pt targets. The cap does **not** shorten messages or add a transcript line limit. List previews remain deliberately one-line summaries; opening a chat exposes the full message.
+- Passive OS fallbacks remain: the existing breathing and face primitives stop animating under Reduce Motion; glass becomes opaque `base` under Reduce Transparency without discarding preferences. Existing typing/mic fallback behavior should be preserved when those components are reused. This support is not a separate delivery work item or reduction-settings release matrix.
 - VoiceOver: labels as in §2.2; capsule "Title, Status. Opens its readout."; the dot is never announced alone; the typing row "First Mate is working on a reply"; the mic "Hold to talk" with the two-activation fallback; inline action buttons read as "Reply: Ship iPhone-only".
 - Landscape iPhone: the same stack; the pinned row shrinks its orbs to 64 pt; the composer keeps its 44 pt targets.
 
@@ -259,7 +266,7 @@ A pushed `FirstMateInfoScreen(target)` replaces today's `.large` sheet on iPhone
 
 ## 3. Theme port: Mono × Herdr dusk glass on iOS
 
-### 3.1 Where each side stands
+### 3.1 Historical theme comparison (before Phase 0)
 
 | | Mac (origin/main) | iOS (origin/main) |
 |---|---|---|
@@ -276,23 +283,23 @@ All new files go under `herdr-harness-ios/herdr-harness-ios/Design/` (folder ref
 1. **`HerdrTheme.swift` rewrite: the Mono generator, dark only.** Port the Mac's roles with fixed dark values (no adaptive providers, no light branch, no Increase Contrast switch beyond `colorSchemeContrast` for the 16% rules):
    - generator: `base` #151519, `foreground` #E9E9EC, `inkFill(α)` (translucent), `inkSolid(α)` (composited over base);
    - surfaces: `windowBackground` = base, `railBackground` #131317;
-   - fills: `cardFill` .03, `fieldFill` .04, `insetFill` .05, `hoverFill` .05 (used as the pressed fill on iOS), `codeFill` .06, `chipFill` .08, `selectedFill` .10;
+   - fills: `cardFill` .03, `fieldFill` .04, `insetFill` .05, `hoverFill` .05 (generic control press), `codeFill` .06, `chipFill` .08, `selectedFill` .10; iOS `rowHighlightFill` aliases `codeFill` for both selected and pressed rows;
    - lines: `hairline` .07, `rowDivider` .05, `outline` .10, `strongOutline` .15, `focusOutline` .20 (all .16 when `colorSchemeContrast == .increased`);
    - text: `primaryText`, `proseText` (78%), `secondaryText` (70%), `tertiaryText` (70%), `iconTint` (50%);
    - accent and actions: `accent` #AAA6F4, `primaryAction`, `onPrimary` (= base), `primaryDisabled` (.28), `controlAccent` #5E59A8, `badgeFill`, `onBadge`, `attentionBadge` #FF9F0A (keep `attention` as an alias for the iOS skim code), `firstMateAvatarFill` #2A2244, `folder` #B9A7DF, `brandBlue` #A6BAFF;
    - status: `signal` #9CCDB9, `success` #A3CBA7, `working` #E4C386, `alert` #E2A7B6, `warning` #DFB38E; diff and `Syntax` palettes as on the Mac;
    - **aliases** so every existing iOS view compiles and moves onto the new palette without edits: `ink` → `railBackground`, `graphite` → `windowBackground`, `elevated` → `inkSolid(.03)`, `input` → `inkSolid(.04)`, `surface`/`selection` → `inkSolid(.10)`, `separator` → `outline`, `subtleSeparator` → `hairline`, `text` → `primaryText`, `mist` → `secondaryText`, `muted` → `tertiaryText`, `mauve` → `folder`, `code` → `primaryText`, `crust` → black 22% over base, `diffAdd/diffRemove/diffHunk` → the Mac values;
-   - sizes: `Radius` (control 6, composer 8, card 12, panel 16, plus `bubble` 18 and `pill` 24 for the chat), `ControlHeight` (mini 20 … bar 44 on iOS), `Glass` (sidebar .80, pane .80, hud .78), `minHitTarget` **44**, and the type ramp in §3.3. The old `cardRadius` 16 / `compactRadius` 10 / `pagePadding` 18 stay as aliases for the untouched tabs.
+   - sizes: `Radius` (control 6, composer 8, row 10, card 12, panel 16, plus `bubble` 18 and `pill` 24 for the chat), `ControlHeight` (mini 20 … bar 44 on iOS), `Glass` (sidebar .80, pane .80, hud .78), `minHitTarget` **44**, and the type ramp in §3.3. The old `cardRadius` 16 / `compactRadius` 10 / `pagePadding` 18 stay as aliases for the untouched tabs.
 2. **`HerdrGlass.swift` port.** The dusk and haze artwork render identically with `CGContext` + Core Image (both available on iOS): `HerdrDusk.sky/glows/blurSigma/saturation`, `HerdrHaze.base/blobs`, the one-time ×0.80 brightness (`herdrDarkened`), cached as `UIImage` (`@MainActor static let`). `HerdrDuskBackdrop(region:)` becomes `Image(uiImage:)` `.resizable().interpolation(.high)`; `HerdrGlassBackground(level:base:cornerRadius:drawsDusk:)`, `HerdrHazeBand(height: 280)` at 6%, `herdrPaneBackground()` and the environment keys `herdrGlassActive` / `herdrHazeActive` port as they are. `HerdrGlass.isActive(enabled:reduceTransparency:colorScheme:)` reads `@Environment(\.accessibilityReduceTransparency)`. Preferences: `herdr.ios.appearance.glass` and `.haze`, both default on, exposed in Settings → Appearance. **No live blur anywhere** (`glassEffect` is not used on custom surfaces; the system bars keep their own Liquid Glass).
    - One `HerdrDuskBackdrop` is drawn once per screen behind the glass levels (not per row); the artwork is 640×400 and stretched, exactly as the Mac does. On an iPhone the trailing-half crop is not needed.
 3. **`HerdrRecipes.swift` port** with touch defaults: `herdrCard`, `herdrPanel`, `herdrField(focused:)`, `herdrPlaceholder`, `herdrHairline(edge)`, `herdrRowBackground(selected:pressed:)` (no hover), `herdrPill`, `HerdrMicroLabel`, `HerdrCountBadge`, `HerdrTabs` (segments/underline, 44 pt tall), `HerdrIconButtonStyle` (glyph box 28–32 in a 44 hit area, pressed fill instead of hover), `HerdrButtonStyle` (primary/outline/ghost, height 36/44), `HerdrPrimarySquareButtonStyle`, `HerdrRowButtonStyle`, `.herdrPlain` (iOS `.plain` has no press fade, but the name keeps call sites identical across platforms).
-4. **Fonts.** `herdrFont(size:weight:monospaced:relativeTo:)` scales through `UIFontMetrics(forTextStyle:)` so Dynamic Type works; `herdrFont(_ style:)` maps to the iOS ramp below. `HerdrProse` gains a `.bubble` role (16/22) and keeps the existing roles; Inter stays bundled but unused (system SF, like the Mac).
-5. **Backgrounds.** `HerdrBackground` keeps drawing opaque `ink` for the other tabs in Phase 0; the First Mates tab installs its own `HerdrFirstMateChromeModifier` (the iOS twin of `HerdrMainWindowChromeModifier`: draws one dusk, sets the glass and haze environment, forces `.preferredColorScheme(.dark)`). Phase 6 moves the dusk under the whole `TabView` after the other tabs pass the contrast sweep.
-6. **Avatars.** Port `FirstMateEmojiDisc` and `FirstMateFaceOrb` / `FirstMateFace` / `FirstMateBlinkSchedule` (pure SwiftUI drawing; the highlight, edge and glow numbers are in `research/mac-chat-window.md` §8) into `Views/FirstMateChat/`.
+4. **Fonts.** `herdrFont(size:weight:monospaced:relativeTo:)` scales through `UIFontMetrics(forTextStyle:)`; `herdrFont(_ style:)` maps to the iOS ramp below. `HerdrProse` adds `.bubble` (16/22) and keeps existing roles; Inter stays bundled but unused (system SF, like the Mac). `HerdrTheme.maximumDynamicTypeSize` is `.xxxLarge`, applied at the new chrome boundary so metric fonts, semantic prose and inline code resolve consistently in UIKit-hosted Markdown. Existing screens remain uncapped until Phase 6.
+5. **Backgrounds.** `HerdrBackground` keeps drawing opaque `ink` for existing screens in Phase 0. `HerdrFirstMateChromeModifier` draws one dusk, sets glass/haze environments, forces dark and caps Dynamic Type. It is exercised by the DEBUG sample now and adopted by the new conversations screen in Phase 2. Phase 6 moves the dusk and text-scaling cap under the whole `TabView` after the other tabs pass the contrast sweep.
+6. **Avatars.** `FirstMateEmojiDisc` and `FirstMateFaceOrb` / `FirstMateFace` / `FirstMateBlinkSchedule` live in `Views/FirstMateChat/` (highlight, edge and glow numbers in `research/mac-chat-window.md` §8). The iOS face uses a cached 31-frame Core Graphics raster bank; SwiftUI controls blink timing. Live simulator glyph coverage supplements offscreen renders.
 
 ### 3.3 Type ramp: Mac → iPhone
 
-The Mac ramp is compact (body 13); the iPhone ramp follows iOS reading sizes and Dynamic Type. Every value is "at 100%" and relative to the text style in the last column.
+The Mac ramp is compact (body 13); the iPhone ramp follows iOS reading sizes and Dynamic Type up to `.xxxLarge` in new First Mate chrome. Every value is "at 100%" and relative to the text style in the last column. The cap limits scale only; prose remains complete and scrollable.
 
 | Use | Mac | iPhone | Relative to |
 |---|---|---|---|
@@ -309,7 +316,7 @@ The Mac ramp is compact (body 13); the iPhone ramp follows iOS reading sizes and
 
 ### 3.4 Application order
 
-Phase 0 lands the tokens, glass and recipes with **no visible change** outside the First Mates tab beyond the alias remap (base shifts from #191A23 to #151519; text from #E4E5ED to #E9E9EC). The First Mates tab is the first surface drawn on the dusk (Phases 2–5). Phase 6 puts the dusk under the whole app and sweeps the Agents, Attention, Notes and Settings tabs, using the Mac's lesson: check every translucent stack and transient state (pressed, selected, disabled, menu open) over the dusk's brightest point.
+Phase 0 lands the tokens, glass and recipes, plus Settings → Appearance and a DEBUG theme sample, with **no layout change** to existing screens beyond the alias remap (base shifts from #191A23 to #151519; text from #E4E5ED to #E9E9EC). The First Mates tab is the first surface drawn on the dusk (Phases 2–5). Phase 6 puts the dusk under the whole app and sweeps the Agents, Attention, Notes and Settings tabs, using the Mac's lesson: check every translucent stack and transient state (pressed, selected, disabled, menu open) over the dusk's brightest point.
 
 ### 3.5 Contrast and tests
 
@@ -413,10 +420,10 @@ Shared folder (`HerdrFirstMateShared/`): the files in §4.1 plus `FirstMateLeadS
 
 Each phase is one branch and one PR from the latest `origin/main`, landed after Verify, with the Mac app built and its First Mate tests run whenever shared files move. Sizes are relative (S < M < L).
 
-### Phase 0: Theme foundation (M)
-- **Build:** §3.2 items 1–6; Settings → Appearance with Glass and Haze toggles; the render harness `.dusk` background option; `HerdrProse.bubble`.
-- **Keep:** every existing iOS screen compiling through the aliases; no layout change outside the palette shift.
-- **Tests:** iOS `HerdrThemeAccessibilityTests` (4.5:1 over the brightest dusk point for every text level, status colors, breathing floor 0.75), dusk and haze bitmap hash tests, a `theme-dusk-sample` render at 390 pt with a card, a field, a row, a pill, a primary button and every text level over the glass.
+### Phase 0: Theme foundation (M) — implemented
+- **Built:** §3.2 items 1–6; Settings → Appearance with Glass and Haze toggles; the render harness `.dusk` background option; `HerdrProse.bubble`; cached face frames; quiet 6% selected/pressed row fill with a 10 pt radius; `.xxxLarge` cap on new First Mate chrome.
+- **Kept:** existing iOS screen layouts and opaque backgrounds through the palette aliases; the legacy appearance menu remains until Phase 2. No Mac/shared/server changes.
+- **Tests:** iOS `HerdrThemeAccessibilityTests` (4.5:1 over the brightest dusk point for every text level, status colors, breathing floor 0.75), dusk/haze bitmap pins, live glyph coverage, and `theme-dusk-sample` renders at 390/402 pt. UIKit-hosted tests compare UIFontMetrics and `HerdrProse` Markdown at `.xxxLarge` and an accessibility3 request; long messages remain fully laid out. UI tests check the effective cap, reachable controls and 44 pt hit targets.
 - **Done when:** the iOS unit target is green, the sample render matches the Mac's look on screen (check on a simulator, not only the PNG), and the other tabs look the same as before apart from the deeper base.
 
 ### Phase 1: Shared logic and the iOS data layer (L)
@@ -426,30 +433,32 @@ Each phase is one branch and one PR from the latest `origin/main`, landed after 
 
 ### Phase 2: Conversations screen (M)
 - **Build:** §2.2 in full (the compact bar, the pinned avatar row with My First Mate and the needs-you orbs, the two-line rows); the pinned lead orb opens the briefing until Phase 3; `FirstMateCreateSheet` and the archive sheet restyled on the new tokens; the old card list, `FirstMateAppearance` and the appearance switch removed; README and `docs/first-mate/ios.md` updated.
-- **Tests:** render tests at 320/375/402/430 and accessibility3 (`fmchat-ios-list-{width}.png`, `-a11y.png`), the pinned row's order and cap (shared, the HUD rule), row and orb accessibility labels, search filter cases (title, label, preview, machine, lead visibility), swipe-archive calls `setArchived` with the reason, UI test: launch demo → orbs and rows present → tap My First Mate → back → tap Receipt export → back.
+- **Tests:** render tests at 320/375/402/430 and an accessibility3 request resolving to `.xxxLarge` (`fmchat-ios-list-{width}.png`, `-a11y.png`), the pinned row's order and cap (shared, the HUD rule), row and orb accessibility labels, search filter cases (title, label, preview, machine, lead visibility), swipe-archive calls `setArchived` with the reason, UI test: launch demo → orbs and rows present → tap My First Mate → back → tap Receipt export → back.
 - **Done when:** the screen matches the Grok Bot layout (§2.0) with Herdr's look, the rows carry the same data as the Mac sidebar on the demo set (`docs/first-mate/chat-window/reference.html` at 1000 pt or wider shows the same rows), dots and badge agree, and scrolling 100 synthetic rows stays smooth on an iPhone 17 simulator.
 
 ### Phase 3: Chat screen for second mates (L)
 - **Build:** §2.3 (the glass bar with the title pill and circles, avatar-less First Mate bubbles, inline action buttons, cards as bubbles); composer v1 (＋ circle, pill, text, send, drafts, closed state, hint row, haptics); read markers; the Info screen as a pushed host for the existing inspector (unstyled until Phase 6); the briefing fallback screen with the capsule flow and readout popover; `SkimmableReply(style: .bubble)`; mention runs from the shared linker; copy via long-press.
 - **Tests:** shared transcript and mention tests already cover the rules; iOS: renders `fmchat-ios-chat-receipts`, `-lead-briefing`, `-composer-{idle,focused,closed}`, `-readout`; read-key gating with `scenePhase`; suggested replies only from skim `reply` blocks; UI tests: send in demo moves the row to the top; tap a file card opens Documents; tap a capsule opens the readout and "Open chat" navigates.
-- **Done when:** a 200-message demo chat scrolls at full frame rate, the transcript matches the Mac bubbles (shape, tails, avatars, meta line), read dots clear on view and come back on rollback, and a real feature chat works against a configured companion from a Mobile App Hub build.
+- **Done when:** a 200-message demo chat scrolls at full frame rate, the transcript matches the Mac bubbles (shape, tails, avatars, meta line), read dots clear on view and come back on rollback, and automated chat integration checks pass. Real companion/device acceptance is collected with the final Phase 6 Mobile App Hub build, not an intermediate phone-test gate.
 
 ### Phase 4: My First Mate (M)
 - **Build:** §2.6: `openLead`, the lead chat on the same transcript and composer, `FirstMateLeadMachine` wiring with the header machine menu and the offline warning, the lead context provider, lead read marking, the lead Overview in the Info screen, the lead in demo (`chatWindowLead`).
-- **Tests:** session tests for choice/failover/return and context contents (hosts not in `peers`, offline flags); render `fmchat-ios-chat-lead` and `fmchat-ios-info-lead`; a live check: send one lead turn on a Mobile App Hub build against a configured companion (the lead answers in ~15–30 s with DeepSeek V4.1 Flash per the Mac delivery notes) and confirm `fm_fleet` reaches the other companion through peers.
-- **Done when:** with two companions configured on the phone, My First Mate opens on the preferred machine, survives one machine going offline, and the briefing appears against a companion without `first-mate-lead-v1`.
+- **Tests:** session tests for choice/failover/return and context contents (hosts not in `peers`, offline flags); render `fmchat-ios-chat-lead` and `fmchat-ios-info-lead`. Retain the final-device acceptance case: send one lead turn against a configured companion and confirm `fm_fleet` reaches the other companion through peers, using the final Phase 6 build.
+- **Done when:** automated two-host coverage proves My First Mate opens on the preferred machine, survives one machine going offline, and falls back to the briefing without `first-mate-lead-v1`; repeat those observable outcomes on the final device build.
 
 ### Phase 5: Composer parity (M)
 - **Build:** attachments (Photos, Files, paste code; upload on the feature's machine; tray; "Attachment:" lines), hold-to-talk with waveform and transcription on the feature's machine plus the Apple fallback, the model + thinking pill (`/first-mate/models`, `model-settings`, host default, confirmation dialog, "Update server for safe model changes"), the context line and sheet, the @ picker strip and serialization, Rate up / Rate down via the feedback routes (port `FirstMateFeedbackControls` and the editor as a sheet) shown as 👍/👎 reaction badges on the bubble.
 - **Tests:** submission composition (attachment lines, dictation suffix, mention links), trigger cases (shared), model pill enablement matrix (control, context match, owner, queued, sending), renders `fmchat-ios-composer-{attachments,listening,model}`; UI test hold-to-talk in demo (canned transcript) sends with the caveat.
-- **Done when:** the phone can do everything the Mac's shared composer does except quotes and drag-and-drop, verified against a live companion.
+- **Done when:** automated composition and capability coverage verifies everything the Mac's shared composer does except quotes and drag-and-drop. Live companion/device confirmation belongs to the final build, without a Phase 5 phone-test pause.
 
 ### Phase 6: Info restyle, iPad, app-wide dusk, polish (M)
-- **Build:** the Info screen per §2.5 (underline tabs, footer, restyled documents and sessions sheets, Agents row highlight); iPad `NavigationSplitView` with the inspector column; the dusk under the whole `TabView` with the contrast sweep of Agents, Attention, Notes, Settings (and `GlassCard` → `herdrCard`); Reduce Motion and Reduce Transparency checks; VoiceOver pass; optional `/board?if_version=` transcript polling; the widget palette left as is (out of scope, noted).
+- **Build:** the Info screen per §2.5 (underline tabs, footer, restyled documents and sessions sheets, Agents row highlight); iPad `NavigationSplitView` with the inspector column; the dusk under the whole `TabView` with the contrast sweep of Agents, Attention, Notes, Settings (and `GlassCard` → `herdrCard`); apply the `.xxxLarge` text-scaling cap app-wide while keeping complete messages scrollable; preserve passive OS reduction fallbacks without separate gates; VoiceOver pass; optional `/board?if_version=` transcript polling; the widget palette left as is (out of scope, noted).
 - **Tests:** renders for each Info tab, iPad 1024 and 1366 renders, the contrast test extended to the other tabs' fills; UI tests on an iPad simulator for the three columns.
-- **Done when:** every tab reads at 4.5:1 over the dusk, the iPad layout matches the Mac window's three columns, and the accessibility3 renders have no clipped text.
+- **Done when:** every tab reads at 4.5:1 over the dusk, the iPad layout matches the Mac window's three columns, and accessibility3 requests resolve to `.xxxLarge` app-wide with no clipped controls, at least 44 pt targets, and fully readable/scrollable message content.
 
-### Phase 7: Freshness: app badge, background refresh, push (M, needs a companion release)
+### Phase 7: Deferred future scope — freshness: app badge, background refresh, push (M)
+
+Not authorized or implemented in this Phases 0–6 delivery. Retained below as future design only; it would require separate authorization and a companion release.
 - **iOS:** `UIBackgroundModes: fetch`, `BGTaskSchedulerPermittedIdentifiers` and a `BGAppRefreshTask` (`org.herdr.companion.ios.firstMate.refresh`, earliest 15 min) that runs one index poll and sets `UNUserNotificationCenter.setBadgeCount(badgeCount)`; the app icon badge follows the First Mate count when the new setting "Show First Mate count on the app icon" is on (default on, mirroring the Mac's Dock badge that takes over from alerts); notification tap → the deep-link router; foreground banner.
 - **Server (`first-mate-push-v1`):** on a needs-you transition (`hud_status` becomes blocked, turn or ready, or the lead gets a reply), send one APNs alert per feature per transition after the same 60 s unread grace pane alerts use (`unread_notifications.py`), payload `{feature_id, machine_id, hud_status, badge}` plus `content-available: 1`; reuse the existing APNs configuration (`HERDR_APNS_*`), device registry and `/push/status`. Document setup; older phones ignore it. Publish as a companion package with its own release notes; the Mac app is unaffected.
 - **Tests:** server route and notifier tests in `tests/`; iOS badge composition and refresh task scheduling; a device check that a blocked demo feature on a configured companion produces a banner and the badge.
@@ -463,16 +472,16 @@ Each phase is one branch and one PR from the latest `origin/main`, landed after 
 - iOS: `xcodebuild -project herdr-harness-ios/herdr-harness-ios.xcodeproj -scheme herdr-harness-ios -destination 'platform=iOS Simulator,id=<udid>' CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO test -only-testing:herdr-harness-iosTests/<Suite>` for the touched suites (Xcode 26.2 and an iOS 26 iPhone 17 simulator are installed on the reference development Mac; a full simulator build of `30627dc` took under three minutes here).
 - Mac, whenever `HerdrFirstMateShared/` changes: `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build` and the First Mate test suites (`FirstMateChatConversationTests`, `FirstMateChatWindowSessionTests`, `FirstMateConversationListTests`, `FirstMateBadgeTests`, `FirstMateReadStateTests`, `FirstMateLeadTests`, `FirstMateFleetIndexTests`, `FirstMateHudTests`, `HerdrThemeAccessibilityTests`).
 - Renders: set `HERDR_IOS_RENDER_DIR` and look at the PNGs; then check the same screen on a simulator, because offscreen renders cannot show the system bars' glass over the dusk.
-- Simulator QA, the way this plan's captures were made: build, `xcrun simctl install`, `xcrun simctl launch <udid> org.herdr.companion.ios -HerdrDemoMode -HerdrFirstMateDemo`, `xcrun simctl io <udid> screenshot`. Walk the list, the lead, a blocked feature, the readout, each Info tab, the composer states, Dynamic Type accessibility3 and Reduce Motion.
+- Simulator QA, the way this plan's captures were made: build, `xcrun simctl install`, `xcrun simctl launch <udid> org.herdr.companion.ios -HerdrDemoMode -HerdrFirstMateDemo`, `xcrun simctl io <udid> screenshot`. Walk the list, the lead, a blocked feature, the readout, each Info tab, the composer states, and an accessibility3 request resolving to the `.xxxLarge` cap (new chrome now, app-wide in Phase 6). Preserve passive OS fallbacks; do not add a separate reduction-settings matrix.
 - `.venv/bin/python scripts/check-public-source.py` before every commit. No AI attribution lines in commits.
 
-**Once per candidate.** The full iOS unit target, the full Mac unit target, `.venv/bin/python -m unittest discover -s tests` when the server changes (Phase 7 only), then Verify on the pushed branch (the `ios` job runs because the paths match `scripts/ci-plan.py`). Land with `scripts/land-pr.py` after Verify passes.
+**Once per reviewed candidate.** Required exact-source Verify on the pushed branch remains the authoritative full automated matrix (including iOS/Mac unit targets according to `scripts/ci-plan.py`). Run focused local regressions and a targeted build while implementing; additionally build Mac and run its First Mate tests whenever shared files move. Do not duplicate unchanged full suites by habit. Source corrections need fresh relevant checks and required exact-SHA Verify evidence. Preserve independent review, privacy and authentication checks. Land with `scripts/land-pr.py` only after the required gates pass. There is no first-push approval gate or per-phase push-permission pause.
 
-**Phones.** Build a device `.ipa` from the landed commit and publish it with the `mobile-app-hub` skill (bump `release/ios.json` version and build; label the build with the phase, e.g. "First Mates tab: conversations list"). The iPhone build ships separately from the Mac feed; the Mac app is untouched. Test against two configured companions from the phone (use companions with fleet, lead and peers support).
+**One final phone delivery.** After Phases 0–6 are complete, build one signed device `.ipa` from the reviewed, verified, landed source and publish through Mobile App Hub. The delivery owner sets `release/ios.json` version/build and final release notes then, not during Phase 0 refinements. No intermediate signed builds or per-phase device-test pauses are required. Collect final device acceptance for list/chat, lead failover and fallback, attachments/voice/model controls, and Info/iPad/app-wide appearance; test against two configured companions with fleet, lead and peers support. This does not authorize server mutation. No Mac app release is included.
 
-**Docs.** On the Phase 0 branch, copy this folder's `IMPLEMENTATION-PLAN.md` and the three research files into `docs/first-mate/ios-chat/` so the design travels with the code (synthetic data only; the as-is screenshots are not included). Update `docs/first-mate/ios.md` (navigation, demo flags, verification), `herdr-harness-ios/README.md` (the First Mate section) and the README's First Mate paragraph about iPhone behavior as each phase lands. Add `release/notes` entries for the iOS builds if the release tooling wants them.
+**Docs.** Phase 0 copied this plan and the three historical research files into `docs/first-mate/ios-chat/` so the design travels with the code (synthetic data only; the as-is screenshots and original prompts are not included). Update `docs/first-mate/ios.md` (navigation, demo flags, verification), `herdr-harness-ios/README.md` (the First Mate section) and the README's First Mate paragraph about iPhone behavior as each phase lands. Add `release/notes` entries for the iOS builds if the release tooling wants them.
 
-**Server.** Nothing until Phase 7. When Phase 7 lands, publish the companion package separately with setup instructions (APNs variables, the new capability), and never infer a server cutover from an app build request (per `AGENTS.md`).
+**Server.** No server deployment or companion package publication is part of this delivery. Deferred Phase 7 would require separate authorization, compatibility/setup instructions and publication; never infer a server cutover from an app build request (per `AGENTS.md`).
 
 ---
 
@@ -483,7 +492,7 @@ Each phase is one branch and one PR from the latest `origin/main`, landed after 
 | Moving logic out of the Mac target breaks the shipped chat window or HUD | Mechanical moves only, Mac first, Mac tests run before any iOS work; the moved tests run in both CI jobs; no behavior edits in the same commit as a move |
 | Swift 6 strict concurrency on moved types (both targets use `complete`) | The moved types are value types or `@MainActor @Observable`; annotate `Sendable` where the compiler asks; no `nonisolated(unsafe)` |
 | Chat polling cost on a phone (3 s snapshot) | Journal-only fetch from Phase 1; measure real payloads on two configured companions; fall back to `/board?if_version=` (57-byte unchanged reply) in Phase 6 |
-| iOS 26 Liquid Glass system bars tint unpredictably over the purple dusk | Check on a device early in Phase 2; fall back to `.toolbarBackground(.visible)` with `railBackground` glass if the bars fail contrast |
+| iOS 26 Liquid Glass system bars tint unpredictably over the purple dusk | Check native simulator rendering in Phase 2 and the final device build after Phase 6; fall back to `.toolbarBackground(.visible)` with `railBackground` glass if the bars fail contrast |
 | Contrast regressions when the dusk goes app-wide | Phase 6 only, behind the same accessibility test the Mac uses; other tabs stay opaque until then |
 | `FirstMateStore.isSending` blocks all sends and actions on one host while one send is in flight | Accepted parity with the Mac; the UI disables the send button and shows Queued |
 | Lead failover on a flaky cellular link (2 failed polls = 20 s) | Same rule as the Mac; the header says which machine answered; the user can pin |
@@ -516,11 +525,13 @@ Each phase is one branch and one PR from the latest `origin/main`, landed after 
 17. **Suggested replies:** **buttons inside the First Mate bubble that offers them** (Grok Bot's inline actions) vs chips above the composer (the Mac).
 18. **Rows:** **two lines with the status word trailing on the preview line** (Grok Bot) vs the Mac's third status line.
 
+**Resolved 2026-09-29:** row highlight = 6% ink, radius 10; bubble radius stays 18. Dynamic Type caps at `.xxxLarge` without truncating messages. Keep passive OS reduction support without independent release gates. One final signed iOS delivery after Phase 6; no first-push or per-phase device-test approval gate.
+
 ---
 
 ## Appendix A: token mapping (Mac → iOS)
 
-Token names are identical after Phase 0; only the old iOS aliases change meaning.
+Shared semantic token names match the Mac after Phase 0; old iOS aliases change meaning. iOS additionally defines `rowHighlightFill` (6% ink), `Radius.row` (10 pt) and `maximumDynamicTypeSize` (`.xxxLarge`), without changing Mac tokens.
 
 | Old iOS name | New role | Old hex → new |
 |---|---|---|
@@ -545,7 +556,8 @@ Token names are identical after Phase 0; only the old iOS aliases change meaning
 | — | `firstMateAvatarFill` | new, #2A2244 |
 | — | `cardFill`, `fieldFill`, `insetFill`, `hoverFill`, `codeFill`, `chipFill`, `selectedFill` | new, ink at 3/4/5/5/6/8/10% |
 | — | `proseText`, `iconTint` | new, 78% / 50% |
-| `cardRadius` 16, `compactRadius` 10 | kept as aliases; new `Radius.card` 12, `.composer` 8, `.control` 6, `.panel` 16, `.bubble` 18, `.pill` 24 | |
+| — | `rowHighlightFill` | `codeFill`, ink 6%, selected and pressed rows |
+| `cardRadius` 16, `compactRadius` 10 | kept as aliases; new `Radius.card` 12, `.composer` 8, `.control` 6, `.row` 10, `.panel` 16, `.bubble` 18, `.pill` 24 | |
 
 ## Appendix B: API map by screen
 

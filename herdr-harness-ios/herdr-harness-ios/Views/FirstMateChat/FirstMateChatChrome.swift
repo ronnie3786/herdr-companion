@@ -13,6 +13,7 @@ struct HerdrFirstMateChromeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize)
             .background {
                 ZStack {
                     HerdrTheme.windowBackground

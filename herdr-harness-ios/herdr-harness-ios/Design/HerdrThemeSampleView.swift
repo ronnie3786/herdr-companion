@@ -24,6 +24,7 @@ struct HerdrThemeSampleContent: View {
     @State private var selection = "Overview"
     @State private var sent = false
     @FocusState private var focused: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicType
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -79,6 +80,7 @@ struct HerdrThemeSampleContent: View {
 
             Text(sent ? "Direction received." : "The build is ready for your review.")
                 .font(HerdrProse.font(.bubble))
+                .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(HerdrProse.lineSpacing(.bubble))
                 .foregroundStyle(HerdrTheme.proseText)
                 .padding(14)
@@ -93,6 +95,7 @@ struct HerdrThemeSampleContent: View {
                 .herdrField(focused: focused)
                 .accessibilityLabel("Sample message")
                 .accessibilityIdentifier("theme-sample-field")
+                .composerLayoutMeasurement(id: "theme-sample-field")
 
             ViewThatFits(in: .horizontal) {
                 HStack { actions }
@@ -100,6 +103,8 @@ struct HerdrThemeSampleContent: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Synthetic data · no agents launched")
+                Text("Text size: \(String(describing: dynamicType))")
+                    .accessibilityIdentifier("theme-sample-text-size")
                 if reduceMotion { Text("Reduce Motion on").accessibilityIdentifier("theme-reduce-motion") }
                 if reduceTransparency { Text("Reduce Transparency on").accessibilityIdentifier("theme-reduce-transparency") }
             }
@@ -124,8 +129,10 @@ struct HerdrThemeSampleContent: View {
             Button("Send direction") { sent = true; draft = "" }
                 .buttonStyle(HerdrButtonStyle(kind: .primary))
                 .accessibilityIdentifier("theme-sample-send")
+                .composerLayoutMeasurement(id: "theme-sample-send")
             Button("Open readout") { selection = "Overview" }
                 .buttonStyle(HerdrButtonStyle(kind: .outline, height: 36))
+                .composerLayoutMeasurement(id: "theme-sample-readout")
         }
     }
 }

@@ -28,6 +28,23 @@ struct HerdrProseFontResolutionTests {
     }
 
     @MainActor
+    @Test("Resolved prose and inline-code fonts scale through the chrome cap")
+    func resolvedFontScaling() {
+        var normal = EnvironmentValues()
+        normal.dynamicTypeSize = .large
+        var capped = normal
+        capped.dynamicTypeSize = HerdrTheme.maximumDynamicTypeSize
+        for role in HerdrProse.Role.allCases {
+            let body = HerdrProse.font(role)
+            let code = HerdrProse.inlineCodeFont(role)
+            #expect(abs(body.resolve(in: normal.fontResolutionContext).pointSize - role.baseSize) < 0.01)
+            #expect(abs(code.resolve(in: normal.fontResolutionContext).pointSize - HerdrProse.inlineCodeSize(for: role)) < 0.01)
+            #expect(body.resolve(in: capped.fontResolutionContext).pointSize > role.baseSize)
+            #expect(code.resolve(in: capped.fontResolutionContext).pointSize > HerdrProse.inlineCodeSize(for: role))
+        }
+    }
+
+    @MainActor
     @Test("Unrelated bundled Inter assets remain available")
     func bundledInterAssetsRemainAvailable() {
         #expect(HerdrProse.isInterRegularAvailable())

@@ -15,6 +15,7 @@ struct IOSNativeRenderHarness {
         let uiKit: UIContentSizeCategory
 
         static let defaultSize = Self(name: "default", swiftUI: .large, uiKit: .large)
+        static let xxxLarge = Self(name: "xxxLarge", swiftUI: .xxxLarge, uiKit: .extraExtraExtraLarge)
         static let accessibility3 = Self(
             name: "accessibility3",
             swiftUI: .accessibility3,

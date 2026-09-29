@@ -8,14 +8,21 @@ No other orchestration server is required.
 
 **First Mate for iPhone, Phase 0:** the dark-only Mono theme, cached dusk/haze,
 static glass recipes, Dynamic Type ramp, and avatar primitives are available.
-Settings → Appearance saves Glass and Haze independently for this phone; Reduce
-Transparency wins. Existing tabs keep their layouts and opaque backgrounds,
+New First Mate chrome uses a quiet 6% selected/pressed row fill, 10 pt row corners,
+and a `.xxxLarge` text-scaling cap. Bubbles retain 18 pt corners; messages stay
+complete and scrollable, and controls retain 44 pt targets. The cap moves app-wide
+in Phase 6. Settings → Appearance saves Glass and Haze independently for this
+phone; passive Reduce Motion/Transparency fallbacks remain, without separate
+release gates. Existing tabs keep their layouts and opaque backgrounds,
 with a deeper neutral palette. The new conversation screens arrive in later
 phases; the legacy First Mate appearance menu is removed in Phase 2. Debug builds
 can open the synthetic theme sample with
 `-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample`. Render outputs go to
 `$HERDR_IOS_RENDER_DIR`. See the [phase plan](../docs/first-mate/ios-chat/IMPLEMENTATION-PLAN.md)
-and [verification guide](../docs/first-mate/ios.md). No server update is needed.
+and [verification guide](../docs/first-mate/ios.md). Phases 1–6 remain planned, with
+per-phase automated verification and one final signed iOS build after Phase 6
+rather than intermediate phone-test pauses. No first-push approval gate remains.
+No server update, Mac release or Phase 7 work is included.
 
 
 The **First Mate** tab brings the feature workspace to iPhone and iPad. It opens

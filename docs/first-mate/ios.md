@@ -17,21 +17,38 @@ Phase 2. Existing screens keep their layouts and opaque backgrounds in this
 phase, with legacy color names mapped onto the deeper Mono palette. The legacy
 First Mate appearance menu remains until its Phase 2 replacement.
 
+Selected and pressed rows in the new chrome share the quiet 6% `codeFill`
+background with 10 pt corners; message bubbles keep 18 pt corners. New First Mate
+chrome caps Dynamic Type at `.xxxLarge`, including UIKit-hosted Markdown and
+metric-scaled controls. This limits scaling, **not message length**: complete
+messages remain readable and scrollable, with at least 44 pt control targets.
+Existing screens stay uncapped until the app-wide Phase 6 adoption. Working
+passive OS motion/transparency fallbacks remain; they are not independent release
+gates or a separate test matrix.
+
 The [implementation plan](ios-chat/IMPLEMENTATION-PLAN.md) and its three research
 inventories travel with the source. Those inventories describe the original
 baseline, not a promise that later phases are already implemented. No Mac view,
-shared First Mate behavior, or server contract changes in Phase 0.
+shared First Mate behavior, or server contract changes in Phase 0. Phases 1–6
+remain unimplemented. Each retains automated verification/review/landing gates,
+without a first-push approval or per-phase device-test pause. One final signed iOS
+build is delivered after Phase 6; Phase 7, Mac releases, server deployment and
+companion package publication are outside this delivery.
 
 For a Debug simulator build, launch with
 `-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample` to inspect the foundation.
 `IOSThemeDuskRenderTests` writes `theme-dusk-sample.png` (390 pt), a 402 pt sample,
-and an accessibility3 sample to `$HERDR_IOS_RENDER_DIR`. The native render harness
+and an accessibility3-request sample (resolved to `.xxxLarge`) to
+`$HERDR_IOS_RENDER_DIR`. `HerdrThemeTypographyRenderTests` compares native
+UIKit-hosted Markdown/UIFontMetrics output at the cap, and checks that long
+messages lay out completely. The native render harness
 supports `background: .dusk`; existing tests still default to `.ink`.
 `HerdrThemeAccessibilityTests` measures reading colors and the 0.75 breathing
 floor over the brightest cached dusk/haze stack. `HerdrGlassBackgroundTests`
 pins canonical bitmap hashes and verifies opacity, one-time darkening, and the
 haze fade. `HerdrThemeFoundationUITests` checks the live sample, Settings toggles,
-and the existing tab destinations with synthetic data.
+the effective text-size cap, 44 pt targets, and existing tab destinations with
+synthetic data.
 
 ## Navigation
 

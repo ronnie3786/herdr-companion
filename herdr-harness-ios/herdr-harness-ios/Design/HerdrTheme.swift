@@ -22,6 +22,8 @@ enum HerdrTheme {
     static let codeFill = inkFill(0.06)
     static let chipFill = inkFill(0.08)
     static let selectedFill = inkFill(0.10)
+    /// Selected and pressed conversation rows match the quiet reply-bubble fill.
+    static let rowHighlightFill = codeFill
 
     static let hairline = inkFill(0.07)
     static let rowDivider = inkFill(0.05)
@@ -125,6 +127,7 @@ enum HerdrTheme {
     enum Radius {
         static let control: CGFloat = 6
         static let composer: CGFloat = 8
+        static let row: CGFloat = 10
         static let card: CGFloat = 12
         static let panel: CGFloat = 16
         static let bubble: CGFloat = 18
@@ -137,6 +140,9 @@ enum HerdrTheme {
         static let hud = 0.78
     }
 
+    /// Applied by First Mate chrome now; the app-wide adoption is a later phase.
+    /// This limits text scaling, never message content or scrolling.
+    static let maximumDynamicTypeSize: DynamicTypeSize = .xxxLarge
     static let minHitTarget: CGFloat = 44
     static let cardRadius = 16.0
     static let compactRadius = 10.0

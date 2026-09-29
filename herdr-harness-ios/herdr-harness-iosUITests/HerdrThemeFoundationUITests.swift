@@ -51,18 +51,29 @@ final class HerdrThemeFoundationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["first-mate-machine-picker"].waitForExistence(timeout: 5))
     }
 
-    func testSampleAtAccessibility3() throws {
+    func testSampleAtAccessibility3UsesCapAndKeepsControlsReachable() throws {
         let app = demo(sample: true, extra: [
             "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"
         ])
         defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["First Mate"].waitForExistence(timeout: 10))
         try capture("theme-dusk-simulator-accessibility3-top", app)
+        for title in ["Overview", "Agents", "Documents"] {
+            let tab = app.buttons[title]
+            assertTouchTarget(tab)
+            XCTAssertTrue(tab.isHittable)
+            XCTAssertTrue(app.frame.contains(tab.frame), "The capped tab must not clip offscreen")
+        }
+        let textSize = app.staticTexts["theme-sample-text-size"]
+        XCTAssertTrue(textSize.waitForExistence(timeout: 5))
+        XCTAssertEqual(textSize.label, "Text size: xxxLarge")
         let send = app.buttons["theme-sample-send"]
         scrollTo(send, app)
+        assertTouchTarget(send)
         XCTAssertTrue(send.isHittable)
         try capture("theme-dusk-simulator-accessibility3-controls", app)
         send.tap()
+        XCTAssertTrue(app.staticTexts["Direction received."].waitForExistence(timeout: 5))
     }
 
     private func demo(sample: Bool = false, extra: [String] = []) -> XCUIApplication {

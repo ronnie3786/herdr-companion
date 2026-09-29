@@ -81,7 +81,7 @@ struct HerdrThemeAccessibilityTests {
             let pane = ThemeContrast.over(HerdrGlass.darkened(base, scheme: .dark).opacity(0.8), dusk)
             for withHaze in [false, true] {
                 let surface = withHaze ? haze * HerdrHazeBand.opacity + pane * (1 - HerdrHazeBand.opacity) : pane
-                for fill in [Color.clear, HerdrTheme.hoverFill, HerdrTheme.selectedFill] {
+                for fill in [Color.clear, HerdrTheme.rowHighlightFill, HerdrTheme.hoverFill, HerdrTheme.selectedFill] {
                     let background = ThemeContrast.over(fill, surface)
                     let ink = ThemeContrast.over(HerdrTheme.working.opacity(FirstMateBreathing.floor), background)
                     #expect(ThemeContrast.ratio(ink, background) >= 4.5)

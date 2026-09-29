@@ -13,6 +13,16 @@ import Foundation
 /// - successful fleet refreshes and fresh completion alerts from `HerdrAppModel`,
 /// - terminal user-facing headless runs from `HeadlessAgentController`.
 ///
+/// State transitions (a receipt may be silent):
+///
+/// | Input | Episode state | Fleet partner | Cue |
+/// | --- | --- | --- | --- |
+/// | Start / snapshot | Armed | None | No |
+/// | Committed settlement | Receipted success | Await status/alert | Once |
+/// | Committed terminal failure | Receipted non-success | Absorb matching fleet evidence | No |
+/// | Fleet done / alert | Receipted or fresh success | Acknowledge other channel | Only if fresh |
+/// | New turn | Armed; retain ordered duplicate protection | Old evidence stays covered | No |
+///
 /// Evidence is scoped to a machine and a pane/terminal identity, with the Pi
 /// session recorded per work episode, and each episode carries at most one
 /// receipt. One completion normally produces two fleet observations - the
@@ -159,9 +169,9 @@ final class AgentCompletionFeedbackCoordinator {
     ///
     /// The exact counters make the two server-side fleet observations of one
     /// completion idempotent:
-    /// - `pendingPiAcknowledgements`: a committed Pi settlement already played,
-    ///   so the first fleet evidence for the same run consumes one instead of
-    ///   playing again.
+    /// - `pendingPiAcknowledgements`: a committed Pi outcome already has a
+    ///   receipt (audible settlement or silent failure), so matching fleet
+    ///   evidence consumes one instead of playing.
     /// - `pendingAlertAcknowledgements`: a `working → done` transition already
     ///   played, so its alert consumes one instead of claiming a new completion
     ///   even when it arrives after a later turn started.
@@ -175,8 +185,9 @@ final class AgentCompletionFeedbackCoordinator {
     private struct Episode {
         var sessionID: String?
         var isComplete = false
-        /// Server completion time of the receipted completion. A Pi work start
-        /// at or before this instant belongs to the receipted episode, not to a
+        var isFailed = false
+        /// Server time of the receipted outcome. A Pi work start at or before
+        /// this instant belongs to the receipted episode, not to a
         /// newer turn.
         var completedAt: Date?
         /// The latest committed Pi journal cursor covered by the receipt. A Pi
@@ -188,10 +199,10 @@ final class AgentCompletionFeedbackCoordinator {
         var pendingStatusAcknowledgements = 0
     }
 
-    /// Ordering evidence for the newest receipted completion on one pane,
+    /// Ordering evidence for the newest receipted outcome on one pane,
     /// retained across later turns. An observation whose server instant is
     /// strictly before, or whose committed Pi cursor is at or before, this
-    /// watermark describes work whose cue was already played, no matter how
+    /// watermark describes work already handled (played or failed), no matter how
     /// many refreshes were missed before it arrived. Unlike
     /// `Episode.completedAt`, it is not cleared when a new turn starts, so a
     /// snapshot restored from an older committed cursor can still be
@@ -289,7 +300,7 @@ final class AgentCompletionFeedbackCoordinator {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
               NSClassFromString("XCTestCase") == nil
         else { return }
-        HerdrMacFeedback.play(.completed)
+        HerdrMacFeedback.playCompletionCue()
     }
 
     /// Drops every receipt. Called at a confirmed connection identity boundary
@@ -330,6 +341,11 @@ final class AgentCompletionFeedbackCoordinator {
             // completion consumes its slot instead of completing this turn.
             episode.sessionID = evidence.sessionID
             episode.isComplete = false
+            // A failed episode that did not produce fleet evidence must not
+            // consume the next turn's fleet-only success. Timestamp/cursor
+            // ordering still covers delayed evidence for the failed turn.
+            if episode.isFailed { episode.pendingPiAcknowledgements = 0 }
+            episode.isFailed = false
             episode.completedAt = nil
             episode.completedPiCursor = nil
             state.episode = episode
@@ -402,6 +418,30 @@ final class AgentCompletionFeedbackCoordinator {
         state.episode = episode
         paneStates[scope] = state
         playback()
+    }
+
+    /// A committed transition from working to failed (including an aborted
+    /// assistant message) is a terminal non-success receipt. The server can
+    /// still project this run as `.done`; its matching fleet transition/alert
+    /// must not turn the known failure into a success cue. Intermediate tool
+    /// errors that leave Pi working do not reach this method.
+    func piWorkFailed(scope: PaneScope, evidence: PiWorkEvidence) {
+        var state = paneStates[scope] ?? PaneState()
+        var episode = state.episode ?? Episode()
+        guard !episode.isComplete,
+              evidence.sessionID == nil || episode.sessionID == nil || evidence.sessionID == episode.sessionID
+        else { return }
+        if episode.sessionID == nil { episode.sessionID = evidence.sessionID }
+        episode.isComplete = true
+        episode.isFailed = true
+        episode.completedAt = evidence.date
+        episode.completedPiCursor = evidence.cursor
+        episode.pendingPiAcknowledgements += 1
+        var watermark = state.receiptWatermark ?? ReceiptWatermark()
+        watermark.record(date: evidence.date, cursor: evidence.cursor)
+        state.receiptWatermark = watermark
+        state.episode = episode
+        paneStates[scope] = state
     }
 
     // MARK: Fleet observations
@@ -583,7 +623,7 @@ final class AgentCompletionFeedbackCoordinator {
             break
         }
 
-        // The committed Pi settlement already played for this run.
+        // The committed Pi outcome already has a receipt for this run.
         if episode.pendingPiAcknowledgements > 0 {
             episode.pendingPiAcknowledgements -= 1
             if !partnerIncluded {

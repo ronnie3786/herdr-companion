@@ -179,12 +179,19 @@ struct AgentCompletionFeedbackIntegrationTests {
         await follow.value
     }
 
-    @Test("Cancellation and failure never play the completion cue")
+    @Test("Committed cancellation and failure suppress matching fleet completion")
     func cancellationAndFailureAreSilent() async throws {
         let fixture = try ModelFixture()
         defer { fixture.cleanUp() }
         let recorder = CompletionFeedbackRecorder()
         fixture.model.agentCompletionFeedback.playback = { recorder.record() }
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "idle", lastActivityAt: "2030-01-01T00:00:00Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id, using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
         let store = PiConversationStore()
         store.reconnectBackoffBase = .zero
         var eventsContinuation: AsyncThrowingStream<PiConversationStreamEvent, any Error>.Continuation?
@@ -205,11 +212,28 @@ struct AgentCompletionFeedbackIntegrationTests {
         try await Self.waitUntil { store.phase == .working }
         eventsContinuation?.yield(try Self.streamEvent(
             3,
-            #"{"type":"message_end","message":{"role":"assistant","stopReason":"aborted","content":[{"type":"text","text":"Stopped"}]}}"#
+            #"{"type":"message_end","message":{"role":"assistant","stopReason":"aborted","content":[{"type":"text","text":"Stopped"}]}}"#,
+            generatedAt: "2030-01-01T00:00:05Z"
         ))
         try await Self.waitUntil { store.phase == .failed }
         eventsContinuation?.yield(try Self.streamEvent(4, #"{"type":"agent_settled"}"#))
-        try await Task.sleep(for: .milliseconds(30))
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(paneStatus: "working", lastActivityAt: "2030-01-01T00:00:04Z", alerts: [])
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id, using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
+        CompletionFleetURLProtocol.state.withLock {
+            $0 = CompletionFleetProtocolState(
+                paneStatus: "done", lastActivityAt: "2030-01-01T00:00:05Z",
+                alerts: [Self.alertJSON(id: "failed-alert", status: "done", createdAt: "2030-01-01T00:00:05Z")]
+            )
+        }
+        try await fixture.model.refresh(
+            machineID: fixture.machine.id, using: fixture.fleetClient(),
+            expectedGeneration: fixture.model.connectionGeneration
+        )
         #expect(recorder.count == 0)
 
         // A reported error is a failure outcome, not a completion.

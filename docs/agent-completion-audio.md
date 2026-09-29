@@ -21,15 +21,17 @@ completion from a working → idle phase change, and a restored or re-created
 chat cannot request its own sound.
 
 Completion audio is the explicit companion sink only:
-`HerdrMacFeedback.play(.completed)` requests the quiet system “Glass” cue.
-Completed work never requests SwiftUI `.success` sensory feedback, and the
-companion never sets a sound on a Notification Center notification.
+`HerdrMacFeedback.playCompletionCue()` requests the quiet system “Glass” cue.
+The view-driven `HerdrMacFeedback.play(_:)` entry point ignores `.completed`;
+answering an interaction card only requests selection feedback while the agent
+resumes work. Completed work never requests SwiftUI `.success` sensory feedback,
+and the companion never sets a sound on a Notification Center notification.
 
 Evidence reaches the one owner from three observation paths:
 
 | Evidence | Completion meaning |
 | --- | --- |
-| Committed Pi lifecycle | An `agent_settled` event that the committed reducer applied while the published phase was working. Private recovery replay, history snapshots, and phase resets never report. |
+| Committed Pi lifecycle | An `agent_settled` event that the committed reducer applied while the published phase was working. A committed working → failed transition instead records a silent receipt to absorb matching fleet evidence. Private recovery replay, history snapshots, and phase resets never report. |
 | Successful fleet refresh | A pane that moves from working/blocked to done, or a brand-new `.done` alert for a pane the poll did not otherwise catch working. The first successful refresh after launch or a connection identity change is a silent baseline. |
 | User-facing headless runs | A HUD-chat or Agent-window run that reaches `completed` or `promoted`, including a run that finished before its first running poll and one restored as active. Internal summary and naming runs never report. |
 
@@ -86,7 +88,7 @@ run receipts are separately bounded.
 | A user-facing HUD-chat or Agent-window run that completes or is promoted | One companion completion cue per durable run ID |
 | A working → done fleet transition, or a fresh completion alert | One companion completion cue, unless the committed settlement already played it |
 | Attention: an agent is blocked or needs you | The existing distinct attention cue (unchanged) |
-| Cancellation, failure, disconnect, compaction, or a phase reset | None |
+| Committed Pi cancellation/failure, disconnect, compaction, or a phase reset | None; a committed terminal failure absorbs its matching later fleet evidence. If fleet `.done` arrives *before* the Pi failure (or Pi is not being followed), fleet-only status cannot distinguish failure from success; installed listening must check that ordering. |
 | Opening saved history, a completed saved HUD chat, or an already-finished run | None |
 | First observation after launch, a relaunch, or a connection identity change | None (silent baseline) |
 | Replayed or repeated observation of the same episode, alert, or run receipt | None |
@@ -158,7 +160,7 @@ for a blocked or needs-you agent is a different sound and is expected to remain.
 | 11 | Notification authorization enabled: finish a background run | One silent banner (if backgrounded) and exactly one companion cue | Pending |
 | 12 | Notification authorization unavailable: finish a background run | No banner and exactly one companion cue; no fallback sound | Pending |
 | 13 | Blocked / needs-you agent | Existing attention cue only; no completion cue for that event | Pending |
-| 14 | Cancel a run, fail a run, or lose the connection mid-run | No completion cue | Pending |
+| 14 | Cancel a run, fail a run, or lose the connection mid-run; check fleet `.done` both before and after committed failure | No cue for committed failure or matching later fleet evidence; fleet-first `.done` may cue before the Pi outcome is known | Pending |
 | 15 | Independently installed upstream Herdr terminal with its notification sound on (see below) | Mute only that sender; the companion cue stays at one | Pending |
 
 ## Automated evidence versus heard audio
@@ -182,8 +184,9 @@ Relevant suites:
   and a second consecutive turn.
 - `NotificationManagerTests.alertContentIsSilent` — silent notification content
   with unchanged routing and interruption level.
-- `HerdrHapticTests.mapsWorkflowFeedback` — completed work requests no SwiftUI
-  success feedback.
+- `HerdrHapticTests` — completed work requests no SwiftUI success feedback;
+  interaction answers request selection, and view haptics cannot request the
+  completion sink.
 
 Run the focused Mac unit target (extend with `-only-testing:` suite selectors as
 needed; the final Verify gate owns the full matrix):

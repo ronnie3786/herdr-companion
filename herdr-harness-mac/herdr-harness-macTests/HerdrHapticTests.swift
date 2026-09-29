@@ -25,6 +25,21 @@ struct HerdrHapticTests {
         #expect(HerdrHaptic.failed.feedback == .error)
     }
 
+    @Test("Answering an interaction is selection, not agent completion")
+    @MainActor
+    func interactionResponseFeedback() {
+        #expect(PiInteractionCardView.feedback(forSucceededResponse: true) == .selection)
+        #expect(PiInteractionCardView.feedback(forSucceededResponse: false) == .failed)
+        #expect(HerdrMacFeedback.Cue(PiInteractionCardView.feedback(forSucceededResponse: true)) == nil)
+    }
+
+    @Test("View haptics cannot request the companion completion sound")
+    @MainActor
+    func onlyCoordinatorMayPlayCompletion() {
+        #expect(HerdrMacFeedback.Cue(HerdrHaptic.completed) == nil)
+        #expect(HerdrMacFeedback.Cue(HerdrHaptic.attention) == .attention)
+    }
+
     @Test("Repeated feedback events always advance the pulse")
     func advancesRepeatedEvents() {
         var pulse = HerdrHapticPulse()

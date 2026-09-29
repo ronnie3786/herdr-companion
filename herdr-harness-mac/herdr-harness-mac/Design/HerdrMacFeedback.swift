@@ -5,7 +5,7 @@ import AppKit
 /// `SensoryFeedback` still drives the taptic channel (Force Touch trackpads),
 /// but a Mac window is usually *not* the thing in your hand, so the two events
 /// that carry news — an agent needing you (`.attention`) and an agent finishing
-/// (`.completed`) — also get a quiet system sound.
+/// (via the completion coordinator) — also get a quiet system sound.
 ///
 /// Everything else stays silent on purpose. Key presses, toggles, staging and
 /// recording lifecycle are direct manipulation: the user already knows they did
@@ -16,15 +16,26 @@ import AppKit
 /// The `.completed` cue is requested only by
 /// `AgentCompletionFeedbackCoordinator`'s production playback, so one logical
 /// completion is heard once even when the fleet, a completion alert, and a
-/// committed Pi settlement all observe it.
+/// committed Pi settlement all observe it. View haptic pulses cannot request
+/// the completion cue, even if they fire `.completed` by mistake.
 @MainActor
 enum HerdrMacFeedback {
     /// Master mute. Reserved for a future Settings toggle.
     static var isEnabled = true
 
-    /// The single funnel. Non-newsworthy events return without touching AppKit.
+    /// View-driven feedback may request attention, but never completion audio.
     static func play(_ event: HerdrHaptic) {
-        guard isEnabled, let cue = Cue(event), let sound = sound(for: cue) else { return }
+        guard let cue = Cue(event) else { return }
+        play(cue)
+    }
+
+    /// Only the process-owned completion coordinator calls this entry point.
+    static func playCompletionCue() {
+        play(Cue.completed)
+    }
+
+    private static func play(_ cue: Cue) {
+        guard isEnabled, let sound = sound(for: cue) else { return }
 
         // Restart rather than overlap: a burst of transitions should read as one
         // notification, not a pile of them.
@@ -36,7 +47,7 @@ enum HerdrMacFeedback {
     }
 
     /// The closed set of events that are allowed to be audible.
-    private enum Cue {
+    enum Cue {
         case attention
         case completed
 
@@ -44,8 +55,6 @@ enum HerdrMacFeedback {
             switch event {
             case .attention:
                 self = .attention
-            case .completed:
-                self = .completed
             default:
                 return nil
             }

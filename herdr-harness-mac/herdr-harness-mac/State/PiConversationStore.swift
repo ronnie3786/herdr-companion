@@ -1143,13 +1143,12 @@ final class PiConversationStore {
             // Committed settlement only. The private recovery candidate above
             // replays the same events without ever reaching this point, so a
             // refetched history can never play a completion cue.
-            if effect == .completed,
-               let completionFeedback,
-               let completionPaneScope {
-                completionFeedback.piWorkSettled(
-                    scope: completionPaneScope,
-                    evidence: evidence
-                )
+            if let completionFeedback, let completionPaneScope {
+                if effect == .completed {
+                    completionFeedback.piWorkSettled(scope: completionPaneScope, evidence: evidence)
+                } else if effect == .failed, previousPhase == .working, reducer.phase == .failed {
+                    completionFeedback.piWorkFailed(scope: completionPaneScope, evidence: evidence)
+                }
             }
             let workStarted = previousPhase != .working && reducer.phase == .working
             schedulePublish(trigger(

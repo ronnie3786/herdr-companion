@@ -134,6 +134,50 @@ struct AgentCompletionFeedbackTests {
         #expect(recorder.count == 2)
     }
 
+    @Test("Committed failure absorbs matching fleet done and alert, not a later turn")
+    func failedPiEpisodeDoesNotSoundOnFleetDone() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "2030-01-01T00:00:00Z")])
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(
+            sessionID: "s1", observedAt: "2030-01-01T00:00:01Z", cursor: "1"
+        ))
+        refresh(coordinator, [paneObservation(.working, episodeKey: "2030-01-01T00:00:01Z")])
+        coordinator.piWorkFailed(scope: scope(), evidence: .init(
+            sessionID: "s1", observedAt: "2030-01-01T00:00:05Z", cursor: "2"
+        ))
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:00:05Z")], alerts: [
+            alert("failed-alert", createdAt: "2030-01-01T00:00:05Z")
+        ])
+        #expect(recorder.count == 0)
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:00:05Z")], alerts: [
+            alert("failed-alert", createdAt: "2030-01-01T00:00:05Z")
+        ])
+        #expect(recorder.count == 0)
+
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(
+            sessionID: "s1", observedAt: "2030-01-01T00:01:00Z", cursor: "3"
+        ))
+        // An old alert arriving during the next turn is not a new success.
+        refresh(coordinator, [paneObservation(.working, episodeKey: "2030-01-01T00:01:00Z")], alerts: [
+            alert("delayed-failure-alert", createdAt: "2030-01-01T00:00:04Z")
+        ])
+        #expect(recorder.count == 0)
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:01:05Z")])
+        #expect(recorder.count == 1)
+    }
+
+    @Test("A failed run without fleet done does not swallow the next fleet-only completion")
+    func failedPiEpisodeWithoutFleetDone() {
+        let (coordinator, recorder) = makeCoordinator()
+        refresh(coordinator, [paneObservation(.idle, episodeKey: "2030-01-01T00:00:00Z")])
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1", cursor: "1"))
+        coordinator.piWorkFailed(scope: scope(), evidence: .init(sessionID: "s1", cursor: "2"))
+        coordinator.piWorkStarted(scope: scope(), evidence: .init(sessionID: "s1", cursor: "3"))
+        refresh(coordinator, [paneObservation(.working, episodeKey: "2030-01-01T00:01:00Z")])
+        refresh(coordinator, [paneObservation(.done, episodeKey: "2030-01-01T00:01:05Z", piCursor: "4")])
+        #expect(recorder.count == 1)
+    }
+
     @Test("Fleet completion before a committed settlement plays once")
     func settlementAfterFleetIsSilent() {
         let (coordinator, recorder) = makeCoordinator()

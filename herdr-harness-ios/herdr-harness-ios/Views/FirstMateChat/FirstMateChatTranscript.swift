@@ -73,23 +73,12 @@ struct FirstMateChatTranscript: View {
                                             isFirstInGroup: true, isLastInGroup: true), snapshot: snapshot, maximumWidth: width,
                                             skimState: skimState, catalog: catalog, sendReply: { _ in }, presentationChanged: presentationChanged, readoutConversations: readoutConversations,
                                             showReadout: { readout = .capture($0, fleet: fleet) })
+                                        resources(files: files[message.id] ?? [], links: links[message.id] ?? [], width: width)
                                     }
                                 }
                                 .herdrFont(.caption).tint(HerdrTheme.accent).frame(maxWidth: width)
                             }
-                            ForEach(files[row.id] ?? []) { document in
-                                Button { openInfo(.documents) } label: {
-                                    card(title: document.title, subtitle: document.assignmentID == nil ? "Saved document" : "From Agent", symbol: "doc.text")
-                                }
-                                .buttonStyle(.plain).frame(maxWidth: width)
-                                .accessibilityIdentifier("first-mate-file-\(document.id)")
-                            }
-                            ForEach(links[row.id] ?? []) { link in
-                                if let url = link.destination {
-                                    Link(destination: url) { card(title: link.title, subtitle: link.hostLabel ?? "Saved pull request", symbol: "arrow.up.right.square") }
-                                        .frame(maxWidth: width).accessibilityIdentifier("first-mate-link-\(link.id)")
-                                }
-                            }
+                            resources(files: files[row.id] ?? [], links: links[row.id] ?? [], width: width)
                         }
                         if typing {
                             HStack(spacing: 5) {
@@ -153,6 +142,23 @@ struct FirstMateChatTranscript: View {
                     }
                 }
                 #endif
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func resources(files: [FirstMateDocument], links: [FirstMateLink], width: CGFloat) -> some View {
+        ForEach(files) { document in
+            Button { openInfo(.documents) } label: {
+                card(title: document.title, subtitle: document.assignmentID == nil ? "Saved document" : "From Agent", symbol: "doc.text")
+            }
+            .buttonStyle(.plain).frame(maxWidth: width)
+            .accessibilityIdentifier("first-mate-file-\(document.id)")
+        }
+        ForEach(links) { link in
+            if let url = link.destination {
+                Link(destination: url) { card(title: link.title, subtitle: link.hostLabel ?? "Saved pull request", symbol: "arrow.up.right.square") }
+                    .frame(maxWidth: width).accessibilityIdentifier("first-mate-link-\(link.id)")
             }
         }
     }

@@ -12,6 +12,7 @@ enum FirstMateMobileDemo {
     static func initialSnapshots(forMachineID machineID: String) -> [FirstMateSnapshot]? {
         guard machineID == "demo1" else { return nil }
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateAdditionalResponse") { return [additionalResponseSnapshot()] }
         if FirstMateTranscriptPerformanceProbe.enabled { return [transcriptPerformanceSnapshot()] }
         if FirstMateListPerformanceProbe.enabled { return performanceSnapshots() + [FirstMateDemo.chatWindowLead()] }
         #endif
@@ -23,6 +24,10 @@ enum FirstMateMobileDemo {
     static func chatFleet(forMachineID machineID: String) -> [FirstMateFleetEntry] {
         guard machineID == "demo1" else { return [] }
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateAdditionalResponse") {
+            return FirstMateDemo.chatWindowFleet().filter { $0.featureID == "demo-receipts" }
+        }
+        if FirstMateTranscriptPerformanceProbe.enabled { return [] }
         if FirstMateListPerformanceProbe.enabled {
             return performanceSnapshots().enumerated().map { index, snapshot in
                 .init(featureID: snapshot.feature.id, title: snapshot.feature.title, status: snapshot.feature.status,
@@ -36,6 +41,23 @@ enum FirstMateMobileDemo {
     }
 
     #if DEBUG
+    static func additionalResponseSnapshot() -> FirstMateSnapshot {
+        var snapshot = FirstMateDemo.chatWindowFeatures().first { $0.feature.id == "demo-receipts" }!
+        let turn = "synthetic-additional-turn"
+        snapshot.messages[snapshot.messages.count - 1].metadata = .init(turnID: turn, checkpoint: true)
+        let closing = FirstMateMessage(id: "additional-closing", featureID: snapshot.feature.id, role: "assistant",
+            text: "Supplementary decision note has the details. The saved pull request is attached.", status: "completed",
+            createdAt: snapshot.feature.updatedAt, metadata: .init(inReplyTo: turn))
+        snapshot.messages.append(closing)
+        snapshot.documents.append(.init(id: "additional-document", featureID: snapshot.feature.id, title: "Supplementary decision note",
+            mediaType: "text/markdown", contentHash: "synthetic-additional", createdAt: snapshot.feature.updatedAt,
+            content: "Synthetic supplementary evidence. No agents launched."))
+        snapshot.links.append(.init(id: "additional-pr", featureID: snapshot.feature.id,
+            url: "https://github.com/example/synthetic/pull/1", kind: "pull_request", title: "Synthetic pull request", source: "coordinator",
+            provenance: .init(messageID: closing.id), createdAt: snapshot.feature.updatedAt, updatedAt: snapshot.feature.updatedAt))
+        return snapshot
+    }
+
     static func transcriptPerformanceSnapshot() -> FirstMateSnapshot {
         var snapshot = FirstMateDemo.newFeature(title: "Transcript performance", goal: "Synthetic scrolling only.", cwd: "/workspace/synthetic", id: "demo-chat-performance")
         snapshot.messages = (0..<200).map { index in

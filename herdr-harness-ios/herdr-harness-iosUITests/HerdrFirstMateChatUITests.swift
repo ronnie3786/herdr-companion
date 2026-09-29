@@ -37,6 +37,24 @@ final class HerdrFirstMateChatUITests: XCTestCase {
         XCTAssertTrue(receipt.isHittable)
         try capture("phase3-list-after-send", app)
     }
+    func testAdditionalResponseKeepsItsDocumentAndPRCards() throws {
+        let app = launch(extra: ["-HerdrFirstMateAdditionalResponse"]); defer { app.terminate() }
+        let receipt = app.buttons["first-mate-feature-demo1-demo-receipts"]
+        reach(receipt, app: app, downward: false); receipt.tap()
+        let disclosure = app.buttons["Additional response from this turn"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5)); disclosure.tap()
+        let file = app.buttons["first-mate-file-additional-document"]
+        reach(file, app: app, downward: false)
+        let pr = app.descendants(matching: .any)["first-mate-link-additional-pr"]
+        XCTAssertTrue(pr.waitForExistence(timeout: 5))
+        try capture("phase3-additional-response-resources", app)
+        file.tap()
+        XCTAssertTrue(app.staticTexts["first-mate-documents"].waitForExistence(timeout: 5))
+        let document = app.buttons["first-mate-document-additional-document"]
+        reach(document, app: app, downward: false); document.tap()
+        XCTAssertTrue(app.staticTexts["Synthetic supplementary evidence. No agents launched."].waitForExistence(timeout: 5))
+    }
+
     func testPauseResumeAndConfirmedCancellationRetainTheConversation() throws {
         let app = launch(); defer { app.terminate() }
         let receipt = app.buttons["first-mate-feature-demo1-demo-receipts"]

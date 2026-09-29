@@ -6,7 +6,7 @@ final class HerdrFirstMateNavigationUITests: XCTestCase {
     }
 
     @MainActor
-    func testEditingTheSameHostClearsItsOldFeatureDestination() throws {
+    func testEditingTheSameHostDoesNotReopenItsPreviousFeature() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-HerdrFirstMateDemo", "-HerdrResetFirstMateScope", "-herdr.firstMate.appearance", "light", "-herdr.smartAlerts", "NO"]
         app.launch()
@@ -17,6 +17,10 @@ final class HerdrFirstMateNavigationUITests: XCTestCase {
         secondFeature.tap()
         XCTAssertTrue(app.descendants(matching: .any)["first-mate-composer"].waitForExistence(timeout: 5))
 
+        // Chat intentionally hides the tab bar. Native back closes the chat
+        // before Settings; the retained stale-destination race remains covered
+        // directly by FirstMateMobileRouteLifecycleTests and navigation tests.
+        app.buttons["first-mate-chat-back"].tap()
         tapTab("Settings", app: app)
         let host = app.buttons["settings-machine-row-demo1"]
         XCTAssertTrue(host.waitForExistence(timeout: 5))
@@ -45,13 +49,12 @@ final class HerdrFirstMateNavigationUITests: XCTestCase {
         secondFeature.tap()
         let composer = app.descendants(matching: .any)["first-mate-composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.navigationBars["Review search"].exists)
+        XCTAssertTrue(app.buttons["first-mate-chat-title"].label.contains("Review search"))
         composer.tap()
         composer.typeText("Continue the search feature after reconnecting.")
         app.buttons["first-mate-send"].tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
-            "first-mate-message-", "Continue the search feature after reconnecting."
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(
+            format: "label CONTAINS %@", "Continue the search feature after reconnecting."
         )).firstMatch.waitForExistence(timeout: 5))
         app.terminate()
     }

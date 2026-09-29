@@ -69,6 +69,19 @@ struct SkimStyle {
         )
     }
 
+    static var bubble: SkimStyle {
+        var style = firstMate(.dark)
+        style.text = HerdrTheme.proseText
+        style.secondaryText = HerdrTheme.secondaryText
+        style.tertiaryText = HerdrTheme.tertiaryText
+        style.sentenceFont = HerdrProse.font(.bubble)
+        style.bodyFont = HerdrProse.font(.body)
+        style.caveatFont = HerdrProse.font(.body)
+        style.lineSpacing = 8
+        style.blockSpacing = 12
+        return style
+    }
+
     static var hud: SkimStyle {
         SkimStyle(
             host: .hud,

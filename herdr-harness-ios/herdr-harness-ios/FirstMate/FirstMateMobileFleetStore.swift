@@ -429,6 +429,7 @@ final class FirstMateMobileFleetStore {
         if let navigationIntent, !chat.isCurrentNavigation(navigationIntent) { return false }
         guard let store = stores[target.machineID] else { return false }
         if store.snapshots[target.featureID]?.feature.isArchived == true { setShowArchived(true) }
+        if selectedTarget != target { store.inspector = .overview }
         selectedTarget = target
         store.select(target.featureID)
         chat.select(store.snapshots[target.featureID]?.feature.isLead == true ? .lead : .feature(target),

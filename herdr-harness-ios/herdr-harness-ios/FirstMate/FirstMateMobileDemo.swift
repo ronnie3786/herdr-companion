@@ -12,6 +12,7 @@ enum FirstMateMobileDemo {
     static func initialSnapshots(forMachineID machineID: String) -> [FirstMateSnapshot]? {
         guard machineID == "demo1" else { return nil }
         #if DEBUG
+        if FirstMateTranscriptPerformanceProbe.enabled { return [transcriptPerformanceSnapshot()] }
         if FirstMateListPerformanceProbe.enabled { return performanceSnapshots() + [FirstMateDemo.chatWindowLead()] }
         #endif
         // Keep existing automation fixtures alongside the curated chat dataset;
@@ -35,6 +36,18 @@ enum FirstMateMobileDemo {
     }
 
     #if DEBUG
+    static func transcriptPerformanceSnapshot() -> FirstMateSnapshot {
+        var snapshot = FirstMateDemo.newFeature(title: "Transcript performance", goal: "Synthetic scrolling only.", cwd: "/workspace/synthetic", id: "demo-chat-performance")
+        snapshot.messages = (0..<200).map { index in
+            FirstMateMessage(id: "performance-message-\(index)", featureID: snapshot.feature.id,
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                text: "Message \(index). A complete synthetic turn; no agents launched.", status: "completed",
+                createdAt: HerdrTimestamp.string(from: Date(timeIntervalSince1970: 1_900_000_000 + Double(index * 60))))
+        }
+        snapshot.messages[199].text += "\n\n" + (1...24).map { "Long paragraph \($0). Every sentence remains available while scrolling this synthetic message." }.joined(separator: "\n\n") + "\n\nEND OF COMPLETE MESSAGE"
+        return snapshot
+    }
+
     static func performanceSnapshots() -> [FirstMateSnapshot] { performanceFixture }
 
     private static let performanceFixture: [FirstMateSnapshot] = {

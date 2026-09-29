@@ -4,30 +4,39 @@ struct FirstMateInspectorView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.firstMateHighlightedAssignment) private var highlighted
 
     var body: some View {
         VStack(spacing: 0) {
             FirstMateInspectorTabs(store: store)
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    switch store.inspector {
-                    case .overview: FirstMateOverviewView(store: store, snapshot: snapshot)
-                    case .agents: FirstMateAgentsView(store: store, snapshot: snapshot)
-                    case .documents: FirstMateDocumentsView(store: store, snapshot: snapshot)
-                    case .workflow: FirstMateWorkflowView(store: store, snapshot: snapshot)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        switch store.inspector {
+                        case .overview: FirstMateOverviewView(store: store, snapshot: snapshot)
+                        case .agents: FirstMateAgentsView(store: store, snapshot: snapshot)
+                        case .documents: FirstMateDocumentsView(store: store, snapshot: snapshot)
+                        case .workflow: FirstMateWorkflowView(store: store, snapshot: snapshot)
+                        }
+                        Label(syncDescription, systemImage: store.error == nil ? "checkmark.circle" : "exclamationmark.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Label(syncDescription, systemImage: store.error == nil ? "checkmark.circle" : "exclamationmark.circle")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+                    .frame(maxWidth: 720, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(20)
-                .frame(maxWidth: 720, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .id(store.inspector)
+                .refreshable { await store.refresh() }
+                .task(id: highlighted) {
+                    guard let highlighted, store.inspector == .agents else { return }
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    proxy.scrollTo(highlighted, anchor: .center)
+                }
             }
-            .id(store.inspector)
-            .refreshable { await store.refresh() }
         }
         .background(FirstMatePalette(scheme: scheme).background)
         .foregroundStyle(FirstMatePalette(scheme: scheme).text)

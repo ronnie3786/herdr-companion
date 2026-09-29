@@ -42,9 +42,7 @@ final class HerdrFirstMateMachinesUITests: XCTestCase {
         desktopRow.tap()
         XCTAssertTrue(app.descendants(matching: .any)["first-mate-composer"].waitForExistence(timeout: 5))
 
-        if app.windows.firstMatch.frame.width < 700, app.navigationBars.buttons.firstMatch.exists {
-            app.navigationBars.buttons.firstMatch.tap()
-        }
+        app.buttons["first-mate-chat-back"].tap()
         let picker = app.buttons["first-mate-machine-picker"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertTrue(picker.label.contains("desktop"), "Opening a feature must not change the browsing scope")
@@ -89,9 +87,7 @@ final class HerdrFirstMateMachinesUITests: XCTestCase {
         submit.tap()
 
         XCTAssertTrue(app.descendants(matching: .any)["first-mate-composer"].waitForExistence(timeout: 5))
-        if app.windows.firstMatch.frame.width < 700, app.navigationBars.buttons.firstMatch.exists {
-            app.navigationBars.buttons.firstMatch.tap()
-        }
+        app.buttons["first-mate-chat-back"].tap()
         let created = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
             "first-mate-feature-demo2-", "Route the laptop checklist"

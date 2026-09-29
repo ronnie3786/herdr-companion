@@ -16,7 +16,8 @@ phone; passive Reduce Motion/Transparency fallbacks remain, without separate
 release gates. Existing tabs keep their layouts and opaque backgrounds,
 with a deeper neutral palette. Phase 2 now installs the dark conversations list,
 client-built lead briefing and restyled create/archive sheets; the legacy First
-Mate appearance menu is removed. Existing detail/chat helpers remain until Phase 3. Debug builds
+Mate appearance menu is removed. Phase 3 replaces the old detail/chat helpers with
+a grouped bubble transcript, text composer v1, pushed Info and briefing readouts. Debug builds
 can open the synthetic theme sample with
 `-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample`. Render outputs go to
 `$HERDR_IOS_RENDER_DIR`. See the [phase plan](../docs/first-mate/ios-chat/IMPLEMENTATION-PLAN.md)
@@ -24,8 +25,10 @@ and [verification guide](../docs/first-mate/ios.md). Phase 1 now adds the shared
 fleet/chat rules, app-active polling, global feature-dot tab badge, exact-owner
 links, fenced read/lead state and concrete authenticated client gaps. Phase 2 adds
 the compact bar, lead + six needs-you pins with overflow, two-line recency rows,
-and shared reply-progress projection for rows and the global badge. Phases 3–6
-are still planned, with per-phase automated verification and one final signed
+and shared reply-progress projection for rows and the global badge. Phase 3 adds
+bottom-following chat, exact-owner mentions/resources, frozen optimistic sends,
+explicit retry, topmost-only phone read hooks and native swipe-back. Phases 4–6
+(real lead, composer parity and Info/iPad/app-wide theme polish) remain planned, with per-phase automated verification and one final signed
 iOS build after Phase 6
 rather than intermediate phone-test pauses. No first-push approval gate remains.
 No server update, Mac release or Phase 7 work is included. Lead metadata never
@@ -53,10 +56,14 @@ host. Recent folders belong to the chosen destination, and changing the
 destination clears the previous folder. Every message, archive action, and saved
 resource resolves the machine that owns the feature, even when two hosts share a
 feature ID. One offline or older companion shows its own notice without hiding a
-healthy host's features. iPhone uses focused detail sheets; iPad keeps a feature
-sidebar and a trailing inspector. First Mates is dark-only, with capped `.xxxLarge`
+healthy host's features. iPhone pushes Info from chat; documents and sessions still
+open as sheets from Info. iPad keeps a feature sidebar and pushed detail navigation;
+the three-column inspector is Phase 6. First Mates is dark-only, with capped `.xxxLarge`
 scaling and full readable messages. My First Mate currently opens an explicitly
-client-built briefing; the real lead conversation remains Phase 4. Swipe/context
+client-built briefing with capsule readouts and a goal composer that opens creation
+without discarding its draft on cancel/failure; the real lead conversation remains
+Phase 4. Composer v1 uses a 1–7-line text pill and explicit send; its plus menu opens
+documents. Attachment, voice, model, mention-picker and rating controls remain Phase 5. Swipe/context
 archive actions capture the exact owner and roll back optimistic removal on error.
 
 The matching companion server with `first-mate-v1` is required. Work continues on

@@ -21,8 +21,7 @@ background with 10 pt corners; message bubbles keep 18 pt corners. New First Mat
 chrome caps Dynamic Type at `.xxxLarge`, including UIKit-hosted Markdown and
 metric-scaled controls. This limits scaling, **not message length**: complete
 messages remain readable and scrollable, with at least 44 pt control targets.
-The retained First Mate detail/chat also inherits this cap without shortening its
-transcript. Other tabs stay uncapped until the app-wide Phase 6 adoption. Working
+The Phase 3 chat uses the same cap without shortening its transcript. Other tabs stay uncapped until the app-wide Phase 6 adoption. Working
 passive OS motion/transparency fallbacks remain; they are not independent release
 gates or a separate test matrix.
 
@@ -31,7 +30,9 @@ inventories travel with the source. Those inventories describe the original
 baseline, not a promise that later phases are already implemented. No Mac view,
 shared First Mate behavior, or server contract changes in Phase 0. Phase 1 now
 provides the shared/mobile data layer below. Phase 2 adds the conversations UI;
-full chat/lead/composer/Info replacements in Phases 3–6 remain unimplemented.
+Phase 3 adds feature chat, composer v1, pushed Info and briefing readouts. Real
+lead chat (Phase 4), attachment/voice/model/rating controls (Phase 5), and Info/iPad
+polish plus app-wide dusk (Phase 6) remain planned.
 Each phase retains automated verification/review/landing gates,
 without a first-push approval or per-phase device-test pause. One final signed iOS
 build is delivered after Phase 6; Phase 7, Mac releases, server deployment and
@@ -54,7 +55,7 @@ synthetic data.
 
 ## Phase 1 data layer
 
-The data layer serves the Phase 2 list and the retained chat. The First Mates tab shows a
+The data layer serves the conversations list and feature chat. The First Mates tab shows a
 **global feature-dot badge**: needs-you **and** unread across saved machines,
 independent of search/host scope and excluding lead unread. Older companions
 without fleet summaries keep attention-style dots; opening them does not invent
@@ -87,7 +88,7 @@ errors. Pane URLs/selections, tab selection, car mode and explicit in-app naviga
 advance the same intent. Background refresh/recovery does not create a new user
 intent or let an older pending pane displace a newer destination. Names, roster ordering and lead metadata never establish identity. Invalid/duplicate/security-bearing fields are rejected; pane
 and car links retain their existing behavior. Valid agent links open the current
-Agents inspector; pushed info/highlighting arrives in Phases 3/6.
+pushed Agents inspector with the exact assignment expanded and highlighted.
 
 Concrete `FirstMateClient` witnesses now cover lead, context, attachments, voice,
 journal snapshots and links. First Mate reads use 15 seconds, normal POSTs 86,400
@@ -130,9 +131,47 @@ and completed rows are preserved. No store or live blur is created per row.
 
 Tap **My First Mate** for a summary explicitly labeled “Built from your features.
 Not a message from an agent.” This is a client-built briefing, not the Phase 4
-real lead chat. Tap a feature for the existing working chat; long-press → Open
-info opens its existing inspector. Full transcript/composer/Info replacements are
-still later phases.
+real lead chat. Its Summary uses feature capsules; tap for a compact 300pt readout
+and Open chat. The goal composer opens the existing create sheet with the goal
+prefilled and an explicit destination; cancel/failure keeps the briefing draft.
+Tap a feature for the Phase 3 chat; the title/Info control pushes its inspector.
+
+## Feature chat (Phase 3)
+
+Chat hides the tab bar and uses a custom glass back/title/Info/More bar, retaining
+native edge-swipe back. A lazy, bottom-anchored transcript follows only within
+40pt of the end. Complete messages remain scrollable at the text cap. Bubbles
+use 18pt corners, a 5pt terminal tail, shared day/turn grouping and additional
+response disclosures. First Mate has no avatar/speaker line; crew messages retain
+both. Skims, native Markdown, queued/voice metadata, typing, notices, closed and
+read-only states remain available. Long-press copies the original message.
+
+Only server skim reply blocks become inline actions, on the newest eligible
+needs-you reply and never while working. Choosing one records a local caption
+and reserves a send without consuming a separately composed draft. File cards
+come from uniquely associated, visible documents on the exact snapshot; saved PR
+cards require authoritative link/message association. File cards open Info →
+Documents. Mention runs are cached by content and catalog, bounded, with only
+captured-owner names; ambiguous names are not guessed. Feature links open their
+chat, agent links validate ownership before opening Agents, and long-press offers
+readouts for mentioned features. Retained popovers cannot override newer navigation.
+
+Composer v1 has a 1–7-line scrolling text pill, explicit send, Return for newline,
+⌘ Return for send and per-host/per-feature in-memory drafts. Plus currently opens
+**View documents**, not a nonfunctional attachment picker. Attachment/voice/model
+and mention-picker controls remain Phase 5. A synchronous `beginOutgoingMessage`
+reservation detaches only submitted text before transport. Rejected reservations
+keep it; newer edits survive completion. Failed/uncertain delivery offers explicit
+Retry/Copy; retry keeps the original owner, lifecycle, payload, request ID and
+frozen context, including nil. Polls never resend or migrate the submission.
+
+Phone-owned read hooks require an appeared, active, topmost First Mates chat at
+the end with a server read key. Info, offscreen render hosts, sheets, root covers,
+other tabs and background scenes do not acknowledge reads. Local clear and
+rollback/backoff/new-reply fencing remain in the mobile chat state. Chat and Info
+use exact-store control leases; stale disappearance cannot revoke a newer grant.
+The old detail/chat/message/composer and inspector-sheet host are removed; Info
+continues hosting existing workflow/document/session views until Phase 6 polish.
 
 Creating from All Machines requires an explicit destination before accepting a
 repository folder; single-machine scope preselects that host. Recent folders
@@ -158,9 +197,8 @@ Hosts without `first-mate-archive-v1` keep their active list and update guidance
 
 On iPhone, a feature opens its conversation. Use the feature controls to inspect
 Overview, Workflow, Agents, or Documents, then return to the same conversation.
-On iPad, the feature list stays in a sidebar and an inspector uses the available
-space. This phase retains those detail helpers rather than deleting working chat
-flows early. First Mates uses dark Mono/dusk chrome, capped scalable text and
+On iPad, the feature list stays in a sidebar and Info pushes within the detail
+stack; the three-column inspector layout remains Phase 6. First Mates uses dark Mono/dusk chrome, capped scalable text and
 native scrolling/navigation; it no longer offers a light appearance.
 
 The conversation holds only your messages and First Mate's replies, stage
@@ -209,6 +247,17 @@ asynchronously. Pause, resume, and cancel act on that feature. Cancel requires
 confirmation. Viewing a document or saved session does not send an agent a prompt.
 
 ## Local verification
+
+Phase 3 uses `FirstMateMobileTranscriptTests` plus existing shared conversation,
+mention/outgoing and mobile read/navigation/lifecycle suites. `FirstMateChatRenderTests`
+checks Receipt export, the briefing, idle/focused/closed composer and readout at
+320/402pt, including accessibility3 requests capped at xxxLarge and full long text.
+`IOSSkimRenderTests` now exercises the replacement bubble. `HerdrFirstMateChatUITests`
+walks send, pushed Info/Documents, file cards, edge-swipe back, briefing readout and
+creation-draft cancellation. DEBUG-only `-HerdrFirstMateTranscriptPerformance` with
+demo mode seeds 200 messages and a complete 24-paragraph final reply. Non-observing
+body/visibility counters and measured XCTest gesture/settling time are evidence,
+not an assertion of full-frame-rate rendering or a substitute for final-device checks.
 
 Launch with `-HerdrFirstMateDemo` for synthetic features without a server. The
 demo configures two synthetic hosts, `desktop` and `laptop`, that share feature

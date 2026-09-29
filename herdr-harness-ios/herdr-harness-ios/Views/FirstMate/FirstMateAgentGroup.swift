@@ -6,6 +6,7 @@ struct FirstMateAgentGroup: View {
     let visit: FirstMateVisit
     @State private var isExpanded: Bool
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.firstMateHighlightedAssignment) private var highlighted
 
     init(store: FirstMateStore, snapshot: FirstMateSnapshot, visit: FirstMateVisit, initiallyExpanded: Bool) {
         self.store = store
@@ -34,6 +35,9 @@ struct FirstMateAgentGroup: View {
                     .foregroundStyle(.secondary)
             }
             .frame(minHeight: 44)
+        }
+        .onChange(of: highlighted, initial: true) { _, id in
+            if agents.contains(where: { $0.id == id }) { isExpanded = true }
         }
         .padding(16)
         .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 18))

@@ -3,13 +3,14 @@ import SwiftUI
 struct FirstMateMarkdownBlockView: View {
     let block: PiMarkdownBlock
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.firstMateMentionCatalog) private var catalog
 
     var body: some View {
         switch block {
         case .paragraph(_, let text):
-            Text(PiMarkdownText.render(text)).font(.body).lineSpacing(5)
+            Text(FirstMateMentionText.render(text, catalog: catalog)).font(HerdrProse.font(.bubble)).lineSpacing(6)
         case .heading(_, let level, let text):
-            Text(PiMarkdownText.render(text))
+            Text(FirstMateMentionText.render(text, catalog: catalog))
                 .font(level == 1 ? .title2 : level == 2 ? .title3 : .headline)
                 .bold()
                 .padding(.top, 6)
@@ -34,8 +35,8 @@ struct FirstMateMarkdownBlockView: View {
                 }
             }
         case .quote(_, let text):
-            Text(PiMarkdownText.render(text))
-                .font(.body)
+            Text(FirstMateMentionText.render(text, catalog: catalog))
+                .font(HerdrProse.font(.bubble))
                 .lineSpacing(4)
                 .foregroundStyle(.secondary)
                 .padding(.leading, 14)

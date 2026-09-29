@@ -16,8 +16,8 @@ final class HerdrFirstMateUITests: XCTestCase {
         composer.tap()
         composer.typeText("Check accessibility before implementation.")
         app.buttons["first-mate-send"].tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "first-mate-message-", "Check accessibility before implementation.")).firstMatch.waitForExistence(timeout: 5))
-        app.buttons["first-mate-open-workflow"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Check accessibility before implementation.")).firstMatch.waitForExistence(timeout: 5))
+        openWorkflow(app)
         XCTAssertTrue(app.descendants(matching: .any)["first-mate-workflow"].waitForExistence(timeout: 5))
         try capture("iphone-light-workflow", app: app)
         let documents = app.buttons["first-mate-visit-documents-demo-plan"]
@@ -34,13 +34,14 @@ final class HerdrFirstMateUITests: XCTestCase {
     @MainActor
     func testSevenReviewersRemainAvailableBehindGraph() throws {
         let app = launchDemo(appearance: "dark")
-        let next = app.buttons["first-mate-demo-next"]
-        XCTAssertTrue(next.waitForExistence(timeout: 5))
-        next.tap()
-        next.tap()
         openFeature(app)
+        for _ in 0..<2 {
+            app.buttons["first-mate-feature-options"].tap()
+            let next = app.buttons["first-mate-demo-next"]
+            XCTAssertTrue(next.waitForExistence(timeout: 5)); next.tap()
+        }
         try capture("iphone-dark-conversation", app: app)
-        app.buttons["first-mate-open-workflow"].tap()
+        openWorkflow(app)
         let graph = app.buttons["Graph"]
         XCTAssertTrue(graph.waitForExistence(timeout: 5))
         graph.tap()
@@ -91,7 +92,7 @@ final class HerdrFirstMateUITests: XCTestCase {
         composer.tap()
         composer.typeText("Start with a plan and an architecture review.")
         app.buttons["first-mate-send"].tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "first-mate-message-", "Start with a plan and an architecture review.")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Start with a plan and an architecture review.")).firstMatch.waitForExistence(timeout: 5))
         try capture("iphone-new-feature", app: app)
         app.terminate()
     }
@@ -105,10 +106,9 @@ final class HerdrFirstMateUITests: XCTestCase {
         let composer = app.descendants(matching: .any)["first-mate-composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         XCTAssertTrue(composer.isHittable)
-        let workflow = app.buttons["first-mate-open-workflow"]
-        XCTAssertTrue(workflow.isHittable)
+        XCTAssertTrue(app.buttons["first-mate-chat-inspector-toggle"].isHittable)
         try capture("iphone-accessibility-conversation", app: app)
-        workflow.tap()
+        openWorkflow(app)
         XCTAssertTrue(app.descendants(matching: .any)["first-mate-workflow"].waitForExistence(timeout: 5))
         try capture("iphone-accessibility-workflow", app: app)
         app.terminate()
@@ -121,6 +121,13 @@ final class HerdrFirstMateUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["first-mate-feature-demo1-demo-session-continuity"].waitForExistence(timeout: 10))
         return app
+    }
+
+    @MainActor
+    private func openWorkflow(_ app: XCUIApplication) {
+        app.buttons["first-mate-chat-inspector-toggle"].tap()
+        let workflow = app.buttons["first-mate-tab-workflow"]
+        XCTAssertTrue(workflow.waitForExistence(timeout: 5)); workflow.tap()
     }
 
     @MainActor

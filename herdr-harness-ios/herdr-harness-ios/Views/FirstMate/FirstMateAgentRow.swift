@@ -4,6 +4,7 @@ struct FirstMateAgentRow: View {
     @Bindable var store: FirstMateStore
     let agent: FirstMateAssignment
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.firstMateHighlightedAssignment) private var highlighted
 
     private var sessions: [FirstMateSession] { store.snapshot?.sessions(for: agent.id) ?? [] }
     private var canOpen: Bool { agent.nativeSessionID != nil || !sessions.isEmpty }
@@ -63,12 +64,14 @@ struct FirstMateAgentRow: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(FirstMatePalette(scheme: scheme).background, in: .rect(cornerRadius: 14))
             .overlay {
-                RoundedRectangle(cornerRadius: 14).strokeBorder(FirstMatePalette(scheme: scheme).line, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 14).strokeBorder(highlighted == agent.id ? HerdrTheme.accent : FirstMatePalette(scheme: scheme).line, lineWidth: highlighted == agent.id ? 2 : 1)
             }
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(!canOpen)
+        .accessibilityValue(highlighted == agent.id ? "Mentioned agent" : "")
+        .id(agent.id)
         .accessibilityHint(canOpen ? "Opens this agent's exact saved session and handoff history" : "This agent has not registered a saved session yet")
         .accessibilityIdentifier("first-mate-agent-\(agent.id)")
     }

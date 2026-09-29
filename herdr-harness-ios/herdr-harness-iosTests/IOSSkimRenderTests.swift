@@ -11,11 +11,18 @@ final class IOSSkimRenderTests: XCTestCase {
     private let harness = IOSNativeRenderHarness()
     private let width: CGFloat = 390
 
+    private func bubble(_ message: FirstMateMessage, state: SkimReadingState = SkimReadingState()) -> some View {
+        FirstMateChatBubble(row: .init(message: message, speaker: .firstMate, isFirstInGroup: true, isLastInGroup: true),
+            snapshot: FirstMateSnapshot(feature: ChatFixtures.feature(message.featureID)), maximumWidth: 350,
+            skimState: state, catalog: .init(entries: []), sendReply: { _ in }, presentationChanged: { _, _ in })
+            .herdrFirstMateChrome()
+    }
+
     func testFirstMateSkimRowShowsSentenceCaveatChipNextStepAndFooter() async throws {
         for dynamicType in [IOSNativeRenderHarness.DynamicTypeFixture.defaultSize, .accessibility3] {
             let message = SkimFixture.checkoutMessage(skim: SkimFixture.checkoutSkim())
             let render = await harness.render(
-                FirstMateMessageView(message: message, skimState: SkimReadingState()).padding(20),
+                bubble(message).padding(20),
                 width: width,
                 dynamicType: dynamicType
             )
@@ -45,10 +52,10 @@ final class IOSSkimRenderTests: XCTestCase {
         }
     }
 
-    func testFirstMateSkimStaysLegibleInLight() async throws {
+    func testBubbleSkimRemainsDarkUnderLightEnvironment() async throws {
         let message = SkimFixture.checkoutMessage(skim: SkimFixture.checkoutSkim())
         let render = await harness.render(
-            FirstMateMessageView(message: message, skimState: SkimReadingState())
+            bubble(message)
                 .padding(20)
                 .background(FirstMatePalette(scheme: .light).background)
                 .environment(\.colorScheme, .light),
@@ -63,7 +70,7 @@ final class IOSSkimRenderTests: XCTestCase {
     func testPendingSkimShowsSkimmingAndTheFullReply() async throws {
         let message = SkimFixture.checkoutMessage(skim: SkimFixture.checkoutSkim(.pending))
         let render = await harness.render(
-            FirstMateMessageView(message: message, skimState: SkimReadingState()).padding(20),
+            bubble(message).padding(20),
             width: width,
             dynamicType: .defaultSize
         )
@@ -81,7 +88,7 @@ final class IOSSkimRenderTests: XCTestCase {
         edited.text += "\n\nOne more synthetic line."
         for (name, message) in [("failed", failed), ("mismatched", edited)] {
             let render = await harness.render(
-                FirstMateMessageView(message: message, skimState: SkimReadingState()).padding(20),
+                bubble(message).padding(20),
                 width: width,
                 dynamicType: .defaultSize
             )
@@ -97,7 +104,7 @@ final class IOSSkimRenderTests: XCTestCase {
         let state = SkimReadingState()
         state.toggleFullReply(message.id)
         let full = await harness.render(
-            FirstMateMessageView(message: message, skimState: state).padding(20),
+            bubble(message, state: state).padding(20),
             width: width,
             dynamicType: .defaultSize
         )
@@ -109,7 +116,7 @@ final class IOSSkimRenderTests: XCTestCase {
         let reader = try XCTUnwrap(SkimFixture.checkoutReader())
         state.showInReply(messageID: message.id, refs: ["s2", "s3"], reader: reader)
         let highlighted = await harness.render(
-            FirstMateMessageView(message: message, skimState: state).padding(20),
+            bubble(message, state: state).padding(20),
             width: width,
             dynamicType: .defaultSize
         )

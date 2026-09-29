@@ -18,6 +18,12 @@ struct FirstMateCreateSheet: View {
     @FocusState private var focusedField: Field?
     private enum Field: Hashable { case title, goal, folder }
 
+    init(model: HerdrAppModel, fleet: FirstMateMobileFleetStore,
+         onCreated: @escaping (FirstMateFeatureTarget) -> Void, initialGoal: String = "") {
+        self.model = model; self.fleet = fleet; self.onCreated = onCreated
+        _goal = State(initialValue: initialGoal)
+    }
+
     private var destinationStore: FirstMateStore? { fleet.creationMachineID.flatMap { fleet.store(forMachineID: $0) } }
     private var destinationName: String? { fleet.creationMachineID.map { model.machineName($0) } }
     private var canCreate: Bool {

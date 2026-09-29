@@ -24,9 +24,9 @@ final class HerdrFirstMateConversationsUITests: XCTestCase {
         reach(receipt, app)
         receipt.tap()
         XCTAssertTrue(app.descendants(matching: .any)["first-mate-composer"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.navigationBars["Receipt export"].exists)
+        XCTAssertTrue(app.buttons["first-mate-chat-title"].label.contains("Receipt export"))
         try capture("phase2-existing-receipt-chat", app)
-        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["first-mate-chat-back"].tap()
         app.buttons["first-mate-chat-search-toggle"].tap()
         let search = app.textFields["first-mate-chat-search"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -66,8 +66,8 @@ final class HerdrFirstMateConversationsUITests: XCTestCase {
         try capture("phase2-create-capped", app)
         submit.tap()
         XCTAssertTrue(app.descendants(matching: .any)["first-mate-composer"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.navigationBars["Synthetic phone checklist"].exists)
-        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons["first-mate-chat-title"].label.contains("Synthetic phone checklist"))
+        app.buttons["first-mate-chat-back"].tap()
         let receipt = app.buttons["first-mate-feature-demo1-demo-receipts"]
         reach(receipt, app)
         receipt.swipeLeft()

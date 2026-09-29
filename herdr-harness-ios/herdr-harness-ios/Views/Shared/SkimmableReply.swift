@@ -46,9 +46,12 @@ struct SkimmableReply<FullReply: View>: View {
     let reader: FirstMateSkimReader?
     let style: SkimStyle
     let state: SkimReadingState
+    var presentationChanged: (Bool) -> Void = { _ in }
     @ViewBuilder let fullReply: () -> FullReply
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.openURL) private var openURL
+    @Environment(\.firstMateMentionCatalog) private var mentionCatalog
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var askDot: CGFloat = 7
     @State private var presented: SkimExcerptRequest?
@@ -56,6 +59,8 @@ struct SkimmableReply<FullReply: View>: View {
     var body: some View {
         content
             .transaction { $0.animation = nil }
+            .onChange(of: presented != nil) { _, shown in presentationChanged(shown) }
+            .onDisappear { presentationChanged(false) }
             .sheet(item: sheetBinding) { request in
                 excerpt(request, presentation: .sheet)
                     .presentationDetents([.medium, .large])
@@ -116,7 +121,7 @@ struct SkimmableReply<FullReply: View>: View {
         font: Font,
         color: Color
     ) -> some View {
-        Text(SkimText.attributed(tokens, style: style, color: color, openAnchorID: presented?.anchorID))
+        Text(FirstMateMentionText.link(SkimText.attributed(tokens, style: style, color: color, openAnchorID: presented?.anchorID), catalog: mentionCatalog))
             .font(font)
             .lineSpacing(style.lineSpacing)
             .foregroundStyle(color)
@@ -125,7 +130,7 @@ struct SkimmableReply<FullReply: View>: View {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.openURL, OpenURLAction { url in
-                guard let id = SkimText.anchorID(in: url) else { return .systemAction }
+                guard let id = SkimText.anchorID(in: url) else { openURL(url); return .handled }
                 openAnchor(id, reader: reader, source: source)
                 return .handled
             })

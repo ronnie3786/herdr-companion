@@ -3,13 +3,14 @@ import SwiftUI
 struct FirstMateMarkdownTableView: View {
     let table: PiMarkdownTable
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.firstMateMentionCatalog) private var catalog
 
     var body: some View {
         ScrollView(.horizontal) {
             Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
                 GridRow {
                     ForEach(Array(table.headers.enumerated()), id: \.offset) { _, header in
-                        Text(PiMarkdownText.render(header))
+                        Text(FirstMateMentionText.render(header, catalog: catalog))
                             .font(.subheadline.weight(.semibold))
                             .frame(minWidth: 120, idealWidth: 160, maxWidth: 220, alignment: .leading)
                             .padding(12)
@@ -19,7 +20,7 @@ struct FirstMateMarkdownTableView: View {
                 ForEach(Array(table.rows.enumerated()), id: \.offset) { _, cells in
                     GridRow {
                         ForEach(Array(cells.enumerated()), id: \.offset) { column, cell in
-                            Text(PiMarkdownText.render(cell))
+                            Text(FirstMateMentionText.render(cell, catalog: catalog))
                                 .font(.subheadline)
                                 .frame(minWidth: 120, idealWidth: 160, maxWidth: 220, alignment: .leading)
                                 .padding(12)

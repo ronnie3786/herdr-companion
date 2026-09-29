@@ -2,14 +2,15 @@ import SwiftUI
 
 struct FirstMateMarkdownListItemView: View {
     let item: PiMarkdownListItem
+    @Environment(\.firstMateMentionCatalog) private var catalog
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Text(marker).foregroundStyle(.secondary).accessibilityHidden(true)
-            Text(PiMarkdownText.render(item.text))
+            Text(FirstMateMentionText.render(item.text, catalog: catalog))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .font(.body)
+        .font(HerdrProse.font(.bubble))
         .lineSpacing(4)
         .padding(.leading, CGFloat(min(item.depth, 4)) * 12)
         .accessibilityElement(children: .combine)

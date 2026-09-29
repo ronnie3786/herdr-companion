@@ -40,15 +40,17 @@ final class HerdrFirstMateServerUITests: XCTestCase {
         XCTAssertTrue(send.waitForExistence(timeout: 5))
         XCTAssertTrue(send.isEnabled)
         send.tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "first-mate-message-", direction
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(
+            format: "label CONTAINS %@", direction
         )).firstMatch.waitForExistence(timeout: 8))
         let after = try await get("/api/v1/first-mate/features/\(featureID)", origin: origin, token: token)
         let messages = try XCTUnwrap(after["messages"] as? [[String: Any]])
         XCTAssertEqual(messages.filter { $0["text"] as? String == direction }.count, 1)
         XCTAssertEqual((after["visits"] as? [[String: Any]])?.count, visits.count)
 
-        app.buttons["first-mate-open-workflow"].tap()
+        app.buttons["first-mate-chat-inspector-toggle"].tap()
+        let workflow = app.buttons["first-mate-tab-workflow"]
+        XCTAssertTrue(workflow.waitForExistence(timeout: 5)); workflow.tap()
         let docs = app.buttons["first-mate-visit-documents-\(planningID)"]
         XCTAssertTrue(docs.waitForExistence(timeout: 6))
         docs.tap()

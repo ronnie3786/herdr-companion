@@ -9,7 +9,7 @@ struct FirstMateConversation: Identifiable, Equatable, Sendable {
     let title: String
     let label: String
     let emoji: String
-    let hudStatus: FirstMateHudStatus
+    var hudStatus: FirstMateHudStatus
     /// The raw feature status, for views that keep the native wording.
     let featureStatus: String
     /// 0...5, or nil when the step is unknown.
@@ -19,7 +19,7 @@ struct FirstMateConversation: Identifiable, Equatable, Sendable {
     /// One line of plain text, prefixed "You: " when the person sent it.
     let previewText: String
     let previewIsFromUser: Bool
-    let isWorkingOnReply: Bool
+    var isWorkingOnReply: Bool
     let activityAt: Date?
     let latestFirstMateMessageID: String?
     let isUnread: Bool

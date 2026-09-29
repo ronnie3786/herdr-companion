@@ -47,7 +47,7 @@ final class HerdrThemeFoundationUITests: XCTestCase {
         XCTAssertEqual(haze.value as? String, "0")
         setToggle(haze, on: true)
         try capture("phase-0-settings-appearance-402", app)
-        app.tabBars.buttons["First Mate"].tap()
+        app.tabBars.buttons["First Mates"].tap()
         XCTAssertTrue(app.buttons["first-mate-machine-picker"].waitForExistence(timeout: 5))
     }
 

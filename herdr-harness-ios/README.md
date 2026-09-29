@@ -14,16 +14,19 @@ complete and scrollable, and controls retain 44 pt targets. The cap moves app-wi
 in Phase 6. Settings → Appearance saves Glass and Haze independently for this
 phone; passive Reduce Motion/Transparency fallbacks remain, without separate
 release gates. Existing tabs keep their layouts and opaque backgrounds,
-with a deeper neutral palette. The new conversation screens arrive in later
-phases; the legacy First Mate appearance menu is removed in Phase 2. Debug builds
+with a deeper neutral palette. Phase 2 now installs the dark conversations list,
+client-built lead briefing and restyled create/archive sheets; the legacy First
+Mate appearance menu is removed. Existing detail/chat helpers remain until Phase 3. Debug builds
 can open the synthetic theme sample with
 `-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample`. Render outputs go to
 `$HERDR_IOS_RENDER_DIR`. See the [phase plan](../docs/first-mate/ios-chat/IMPLEMENTATION-PLAN.md)
 and [verification guide](../docs/first-mate/ios.md). Phase 1 now adds the shared
 fleet/chat rules, app-active polling, global feature-dot tab badge, exact-owner
-links, fenced read/lead state and concrete authenticated client gaps. Existing
-list/chat screens remain; Phases 2–6 are still planned, with per-phase automated
-verification and one final signed iOS build after Phase 6
+links, fenced read/lead state and concrete authenticated client gaps. Phase 2 adds
+the compact bar, lead + six needs-you pins with overflow, two-line recency rows,
+and shared reply-progress projection for rows and the global badge. Phases 3–6
+are still planned, with per-phase automated verification and one final signed
+iOS build after Phase 6
 rather than intermediate phone-test pauses. No first-push approval gate remains.
 No server update, Mac release or Phase 7 work is included. Lead metadata never
 replaces saved connection identity; unknown/ambiguous link origins do not fall
@@ -32,13 +35,15 @@ budget, with 90-second uploads, 120-second voice and 15-second reads. These are
 transport/data foundations, not completion of the later composer or lead UI.
 
 
-The **First Mate** tab brings the feature workspace to iPhone and iPad. It opens
-on **All Machines**, combining features from every configured host with items
-waiting for your direction first; each combined card names its host. The host
+The **First Mates** tab opens on **All Machines**, with needs-you features in a
+pinned avatar strip and a flat activity-sorted conversation list. Visible names
+honor shared user presentation metadata. Working replies use the shared progress
+projection immediately, without changing native feature status or creating a
+store per row; the global badge stays independent of scope/search. The host
 menu also lists every machine individually, and choosing one filters the list to
 it. An explicit choice is remembered until you change it, and a host removed from
 the roster falls back to All Machines rather than another machine. Search matches
-title, goal, ticket, or machine name, and **Show archived** applies across the
+title, user label, preview, goal, ticket or machine name, and **Show archived** applies across the
 hosts in scope.
 
 Talk to one First Mate per feature, then inspect its workflow, independent agents,
@@ -49,8 +54,10 @@ destination clears the previous folder. Every message, archive action, and saved
 resource resolves the machine that owns the feature, even when two hosts share a
 feature ID. One offline or older companion shows its own notice without hiding a
 healthy host's features. iPhone uses focused detail sheets; iPad keeps a feature
-sidebar and a trailing inspector. Choose System, Light, or Dark from First Mate
-options.
+sidebar and a trailing inspector. First Mates is dark-only, with capped `.xxxLarge`
+scaling and full readable messages. My First Mate currently opens an explicitly
+client-built briefing; the real lead conversation remains Phase 4. Swipe/context
+archive actions capture the exact owner and roll back optimistic removal on error.
 
 The matching companion server with `first-mate-v1` is required. Work continues on
 that host when the phone app closes. The scope preference is versioned; a missing

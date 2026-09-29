@@ -11,14 +11,44 @@ import Foundation
 enum FirstMateMobileDemo {
     static func initialSnapshots(forMachineID machineID: String) -> [FirstMateSnapshot]? {
         guard machineID == "demo1" else { return nil }
-        // Retain the old list's synthetic identifiers while the replacement
-        // conversation UI is not installed yet.
+        #if DEBUG
+        if FirstMateListPerformanceProbe.enabled { return performanceSnapshots() + [FirstMateDemo.chatWindowLead()] }
+        #endif
+        // Keep existing automation fixtures alongside the curated chat dataset;
+        // their IDs remain valid through the list-to-detail transition.
         return FirstMateDemo.features(step: 0) + FirstMateDemo.chatWindowFeatures() + [FirstMateDemo.chatWindowLead()]
     }
 
     static func chatFleet(forMachineID machineID: String) -> [FirstMateFleetEntry] {
-        machineID == "demo1" ? FirstMateDemo.chatWindowFleet() : []
+        guard machineID == "demo1" else { return [] }
+        #if DEBUG
+        if FirstMateListPerformanceProbe.enabled {
+            return performanceSnapshots().enumerated().map { index, snapshot in
+                .init(featureID: snapshot.feature.id, title: snapshot.feature.title, status: snapshot.feature.status,
+                      hudStatus: index < 8 ? .blocked : .working, stepIndex: 1,
+                      latestMessage: .init(id: "reply-\(index)", role: "assistant", text: "Synthetic update \(index). No agents launched.", createdAt: snapshot.feature.updatedAt),
+                      latestFirstMateMessageID: "reply-\(index)", unread: index < 8, activityAt: snapshot.feature.updatedAt)
+            }
+        }
+        #endif
+        return FirstMateDemo.chatWindowFleet()
     }
+
+    #if DEBUG
+    static func performanceSnapshots() -> [FirstMateSnapshot] { performanceFixture }
+
+    private static let performanceFixture: [FirstMateSnapshot] = {
+        let formatter = ISO8601DateFormatter()
+        return (0..<100).map { index in
+            let id = String(format: "performance-%03d", index)
+            var feature = FirstMateDemo.newFeature(title: String(format: "Performance conversation %03d", index),
+                goal: "A wholly synthetic scrolling fixture.", cwd: "/workspace/synthetic", id: id).feature
+            feature.status = index < 8 ? "blocked" : "running"
+            feature.updatedAt = formatter.string(from: Date(timeIntervalSince1970: 1_900_000_000 - Double(index)))
+            return FirstMateSnapshot(feature: feature)
+        }
+    }()
+    #endif
 
     /// Extra synthetic snapshots owned by one demo host. Nothing is fetched,
     /// nothing leaves the device, and every value is invented.

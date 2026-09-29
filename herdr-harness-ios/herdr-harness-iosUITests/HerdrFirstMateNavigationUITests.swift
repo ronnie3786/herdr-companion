@@ -36,7 +36,7 @@ final class HerdrFirstMateNavigationUITests: XCTestCase {
             "The host edit must save successfully before checking navigation. "
             + "Run this test with simulator code signing enabled so Keychain remains available. "
             + "Visible alert: \(app.alerts.firstMatch.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " "))")
-        tapTab("First Mate", app: app)
+        tapTab("First Mates", app: app)
 
         XCTAssertTrue(secondFeature.waitForExistence(timeout: 5))
         for _ in 0..<6 where !secondFeature.isHittable { scrollUp(app) }
@@ -45,7 +45,7 @@ final class HerdrFirstMateNavigationUITests: XCTestCase {
         secondFeature.tap()
         let composer = app.descendants(matching: .any)["first-mate-composer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.navigationBars["Make review evidence searchable"].exists)
+        XCTAssertTrue(app.navigationBars["Review search"].exists)
         composer.tap()
         composer.typeText("Continue the search feature after reconnecting.")
         app.buttons["first-mate-send"].tap()
@@ -59,7 +59,7 @@ final class HerdrFirstMateNavigationUITests: XCTestCase {
     @MainActor
     private func scrollUp(_ app: XCUIApplication) {
         // On iPad the swipe must land on the sidebar list, not the detail column.
-        let list = app.scrollViews["first-mate-feature-list"]
+        let list = app.collectionViews["first-mate-feature-list"]
         if list.exists {
             list.swipeUp()
         } else {

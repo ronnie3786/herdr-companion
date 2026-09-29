@@ -31,6 +31,7 @@ final class FirstMateMobileChatState {
     @ObservationIgnored private var openingLeads: [String: UUID] = [:]
     @ObservationIgnored private var failedReads: [FirstMateFleetFeatureID: FailedRead] = [:]
     @ObservationIgnored private var conversationCache: (hosts: [FirstMateFleetHost], read: FirstMateReadState, rows: [FirstMateConversation])?
+    @ObservationIgnored private var rowPresentations: [FirstMateFleetFeatureID: FirstMateConversation] = [:]
     @ObservationIgnored var clock: () -> Date = Date.init
     static let pinnedKey = "herdr.ios.firstMate.lead.pinned"
 
@@ -67,6 +68,7 @@ final class FirstMateMobileChatState {
             || Set(nextTokens.keys) != Set(sources.keys) {
             beginNavigation()
         }
+        rowPresentations = rowPresentations.filter { retained.contains($0.key.machineID) }
         readState.overrides = readState.overrides.filter { retained.contains($0.key.machineID) }
         leadReadObservations = leadReadObservations.filter { retained.contains($0.key.machineID) }
         failedReads = failedReads.filter { retained.contains($0.key.machineID) }
@@ -93,6 +95,7 @@ final class FirstMateMobileChatState {
     func retire() {
         beginNavigation()
         leadReadObservations = [:]
+        rowPresentations = [:]
         index.activate(sources: [], connectionGeneration: generation + 1)
         sources = [:]; tokens = [:]; failedReads = [:]; openingLeads = [:]
         readState = FirstMateReadState(); selection = nil; route = nil
@@ -151,12 +154,37 @@ final class FirstMateMobileChatState {
         }
     }
 
+    func knownPresentation(for target: FirstMateFeatureTarget) -> FirstMateConversation? {
+        rowPresentations[.init(machineID: target.machineID, featureID: target.featureID)]
+    }
+
     func conversations(fleet: FirstMateMobileFleetStore) -> [FirstMateConversation] {
         let hosts = hosts(fleet: fleet)
-        if let cache = conversationCache, cache.hosts == hosts, cache.read == readState { return cache.rows }
-        let rows = FirstMateConversationList.build(hosts: hosts, readState: readState)
-        conversationCache = (hosts, readState, rows)
-        return rows
+        let rows: [FirstMateConversation]
+        if let cache = conversationCache, cache.hosts == hosts, cache.read == readState {
+            rows = cache.rows
+        } else {
+            let leadIDs = Set(hosts.compactMap { host in
+                host.lead.map { FirstMateFleetFeatureID(machineID: host.machineID, featureID: $0.feature.id) }
+            })
+            rows = FirstMateConversationList.build(hosts: hosts, readState: readState).filter { !leadIDs.contains($0.id) }
+            conversationCache = (hosts, readState, rows)
+            for row in rows { rowPresentations[row.id] = row }
+        }
+        // Cache only fleet-derived rows. Reading existing stores outside that
+        // cache observes local outgoing/snapshot changes immediately, without
+        // creating a store per rendered row or retaining a stale pending flag.
+        return rows.compactMap { row in
+            let store = fleet.store(forMachineID: row.machineID)
+            let feature = hosts.first(where: { $0.machineID == row.machineID })?.features.first { $0.id == row.featureID }
+            if let cached = store?.snapshots[row.featureID]?.feature, cached.isArchived,
+               cached.revision >= (feature?.revision ?? 0) { return nil }
+            let pending = FirstMateReplyProgress.isLocalReplyPending(
+                outgoing: store?.outgoingMessages(for: row.featureID) ?? [], snapshot: store?.snapshots[row.featureID],
+                hostFeatureUpdatedAt: feature?.updatedAt, fleetLatestFirstMateMessageID: row.latestFirstMateMessageID
+            )
+            return FirstMateReplyProgress.presenting(row, workingOnReply: row.isWorkingOnReply || pending)
+        }
     }
 
     func leadChoice(fleet: FirstMateMobileFleetStore) -> FirstMateLeadMachine.Choice {

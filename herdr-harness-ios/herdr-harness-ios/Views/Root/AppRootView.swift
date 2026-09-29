@@ -129,7 +129,7 @@ struct AppRootView: View {
 
     private var appTabs: some View {
         TabView(selection: Binding(get: { model.selectedTab }, set: { model.selectTab($0) })) {
-            Tab("First Mate", systemImage: "sailboat", value: .firstMate) {
+            Tab("First Mates", systemImage: "sailboat", value: .firstMate) {
                 FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
             }
             .badge(model.firstMateFleet.badgeCount)

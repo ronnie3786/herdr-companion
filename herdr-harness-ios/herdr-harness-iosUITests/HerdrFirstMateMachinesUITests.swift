@@ -50,7 +50,7 @@ final class HerdrFirstMateMachinesUITests: XCTestCase {
         XCTAssertTrue(picker.label.contains("desktop"), "Opening a feature must not change the browsing scope")
 
         tapTab("Agents", app: app)
-        tapTab("First Mate", app: app)
+        tapTab("First Mates", app: app)
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertTrue(picker.label.contains("desktop"), "Returning from another tab must not narrow the scope")
         assertAbsent(app.buttons["first-mate-feature-demo2-demo-session-continuity"], app: app)
@@ -188,7 +188,7 @@ final class HerdrFirstMateMachinesUITests: XCTestCase {
     @MainActor
     private func scrollUp(_ app: XCUIApplication) {
         // On iPad the swipe must land on the sidebar list, not the detail column.
-        let list = app.scrollViews["first-mate-feature-list"]
+        let list = app.collectionViews["first-mate-feature-list"]
         if list.exists {
             list.swipeUp()
         } else {

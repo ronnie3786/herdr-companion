@@ -11,18 +11,18 @@ Phase 0 adds the dark-only Mono × Herdr theme foundation: a cached dusk image,
 6% haze band, static glass levels, touch-sized recipes, Dynamic Type fonts, and
 First Mate avatar primitives. **Settings → Appearance → Glass / Haze** stores
 phone-local preferences, both on by default; Reduce Transparency keeps surfaces
-opaque without discarding either preference. The new chrome is exercised in the
-synthetic theme sample and will be installed on the new conversations screen in
-Phase 2. Existing screens keep their layouts and opaque backgrounds in this
-phase, with legacy color names mapped onto the deeper Mono palette. The legacy
-First Mate appearance menu remains until its Phase 2 replacement.
+opaque without discarding either preference. Phase 2 installs the chrome on the
+new conversations screen, client-built briefing and create/archive sheets. The
+**First Mates** tab is dark-only; the legacy System/Light/Dark menu is removed.
+Other app tabs keep their existing layouts and opaque backgrounds until Phase 6.
 
 Selected and pressed rows in the new chrome share the quiet 6% `codeFill`
 background with 10 pt corners; message bubbles keep 18 pt corners. New First Mate
 chrome caps Dynamic Type at `.xxxLarge`, including UIKit-hosted Markdown and
 metric-scaled controls. This limits scaling, **not message length**: complete
 messages remain readable and scrollable, with at least 44 pt control targets.
-Existing screens stay uncapped until the app-wide Phase 6 adoption. Working
+The retained First Mate detail/chat also inherits this cap without shortening its
+transcript. Other tabs stay uncapped until the app-wide Phase 6 adoption. Working
 passive OS motion/transparency fallbacks remain; they are not independent release
 gates or a separate test matrix.
 
@@ -30,7 +30,8 @@ The [implementation plan](ios-chat/IMPLEMENTATION-PLAN.md) and its three researc
 inventories travel with the source. Those inventories describe the original
 baseline, not a promise that later phases are already implemented. No Mac view,
 shared First Mate behavior, or server contract changes in Phase 0. Phase 1 now
-provides the shared/mobile data layer below; Phases 2–6 remain unimplemented.
+provides the shared/mobile data layer below. Phase 2 adds the conversations UI;
+full chat/lead/composer/Info replacements in Phases 3–6 remain unimplemented.
 Each phase retains automated verification/review/landing gates,
 without a first-push approval or per-phase device-test pause. One final signed iOS
 build is delivered after Phase 6; Phase 7, Mac releases, server deployment and
@@ -53,7 +54,7 @@ synthetic data.
 
 ## Phase 1 data layer
 
-The existing list and chat remain available. The First Mate tab now shows a
+The data layer serves the Phase 2 list and the retained chat. The First Mates tab shows a
 **global feature-dot badge**: needs-you **and** unread across saved machines,
 independent of search/host scope and excluding lead unread. Older companions
 without fleet summaries keep attention-style dots; opening them does not invent
@@ -96,7 +97,7 @@ retained without changing two-value status catches. This adds transport/data
 support, not the Phase 5 attachment/voice/model UI, and needs no server deployment.
 
 Demo mode adds chat-window features/lead on the first synthetic host while
-retaining legacy fixtures during Phase 1; the second host retains its scenario
+retaining legacy fixture identifiers through the list/detail transition; the second host retains its scenario
 and host-only release-checklist feature. No demo client starts agents or networks.
 Focused coverage includes `FirstMateMobileHTTPContractTests`,
 `FirstMateMobileChatStateTests`, `FirstMateMobileDeepLinkTests`,
@@ -105,29 +106,55 @@ rules/outgoing tests. HTTP tests use URLProtocol/fake clients, not a live agent.
 
 ## Navigation
 
-The **First Mate** tab opens on **All Machines**, combining the features of every
-configured host with items waiting for your direction first. Each combined card
-names its host; the host menu offers All Machines or one machine, and an explicit
-choice is remembered until you change it. Choosing one machine filters the list to
-that machine. Search matches a title, goal, ticket, or machine name. Creating a
-feature from All Machines requires choosing its destination host before a
-repository folder is accepted; a single-machine scope preselects that host.
-Recent folders come only from the chosen destination, and changing the
-destination clears the previous folder. The existing **Agents** tab remains
-available for ordinary Pi conversations.
+The **First Mates** tab opens on **All Machines**. A compact host control sits at
+the leading edge; the trailing glass pill contains Search, New feature and More.
+The host menu retains All Machines/per-machine scope and remembers an explicit
+choice. Search matches presented names, original titles, labels, previews, host
+names, goals and tickets. The lead stays visible only for an empty query or one
+matching “My First Mate”.
 
-Long-press a feature to archive it. The confirmation offers an optional reason,
-states that all records are retained, and explicitly says when work continues.
-Use **Show archived** in First Mate options to reveal an Archived section with an
-Unarchive button on every card. Show archived applies across the hosts in the
-current scope; a companion that does not advertise `first-mate-archive-v1` keeps
-its active list and shows its own update notice.
+The pinned strip starts with an 88pt lead face, then up to **six** needs-you
+features ordered Blocked → Your turn → Ready, with activity-descending ties. A
+separate +N orb scrolls to the first hidden feature. Landscape uses 64pt orbs.
+Below, flat two-line rows are sorted by activity, with 52pt emoji discs, times,
+previews, reason-colored unread dots and status words. Rows use shared
+`FirstMateConversation.name`, respecting user presentation metadata without adding
+a phone name/emoji editor. Machine-qualified identifiers and accessibility labels
+keep same-ID features on different hosts distinct.
+
+The shared `FirstMateReplyProgress` projection reads existing stores outside the
+base row cache: pending local/server replies immediately show working/typing,
+remove needs-you dots/pins, and affect the **same global phone badge**. Failed
+sends and newer activity/replies retire the local bridge; native feature status
+and completed rows are preserved. No store or live blur is created per row.
+
+Tap **My First Mate** for a summary explicitly labeled “Built from your features.
+Not a message from an agent.” This is a client-built briefing, not the Phase 4
+real lead chat. Tap a feature for the existing working chat; long-press → Open
+info opens its existing inspector. Full transcript/composer/Info replacements are
+still later phases.
+
+Creating from All Machines requires an explicit destination before accepting a
+repository folder; single-machine scope preselects that host. Recent folders
+belong to the destination, changing it clears the folder, and submitted values,
+request ID and owner context are frozen before asynchronous work. The capped
+form has Next field/Done keyboard controls. Ordinary Pi chats remain in Agents.
+
+Swipe or long-press a row to archive it. The restyled confirmation captures the
+exact store/lifecycle and optional reason, retains all records and explains when
+work continues. Active removal is optimistic and rolls back on failure; stale
+confirmations cannot target a replacement connection. **More → Show archived**
+uses a separate host-store inventory, not the active-only projection; swipe or
+long-press an archived row to unarchive it. Known presentation names/emoji survive
+local archiving; cold archived inventories use the metadata their host provides.
+Hosts without `first-mate-archive-v1` keep their active list and update guidance.
 
 On iPhone, a feature opens its conversation. Use the feature controls to inspect
 Overview, Workflow, Agents, or Documents, then return to the same conversation.
 On iPad, the feature list stays in a sidebar and an inspector uses the available
-space. First Mate supports System, Light, and Dark appearance from its options
-menu. It uses scalable text and native scrolling and navigation.
+space. This phase retains those detail helpers rather than deleting working chat
+flows early. First Mates uses dark Mono/dusk chrome, capped scalable text and
+native scrolling/navigation; it no longer offers a light appearance.
 
 The conversation holds only your messages and First Mate's replies, stage
 results, and requests for your direction, as on Mac. Background activity,
@@ -150,8 +177,8 @@ Both use the authenticated `first-mate-v1` companion API. The matching server
 release is required; an older server shows an update explanation. Updating the
 phone app does not install or activate a companion server.
 
-The app polls every configured host while First Mate is visible in the
-foreground and refreshes after sending direction. Hosts fail independently: one
+The app polls every configured host while the app is active, including on other
+tabs, and refreshes the selected conversation on its own cadence. Hosts fail independently: one
 offline, stale, or older companion shows its own notice and keeps its cached
 features readable without clearing a healthy peer. Switching features preserves
 their unsent drafts in memory. Returning from another tab or from the background
@@ -186,8 +213,15 @@ Ordinary `-HerdrDemoMode` continues to open the existing Agents experience.
 
 Use the repository's iOS Xcode scheme and verification instructions. Shared
 First Mate contract tests compile into both the iOS and Mac unit-test targets.
-The iOS UI tests cover feature navigation, composing direction, workflow resource
-drilldown, appearance, larger text, and machine scope. `HerdrFirstMateMachinesUITests`
+`FirstMateConversationsRenderTests` exercises native list/row renders at
+320/375/402/430pt and accessibility3 requests capped to `.xxxLarge`, asserting
+control/label geometry and 44pt targets. `HerdrFirstMateConversationsUITests`
+walks host scope, lead briefing, retained chat, search, capped creation/archive
+and unarchive. Debug-only `-HerdrFirstMateListPerformance` (with demo mode) supplies
+100 synthetic rows and a More → List diagnostics counter; tests measure actual
+lazy row-body/visibility counts and scrolling time, not an invented FPS claim.
+The existing iOS UI suites retain feature navigation, composing direction,
+workflow resources, larger text and machine-scope coverage. `HerdrFirstMateMachinesUITests`
 verifies the All Machines default, both demo hosts in the combined list, All →
 one machine → another machine → All, an unchanged scope after detail navigation
 and tab return, an explicit creation destination, and reachable controls at

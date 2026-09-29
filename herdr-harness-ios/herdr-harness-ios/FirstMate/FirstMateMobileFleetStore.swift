@@ -80,7 +80,25 @@ struct FirstMateMobileFleetHost: Identifiable, Equatable, Sendable {
 @MainActor @Observable
 final class FirstMateMobileFleetStore {
     let chat: FirstMateMobileChatState
-    var conversations: [FirstMateConversation] { chat.conversations(fleet: self) }
+    private var pendingArchiveTokens: [FirstMateFeatureTarget: UUID] = [:]
+    var conversations: [FirstMateConversation] {
+        chat.conversations(fleet: self).filter { pendingArchiveTokens[FirstMateMobileListPresentation.target($0)] == nil }
+    }
+    func isArchiving(_ target: FirstMateFeatureTarget) -> Bool { pendingArchiveTokens[target] != nil }
+    /// Archived inventory keeps exact host ownership and the same extended
+    /// search fields as active conversations, including retained user names.
+    var archivedConversations: [FirstMateConversation] {
+        guard showArchived else { return [] }
+        return visibleHosts.flatMap { host in
+            host.features.filter { $0.isArchived && !$0.isLead }.map { feature in
+                let row = FirstMateMobileFleetFeature(target: .init(machineID: host.machineID, featureID: feature.id),
+                                                     machineName: host.machineName, feature: feature)
+                return FirstMateMobileListPresentation.archived(row, known: chat.knownPresentation(for: row.target))
+            }
+        }.filter { FirstMateMobileListPresentation.matches(search.trimmingCharacters(in: .whitespacesAndNewlines),
+            conversation: $0, feature: feature(for: FirstMateMobileListPresentation.target($0))) }
+            .sorted(by: FirstMateMobileListPresentation.moreRecent)
+    }
     /// Global feature dots, independent of host scope, search and lead unread.
     var badgeCount: Int { conversations.count(where: \.showsDot) }
     var leadChoice: FirstMateLeadMachine.Choice { chat.leadChoice(fleet: self) }
@@ -240,6 +258,11 @@ final class FirstMateMobileFleetStore {
     ) async -> Bool {
         guard let store = stores[target.machineID] else { return false }
         if let expectedContext, expectedContext != store.operationContext { return false }
+        guard pendingArchiveTokens[target] == nil else { return false }
+        _ = conversations // Retain the known presentation before optimistic removal.
+        let operation = UUID()
+        if archived { pendingArchiveTokens[target] = operation }
+        defer { if pendingArchiveTokens[target] == operation { pendingArchiveTokens[target] = nil } }
         let archivedSuccessfully = await store.setArchived(
             featureID: target.featureID,
             archived: archived,
@@ -492,6 +515,7 @@ final class FirstMateMobileFleetStore {
             retiredMachineIDs.insert(machineID)
         }
 
+        pendingArchiveTokens = pendingArchiveTokens.filter { !retiredMachineIDs.contains($0.key.machineID) }
         stores = nextStores
         identities = nextIdentities
         if hosts != nextHosts {
@@ -526,6 +550,7 @@ final class FirstMateMobileFleetStore {
     /// Retires every store immediately. Used when the whole app connection is
     /// replaced, so no captured store reference can operate afterwards.
     func retireAll() {
+        pendingArchiveTokens = [:]
         chat.retire()
         lifecycle &+= 1
         refreshGeneration &+= 1

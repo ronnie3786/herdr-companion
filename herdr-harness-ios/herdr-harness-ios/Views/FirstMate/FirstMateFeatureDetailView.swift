@@ -5,6 +5,7 @@ struct FirstMateFeatureDetailView: View {
     let featureID: String
     let machineName: String
     let canControl: Bool
+    var displayName: String? = nil
     var requestedInspector: FirstMateInspector? = nil
     var inspectorRequestID: UUID? = nil
     @Environment(\.colorScheme) private var scheme
@@ -34,7 +35,7 @@ struct FirstMateFeatureDetailView: View {
             }
         }
         .background(FirstMatePalette(scheme: scheme).background)
-        .navigationTitle(snapshot?.feature.title ?? "First Mate")
+        .navigationTitle(displayName ?? snapshot?.feature.title ?? "First Mate")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(scheme, for: .navigationBar)
         .toolbar {

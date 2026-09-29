@@ -605,6 +605,57 @@ struct AgentResultArtifactTests {
         #expect(reloaded.unopenedResultArtifacts.isEmpty)
     }
 
+    @Test("Clear all retires every orb-docked result, keeps session results, and persists")
+    func clearAllOrbResultsPersists() throws {
+        let suiteName = "AgentResultArtifactTests.clear-all-orb"
+        let defaults = try testDefaults(suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"], userDefaults: defaults)
+        let pane = try JSONDecoder().decode(HerdrPane.self, from: Data(
+            #"{"pane_id":"p1","workspace_id":"w1","tab_id":"t1","agent_status":"idle","pi_semantic":{"available":true,"protocol_version":1}}"#.utf8
+        )).stamped(machineID: "development")
+        let link = linkArtifact(id: "orb-link")
+        let file = AgentResultArtifact(
+            id: "orb-file", originType: .agentRun, originID: "run-1", kind: .file,
+            title: "Summary", filename: "summary.txt", contentType: "text/plain", byteSize: 5,
+            createdAt: "2026-09-02T20:00:00Z",
+            downloadPath: "/api/v1/result-artifacts/orb-file/content"
+        )
+        let paneLink = AgentResultArtifact(
+            id: "session-link", originType: .pane, originID: pane.paneID, kind: .link,
+            title: "Session result", createdAt: "2026-09-02T20:00:00Z",
+            url: URL(string: "https://example.com/session-result")
+        )
+        let artifacts = [link, file, paneLink]
+        let orbIDs = [link.id, file.id].map { "development|\($0)" }
+        let paneID = "development|\(paneLink.id)"
+
+        model.ingestResultArtifacts(artifacts, machineID: "development", replacingMachineSlice: true)
+        let before = model.unopenedResultArtifacts.map(\.id)
+        model.dismissResultArtifacts([])
+        #expect(model.unopenedResultArtifacts.map(\.id) == before)
+
+        let projection = HerdrHudSessionChips.chips(
+            panes: [pane], mutedPaneIDs: [], dismissed: [:], revealTitles: true,
+            artifacts: model.unopenedResultArtifacts
+        )
+        #expect(Set(projection.detachedArtifacts.map(\.id)) == Set(orbIDs))
+        #expect(projection.chips.first?.artifacts.map(\.id) == [paneID])
+
+        model.dismissResultArtifacts(HerdrHudOrbResultClearing.clearableArtifacts(
+            projection.detachedArtifacts, phase: model.resultArtifactPhase(id:)
+        ))
+        #expect(orbIDs.allSatisfy { model.resultArtifactPhase(id: $0) == .opened })
+        #expect(model.unopenedResultArtifacts.map(\.id) == [paneID])
+        #expect(model.resultArtifactPhase(id: paneID) == .available)
+
+        let reloaded = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"], userDefaults: defaults)
+        reloaded.ingestResultArtifacts(artifacts, machineID: "development", replacingMachineSlice: true)
+        #expect(reloaded.unopenedResultArtifacts.map(\.id) == [paneID])
+        #expect(orbIDs.allSatisfy { reloaded.resultArtifactPhase(id: $0) == .opened })
+        #expect(reloaded.resultArtifactPhase(id: paneID) == .available)
+    }
+
     @Test("Reading a pane clears only that machine's session outputs and retains inline history")
     func paneReadRetainsResults() throws {
         let suiteName = "AgentResultArtifactTests.pane-read"

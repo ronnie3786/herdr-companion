@@ -1084,6 +1084,40 @@ struct HerdrHudControllerTests {
         #expect(harness.controller.isEnabled)
     }
 
+    @Test("Orb with docked results renders and Clear all retires only orb-docked results")
+    func rendersAndClearsOrbResults() async throws {
+        let harness = makeHarness()
+        defer { harness.controller.setEnabled(false) }
+        let artifacts = [
+            AgentResultArtifact(
+                id: "orb-file", originType: .agentRun, originID: "run-1", kind: .file,
+                title: "Summary", filename: "summary.txt", contentType: "text/plain", byteSize: 5,
+                createdAt: "2026-09-02T20:00:00Z",
+                downloadPath: "/api/v1/result-artifacts/orb-file/content"
+            ),
+            AgentResultArtifact(
+                id: "orb-link", originType: .agentRun, originID: "run-1", kind: .link,
+                title: "Research", createdAt: "2026-09-02T20:00:01Z",
+                url: URL(string: "https://example.com/research")
+            ),
+        ]
+        harness.model.ingestResultArtifacts(artifacts, machineID: "work-mac", replacingMachineSlice: true)
+        #expect(harness.model.unopenedResultArtifacts.count == 2)
+
+        let result = try await HerdrRenderHarness.render("hud-orb-clear-all-results.png", size: CGSize(width: 260, height: 180)) {
+            HerdrHudOrbResultRow(
+                model: harness.model, controller: harness.controller, session: harness.session,
+                artifacts: harness.model.unopenedResultArtifacts
+            )
+        }
+        result.expectSubstantial(minimumBytes: 4000)
+
+        harness.model.dismissResultArtifacts(HerdrHudOrbResultClearing.clearableArtifacts(
+            harness.model.unopenedResultArtifacts, phase: harness.model.resultArtifactPhase(id:)
+        ))
+        #expect(harness.model.unopenedResultArtifacts.isEmpty)
+    }
+
     @Test("A detected chord is visible before the capture resolves and records its route and signal")
     func chordTriggerIsObservable() async throws {
         let barrier = ScreenshotCaptureBarrier()

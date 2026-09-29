@@ -292,7 +292,7 @@ private struct FirstMateHudMicButton: View {
     }
 }
 
-/// Rename a feature (24 characters at most) or change its emoji.
+/// Rename a feature (100 characters at most) or change its emoji.
 struct FirstMateHudEditorCard: View {
     @Bindable var controller: FirstMateHudController
     let item: FirstMateHudItem
@@ -323,8 +323,8 @@ struct FirstMateHudEditorCard: View {
                     .frame(height: 32)
                     .background(RoundedRectangle(cornerRadius: HerdrTheme.Radius.composer).fill(HerdrTheme.fieldFill))
                     .onChange(of: controller.editorLabel) { _, value in
-                        if value.count > FirstMateHudEditing.labelLimit {
-                            controller.editorLabel = String(value.prefix(FirstMateHudEditing.labelLimit))
+                        if FirstMateHudEditing.labelLength(value) > FirstMateHudEditing.labelLimit {
+                            controller.editorLabel = FirstMateHudEditing.clippedLabel(value)
                         }
                     }
                     .onSubmit { controller.saveEditor(for: item.id) }
@@ -339,7 +339,7 @@ struct FirstMateHudEditorCard: View {
                 }
             }
             HStack {
-                Text("\(controller.editorLabel.count)/\(FirstMateHudEditing.labelLimit)")
+                Text("\(FirstMateHudEditing.labelLength(controller.editorLabel))/\(FirstMateHudEditing.labelLimit)")
                     .font(.system(size: 10).monospacedDigit())
                     .foregroundStyle(HerdrTheme.tertiaryText)
                 Spacer()

@@ -13,8 +13,29 @@ comparison and AI inspection contract.
 2. Use the **Chat / Git** control above the feature. Switching views does not
    replace the First Mate store, so its draft, conversation, selected workflow
    visit, and inspector state remain intact.
-3. In Git, choose **Project workspace** (the default) or one of the assignment
-   worktrees recorded by that feature.
+3. Git opens the feature's uniquely identifiable tracked branch. The header
+   names the actual branch and checkout, and **Branch changes** compares its
+   committed changes against the current target merge base (preferring
+   `origin/develop` when it exists). **Working files** shows staged, unstaged,
+   and untracked edits.
+
+Assignments sharing a checkout appear once. The checkout menu puts the feature
+branch and project checkout first, with historical workers under **Other
+checkouts**. An explicit choice is retained when switching to Chat and back or
+refreshing; pop-out windows and recorded commit links stay on their exact target.
+
+The default uses local Git's actual branch, upstream, target, and repository
+identity, never task titles, ticket text, assignment order, or a "latest" worker.
+A unique tracked branch in the feature's recorded repository takes priority. A
+single recorded worker checkout is also unambiguous; a feature with only its
+project uses that checkout. Multiple candidates require an explicit choice.
+No network fetch, branch switch, or worktree creation occurs when opening Git.
+
+**All branch changes** returns to the current target comparison. Opening a
+recorded workflow commit keeps its captured historical baseline, so inspecting
+older work does not rewrite its evidence. The working-tree revision option
+includes both committed branch changes and uncommitted edits relative to the
+selected earlier revision.
 
 **Compare commits** opens the recorded baseline against the latest commit.
 The baseline is the target branch's merge-base captured when workflow tracking
@@ -39,9 +60,9 @@ Real URL, credential, feature, or workspace changes still load the new target.
 This correction applies to pane Git and pop-out Git views too, without a server
 update.
 
-The picker never guesses the newest worker, borrows the active Chat pane, uses a
-terminal's current directory, or creates a shell. Concurrent workers are distinct
-choices. Paths are visible for context but are not editable selectors. A worktree
+The picker never borrows the active Chat pane, uses a terminal's current directory,
+or creates a shell. Concurrent checkouts remain distinct choices. Paths are
+visible for context but are not editable selectors. A worktree
 that has since been removed stays listed and reports that it is unavailable; it
 never falls back to the project checkout.
 
@@ -64,7 +85,11 @@ feature.
 
 ## Compatibility and limitations
 
-The companion must advertise `first-mate-git-v1`. An older companion shows a
+The companion must advertise `first-mate-git-v1`. The feature checkout default,
+deduplicated catalog, and current target comparison require the matching companion
+update. The catalog's additive fields preserve compatibility with older clients;
+an updated Mac connected to an older Git-capable companion retains its project
+default until that companion is updated. An older companion without Git shows a
 server-update message. First Mate Git does not require a live terminal pane: an
 authenticated capability and catalog response from the owning companion is
 enough. An unreachable or removed owning host, missing project directory,
@@ -91,9 +116,13 @@ authenticated native web container.
 
 - [ ] Select a feature, type an unsent Chat draft, switch to Git and back, and
       confirm the draft and workflow/inspector selection remain.
-- [ ] Confirm Project workspace is selected initially and its path is visible.
-- [ ] Choose two recorded assignment worktrees and confirm each shows its own
-      status without choosing a "latest" worker implicitly.
+- [ ] With a project on `develop` and a recorded worktree tracking a feature
+      branch, confirm Git opens the feature branch and shows only its changes
+      against `develop`, including after merging newer `develop` changes.
+- [ ] Confirm multiple assignments sharing one checkout appear once, historical
+      checkouts are grouped, and multiple tracked feature branches ask for a choice.
+- [ ] Choose the project explicitly, refresh, and switch to Chat and back;
+      confirm the explicit choice survives. Existing assignment links still work.
 - [ ] Remove a recorded worktree and confirm retry reports it unavailable without
       showing the project checkout.
 - [ ] Exercise working-tree diff, staged/unstaged changes, untracked files,

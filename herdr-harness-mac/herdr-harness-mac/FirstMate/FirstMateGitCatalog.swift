@@ -28,28 +28,32 @@ final class FirstMateGitCatalog {
     private(set) var phase = Phase.idle
     private(set) var workspaces: [FirstMateGitWorkspace] = []
     private(set) var featureTitle: String?
+    private(set) var recommendedWorkspaceID: String?
+    private(set) var selectionMessage: String?
     private(set) var selectedWorkspaceID: String
     private(set) var identity: FirstMateGitCatalogIdentity?
     let pinnedWorkspaceID: String?
 
-    private let initialWorkspaceID: String
+    private let initialWorkspaceID: String?
+    private var needsInitialSelection = true
     private var requestGeneration = 0
 
-    init(pinnedWorkspaceID: String? = nil, initialWorkspaceID: String = "project") {
+    init(pinnedWorkspaceID: String? = nil, initialWorkspaceID: String? = nil) {
         self.pinnedWorkspaceID = pinnedWorkspaceID
         self.initialWorkspaceID = initialWorkspaceID
-        selectedWorkspaceID = pinnedWorkspaceID ?? initialWorkspaceID
+        selectedWorkspaceID = pinnedWorkspaceID ?? initialWorkspaceID ?? ""
     }
 
     var isPinned: Bool { pinnedWorkspaceID != nil }
 
     var selectedWorkspace: FirstMateGitWorkspace? {
-        workspaces.first { $0.id == selectedWorkspaceID }
+        workspaces.first { $0.matches(selectedWorkspaceID) }
     }
 
     func selectWorkspace(id: String) {
         guard pinnedWorkspaceID == nil else { return }
         selectedWorkspaceID = id
+        needsInitialSelection = false
     }
 
     func reset() {
@@ -58,7 +62,10 @@ final class FirstMateGitCatalog {
         phase = .idle
         workspaces = []
         featureTitle = nil
-        selectedWorkspaceID = pinnedWorkspaceID ?? initialWorkspaceID
+        recommendedWorkspaceID = nil
+        selectionMessage = nil
+        needsInitialSelection = true
+        selectedWorkspaceID = pinnedWorkspaceID ?? initialWorkspaceID ?? ""
     }
 
     func load(
@@ -87,13 +94,17 @@ final class FirstMateGitCatalog {
             featureTitle = nil
         }
         if changedTarget {
-            selectedWorkspaceID = pinnedWorkspaceID ?? initialWorkspaceID
+            selectedWorkspaceID = pinnedWorkspaceID ?? initialWorkspaceID ?? ""
+            needsInitialSelection = true
+            recommendedWorkspaceID = nil
+            selectionMessage = nil
         }
 
         if demo {
             guard requestIsCurrent(request, identity: requestedIdentity) else { return }
             workspaces = FirstMateGitDemo.workspaces
             featureTitle = demoFeatureTitle
+            applyDefault(workspaceID: "demo-worker", message: nil)
             phase = .ready
             return
         }
@@ -145,6 +156,7 @@ final class FirstMateGitCatalog {
             guard workspaceResponse.ok else { throw APIError.invalidResponse }
             workspaces = workspaceResponse.workspaces
             featureTitle = featureSnapshot.feature.title
+            applyDefault(workspaceID: workspaceResponse.defaultWorkspaceID, message: workspaceResponse.selectionMessage)
             // Same-target refreshes preserve an exact worker selection. A
             // missing row stays unavailable with its ID unchanged; no row is
             // silently substituted for project or another worker.
@@ -157,6 +169,16 @@ final class FirstMateGitCatalog {
             featureTitle = nil
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    private func applyDefault(workspaceID: String?, message: String?) {
+        recommendedWorkspaceID = workspaceID
+        selectionMessage = message
+        guard needsInitialSelection, pinnedWorkspaceID == nil, initialWorkspaceID == nil else { return }
+        // Missing additive fields mean an older companion. An explicit
+        // ambiguity message from a new server must never fall back to project.
+        selectedWorkspaceID = workspaceID ?? (message == nil ? "project" : "")
+        needsInitialSelection = false
     }
 
     private func requestIsCurrent(

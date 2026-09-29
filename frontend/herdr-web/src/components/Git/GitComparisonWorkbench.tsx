@@ -72,7 +72,7 @@ export function GitComparisonWorkbench({ targetKey, rootPath, initialCommit, hea
       {result ? <ComparisonControls baseline={result.baseline_sha} baselineLabel={result.baseline_label}
         commits={result.commits} before={result.comparison.before_sha} after={result.comparison.after_sha}
         disabled={loading} onChange={(before, after) => setSelection(comparisonSelection(before, after))} /> : null}
-      <button type="button" disabled={loading} onClick={() => setSelection({ mode: "all" })}>Latest</button>
+      <button type="button" disabled={loading} onClick={() => setSelection({ mode: "all" })}>All branch changes</button>
       <button type="button" disabled={loading} onClick={() => setRefresh((value) => value + 1)}>Refresh</button>
     </header>
     {loading ? <p className="hz-diff-state" role="status">Loading comparison…</p>

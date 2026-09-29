@@ -216,7 +216,7 @@ class FirstMateHTTPTests(unittest.TestCase):
         self.assertEqual(detail["feature"]["verification"]["status"], "partially_verified")
         self.assertEqual(detail["feature"]["verification"]["missing_suites"], [{"label": "pkg/app/SuiteTwo"}])
         reply = [item for item in detail["messages"] if item["role"] == "assistant"][-1]
-        self.assertIn("Verification coverage: Partially verified", reply["text"])
+        self.assertEqual(reply["text"], "Parked with partial coverage.")
         self.assertEqual(reply["metadata"]["verification"]["gate_set"][0]["label"], "pkg/app/SuiteOne")
         code, board = self.request(f"/api/v1/first-mate/features/{feature_id}/board")
         self.assertEqual(code, 200)

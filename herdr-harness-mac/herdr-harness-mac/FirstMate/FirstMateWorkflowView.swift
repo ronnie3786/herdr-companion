@@ -36,7 +36,7 @@ struct FirstMateWorkflowView: View {
                                 HStack(alignment: .top) {
                                     Text(visit.title).herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                                     Spacer(minLength: 4)
-                                    FirstMateStatusLabel(status: visit.status)
+                                    FirstMateStatusLabel(status: snapshot.displayStatus(for: visit))
                                 }
                                 Text("Visit \(index + 1) · revision \(visit.revision)").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                                 FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)

@@ -44,19 +44,23 @@ The following never produce the cue:
   attempt.
 
 The cue is session-scoped. Changing pane, machine, session, or authoritative
-branch drops carried evidence, and an in-memory acknowledgement is remembered
-per session so repeated snapshots cannot restore a cue the user already
-dismissed.
+branch drops carried evidence. Acknowledgement is derived from persisted
+user-role message entries after the newest confirmed compaction and live user
+messages, not from in-memory state alone. A later user message in the transcript
+keeps the cue dismissed across reopening, pane switches, reconnects, and refreshes.
 
 ## Lifetime
 
-The cue remains until the next accepted local message, another compaction
-starts, or the session changes. Typing, failed submissions, ordinary refreshes,
-and elapsed time do not dismiss it. The next accepted submission dismisses only
-the composer cue; the transcript's **Context compacted** notice is durable
-history and remains. Opening an already-compacted session reconstructs the
-historical fact from its saved compaction entries without treating it as a new
-alert, and completion never submits or clears a draft or attachment.
+The cue is visible only while no user-role message follows the newest confirmed
+compaction. The next user message, whether sent from this Mac, another client,
+or the Pi terminal, dismisses only the composer cue; a locally accepted
+submission still dismisses it immediately. Assistant-only continuations after
+an overflow compaction do not dismiss it. Typing, failed sends, refreshes, and
+elapsed time do not dismiss it either. Another compaction starting or a session
+change removes the cue. The transcript's **Context compacted** notice remains
+as durable history. Opening an already-compacted session shows the cue only if
+no user message has followed that compaction; completion never submits or clears
+a draft or attachment.
 
 ## Readiness copy
 
@@ -86,6 +90,7 @@ synthetic renders, not installed-device smoke checks.
 | --- | --- | --- |
 | Persisted entry and explicit event evidence; terminal events return nil | `PiCompactionCompletionTests` | `PiCompactionCompletionTests` |
 | Snapshot reconstruction, duplicate snapshots, acknowledgement across refreshes | `PiCompactionCompletionTests` | `PiCompactionCompletionTests` |
+| User message after the compaction (persisted or live) dismisses the cue durably; reopening keeps it dismissed; assistant-only continuation keeps it | `PiCompactionCompletionTests` | `PiCompactionCompletionTests` |
 | Failed/aborted/settled attempt cannot revive an older cue; branch and session boundaries | `PiCompactionCompletionTests`, `PiConversationReducerTests` | `PiCompactionCompletionTests`, `PiConversationReducerTests` |
 | Event survives authoritative recovery; truncated snapshot uses the event cursor; unmatched recovery never publishes | `PiConversationStoreReloadGuardTests` | `PiConversationStoreReloadGuardTests` |
 | Terminal outcome clears activity without creating completion; completion survives phase and disconnect | `PiConversationReducerTests` | `PiConversationReducerTests` |

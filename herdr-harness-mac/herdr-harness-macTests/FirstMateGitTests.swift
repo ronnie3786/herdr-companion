@@ -131,6 +131,8 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
     let blockedRequestNumber: Int
     var workspacesByFeature: [String: [FirstMateGitWorkspace]]
     let titlesByFeature: [String: String]
+    let defaultWorkspaceID: String?
+    let selectionMessage: String?
 
     private(set) var capabilityRequestCount = 0
     private(set) var workspaceRequestIDs: [String] = []
@@ -144,7 +146,9 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
         workspacesByFeature: [String: [FirstMateGitWorkspace]],
         titlesByFeature: [String: String],
         blockedFeatureID: String? = nil,
-        blockedRequestNumber: Int = 1
+        blockedRequestNumber: Int = 1,
+        defaultWorkspaceID: String? = nil,
+        selectionMessage: String? = nil
     ) {
         self.capabilities = capabilities
         self.capabilityError = capabilityError
@@ -153,6 +157,8 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
         self.titlesByFeature = titlesByFeature
         self.blockedFeatureID = blockedFeatureID
         self.blockedRequestNumber = blockedRequestNumber
+        self.defaultWorkspaceID = defaultWorkspaceID
+        self.selectionMessage = selectionMessage
     }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
@@ -173,7 +179,8 @@ private actor FirstMateGitClientFixture: FirstMateGitClient {
                 waiters.forEach { $0.resume() }
             }
         }
-        return .init(ok: true, workspaces: workspacesByFeature[featureID] ?? [])
+        return .init(ok: true, workspaces: workspacesByFeature[featureID] ?? [],
+                     defaultWorkspaceID: defaultWorkspaceID, selectionMessage: selectionMessage)
     }
 
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
@@ -223,6 +230,51 @@ struct FirstMateGitCatalogTests {
         title: "Implementation worker",
         path: "/synthetic/worker"
     )
+
+    @Test("The server's feature checkout is the initial selection and explicit project choice survives refresh")
+    func recommendedSelection() async {
+        let fixture = FirstMateGitClientFixture(
+            workspacesByFeature: ["feature": [project, worker]], titlesByFeature: [:],
+            defaultWorkspaceID: "worker"
+        )
+        let catalog = FirstMateGitCatalog()
+        await catalog.load(machineID: "machine", featureID: "feature", client: fixture, demo: false)
+        #expect(catalog.selectedWorkspace == worker)
+        catalog.selectWorkspace(id: "project")
+        await catalog.load(machineID: "machine", featureID: "feature", client: fixture, demo: false)
+        #expect(catalog.selectedWorkspace == project)
+        let restored = FirstMateGitCatalog(initialWorkspaceID: "project")
+        await restored.load(machineID: "machine", featureID: "feature", client: fixture, demo: false)
+        #expect(restored.selectedWorkspace == project)
+    }
+
+    @Test("Ambiguous feature checkouts require a choice instead of silently selecting project")
+    func ambiguousSelection() async {
+        let fixture = FirstMateGitClientFixture(
+            workspacesByFeature: ["feature": [project, worker]], titlesByFeature: [:],
+            selectionMessage: "Choose a checkout."
+        )
+        let catalog = FirstMateGitCatalog()
+        await catalog.load(machineID: "machine", featureID: "feature", client: fixture, demo: false)
+        #expect(catalog.phase == .ready)
+        #expect(catalog.selectedWorkspace == nil)
+        #expect(catalog.selectedWorkspaceID.isEmpty)
+    }
+
+    @Test("Deduplicated checkouts retain pinned assignment aliases and decode the recommendation")
+    func aliasesAndDecoding() async throws {
+        let json = #"{"ok":true,"workspaces":[{"id":"worker","title":"Feature branch","path":"/synthetic/worker","aliases":["reviewer"],"branch":"feature/input"}],"default_workspace_id":"worker"}"#
+        let response = try JSONDecoder().decode(FirstMateGitWorkspaceResponse.self, from: Data(json.utf8))
+        #expect(response.defaultWorkspaceID == "worker")
+        let fixture = FirstMateGitClientFixture(
+            workspacesByFeature: ["feature": response.workspaces], titlesByFeature: [:],
+            defaultWorkspaceID: response.defaultWorkspaceID
+        )
+        let catalog = FirstMateGitCatalog(pinnedWorkspaceID: "reviewer")
+        await catalog.load(machineID: "machine", featureID: "feature", client: fixture, demo: false)
+        #expect(catalog.selectedWorkspace?.id == "worker")
+        #expect(catalog.selectedWorkspaceID == "reviewer")
+    }
 
     @Test("Same-target refresh preserves a worker and a logical target change resets to project")
     func selectionLifecycle() async {

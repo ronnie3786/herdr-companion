@@ -12,7 +12,6 @@ in tests/test_first_mate_fleet.py.
 """
 from __future__ import annotations
 
-import re
 import unicodedata
 from typing import Any, Iterable, Mapping
 
@@ -31,22 +30,20 @@ NOW_LIMIT = 120
 LATEST_TEXT_LIMIT = 200
 ELLIPSIS = "…"
 
-# Plan, Build, Review, QA, PR, Merge.
-STEP_COUNT = 6
-# Checked in this order, so the first step with a matching token wins:
-# "code-review-pre-pr" is PR, not Review.
-_STEP_KEYWORDS = (
-    (5, ("merge",)),
-    (4, ("pr",)),
-    (3, ("proof", "qa", "test")),
-    (2, ("review",)),
-    (1, ("implement", "build")),
-    (0, ("plan",)),
-)
-# Two-letter keywords must be the whole token; a prefix would read "proof",
-# "prepare", or "preflight" as a pull request.
-_WHOLE_TOKEN_KEYWORDS = frozenset({"pr", "qa"})
-_STAGE_KEY_SPLIT = re.compile(r"[-_\s]+")
+# Only whole, explicit phase names are a phase declaration. Free-form keys
+# such as test-fixture-cleanup and code-review-pre-pr do not establish QA or PR.
+_STAGE_PHASES = {
+    "plan": 0, "planning": 0,
+    "build": 1, "building": 1, "implement": 1, "implementation": 1,
+    "review": 2, "code-review": 2,
+    "qa": 3, "quality-assurance": 3,
+    "pr": 4, "pull-request": 4,
+    "merge": 5, "merging": 5,
+}
+# An active assignment describes the current work, including revisions that
+# return to implementation inside an older review or QA stage. Mixed or custom
+# roles have no single phase; keep those honestly labeled Working.
+_ROLE_PHASES = {"planner": 0, "coder": 1, "implementer": 1, "reviewer": 2, "qa": 3}
 
 # A stage result waiting at Review, PR, or Merge asks for approval of finished
 # work ("ready"); anything else waiting on the human is "turn".
@@ -69,12 +66,10 @@ def awaiting_direction_is_ready(*, attention_type: str | None, visit_status: str
                                 step_index: int | None, has_pull_request: bool) -> bool:
     """The one place that splits "ready" (review finished work) from "turn".
 
-    A visible pull request link means finished work is waiting. Otherwise only
-    a completed stage result at Review, PR, or Merge counts; a question, a
+    A saved URL says nothing about draft, review, or merge readiness. Only a
+    completed stage result at Review, PR, or Merge counts; a question, a
     human gate, or a plan revision is the human's turn.
     """
-    if has_pull_request:
-        return True
     return (attention_type == "visit.awaiting_direction" and visit_status == "completed"
             and step_index in _READY_STEPS)
 
@@ -108,22 +103,17 @@ def step_index(stage_key: str | None) -> int | None:
     """The HUD step for a visit's free-form stage key, or None when unknown."""
     if not isinstance(stage_key, str):
         return None
-    tokens = [token for token in _STAGE_KEY_SPLIT.split(stage_key.lower()) if token]
-    for index, keywords in _STEP_KEYWORDS:
-        for keyword in keywords:
-            whole = keyword in _WHOLE_TOKEN_KEYWORDS
-            if any(token == keyword if whole else token.startswith(keyword) for token in tokens):
-                return index
-    return None
+    return _STAGE_PHASES.get(stage_key.strip().lower().replace("_", "-"))
 
 
-def step_progress(stage_key: str | None, visit_status: str | None) -> tuple[int | None, float | None, int | None]:
-    """(step_index, step_fraction, percent); all three are None when unknown."""
-    index = step_index(stage_key)
-    if index is None:
-        return None, None, None
-    fraction = 1.0 if visit_status == "completed" else 0.0
-    return index, fraction, round((index + fraction) / STEP_COUNT * 100)
+def current_step(row: Mapping[str, Any]) -> int | None:
+    if row.get("pending_human_message") or row.get("coordinator_owner"):
+        return None  # New direction is being interpreted, not a phase transition.
+    roles = row.get("active_roles")
+    if roles:
+        phases = {_ROLE_PHASES.get(role) for role in roles}
+        return next(iter(phases)) if len(phases) == 1 else None
+    return step_index(row.get("stage_key"))
 
 
 # ---------------------------------------------------------------- label and emoji
@@ -269,7 +259,9 @@ def _needs_user_prompt(row: Mapping[str, Any], hud: str) -> str | None:
 
 def entry(row: Mapping[str, Any], *, automatic_recovery: bool = True) -> dict:
     """The public fleet entry for one store row (FirstMateStore.fleet_rows)."""
-    index, fraction, percent = step_progress(row.get("stage_key"), row.get("visit_status"))
+    index = current_step(row)
+    # A phase is not a completion percentage or an ordered six-stage plan.
+    fraction, percent = None, None
     hud = hud_status(row.get("status"), awaiting_turn=bool(row.get("awaiting_turn")),
                      attention_type=row.get("attention_type"), visit_status=row.get("visit_status"),
                      step_index=index, has_pull_request=bool(row.get("has_pull_request")),

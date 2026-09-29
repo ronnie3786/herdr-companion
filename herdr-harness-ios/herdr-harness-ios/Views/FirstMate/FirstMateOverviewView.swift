@@ -47,7 +47,7 @@ struct FirstMateOverviewView: View {
             if let visit = snapshot.currentVisit {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Current focus").font(.headline).accessibilityAddTraits(.isHeader)
-                    FirstMateVisitHeading(visit: visit, isCurrent: true)
+                    FirstMateVisitHeading(visit: visit, isCurrent: true, displayStatus: snapshot.displayStatus(for: visit))
                     FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
                     if visit.status == "awaiting_direction" {
                         Label("The next step waits for your direction in the conversation.", systemImage: "bubble.left.and.text.bubble.right")

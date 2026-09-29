@@ -28,7 +28,7 @@ struct FirstMateTimelineVisit: View {
                 Text(isCurrent ? "CURRENT STEP" : "STEP \(index + 1)")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(isCurrent ? FirstMatePalette(scheme: scheme).accent : FirstMatePalette(scheme: scheme).secondaryText)
-                FirstMateVisitHeading(visit: visit, isCurrent: isCurrent)
+                FirstMateVisitHeading(visit: visit, isCurrent: isCurrent, displayStatus: snapshot.displayStatus(for: visit))
                 FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
             }
             .padding(.bottom, isLast ? 0 : 28)

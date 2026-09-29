@@ -36,7 +36,7 @@ struct FirstMateWorkspaceView: View {
     var popOutChat: (() -> Void)?
 
     @State private var mode = FirstMateWorkspaceMode.chat
-    @State private var selectedGitWorkspaceID = "project"
+    @State private var selectedGitWorkspaceID: String?
     @State private var selectedGitTargetIdentity: String?
     @State private var selectedGitCommitSHA: String?
     @State private var controlLease = FirstMateWorkspaceControlLease()
@@ -139,7 +139,7 @@ struct FirstMateWorkspaceView: View {
         .onChange(of: gitTargetIdentity, initial: true) { _, target in
             guard let target else { return }
             if let selectedGitTargetIdentity, selectedGitTargetIdentity != target {
-                selectedGitWorkspaceID = "project"
+                selectedGitWorkspaceID = nil
                 selectedGitCommitSHA = nil
             }
             selectedGitTargetIdentity = target
@@ -251,8 +251,8 @@ struct FirstMateWorkspaceView: View {
         return "\(owningMachineID)|\(featureID)"
     }
 
-    private var initialGitWorkspaceID: String {
-        selectedGitTargetIdentity == gitTargetIdentity ? selectedGitWorkspaceID : "project"
+    private var initialGitWorkspaceID: String? {
+        selectedGitTargetIdentity == gitTargetIdentity ? selectedGitWorkspaceID : nil
     }
 
     private func observe() async {

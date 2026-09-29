@@ -1470,23 +1470,9 @@ class HerdrService:
 
     def first_mate_git_workspaces(self, feature_id: str) -> dict:
         """Return only Git roots explicitly recorded by this First Mate feature."""
-
+        from .first_mate_git_workspaces import workspace_catalog
         feature = self.first_mate_store.get_feature(feature_id)
-        workspaces = [{
-            "id": "project",
-            "title": "Project workspace",
-            "path": feature["cwd"],
-        }]
-        for assignment in self.first_mate_store.list_assignments(feature_id=feature_id):
-            metadata = assignment.get("metadata")
-            path = metadata.get("worktree_path") if isinstance(metadata, dict) else None
-            if isinstance(path, str) and path:
-                workspaces.append({
-                    "id": assignment["id"],
-                    "title": assignment["title"],
-                    "path": path,
-                })
-        return {"ok": True, "workspaces": workspaces}
+        return workspace_catalog(feature, self.first_mate_store.list_assignments(feature_id=feature_id))
 
     def _first_mate_git_context(self, feature_id: str, workspace_id: str) -> tuple[dict, Path]:
         feature = self.first_mate_store.get_feature(feature_id)
@@ -1598,7 +1584,14 @@ class HerdrService:
             "diff": payload.get("diff", ""), "truncated": payload.get("truncated", False),
         })
 
-    def _first_mate_git_baseline(self, feature_id: str, workspace_id: str) -> dict | None:
+    def _first_mate_git_baseline(self, feature_id: str, workspace_id: str, comparison: dict | None = None) -> dict | None:
+        # Live branch review follows the current target merge base. A recorded
+        # workflow commit keeps its original boundary for historical inspection.
+        if comparison is not None:
+            from .git_comparison import comparison_request
+            selection = comparison_request(comparison)
+            if selection["mode"] == "all" or (selection["mode"] == "working-tree" and "start_commit" not in selection):
+                return None
         # Comparison inception is independent of a step's observed interval.
         # Only server-captured evidence for this exact workspace is eligible.
         snapshot = self.first_mate_store.snapshot(feature_id)
@@ -1627,7 +1620,7 @@ class HerdrService:
 
     def first_mate_git_compare(self, feature_id: str, workspace_id: str, *, comparison: dict | None, file: str | None, expected_root: str) -> dict:
         _, root = self._first_mate_git_context(feature_id, workspace_id)
-        payload = self._tool_call(self.local_tools.git_compare, root, comparison, file=file, expected_root=expected_root, baseline=self._first_mate_git_baseline(feature_id, workspace_id))
+        payload = self._tool_call(self.local_tools.git_compare, root, comparison, file=file, expected_root=expected_root, baseline=self._first_mate_git_baseline(feature_id, workspace_id, comparison or {"mode": "all"}))
         return self._first_mate_git_payload(feature_id, workspace_id, payload)
 
     def workspace_skills(self, workspace_id: str) -> dict:
@@ -3214,7 +3207,7 @@ class HerdrService:
             expected = scope.get("expectedRootPath")
             if not isinstance(expected, str) or not expected:
                 raise AgentRunError("The expected repository is required.", code="invalid_assistant_scope", status=400)
-            baseline = self._first_mate_git_baseline(feature_id, workspace_id) if feature_id is not None else None
+            baseline = self._first_mate_git_baseline(feature_id, workspace_id, scope.get("comparison") or {"mode": "all"}) if feature_id is not None else None
             response = self.local_tools.git_compare(root, scope.get("comparison"), expected_root=expected, baseline=baseline)
             if scope.get("comparisonId") != response["comparison"]["id"]:
                 raise AgentRunError("The Git comparison changed. Refresh before asking.", code="assistant_scope_changed", status=409)

@@ -34,7 +34,7 @@ struct FirstMateGitView: View {
         configuration: ServerConfiguration?,
         configurationRevision: Int,
         pinnedWorkspaceID: String? = nil,
-        initialWorkspaceID: String = "project",
+        initialWorkspaceID: String? = nil,
         initialCommitSHA: String? = nil,
         workspaceSelectionChanged: ((String) -> Void)? = nil,
         popOut: ((FirstMateGitWindowTarget) -> Void)? = nil
@@ -111,25 +111,30 @@ struct FirstMateGitView: View {
             }
             Spacer(minLength: 8)
             if catalog.phase == .ready, !catalog.isPinned {
-                Picker(
-                    "Git workspace",
-                    selection: Binding(
-                        get: { catalog.selectedWorkspaceID },
-                        set: {
-                            catalog.selectWorkspace(id: $0)
-                            selectedCommitSHA = nil
-                            workspaceSelectionChanged?($0)
+                Menu {
+                    ForEach(primaryWorkspaces) { workspace in
+                        workspaceButton(workspace)
+                    }
+                    if !otherWorkspaces.isEmpty {
+                        Menu("Other checkouts (\(otherWorkspaces.count))") {
+                            ForEach(otherWorkspaces) { workspace in
+                                workspaceButton(workspace)
+                            }
                         }
-                    )
-                ) {
-                    ForEach(catalog.workspaces) { workspace in
-                        Text(workspace.title).tag(workspace.id)
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(catalog.selectedWorkspace?.title ?? "Choose checkout…")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Image(systemName: "chevron.down")
+                            .imageScale(.small)
                     }
                 }
-                .labelsHidden()
                 .controlSize(.small)
-                .frame(maxWidth: 280)
-                .accessibilityLabel("Git workspace")
+                .frame(maxWidth: 360)
+                .help("Choose a repository checkout. Assignments that share a checkout appear once.")
+                .accessibilityLabel("Git checkout")
                 .accessibilityIdentifier("first-mate-git-workspace-picker")
                 if let popOut, catalog.selectedWorkspace != nil {
                     Button("Open Git in New Window", systemImage: "macwindow.badge.plus") {
@@ -185,12 +190,46 @@ struct FirstMateGitView: View {
                     detail: "The owning machine is no longer configured. Add it again, then retry."
                 )
             }
+        } else if catalog.selectedWorkspaceID.isEmpty {
+            ContentUnavailableView {
+                Label("Choose a checkout", systemImage: "arrow.triangle.branch")
+            } description: {
+                Text(catalog.selectionMessage ?? "Choose the feature branch from the checkout menu above.")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             unavailable(
                 "Workspace unavailable",
                 detail: "Workspace \(catalog.selectedWorkspaceID) is not available for this feature. The window remains pinned to that exact target."
             )
         }
+    }
+
+    private var primaryWorkspaces: [FirstMateGitWorkspace] {
+        catalog.workspaces.filter {
+            $0.id == catalog.recommendedWorkspaceID || $0.id == "project"
+        }.sorted { $0.id == catalog.recommendedWorkspaceID && $1.id != catalog.recommendedWorkspaceID }
+    }
+
+    private var otherWorkspaces: [FirstMateGitWorkspace] {
+        catalog.workspaces.filter {
+            $0.id != catalog.recommendedWorkspaceID && $0.id != "project"
+        }
+    }
+
+    private func workspaceButton(_ workspace: FirstMateGitWorkspace) -> some View {
+        Button {
+            catalog.selectWorkspace(id: workspace.id)
+            selectedCommitSHA = nil
+            workspaceSelectionChanged?(workspace.id)
+        } label: {
+            if workspace.matches(catalog.selectedWorkspaceID) {
+                Label(workspace.title, systemImage: "checkmark")
+            } else {
+                Text(workspace.title)
+            }
+        }
+        .help(workspace.path)
     }
 
     private var loading: some View {
@@ -228,11 +267,11 @@ struct FirstMateGitView: View {
     }
 
     private var workspaceTitle: String {
-        catalog.selectedWorkspace?.title ?? catalog.selectedWorkspaceID
+        catalog.selectedWorkspace?.title ?? "Choose checkout"
     }
 
     private var workspaceContext: String {
-        catalog.selectedWorkspace?.path ?? "Workspace \(catalog.selectedWorkspaceID) unavailable"
+        catalog.selectedWorkspace?.path ?? "No checkout selected"
     }
 
     private var windowTitle: String {

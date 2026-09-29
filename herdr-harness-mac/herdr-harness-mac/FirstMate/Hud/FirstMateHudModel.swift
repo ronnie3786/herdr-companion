@@ -25,8 +25,9 @@ struct FirstMateHudItem: Identifiable, Equatable, Sendable {
     /// The row's state word: the status for needs-you rows, the step for
     /// moving rows ("Building"), or the status when the step is unknown.
     var stateWord: String {
+        if let execution = FirstMateChatStatusStyle.executionLabel(for: conversation) { return execution }
         if needsYou { return FirstMateChatStatusStyle.label(for: hudStatus) }
-        if hudStatus == .done { return "Merged" }
+        if hudStatus == .done { return "Complete" }
         if hudStatus == .working, let step = conversation.stepIndex { return FirstMateChatSteps.doing[step] }
         if hudStatus == .idle, let step = conversation.stepIndex { return FirstMateChatSteps.names[step] }
         return FirstMateChatStatusStyle.label(for: hudStatus)
@@ -37,9 +38,9 @@ enum FirstMateHudProgress {
     /// `round((step + fraction) / 6 × 100)`, nil when the step is unknown.
     static func percent(status: FirstMateHudStatus, step: Int?, fraction: Double?) -> Int? {
         if status == .done { return 100 }
-        guard let step else { return nil }
+        guard let step, let fraction else { return nil }
         let count = Double(FirstMateChatSteps.names.count)
-        let clamped = min(max(fraction ?? 0, 0), 1)
+        let clamped = min(max(fraction, 0), 1)
         return Int((Double(step) + clamped) / count * 100 + 0.5)
     }
 
@@ -48,8 +49,8 @@ enum FirstMateHudProgress {
     static func segments(status: FirstMateHudStatus, step: Int?, fraction: Double?) -> [Double] {
         let count = FirstMateChatSteps.names.count
         if status == .done { return Array(repeating: 1, count: count) }
-        guard let step else { return Array(repeating: 0, count: count) }
-        let current = min(max(fraction ?? 0, 0), 1)
+        guard let step, let fraction else { return Array(repeating: 0, count: count) }
+        let current = min(max(fraction, 0), 1)
         return (0..<count).map { index in
             index < step ? 1 : index == step ? current : 0
         }
@@ -57,7 +58,7 @@ enum FirstMateHudProgress {
 }
 
 enum FirstMateHudRoster {
-    /// How long a completed feature stays on the HUD as "Merged".
+    /// How long a completed feature stays on the HUD as "Complete".
     static let doneLinger: TimeInterval = 120
 
     /// Every feature the HUD shows, in HUD order.
@@ -333,7 +334,7 @@ enum FirstMateHudSpeech {
     /// "Receipt export: blocked in QA, 58 percent. Unread message. Opens the
     /// session."
     static func accessibilityLabel(_ item: FirstMateHudItem, opensMessage: Bool = false) -> String {
-        var text = item.label + ": " + FirstMateChatStatusStyle.label(for: item.hudStatus).lowercased()
+        var text = item.label + ": " + (FirstMateChatStatusStyle.executionLabel(for: item.conversation) ?? FirstMateChatStatusStyle.label(for: item.hudStatus)).lowercased()
         if let step = item.conversation.stepIndex, item.hudStatus != .done {
             text += " in " + FirstMateChatSteps.names[step]
         }

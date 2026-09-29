@@ -206,6 +206,8 @@ class CodeFactorySettings:
     comment_on_issues: bool = True
     base_branch: str = "main"
     pi_binary: str = "pi"
+    claude_binary: str = "claude"
+    anthropic_runner: str = "pi"
     python: str = sys.executable
     config_path: str | None = None
     machine: str | None = None
@@ -272,6 +274,8 @@ class CodeFactorySettings:
             comment_on_issues=_boolean(environ, "COMMENT_ON_ISSUES", cls.comment_on_issues),
             base_branch=_branch(environ, "BASE_BRANCH", cls.base_branch),
             pi_binary=_string(environ, "PI_BIN", cls.pi_binary),
+            claude_binary=_string(environ, "CLAUDE_BINARY", cls.claude_binary),
+            anthropic_runner=_choice(environ, "ANTHROPIC_RUNNER", cls.anthropic_runner, ("pi", "claude")),
             python=_string(environ, "PYTHON", cls.python),
             config_path=(environ.get("HERDR_CONFIG") or "").strip() or None,
             machine=(environ.get("HERDR_MACHINE") or "").strip() or None,

@@ -46,6 +46,7 @@ from .errors import CodeFactoryError
 from .git import GitRepository
 from .github import GitHubClient
 from .pi import PiRunner
+from .claude import ClaudeRunner, RoutedRunner
 from .settings import CodeFactorySettings, THINKING_LEVELS
 from .store import CodeFactoryStore, utc_now
 
@@ -202,7 +203,7 @@ class Context:
         self._store: CodeFactoryStore | None = None
         self._github: GitHubClient | None = None
         self._git: GitRepository | None = None
-        self._pi: PiRunner | None = None
+        self._pi: RoutedRunner | None = None
         self._factory: Any = None
         self._daemon_lock: DaemonLock | None = None
 
@@ -235,9 +236,13 @@ class Context:
         return self._git
 
     @property
-    def pi(self) -> PiRunner:
+    def pi(self) -> RoutedRunner:
         if self._pi is None:
-            self._pi = PiRunner(self.settings.pi_binary, popen=self.deps.popen, environ=self.environ)
+            self._pi = RoutedRunner(
+                PiRunner(self.settings.pi_binary, popen=self.deps.popen, environ=self.environ),
+                ClaudeRunner(self.settings.claude_binary, popen=self.deps.popen, environ=self.environ),
+                anthropic_runner=self.settings.anthropic_runner,
+            )
         return self._pi
 
     @property
@@ -643,9 +648,44 @@ def doctor_checks(ctx: Context, *, fix: bool = False) -> list[dict[str, Any]]:
     code, out, err = _probe(deps.runner, [settings.pi_binary, "--version"], pi_env)
     add("pi_binary", code == 0, _last_line(out, err) or (f"{settings.pi_binary} answered" if code == 0 else f"exit status {code}"))
 
+    claude_models = [model for model in (settings.planner_model, settings.implementer_model, settings.reviewer_model)
+                     if settings.anthropic_runner == "claude" and model.startswith("anthropic/")]
+    if claude_models:
+        claude_env = ctx.pi.claude.environment()
+        code, out, err = _probe(deps.runner, [settings.claude_binary, "--version"], claude_env)
+        add("claude_binary", code == 0, _last_line(out, err) or ("Claude Code answered" if code == 0 else f"exit status {code}"))
+        code, out, err = _probe(deps.runner, [settings.claude_binary, "auth", "status", "--json"], claude_env)
+        try:
+            auth = json.loads(out)
+        except ValueError:
+            auth = {}
+        logged_in = code == 0 and isinstance(auth, dict) and auth.get("loggedIn") is True \
+            and auth.get("authMethod") == "claude.ai"
+        add("claude_auth", logged_in, "Claude subscription login is active" if logged_in
+            else "Claude Code is not logged in to a claude.ai subscription (run claude auth login)")
+
     for role, configured_model in (("planner_model", settings.planner_model),
                                    ("implementer_model", settings.implementer_model),
                                    ("reviewer_model", settings.reviewer_model)):
+        if settings.anthropic_runner == "claude" and configured_model.startswith("anthropic/"):
+            # The catalog is Pi-specific. Claude Code can validate the exact model only by making a request.
+            # Doctor uses a tiny, tool-free request so a stale login or exhausted usage fails visibly.
+            model_name = _split_model_id(configured_model)[1]
+            command = [settings.claude_binary, "-p", "Reply with OK.", "--model", model_name,
+                       "--effort", "low", "--tools", "", "--output-format", "json",
+                       "--safe-mode", "--restricted", "--strict-mcp-config", "--no-session-persistence",
+                       "--permission-prompts", "none", "--disable-slash-commands", "--no-chrome"]
+            code, out, err = _probe(deps.runner, command, claude_env)
+            try:
+                response = json.loads(out)
+            except ValueError:
+                response = {}
+            available = code == 0 and isinstance(response, dict) and response.get("is_error") is False \
+                and response.get("subtype") == "success" and model_name in (response.get("modelUsage") or {})
+            add(role, available, f"{configured_model} answered through Claude Code" if available
+                else f"{configured_model} could not answer through Claude Code"
+                + (f" ({_last_line(err)})" if err else ""))
+            continue
         configured_provider, model_part = _split_model_id(configured_model)
         code, out, err = _probe(deps.runner, [settings.pi_binary, "--list-models", model_part], pi_env)
         listed = code == 0 and any(

@@ -56,6 +56,8 @@ class DefaultsTests(unittest.TestCase):
         self.assertTrue(settings.comment_on_issues)
         self.assertEqual(settings.base_branch, "main")
         self.assertEqual(settings.pi_binary, "pi")
+        self.assertEqual(settings.claude_binary, "claude")
+        self.assertEqual(settings.anthropic_runner, "pi")
         self.assertEqual(settings.python, sys.executable)
         self.assertIsNone(settings.config_path)
         self.assertIsNone(settings.machine)
@@ -82,6 +84,11 @@ class DefaultsTests(unittest.TestCase):
         settings = CodeFactorySettings.from_environ(env)
         self.assertEqual(settings.config_path, "/etc/herdr/config.toml")
         self.assertEqual(settings.machine, "studio")
+
+    def test_claude_subscription_runner_can_be_selected(self):
+        settings = CodeFactorySettings.from_environ(environ(anthropic_runner="claude", claude_binary="/opt/bin/claude"))
+        self.assertEqual(settings.anthropic_runner, "claude")
+        self.assertEqual(settings.claude_binary, "/opt/bin/claude")
 
 
 class OverrideTests(unittest.TestCase):

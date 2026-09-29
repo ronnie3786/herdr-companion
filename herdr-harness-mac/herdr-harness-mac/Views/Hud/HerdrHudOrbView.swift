@@ -58,12 +58,16 @@ struct HerdrHudOrbView: View {
     /// Statuses corresponding to `attentionChipCount`, so completion can use
     /// the green signal while blocked and failed notifications remain alerts.
     var attentionChipStatuses: [AgentStatus] = []
+    /// Where the orb is in its morph out of the resting circle, 0 to 1. The
+    /// glyph is revealed inside the opening rim a little after the face, so
+    /// the icon reads as surfacing rather than being scaled up from nothing.
+    var morphProgress: Double = 1
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
     @State private var isDropTargeted = false
 
-    private let orbSize: CGFloat = 56
+    private let orbSize: CGFloat = HerdrHudMorph.orbDiameter
 
     var body: some View {
         orb
@@ -172,6 +176,8 @@ struct HerdrHudOrbView: View {
                 .frame(width: 40, height: 40)
                 .clipShape(Circle())
                 .foregroundStyle(glyphColor)
+                .scaleEffect(HerdrHudMorph.glyphScale(orb: morphProgress))
+                .opacity(HerdrHudMorph.glyphOpacity(orb: morphProgress))
                 .accessibilityHidden(true)
 
                 if session.hasUnseenAnswer {
@@ -205,30 +211,34 @@ struct HerdrHudOrbView: View {
         }
     }
 
+    /// The ring geometry is shared with `HerdrHudMorph`, whose coloured rim
+    /// settles onto exactly this circle before handing the colour over.
     @ViewBuilder
     private func staticStateRing(for state: HerdrHudOrbMotion.State) -> some View {
+        let lineWidth = HerdrHudMorph.stateRingWidth
+        let inset = HerdrHudMorph.stateRingInset
         switch state {
         case .attention:
             Circle()
-                .strokeBorder(notificationOutlineColor, lineWidth: 2.5)
-                .padding(2)
+                .strokeBorder(notificationOutlineColor, lineWidth: lineWidth)
+                .padding(inset)
         case .thinking:
             Circle()
-                .strokeBorder(HerdrTheme.accent, lineWidth: 2.5)
-                .padding(2)
+                .strokeBorder(HerdrTheme.accent, lineWidth: lineWidth)
+                .padding(inset)
         case .working:
             Circle()
-                .strokeBorder(HerdrTheme.working, lineWidth: 2.5)
-                .padding(2)
+                .strokeBorder(HerdrTheme.working, lineWidth: lineWidth)
+                .padding(inset)
         case .idle:
             if model.connectionState == .live || model.isDemoMode {
                 Circle()
-                    .strokeBorder(HerdrTheme.signal.opacity(0.4), lineWidth: 2.5)
-                    .padding(2)
+                    .strokeBorder(HerdrTheme.signal.opacity(0.4), lineWidth: lineWidth)
+                    .padding(inset)
             } else {
                 Circle()
-                    .strokeBorder(HerdrTheme.muted.opacity(0.18), lineWidth: 2.5)
-                    .padding(2)
+                    .strokeBorder(HerdrTheme.muted.opacity(0.18), lineWidth: lineWidth)
+                    .padding(inset)
             }
         }
     }

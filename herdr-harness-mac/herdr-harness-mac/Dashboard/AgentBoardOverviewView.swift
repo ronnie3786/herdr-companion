@@ -17,10 +17,10 @@ struct AgentBoardOverviewView: View {
                             .foregroundStyle(HerdrTheme.tertiaryText)
                     } else {
                         AgentBoardProseView(blocks: content.goalBlocks)
-                            .frame(maxHeight: goalExpanded ? nil : 88, alignment: .top)
+                            .frame(maxHeight: goalExpanded || !content.canExpandGoal ? nil : 88, alignment: .top)
                             .clipped()
                     }
-                    if content.goal.count > 220 {
+                    if content.canExpandGoal {
                         Button(goalExpanded ? "Show less" : "Show more") { goalExpanded.toggle() }
                             .buttonStyle(.herdrPlain)
                             .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)

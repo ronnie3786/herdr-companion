@@ -86,6 +86,10 @@ struct AgentBoardContent: Equatable, Sendable {
     var runningCount: Int
     var sessionsTruncated: Bool
 
+    /// Only constrain goal height when the same policy exposes Show more.
+    /// Short Markdown can still contain many vertically stacked blocks.
+    var canExpandGoal: Bool { goal.count > 220 }
+
     var needsAttention: Bool { FirstMateAttention.needsHumanDecision(status: status) || awaitingTurn }
 }
 

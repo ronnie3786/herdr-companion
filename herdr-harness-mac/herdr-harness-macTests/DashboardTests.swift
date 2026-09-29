@@ -157,6 +157,18 @@ struct DashboardTests {
         }
     }
 
+    @Test("Short multiline Markdown is never collapsed without an expansion control")
+    func shortMarkdownGoalRemainsVisible() {
+        var snapshot = FirstMateDemo.features(step: 2)[0]
+        snapshot.feature.goal = (1...8).map { "- Step \($0)" }.joined(separator: "\n")
+        let short = AgentBoardContent.build(from: .adapting(snapshot))
+        #expect(short.goalBlocks.count == 8)
+        #expect(!short.canExpandGoal)
+
+        snapshot.feature.goal = String(repeating: "A longer goal. ", count: 20)
+        #expect(AgentBoardContent.build(from: .adapting(snapshot)).canExpandGoal)
+    }
+
     @Test("Agents list running work first and decode role text")
     func agentOrdering() {
         var snapshot = FirstMateDemo.features(step: 2)[0]

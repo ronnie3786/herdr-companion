@@ -1,6 +1,10 @@
 import Foundation
 import Testing
+#if os(macOS)
 @testable import herdr_harness_mac
+#else
+@testable import herdr_harness_ios
+#endif
 
 @Suite("First Mate reply progress")
 @MainActor
@@ -61,6 +65,7 @@ struct FirstMateReplyProgressTests {
         #expect(blocked.showsDot)
     }
 
+    #if os(macOS)
     @Test("Projected row uses the working word or its step's doing word, never the old badge")
     func workingWords() {
         let blocked = FirstMateReplyProgress.presenting(
@@ -75,6 +80,8 @@ struct FirstMateReplyProgressTests {
         #expect(inReview.stepIndex == 2)
         #expect(FirstMateChatStatusStyle.word(for: inReview) == "In review")
     }
+
+    #endif
 
     @Test("An unresolved send projects immediately, even without a snapshot")
     func unresolvedSend() {

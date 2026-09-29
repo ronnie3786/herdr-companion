@@ -11,13 +11,16 @@ struct AgentBoardOverviewView: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     DashboardMicroLabel(text: "Goal")
-                    Text(content.goal.isEmpty ? "No goal added yet." : content.goal)
-                        .herdrFont(size: HerdrTheme.TextSize.small)
-                        .foregroundStyle(content.goal.isEmpty ? HerdrTheme.tertiaryText : HerdrTheme.secondaryText)
-                        .lineSpacing(4)
-                        .lineLimit(goalExpanded ? nil : 4)
-                        .textSelection(.enabled)
-                    if content.goal.count > 220 {
+                    if content.goalBlocks.isEmpty {
+                        Text("No goal added yet.")
+                            .herdrFont(size: HerdrTheme.TextSize.small)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
+                    } else {
+                        AgentBoardProseView(blocks: content.goalBlocks)
+                            .frame(maxHeight: goalExpanded || !content.canExpandGoal ? nil : 88, alignment: .top)
+                            .clipped()
+                    }
+                    if content.canExpandGoal {
                         Button(goalExpanded ? "Show less" : "Show more") { goalExpanded.toggle() }
                             .buttonStyle(.herdrPlain)
                             .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
@@ -57,12 +60,8 @@ struct AgentBoardOverviewView: View {
                     VStack(spacing: 0) {
                         ForEach(content.latestNotes) { note in
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(note.text)
-                                    .herdrFont(size: HerdrTheme.TextSize.small)
-                                    .foregroundStyle(HerdrTheme.primaryText)
+                                AgentBoardProseView(blocks: note.blocks, textColor: HerdrTheme.primaryText)
                                     .lineLimit(3)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
                                 if let date = note.date {
                                     DashboardAgeText(date: date)
                                         .herdrFont(size: HerdrTheme.TextSize.caption)

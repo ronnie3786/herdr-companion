@@ -5,8 +5,9 @@ struct FirstMateDocumentsView: View {
     let snapshot: FirstMateSnapshot
     @State private var query = ""
 
+    private var presentedDocuments: [FirstMateDocument] { snapshot.presentedDocuments }
     private var documents: [FirstMateDocument] {
-        snapshot.documents.filter { document in
+        presentedDocuments.filter { document in
             query.isEmpty || document.title.localizedCaseInsensitiveContains(query)
                 || snapshot.author(of: document)?.title.localizedCaseInsensitiveContains(query) == true
                 || snapshot.visits.first(where: { $0.id == document.visitID })?.title.localizedCaseInsensitiveContains(query) == true
@@ -22,7 +23,7 @@ struct FirstMateDocumentsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            if !snapshot.documents.isEmpty {
+            if !presentedDocuments.isEmpty {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
                     TextField("Find a document, agent, or step", text: $query)
@@ -46,7 +47,7 @@ struct FirstMateDocumentsView: View {
                     Divider()
                 }
             }
-            if snapshot.documents.isEmpty {
+            if presentedDocuments.isEmpty {
                 ContentUnavailableView("No documents yet", systemImage: "doc.text", description: Text("Plans, reviews, and evidence will appear here as your crew works."))
             } else if documents.isEmpty {
                 ContentUnavailableView.search(text: query)

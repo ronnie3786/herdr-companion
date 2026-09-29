@@ -6,7 +6,7 @@ struct FirstMateDocumentMenu: View {
     let visit: FirstMateVisit
     @Environment(\.colorScheme) private var scheme
 
-    private var documents: [FirstMateDocument] { snapshot.documents(for: visit.id) }
+    private var documents: [FirstMateDocument] { snapshot.presentedDocuments(for: visit.id) }
     private var countTitle: String { "\(documents.count) \(documents.count == 1 ? "document" : "documents")" }
 
     var body: some View {

@@ -102,7 +102,7 @@ struct FirstMateChatView: View {
             HStack(spacing: 8) {
                 shortcut(.workflow, title: "Workflow")
                 shortcut(.agents, title: "Agents · \(snapshot.assignments.count)")
-                shortcut(.documents, title: "Docs · \(snapshot.documents.count)")
+                shortcut(.documents, title: "Docs · \(snapshot.presentedDocuments.count)")
                 shortcut(.overview, title: "Overview")
             }
         }

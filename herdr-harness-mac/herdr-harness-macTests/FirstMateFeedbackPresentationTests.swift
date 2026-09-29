@@ -531,6 +531,59 @@ struct FirstMateFeedbackPresentationTests {
         #expect(!state(writable: false).canSave)
     }
 
+    @Test("Persistent response actions render inside both Mac response bubbles")
+    func responseActionsRenderInsideBubbles() async throws {
+        let message = syntheticMessage(
+            id: "inside-bubble",
+            role: "assistant",
+            status: "done",
+            text: "A completed synthetic response keeps its actions close at hand."
+        )
+        let presentation = try #require(FirstMateResponseFeedbackPresentation.make(
+            message: message,
+            supported: true,
+            writable: true,
+            isSaving: false,
+            record: nil
+        ))
+
+        let main = try await HerdrRenderHarness.render(
+            "issue-103-main-response-actions.png",
+            size: CGSize(width: 480, height: 220)
+        ) {
+            FirstMateMessageView(message: message, feedback: presentation)
+                .environment(\.herdrFontScale, .medium)
+                .padding(16)
+                .background(FirstMatePalette(scheme: .dark).background)
+        }
+        main.expectSubstantial()
+
+        let row = FirstMateTranscriptLayout.Row(
+            message: message,
+            speaker: .firstMate,
+            isFirstInGroup: true,
+            isLastInGroup: true
+        )
+        let poppedOut = try await HerdrRenderHarness.render(
+            "issue-103-window-response-actions.png",
+            size: CGSize(width: 640, height: 220)
+        ) {
+            FirstMateChatBubbleRow(
+                row: row,
+                agent: nil,
+                fileCards: [],
+                maxBubbleWidth: 520,
+                feedback: presentation,
+                feedbackActions: FirstMateChatFeedbackActions(),
+                openDocuments: {}
+            )
+            .environment(\.herdrFontScale, .medium)
+            .padding(16)
+            .background(HerdrTheme.windowBackground)
+        }
+        poppedOut.expectSubstantial()
+    }
+
     @Test("The footer, message row, and pinned editor host in both appearances at the largest text size")
     func rendering() throws {
         let message = syntheticMessage(id: "render", role: "assistant", status: "done", text: "A **completed** synthetic answer.")
@@ -558,11 +611,19 @@ struct FirstMateFeedbackPresentationTests {
             #expect(footer.fittingSize.height > 10)
         }
 
-        let withFooter = NSHostingView(rootView: FirstMateMessageView(message: message, feedback: presentation).frame(width: 420))
-        let withoutFooter = NSHostingView(rootView: FirstMateMessageView(message: message).frame(width: 420))
-        withFooter.layoutSubtreeIfNeeded()
-        withoutFooter.layoutSubtreeIfNeeded()
-        #expect(withFooter.fittingSize.height > withoutFooter.fittingSize.height)
+        let withFeedback = NSHostingView(rootView: FirstMateMessageView(message: message, feedback: presentation).frame(width: 420))
+        let copyOnly = NSHostingView(rootView: FirstMateMessageView(message: message).frame(width: 420))
+        var inFlightMessage = message
+        inFlightMessage.status = "queued"
+        let inFlight = NSHostingView(rootView: FirstMateMessageView(message: inFlightMessage).frame(width: 420))
+        withFeedback.layoutSubtreeIfNeeded()
+        copyOnly.layoutSubtreeIfNeeded()
+        inFlight.layoutSubtreeIfNeeded()
+        // Every completed response reserves its persistent in-bubble action
+        // row. Rating support adds two controls without making them hover-only;
+        // an in-flight answer remains ineligible for rating actions.
+        #expect(withFeedback.fittingSize.height >= copyOnly.fittingSize.height)
+        #expect(copyOnly.fittingSize.height > inFlight.fittingSize.height)
 
         let store = FirstMateStore()
         store.configure(client: nil, demo: true)

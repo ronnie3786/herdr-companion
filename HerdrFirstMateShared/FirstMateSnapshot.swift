@@ -6,6 +6,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     var visits: [FirstMateVisit]
     var assignments: [FirstMateAssignment]
     var documents: [FirstMateDocument]
+    var handoffs: [FirstMateHandoff]
     var messages: [FirstMateMessage]
     var events: [FirstMateEvent]
     var hasDetails: Bool
@@ -29,12 +30,13 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     var latestEventSequence: Int { eventCursor ?? events.map(\.sequence).max() ?? 0 }
 
     init(feature: FirstMateFeature, visits: [FirstMateVisit] = [], assignments: [FirstMateAssignment] = [],
-         documents: [FirstMateDocument] = [], messages: [FirstMateMessage] = [], events: [FirstMateEvent] = [], sessions: [FirstMateSession] = [], sessionsTruncated: Bool = false, links: [FirstMateLink] = []) {
+         documents: [FirstMateDocument] = [], handoffs: [FirstMateHandoff] = [], messages: [FirstMateMessage] = [], events: [FirstMateEvent] = [], sessions: [FirstMateSession] = [], sessionsTruncated: Bool = false, links: [FirstMateLink] = []) {
         ok = true
         self.feature = feature
         self.visits = visits
         self.assignments = assignments
         self.documents = documents
+        self.handoffs = handoffs
         self.messages = messages
         self.events = events
         hasDetails = true
@@ -44,7 +46,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case ok, feature, visits, assignments, documents, messages, message, events, sessions, links
+        case ok, feature, visits, assignments, documents, handoffs, messages, message, events, sessions, links
         case sessionsTruncated = "sessions_truncated"
         case runtimeHealth = "runtime_health"
         case eventCursor = "event_cursor"
@@ -57,6 +59,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         visits = try c.decodeIfPresent([FirstMateVisit].self, forKey: .visits) ?? []
         assignments = try c.decodeIfPresent([FirstMateAssignment].self, forKey: .assignments) ?? []
         documents = try c.decodeIfPresent([FirstMateDocument].self, forKey: .documents) ?? []
+        handoffs = try c.decodeIfPresent([FirstMateHandoff].self, forKey: .handoffs) ?? []
         messages = try c.decodeIfPresent([FirstMateMessage].self, forKey: .messages) ?? []
         message = try? c.decodeIfPresent(FirstMateMessage.self, forKey: .message)
         events = try c.decodeIfPresent([FirstMateEvent].self, forKey: .events) ?? []
@@ -94,11 +97,19 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     func agents(for visitID: String) -> [FirstMateAssignment] {
         assignments.filter { $0.featureID == feature.id && ($0.visitID == visitID || $0.visitIDs?.contains(visitID) == true) }
     }
+    /// Documents shown in user-facing document collections. Raw `documents`
+    /// remain intact for handoff context, recovery, and direct tracking access.
+    var presentedDocuments: [FirstMateDocument] {
+        FirstMateDocumentVisibility.presentedDocuments(documents, handoffs: handoffs)
+    }
     func documents(for visitID: String) -> [FirstMateDocument] {
         let memberIDs = Set(agents(for: visitID).map(\.id))
         return documents.filter {
             $0.featureID == feature.id && ($0.visitID == visitID || $0.assignmentID.map(memberIDs.contains) == true)
         }
+    }
+    func presentedDocuments(for visitID: String) -> [FirstMateDocument] {
+        FirstMateDocumentVisibility.presentedDocuments(documents(for: visitID), handoffs: handoffs)
     }
     func sessions(for assignmentID: String?) -> [FirstMateSession] {
         sessions.filter { $0.featureID == feature.id && $0.assignmentID == assignmentID }

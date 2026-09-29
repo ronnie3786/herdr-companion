@@ -7,8 +7,6 @@ struct FirstMateOverviewView: View {
     @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
     @State private var builds = MobileAppHubFeed()
 
-    @Environment(\.herdrFontScale) private var fontScale
-
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
     var body: some View {
@@ -31,15 +29,7 @@ struct FirstMateOverviewView: View {
                 .foregroundStyle(palette.text)
                 .padding(.top, 4)
                 .accessibilityAddTraits(.isHeader)
-            VStack(alignment: .leading, spacing: 6) {
-                HerdrMicroLabel(text: "Goal")
-                Text(FirstMateGoalSummary.text(goal: snapshot.feature.goal, title: snapshot.feature.title))
-                    .herdrFont(size: HerdrTheme.TextSize.body)
-                    .foregroundStyle(palette.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("first-mate-goal-summary")
-            }
+            FirstMateOverviewGoalView(source: snapshot.feature.goal)
             FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
                 .padding(12)
                 .herdrCard()
@@ -85,24 +75,14 @@ struct FirstMateOverviewView: View {
                 HerdrMicroLabel(text: "Latest in the journal")
                     .padding(.bottom, 4)
                 ForEach(Array(snapshot.events.sorted { $0.sequence > $1.sequence }.prefix(4))) { event in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "clock")
                             .herdrFont(size: 12)
                             .foregroundStyle(palette.iconTint)
+                            .padding(.top, 3)
                             .accessibilityHidden(true)
-                        // Journal summaries are agent-written Markdown (#70).
-                        PiMarkdownText(
-                            event.summary,
-                            font: .system(size: HerdrTheme.TextSize.small * fontScale.rawValue),
-                            inlineCodeFont: .system(size: (10 * fontScale.rawValue).rounded(), design: .monospaced),
-                            inlineCodeColor: palette.text,
-                            inlineCodeBackground: palette.chipFill,
-                            strongColor: palette.text
-                        )
-                        .foregroundStyle(palette.secondaryText)
-                        .lineSpacing(3)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        FirstMateMarkdownContentView(source: event.summary)
+                            .environment(\.firstMateMarkdownDensity, .compact)
                     }
                     .padding(.vertical, 4)
                 }

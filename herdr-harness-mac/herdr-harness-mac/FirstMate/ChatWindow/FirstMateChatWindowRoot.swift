@@ -1,34 +1,45 @@
 import SwiftUI
 
-/// How the chat window arranges its columns at a given width: the sidebar
-/// (320 pt, or a 76 pt rail below 760 pt), the flexible chat, and the 360 pt
-/// inspector, which sits inline from 1140 pt and floats over the chat below.
+/// How the chat window arranges its surfaces at a given width. The person can
+/// drag the conversation list from an avatar rail through wider text layouts;
+/// the inspector always floats over chat instead of becoming a sizing column.
 struct FirstMateChatWindowLayout: Equatable {
     enum Sidebar: Equatable { case full, rail }
-    enum Inspector: Equatable { case hidden, inline, overlay }
+    enum Inspector: Equatable { case hidden, overlay }
 
-    static let sidebarWidth: CGFloat = 320
-    static let railWidth: CGFloat = 76
+    static let minimumSidebarWidth: CGFloat = 76
+    static let maximumSidebarWidth: CGFloat = 480
+    /// Text returns at this width. The avatar and status dot remain below it.
+    static let compactBelow: CGFloat = 220
+    /// Protect a useful conversation width when the whole window narrows.
+    static let minimumChatWidth: CGFloat = 360
     static let inspectorWidth: CGFloat = 360
-    /// Below this width the sidebar collapses to the rail.
-    static let railBelow: CGFloat = 760
-    /// Below this width the inspector overlays the chat instead of taking a column.
-    static let overlayBelow: CGFloat = 1140
     /// With no preference, the inspector opens at this width and wider.
     static let autoOpenWidth: CGFloat = 1280
-    /// The chat header's height; the inspector's tab bar ends on its bottom edge.
+    /// The chat header's height; the overlay starts below its toggle.
     static let headerHeight: CGFloat = 60
 
     var sidebar: Sidebar
     var inspector: Inspector
+    var sidebarWidth: CGFloat
 
-    /// `inspectorPreference` is the person's choice (the header toggle or
-    /// ⌘I); nil follows the width.
-    static func resolve(width: CGFloat, inspectorPreference: Bool?) -> FirstMateChatWindowLayout {
-        let sidebar: Sidebar = width < railBelow ? .rail : .full
-        let isOpen = inspectorVisible(width: width, preference: inspectorPreference)
-        let inspector: Inspector = !isOpen ? .hidden : width < overlayBelow ? .overlay : .inline
-        return FirstMateChatWindowLayout(sidebar: sidebar, inspector: inspector)
+    /// `preferredSidebarWidth` is persisted independently of window resizing,
+    /// so a temporarily narrow window restores the person's wider list later.
+    static func resolve(
+        width: CGFloat,
+        preferredSidebarWidth: CGFloat,
+        inspectorPreference: Bool?
+    ) -> FirstMateChatWindowLayout {
+        let sidebarWidth = resolvedSidebarWidth(preferred: preferredSidebarWidth, availableWidth: width)
+        let sidebar: Sidebar = sidebarWidth < compactBelow ? .rail : .full
+        let inspector: Inspector = inspectorVisible(width: width, preference: inspectorPreference) ? .overlay : .hidden
+        return FirstMateChatWindowLayout(sidebar: sidebar, inspector: inspector, sidebarWidth: sidebarWidth)
+    }
+
+    static func resolvedSidebarWidth(preferred: CGFloat, availableWidth: CGFloat) -> CGFloat {
+        let preference = min(max(preferred, minimumSidebarWidth), maximumSidebarWidth)
+        let availableMaximum = max(minimumSidebarWidth, availableWidth - minimumChatWidth)
+        return min(preference, availableMaximum)
     }
 
     static func inspectorVisible(width: CGFloat, preference: Bool?) -> Bool {
@@ -42,8 +53,6 @@ struct FirstMateChatWindowLayout: Equatable {
         guard preference == nil, width > 0 else { return preference }
         return inspectorVisible(width: width, preference: nil)
     }
-
-    var sidebarWidth: CGFloat { sidebar == .rail ? Self.railWidth : Self.sidebarWidth }
 }
 
 /// The First Mate chat window: conversation list, chat, and inspector.
@@ -55,6 +64,11 @@ struct FirstMateChatWindowRoot: View {
     @State private var searchFocusRequest = 0
     @State private var composerFocusRequest = 0
     @State private var createOrigin: FirstMateChatCreateOrigin?
+    @AppStorage(FirstMateChatPreferences.sidebarWidthKey)
+    private var storedSidebarWidth = FirstMateChatPreferences.defaultSidebarWidth
+    @State private var liveSidebarWidth: CGFloat?
+    @State private var sidebarDragStartWidth: CGFloat?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(model: HerdrAppModel, shell: HerdrShellState, modelFavorites: ModelFavoritesStore) {
         self.init(session: FirstMateChatWindowSession(model: model, shell: shell), modelFavorites: modelFavorites)
@@ -74,7 +88,12 @@ struct FirstMateChatWindowRoot: View {
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
-            let layout = FirstMateChatWindowLayout.resolve(width: width, inspectorPreference: session.inspectorPreference)
+            let preferredSidebarWidth = liveSidebarWidth ?? CGFloat(storedSidebarWidth)
+            let layout = FirstMateChatWindowLayout.resolve(
+                width: width,
+                preferredSidebarWidth: preferredSidebarWidth,
+                inspectorPreference: session.inspectorPreference
+            )
             HStack(spacing: 0) {
                 FirstMateChatSidebar(
                     session: session,
@@ -87,18 +106,14 @@ struct FirstMateChatWindowRoot: View {
                 .herdrHairline(.trailing)
 
                 chatColumn(layout: layout, width: width)
-
-                if layout.inspector == .inline {
-                    FirstMateChatInspectorColumn(
-                        session: session,
-                        topInset: FirstMateChatWindowLayout.headerHeight - HerdrTheme.ControlHeight.bar
-                    )
-                    .frame(width: FirstMateChatWindowLayout.inspectorWidth)
-                    .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane, base: HerdrTheme.windowBackground) }
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
             }
-            .animation(.snappy(duration: 0.24), value: layout)
+            // Above both surfaces so the full six-point strip remains
+            // draggable even where chat would otherwise win hit testing.
+            .overlay(alignment: .leading) {
+                sidebarResizeHandle(availableWidth: width, displayedWidth: layout.sidebarWidth)
+                    .offset(x: layout.sidebarWidth - 3)
+            }
+            .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: layout.inspector)
             .background { shortcuts(width: width) }
             .onKeyPress(.escape) {
                 guard layout.inspector == .overlay else { return .ignored }
@@ -185,7 +200,7 @@ struct FirstMateChatWindowRoot: View {
     /// Italic); the window's own shortcuts are meant to answer first here.
     private func shortcuts(width: CGFloat) -> some View {
         ZStack {
-            Button("Search conversations") { searchFocusRequest &+= 1 }
+            Button("Search conversations") { focusSearch(width: width) }
                 .keyboardShortcut("k", modifiers: .command)
             Button("Toggle inspector") { toggleInspector(width: width) }
                 .keyboardShortcut("i", modifiers: .command)
@@ -200,6 +215,65 @@ struct FirstMateChatWindowRoot: View {
     private func toggleInspector(width: CGFloat) {
         let isOpen = FirstMateChatWindowLayout.inspectorVisible(width: width, preference: session.inspectorPreference)
         session.inspectorPreference = !isOpen
+    }
+
+    /// Search remains keyboard reachable from the compact rail: ⌘K first
+    /// restores the smallest text width, then focuses its field.
+    private func focusSearch(width: CGFloat) {
+        if FirstMateChatWindowLayout.resolvedSidebarWidth(
+            preferred: CGFloat(storedSidebarWidth),
+            availableWidth: width
+        ) < FirstMateChatWindowLayout.compactBelow {
+            storedSidebarWidth = Double(FirstMateChatWindowLayout.compactBelow)
+        }
+        searchFocusRequest &+= 1
+    }
+
+    /// A draggable split handle with keyboard and VoiceOver parity. The
+    /// persisted preference is not reduced when the whole window temporarily
+    /// constrains it, so widening the window restores the chosen size.
+    private func sidebarResizeHandle(availableWidth: CGFloat, displayedWidth: CGFloat) -> some View {
+        Color.clear
+            .frame(width: 6)
+            .contentShape(Rectangle())
+            .pointerStyle(.columnResize)
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if sidebarDragStartWidth == nil { sidebarDragStartWidth = displayedWidth }
+                        let proposed = (sidebarDragStartWidth ?? displayedWidth) + value.translation.width
+                        liveSidebarWidth = FirstMateChatWindowLayout.resolvedSidebarWidth(
+                            preferred: proposed,
+                            availableWidth: availableWidth
+                        )
+                    }
+                    .onEnded { _ in
+                        if let liveSidebarWidth { storedSidebarWidth = Double(liveSidebarWidth) }
+                        liveSidebarWidth = nil
+                        sidebarDragStartWidth = nil
+                    }
+            )
+            .focusable()
+            .onKeyPress(.leftArrow) { adjustSidebar(by: -20, availableWidth: availableWidth) }
+            .onKeyPress(.rightArrow) { adjustSidebar(by: 20, availableWidth: availableWidth) }
+            .accessibilityElement()
+            .accessibilityLabel("Conversation list width")
+            .accessibilityValue("\(Int(displayedWidth)) points")
+            .accessibilityAdjustableAction { direction in
+                let step: Double = direction == .increment ? 20 : direction == .decrement ? -20 : 0
+                adjustSidebar(by: step, availableWidth: availableWidth)
+            }
+            .accessibilityIdentifier("first-mate-chat-sidebar-resize-handle")
+            .help("Drag to resize the conversation list")
+    }
+
+    private func adjustSidebar(by step: Double, availableWidth: CGFloat) -> KeyPress.Result {
+        guard step != 0 else { return .ignored }
+        storedSidebarWidth = Double(FirstMateChatWindowLayout.resolvedSidebarWidth(
+            preferred: CGFloat(storedSidebarWidth + step),
+            availableWidth: availableWidth
+        ))
+        return .handled
     }
 
     // MARK: Routing

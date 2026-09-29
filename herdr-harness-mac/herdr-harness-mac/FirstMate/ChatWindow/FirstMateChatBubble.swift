@@ -15,8 +15,6 @@ struct FirstMateChatBubbleRow: View {
     let feedbackActions: FirstMateChatFeedbackActions
     let openDocuments: () -> Void
 
-    @State private var hovering = false
-
     static let avatarSize: CGFloat = 26
     static let avatarGap: CGFloat = 8
 
@@ -72,13 +70,7 @@ struct FirstMateChatBubbleRow: View {
                     .frame(maxWidth: maxBubbleWidth, alignment: .leading)
                 Spacer(minLength: 0)
             }
-            if showsFooter {
-                footer
-                    .padding(.leading, Self.avatarSize + Self.avatarGap)
-                    .transition(.opacity)
-            }
         }
-        .onHover { hovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(speakerName)
     }
@@ -112,6 +104,10 @@ struct FirstMateChatBubbleRow: View {
                 }
                 .padding(.top, 8)
                 .padding(.bottom, 3)
+            }
+            if FirstMateFeedbackEligibility.isEligible(message) {
+                responseActions
+                    .padding(.top, 4)
             }
             meta(isVoice: false)
         }
@@ -188,15 +184,10 @@ struct FirstMateChatBubbleRow: View {
         .padding(.top, 2)
     }
 
-    /// Rating and Copy show on hover, and stay while a rating is saved or
-    /// needs attention.
-    private var showsFooter: Bool {
-        if hovering { return true }
-        guard let feedback else { return false }
-        return feedback.hasSavedRating || feedback.saveErrorMessage != nil || feedback.hasConflict || feedback.isSaving
-    }
-
-    @ViewBuilder private var footer: some View {
+    /// Completed assistant responses keep their actions inside the bubble.
+    /// Feedback controls remain gated by the presentation; Copy does not need
+    /// companion support and remains available when rating is unavailable.
+    @ViewBuilder private var responseActions: some View {
         if let feedback {
             FirstMateResponseFeedbackFooter(
                 messageID: message.id,

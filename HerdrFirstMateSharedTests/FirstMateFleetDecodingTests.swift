@@ -13,7 +13,7 @@ struct FirstMateFleetDecodingTests {
         let json = """
         {"ok": true, "generated_at": "2030-01-01T12:00:00Z", "features": [{
           "feature_id": "fmf_receipts", "title": "Receipt export", "label": "Receipts", "emoji": "🧾",
-          "emoji_source": "user", "status": "blocked", "hud_status": "blocked", "step_index": 3,
+          "label_source": "user", "emoji_source": "user", "status": "blocked", "hud_status": "blocked", "step_index": 3,
           "step_fraction": 0.0, "percent": 50, "now": "QA failed twice on iPad.",
           "latest_message": {"id": "fmm_2", "role": "assistant", "text": "I stopped QA.", "created_at": "2030-01-01T11:20:00Z",
                              "skim_say": "QA failed twice, so I stopped."},
@@ -29,6 +29,8 @@ struct FirstMateFleetDecodingTests {
         #expect(entry.id == "fmf_receipts")
         #expect(entry.title == "Receipt export")
         #expect(entry.label == "Receipts")
+        #expect(entry.labelSource == "user")
+        #expect(entry.isUserLabel)
         #expect(entry.emoji == "🧾")
         #expect(entry.emojiSource == "user")
         #expect(entry.status == "blocked")
@@ -56,7 +58,7 @@ struct FirstMateFleetDecodingTests {
         {"ok": true, "features": [
           {"feature_id": "fmf_minimal"},
           {"feature_id": "fmf_nulls", "title": "  Nulls everywhere and a long title  ", "label": null, "emoji": "",
-           "status": "awaiting_direction", "hud_status": null, "step_index": null, "step_fraction": null,
+           "label_source": "default", "status": "awaiting_direction", "hud_status": null, "step_index": null, "step_fraction": null,
            "percent": null, "now": null, "latest_message": null, "unread": null, "working_on_reply": null},
           {"feature_id": "fmf_future", "status": "running", "hud_status": "celebrating", "step_index": 9,
            "latest_message": {"id": "fmm_1", "role": "human", "text": "Ship it"}, "unread": "yes"},
@@ -68,6 +70,8 @@ struct FirstMateFleetDecodingTests {
 
         let minimal = response.features[0]
         #expect(minimal.title == "")
+        #expect(minimal.labelSource == nil)
+        #expect(!minimal.isUserLabel)
         #expect(minimal.status == "unknown")
         #expect(minimal.hudStatus == .idle)
         #expect(minimal.emoji == FirstMateDefaultEmoji.emoji(for: "fmf_minimal"))
@@ -79,6 +83,8 @@ struct FirstMateFleetDecodingTests {
         let nulls = response.features[1]
         #expect(nulls.label == "Nulls everywhere and a l")
         #expect(nulls.label.count == 24)
+        #expect(nulls.labelSource == "default")
+        #expect(!nulls.isUserLabel)
         #expect(nulls.emoji == FirstMateDefaultEmoji.emoji(for: "fmf_nulls"))
         #expect(nulls.hudStatus == .turn, "A missing hud_status uses the client-side fallback")
         #expect(nulls.stepFraction == nil)
@@ -112,13 +118,14 @@ struct FirstMateFleetDecodingTests {
             featureID: "fmf_round", title: "Round trip", status: "running", hudStatus: .working,
             stepIndex: 1, stepFraction: 0, percent: 17, now: "Building",
             latestMessage: .init(id: "fmm_1", role: "user", text: "Go", createdAt: "2030-01-01T10:00:00Z"),
-            unread: false, activityAt: "2030-01-01T10:00:00Z"
+            unread: false, activityAt: "2030-01-01T10:00:00Z", labelSource: "user"
         )
         let data = try JSONEncoder().encode(entry)
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(object["feature_id"] as? String == "fmf_round")
         #expect(object["hud_status"] as? String == "working")
         #expect(object["step_index"] as? Int == 1)
+        #expect(object["label_source"] as? String == "user")
         #expect(object["featureID"] == nil)
         #expect(try JSONDecoder().decode(FirstMateFleetEntry.self, from: data) == entry)
     }
@@ -136,6 +143,43 @@ struct FirstMateFleetDecodingTests {
         ))
         #expect(hud.feature.label == "Short")
         #expect(hud.feature.emojiSource == "user")
+    }
+
+    @Test("Label provenance overrides heuristics; older companions use the server's clip")
+    func labelProvenance() throws {
+        func entry(_ title: String, _ label: String, source: String? = nil) -> FirstMateFleetEntry {
+            .init(featureID: "fmf_synthetic", title: title, label: label, status: "ready", labelSource: source)
+        }
+        let title = "Receipt export for every storefront region"
+        #expect(entry(title, title, source: "user").isUserLabel)
+        #expect(entry(title, "Receipt export for…", source: "user").isUserLabel)
+        #expect(!entry(title, "Custom", source: "default").isUserLabel)
+        #expect(!entry(title, title).isUserLabel)
+        #expect(!entry(title, "Receipt export for…").isUserLabel)
+        #expect(!entry("  Receipt   export  ", "Receipt export").isUserLabel)
+        #expect(entry(title, "Receipts").isUserLabel)
+        #expect(!entry("", "").isUserLabel)
+        #expect(entry("Receipt export", "", source: "user").isUserLabel,
+                "An explicit user source remains authoritative even for an empty label")
+
+        let json = #"{"feature_id":"fmf_old","title":"Receipt export for every storefront region","label":"Receipts","label_source":null}"#
+        let decoded = try JSONDecoder().decode(FirstMateFleetEntry.self, from: Data(json.utf8))
+        #expect(decoded.labelSource == nil)
+        #expect(decoded.isUserLabel)
+    }
+
+    @Test("The server default label matches Python code-point and whitespace vectors", arguments: [
+        ("Receipt export", "Receipt export"),
+        ("Receipt export for every storefront region", "Receipt export for…"),
+        ("Supercalifragilisticexpialidocious", "Supercalifragilisticexp…"),
+        ("  QA\t failed\n  twice.  ", "QA failed twice."),
+        ("\u{001C}Receipt\u{00A0}  export  ", "Receipt export"),
+        ("12345678901234567890123 next", "12345678901234567890123…"),
+        ("1234567890123456789012, next", "1234567890123456789012…"),
+        (String(repeating: "e\u{0301}", count: 13), String(repeating: "e\u{0301}", count: 11) + "e…"),
+    ])
+    func serverDefaultLabel(title: String, expected: String) {
+        #expect(FirstMateFleetEntry.serverDefaultLabel(title: title) == expected)
     }
 
     @Test("The fleet capability flag is read from the capability list")

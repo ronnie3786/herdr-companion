@@ -24,6 +24,80 @@ struct FirstMateChatWindowSessionTests {
         #expect(session.store(for: "elsewhere") == nil)
     }
 
+    @Test("Presentation edit targets a feature without changing selection; unknown IDs are ignored")
+    func presentationTarget() {
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())
+        let id = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+        session.requestPresentationEdit(id)
+        #expect(session.presentationEditTarget?.id == id)
+        #expect(session.selection == .lead)
+        session.requestPresentationEdit(.init(machineID: "demo", featureID: "demo-lead"))
+        session.requestPresentationEdit(.init(machineID: "demo", featureID: "missing"))
+        #expect(session.presentationEditTarget?.id == id)
+    }
+
+    @Test("Demo presentation edits persist in its shared fleet and invalidate the list cache")
+    func demoPresentationSave() async throws {
+        let shell = ChatFixtures.shell()
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: shell)
+        let id = FirstMateFleetFeatureID(machineID: "demo", featureID: "demo-receipts")
+        let original = try #require(session.conversations.first { $0.id == id })
+        #expect(await session.savePresentation(id, label: "Friendly demo", emoji: "🪁") == nil)
+        let changed = try #require(session.conversations.first { $0.id == id })
+        #expect(changed.name == "Friendly demo" && changed.emoji == "🪁")
+        #expect(changed.title == original.title)
+        #expect(changed.previewText == original.previewText && changed.hudStatus == original.hudStatus)
+        #expect(shell.firstMateChatDemo.fleet.first { $0.featureID == id.featureID }?.labelSource == "user")
+        #expect(await session.savePresentation(id, label: "", emoji: "") == nil)
+        let reset = try #require(session.conversations.first { $0.id == id })
+        #expect(reset.name == original.title && reset.emoji == FirstMateDefaultEmoji.emoji(for: id.featureID))
+        #expect(shell.firstMateChatDemo.fleet.first { $0.featureID == id.featureID }?.labelSource == "default")
+    }
+
+    @Test("Live save sends only changed fields and applies the companion response immediately")
+    func livePresentationSave() async throws {
+        let shell = ChatFixtures.shell()
+        let entry = ChatFixtures.entry("f1", hud: .blocked, latestFirstMate: "fmm_1")
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1")], fleet: [entry])
+        shell.firstMateFleet.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1)
+        await shell.firstMateFleet.refresh()
+        let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: false), shell: shell,
+            configuration: { _ in ServerConfiguration(urlString: "https://alpha.example.invalid", token: "synthetic") },
+            makeClient: { _ in client })
+        let id = FirstMateFleetFeatureID(machineID: "alpha", featureID: "f1")
+        #expect(await session.savePresentation(id, label: "Friendly", emoji: nil) == nil)
+        #expect(client.hudUpdates.count == 1)
+        #expect(client.hudUpdates[0].label == "Friendly" && client.hudUpdates[0].emoji == nil)
+        #expect(session.conversations.first { $0.id == id }?.name == "Friendly")
+        #expect(await session.savePresentation(id, label: nil, emoji: "🎯") == nil)
+        #expect(client.hudUpdates[1].label == nil && client.hudUpdates[1].emoji == "🎯")
+        #expect(session.conversations.first { $0.id == id }?.emoji == "🎯")
+        #expect(shell.firstMateFleet.hosts[0].fleetEntries?["f1"]?.unread == entry.unread)
+        #expect(await session.savePresentation(id, label: nil, emoji: nil) == nil)
+        #expect(client.hudUpdates.count == 2)
+    }
+
+    @Test("Failed or unconfigured saves keep the conversation unchanged")
+    func presentationFailure() async throws {
+        let shell = ChatFixtures.shell()
+        let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1")], fleet: [ChatFixtures.entry("f1", hud: .working)])
+        shell.firstMateFleet.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1)
+        await shell.firstMateFleet.refresh()
+        let model = ChatFixtures.model(demo: false)
+        let id = FirstMateFleetFeatureID(machineID: "alpha", featureID: "f1")
+        let session = FirstMateChatWindowSession(model: model, shell: shell,
+            configuration: { _ in ServerConfiguration(urlString: "https://alpha.example.invalid", token: "synthetic") },
+            makeClient: { _ in client })
+        let original = try #require(session.conversations.first { $0.id == id })
+        client.hudFailure = .server(status: 503, message: "Synthetic outage")
+        #expect(await session.savePresentation(id, label: "Friendly", emoji: nil)?.contains("Synthetic outage") == true)
+        #expect(session.conversations.first { $0.id == id } == original)
+        let unconfigured = FirstMateChatWindowSession(model: model, shell: shell,
+            configuration: { _ in nil }, makeClient: { _ in client })
+        #expect(await unconfigured.savePresentation(id, label: "Friendly", emoji: nil)?.contains("not configured") == true)
+        #expect(client.hudUpdates.count == 1)
+    }
+
     @Test("Archiving a conversation removes its row and badge and returns the selected chat to My First Mate")
     func archiveConversation() async throws {
         let session = FirstMateChatWindowSession(model: ChatFixtures.model(demo: true), shell: ChatFixtures.shell())

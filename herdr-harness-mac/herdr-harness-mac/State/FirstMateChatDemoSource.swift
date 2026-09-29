@@ -10,7 +10,7 @@ import Foundation
 @MainActor
 final class FirstMateChatDemoSource {
     let now: Date
-    let fleet: [FirstMateFleetEntry]
+    private(set) var fleet: [FirstMateFleetEntry]
     let store: FirstMateStore
 
     init(now: Date = Date()) {
@@ -19,6 +19,20 @@ final class FirstMateChatDemoSource {
         store = FirstMateStore()
         store.configure(client: nil, demo: true,
                         demoFeatures: FirstMateDemo.chatWindowFeatures(now: now) + [FirstMateDemo.chatWindowLead(now: now)])
+    }
+
+    /// Apply the same reset semantics as the companion, without touching the
+    /// feature title, read markers, or the rest of the synthetic summary.
+    func setPresentation(featureID: String, label: String?, emoji: String?) {
+        guard let index = fleet.firstIndex(where: { $0.featureID == featureID }) else { return }
+        if let label {
+            fleet[index].label = label.isEmpty ? FirstMateFleetEntry.serverDefaultLabel(title: fleet[index].title) : label
+            fleet[index].labelSource = label.isEmpty ? "default" : "user"
+        }
+        if let emoji {
+            fleet[index].emoji = emoji.isEmpty ? FirstMateDefaultEmoji.emoji(for: featureID) : emoji
+            fleet[index].emojiSource = emoji.isEmpty ? "default" : "user"
+        }
     }
 
     /// The demo's one host, with each chat's newest message taken from the

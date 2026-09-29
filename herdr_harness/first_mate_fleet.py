@@ -286,6 +286,7 @@ def entry(row: Mapping[str, Any], *, automatic_recovery: bool = True) -> dict:
         "feature_id": row["id"],
         "title": row.get("title") or "",
         "label": label or default_label(row.get("title") or ""),
+        "label_source": "user" if label else "default",
         "emoji": emoji or default_emoji(row["id"]),
         "emoji_source": "user" if emoji else "default",
         "status": row.get("status"),

@@ -6,19 +6,36 @@ struct FirstMateChatHeader: View {
     let session: FirstMateChatWindowSession
     let inspectorVisible: Bool
     let toggleInspector: () -> Void
+    @State private var isNameHovered = false
 
     var body: some View {
         HStack(spacing: 12) {
-            avatar
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .herdrFont(size: 14.5, weight: .semibold)
-                    .tracking(-0.15)
-                    .foregroundStyle(HerdrTheme.text)
-                    .lineLimit(1)
-                subtitle
+            switch session.selection {
+            case .lead:
+                avatar
+                VStack(alignment: .leading, spacing: 2) {
+                    nameText
+                    subtitle
+                }
+                .accessibilityElement(children: .combine)
+            case .feature(let id):
+                VStack(alignment: .leading, spacing: 2) {
+                    Button { session.requestPresentationEdit(id) } label: {
+                        HStack(spacing: 12) {
+                            avatar
+                            nameText
+                        }
+                        .padding(.trailing, 5)
+                        .background(isNameHovered ? HerdrTheme.inkFill(0.08) : .clear, in: .rect(cornerRadius: 8))
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.herdrPlain)
+                    .onHover { isNameHovered = $0 }
+                    .help("Rename or change emoji")
+                    .accessibilityLabel("Rename or change emoji for \(title)")
+                    subtitle.padding(.leading, 50)
+                }
             }
-            .accessibilityElement(children: .combine)
             Spacer(minLength: 8)
             FirstMateInspectorToggle(isOpen: inspectorVisible, action: toggleInspector)
         }
@@ -32,6 +49,14 @@ struct FirstMateChatHeader: View {
 
     private var conversation: FirstMateConversation? { session.selectedConversation }
 
+    private var nameText: some View {
+        Text(title)
+            .herdrFont(size: 14.5, weight: .semibold)
+            .tracking(-0.15)
+            .foregroundStyle(HerdrTheme.text)
+            .lineLimit(1)
+    }
+
     @ViewBuilder private var avatar: some View {
         switch session.selection {
         case .lead:
@@ -44,7 +69,7 @@ struct FirstMateChatHeader: View {
     private var title: String {
         switch session.selection {
         case .lead: "My First Mate"
-        case .feature: conversation?.title ?? session.selectedSnapshot?.feature.title ?? "Loading…"
+        case .feature: conversation?.name ?? session.selectedSnapshot?.feature.title ?? "Loading…"
         }
     }
 

@@ -435,7 +435,9 @@ filters for itself. Each entry has:
 
 - `feature_id`, `title`, raw `status`, `updated_at`, `activity_at` (the Agent
   view's telemetry-free activity time), and nullable `archived_at`.
-- `label`: the user's label, or the title on one line cut to 24 characters.
+- `label`: the user's label, or the title on one line cut to 24 code points
+  (collapsed whitespace, word-boundary cut with an ellipsis). `label_source`
+  is `user` or `default` according to whether a user label is stored.
   `emoji`: the user's emoji, or a default; `emoji_source` is `user` or
   `default`. The default is `EMOJI_PALETTE[((h >> 16) ^ (h & 0xffff)) % 16]`
   where `h` is 32-bit FNV-1a over the UTF-8 feature ID and the palette is

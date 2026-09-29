@@ -6,6 +6,46 @@ import Testing
 @Suite("First Mate fleet index")
 @MainActor
 struct FirstMateFleetIndexTests {
+    @Test("Presentation response merges only the owning feature's presentation and bumps revision")
+    func presentationMerge() async throws {
+        let alpha = SyntheticChatFleetClient(features: [ChatFixtures.feature("shared")], fleet: [
+            ChatFixtures.entry("shared", hud: .blocked, unread: true, latestFirstMate: "fmm_saved")
+        ])
+        let beta = SyntheticChatFleetClient(features: [ChatFixtures.feature("shared")], fleet: [
+            ChatFixtures.entry("shared", hud: .working, unread: false, latestFirstMate: "fmm_elsewhere")
+        ])
+        let index = FirstMateFleetIndex()
+        index.activate(sources: [ChatFixtures.source("alpha", client: alpha), ChatFixtures.source("beta", client: beta)], connectionGeneration: 1)
+        await index.refresh()
+        let before = try #require(index.hosts[0].fleetEntries?["shared"])
+        var staleResponse = before
+        staleResponse.title = "Updated synthetic title"
+        staleResponse.label = "Friendly"
+        staleResponse.labelSource = "user"
+        staleResponse.emoji = "🚀"
+        staleResponse.emojiSource = "user"
+        staleResponse.unread = false
+        staleResponse.readThroughMessageID = "fmm_stale"
+        staleResponse.status = "completed"
+        staleResponse.hudStatus = .done
+        staleResponse.latestFirstMateMessageID = "fmm_stale"
+        let revision = index.contentRevision
+        index.applyPresentation(staleResponse, machineID: "alpha")
+        let updated = try #require(index.hosts[0].fleetEntries?["shared"])
+        #expect(index.contentRevision == revision + 1)
+        #expect(updated.title == staleResponse.title)
+        #expect(updated.label == "Friendly" && updated.labelSource == "user")
+        #expect(updated.emoji == "🚀" && updated.emojiSource == "user")
+        #expect(updated.unread == before.unread && updated.status == before.status)
+        #expect(updated.hudStatus == before.hudStatus)
+        #expect(updated.latestFirstMateMessageID == before.latestFirstMateMessageID)
+        #expect(updated.readThroughMessageID == before.readThroughMessageID)
+        #expect(index.hosts[1].fleetEntries?["shared"]?.label == FirstMateFleetEntry.defaultLabel(title: "Synthetic shared"))
+        index.applyPresentation(staleResponse, machineID: "missing")
+        index.applyPresentation(staleResponse, machineID: "alpha")
+        #expect(index.contentRevision == revision + 1)
+    }
+
     @Test("Archive targets the owning machine and removes only its feature")
     func archiveOwningMachine() async throws {
         let value = snapshot(id: "same-id", title: "Synthetic task", goal: "Archive this task")

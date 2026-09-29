@@ -108,6 +108,21 @@ final class FirstMateFleetIndex {
         }
     }
 
+    /// Merge only presentation fields from a successful HUD write. In
+    /// particular a stale response must not roll back newer read/status data.
+    func applyPresentation(_ entry: FirstMateFleetEntry, machineID: String) {
+        guard let index = hosts.firstIndex(where: { $0.machineID == machineID }),
+              var current = hosts[index].fleetEntries?[entry.featureID] else { return }
+        current.title = entry.title
+        current.label = entry.label
+        current.labelSource = entry.labelSource
+        current.emoji = entry.emoji
+        current.emojiSource = entry.emojiSource
+        guard current != hosts[index].fleetEntries?[entry.featureID] else { return }
+        hosts[index].fleetEntries?[entry.featureID] = current
+        contentRevision &+= 1
+    }
+
     var search = ""
     private(set) var hosts: [FirstMateFleetHost] = []
     /// Increments only when a host's published state actually changes, or the

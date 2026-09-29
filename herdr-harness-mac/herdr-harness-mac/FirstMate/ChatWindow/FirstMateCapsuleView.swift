@@ -33,7 +33,7 @@ struct FirstMateCapsuleView: View {
                     Text(conversation.emoji).font(.system(size: 10))
                 }
                 .frame(width: 17, height: 17)
-                Text(conversation.title)
+                Text(conversation.name)
                     .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
                     .foregroundStyle(HerdrTheme.primaryText)
                     .lineLimit(1)
@@ -83,7 +83,7 @@ struct FirstMateCapsuleView: View {
             }
         }
         .onDisappear { hoverTask?.cancel() }
-        .accessibilityLabel("\(conversation.title), \(FirstMateChatStatusStyle.word(for: conversation)). Opens its chat.")
+        .accessibilityLabel("\(conversation.name), \(FirstMateChatStatusStyle.word(for: conversation)). Opens its chat.")
     }
 
     private func hoverChanged(_ inside: Bool) {
@@ -143,7 +143,7 @@ struct FirstMateCapsuleReadout: View {
             HStack(spacing: 10) {
                 FirstMateEmojiDisc(emoji: conversation.emoji, size: 32)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(conversation.title)
+                    Text(conversation.name)
                         .herdrFont(size: 13, weight: .semibold)
                         .foregroundStyle(HerdrTheme.primaryText)
                         .lineLimit(1)

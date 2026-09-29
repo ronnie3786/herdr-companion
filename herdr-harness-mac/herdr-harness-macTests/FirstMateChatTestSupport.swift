@@ -17,6 +17,8 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     private var _featureCalls = 0
     private var _fleetCalls = 0
     private var _reads: [(featureID: String, messageID: String)] = []
+    private var _hudUpdates: [(featureID: String, label: String?, emoji: String?)] = []
+    private var _hudFailure: APIError?
     /// The lead summary GET and POST return (nil: no lead yet).
     private var _lead: FirstMateLeadSummary?
     private var _leadCalls = 0
@@ -84,6 +86,11 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     var featureCalls: Int { lock.withLock { _featureCalls } }
     var fleetCalls: Int { lock.withLock { _fleetCalls } }
     var reads: [(featureID: String, messageID: String)] { lock.withLock { _reads } }
+    var hudUpdates: [(featureID: String, label: String?, emoji: String?)] { lock.withLock { _hudUpdates } }
+    var hudFailure: APIError? {
+        get { lock.withLock { _hudFailure } }
+        set { lock.withLock { _hudFailure = newValue } }
+    }
     /// Runs before the capability probe answers (tests that check overlap).
     private var _beforeCapabilities: (@Sendable () async -> Void)?
     var beforeCapabilities: (@Sendable () async -> Void)? {
@@ -103,6 +110,24 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     func fetchFirstMateFleet() async throws -> FirstMateFleetResponse {
         let result = lock.withLock { _fleetCalls += 1; return _fleet }
         return FirstMateFleetResponse(features: try result.get())
+    }
+    func updateFirstMateHud(featureID: String, label: String?, emoji: String?) async throws -> FirstMateFleetEntry {
+        try lock.withLock {
+            _hudUpdates.append((featureID, label, emoji))
+            if let _hudFailure { throw _hudFailure }
+            guard case .success(let entries) = _fleet,
+                  var entry = entries.first(where: { $0.featureID == featureID }) else { throw APIError.invalidResponse }
+            if let label {
+                entry.label = label.isEmpty ? FirstMateFleetEntry.serverDefaultLabel(title: entry.title) : label
+                entry.labelSource = label.isEmpty ? "default" : "user"
+            }
+            if let emoji {
+                entry.emoji = emoji.isEmpty ? FirstMateDefaultEmoji.emoji(for: featureID) : emoji
+                entry.emojiSource = emoji.isEmpty ? "default" : "user"
+            }
+            _fleet = .success(entries.map { $0.featureID == featureID ? entry : $0 })
+            return entry
+        }
     }
     func markFirstMateRead(featureID: String, throughMessageID: String) async throws -> FirstMateReadResponse {
         let handler = lock.withLock { _reads.append((featureID, throughMessageID)); return _read }
@@ -282,7 +307,8 @@ enum ChatFixtures {
     ) -> FirstMateConversation {
         FirstMateConversation(
             id: FirstMateFleetFeatureID(machineID: "local", featureID: title), machineID: "local", machineName: "Local Mac",
-            featureID: title, title: title, label: title, emoji: "🧪", hudStatus: hud, featureStatus: "running",
+            featureID: title, title: title, label: title, isUserNamed: false, emoji: "🧪", isUserEmoji: false,
+            hudStatus: hud, featureStatus: "running",
             stepIndex: step, stepFraction: nil, now: nil, previewText: "", previewIsFromUser: false,
             isWorkingOnReply: false, activityAt: activityAt, latestFirstMateMessageID: nil, isUnread: unread, isArchived: false
         )

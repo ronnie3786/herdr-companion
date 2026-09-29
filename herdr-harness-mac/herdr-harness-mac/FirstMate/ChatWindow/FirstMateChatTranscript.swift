@@ -13,6 +13,7 @@ struct FirstMateChatTranscript: View {
 
     @Environment(\.controlActiveState) private var controlActiveState
     @State private var followsLatest = true
+    @State private var transcriptClock = FirstMateTranscriptClock()
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
     /// Only the clamped, whole-point bubble width is state, so resize frames
     /// that do not change it do not rebuild the transcript.
@@ -32,7 +33,7 @@ struct FirstMateChatTranscript: View {
     var body: some View {
         let messages = messages
         let rows = FirstMateTranscriptLayout.rows(for: messages, typing: isTyping,
-            pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: .now, calendar: .current)
+            pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: transcriptClock.now, calendar: .current)
         let cards = FirstMateTranscriptLayout.fileCards(messages: messages, documents: snapshot.documents)
         return ScrollViewReader { proxy in
             ScrollView {
@@ -47,7 +48,7 @@ struct FirstMateChatTranscript: View {
                             .padding(.top, row.isFirstInGroup ? (row.dayLabel == nil ? 14 : 6) : 3)
                         if !row.additionalReplies.isEmpty {
                             DisclosureGroup("Additional response from this turn") {
-                                ForEach(FirstMateTranscriptLayout.rows(for: row.additionalReplies, now: .now, calendar: .current)) { reply in
+                                ForEach(FirstMateTranscriptLayout.rows(for: row.additionalReplies, now: transcriptClock.now, calendar: .current)) { reply in
                                     bubble(for: reply, cards: cards[reply.id] ?? [])
                                 }
                             }
@@ -93,6 +94,7 @@ struct FirstMateChatTranscript: View {
                 if typing, followsLatest { proxy.scrollTo(Self.endID, anchor: .bottom) }
             }
         }
+        .modifier(FirstMateTranscriptClockLifecycle(clock: transcriptClock))
         .onAppear(perform: markRead)
         .onChange(of: FirstMateTranscriptLayout.ReadKey(
             followsLatest: followsLatest,

@@ -3,10 +3,59 @@
 Every completed text-bearing First Mate assistant response in the Mac
 conversation keeps compact thumbs-up, thumbs-down, and Copy controls visible
 inside its response bubble. An unrated response has no “Rate this response”
-label; a saved rating is shown next to the controls with an explicit label and
-selected state rather than color alone. Feedback is local data collection for
+label; a saved rating is shown above the final action row with an explicit
+label and selected state rather than color alone. Feedback is local data collection for
 later manual review; nothing in this feature changes prompts, preferences,
 models, or workflows.
+
+## Mac footer layout and timestamps (issue #126)
+
+The standalone chat's existing actions and timestamps now share **one final
+row**, below reply/skim content, document cards, skim/status information, saved
+rating details, Edit/Remove, saving progress, and error/retry recovery. Icons lead;
+the timestamp trails and can wrap within its allocation without moving into a
+separate lower band. Metadata and recovery prose wrap rather than truncating.
+The footer fills the actual bubble content width without forcing short replies
+to maximum width. Existing theme tokens, scaled typography, action hit targets,
+identifiers, callbacks, selected-state labels, and keyboard access are retained.
+Copy always uses the complete original response, including while a skim is shown.
+
+The main chat did **not** previously have a timestamp. Eligible completed
+assistant responses now gain one alongside their existing actions, including
+Copy-only responses when feedback is unavailable. This is an inferred parity
+improvement, separate from the standalone split-row correction.
+
+| Message | Main chat | Standalone chat / shared HUD bubbles |
+| --- | --- | --- |
+| Completed, nonblank assistant (`done` / `complete`, existing eligibility) | Final actions + contextual timestamp | Final actions + time-only timestamp |
+| Same response, no feedback presentation | Copy + contextual timestamp | Copy + time only; HUD gains no rating capability |
+| User / human | No new footer/time; existing text, status and copy route | Existing time, status, voice and context Copy; no ratings |
+| In-flight, queued, system, or blank assistant | No new footer/time; existing status and context Copy | Existing time/status and context Copy; no ratings |
+| Malformed creation timestamp | Omit time, retain eligible actions | Omit time, retain existing status/actions |
+
+Standalone bubbles show **localized short time only** because the transcript's
+Today/Yesterday/weekday/date pills already supply the date. Main-chat eligible
+assistant footers show **Today · time**, **Yesterday · time**, or an abbreviated
+date and time (with the year outside the current year). Future dates use their
+actual date rather than a negative age. All bubble timestamps expose complete
+date, year, time, and time zone in hover help and their accessibility label.
+Invalid input never produces an invented date.
+
+One Mac-local formatter follows local time and current locale/clock preferences
+(including 12/24-hour settings) for bubbles, same-day sidebar clocks, and the
+summary's **Updated** clock. Non-today sidebar date labels keep their existing
+policy; Updated still refers to the summary's source instant, not a message date.
+Shared `FirstMateChatTime`, iOS and web presentation are unchanged.
+
+Each mounted main or standalone transcript owns one presentation clock. It
+refreshes on appearance, calendar-day change, and app activation; contextual
+labels and standalone day pills (including additional replies) use that value.
+Observers are removed on disappearance/destruction. No bubble timers or
+notification observers are added.
+
+This is Mac-only presentation with **no new server requirement**, networking,
+storage, API, or configuration change. Feedback still requires the existing
+`first-mate-feedback-v1` capability and all existing load/write/conflict gates.
 
 ## Interaction
 
@@ -188,11 +237,59 @@ Readback is inspect-only. There is no export, upload, or training route, and
 refining future First Mate behavior from these labels remains a manual,
 separately designed step.
 
+## Footer verification evidence
+
+Focused suites: `FirstMateMessageTimestampTests` (surface policies, locales,
+time zones, ISO precision, local-day/DST boundaries, years/future/invalid dates),
+`FirstMateTranscriptClockTests` (notification refresh and cleanup),
+`FirstMateMessageFooterTests` (actual hosted geometry, role/status eligibility,
+short-bubble sizing, secondary/document ordering, both surfaces, every text scale,
+light/dark, and hosted bubble/sidebar/Updated clock consistency), and
+`FirstMateFeedbackPresentationTests` (unchanged presentation gates and feedback
+regressions). Synthetic PNGs include a labeled reconstruction of the old split
+row and after renders of both production views; the reconstruction is not a
+captured conversation. Geometry assertions, not PNG byte counts, establish
+alignment. UI tests carry screenshots and accessibility trees into `.xcresult`.
+
+Implementation checks for issue #126: the four focused suites above passed
+**29 tests**, including the hosted width/scale/appearance and role/status matrices.
+The requested unsigned macOS test command was run with an isolated
+`-derivedDataPath .build/issue-126/DerivedData` and
+`COMPILER_INDEX_STORE_ENABLE=NO` after the runner ran low on disk space; test and
+coverage checks were not disabled. Synthetic before/after renders were generated
+and inspected for both surfaces, including light/dark, narrow/default widths,
+largest text, document cards, and short Copy-only bubbles. The public-source scan
+passed.
+
+The interactive UI command was attempted, but no tests began during a bounded
+startup wait; it was stopped. **NOT RUN / pending:** interactive UI assertions,
+keyboard/VoiceOver operation, actual clipboard readback (including a displayed
+skim), hover help, and installed-app checks. Offscreen unit hosts did not expose
+a usable SwiftUI accessibility tree, so geometry evidence is not presented as
+accessibility interaction evidence. The UI suite remains ready for a suitable
+interactive runner. The authoritative full Verify matrix is **NOT RUN locally**
+and still owns the exact candidate. These distinctions also apply to every
+unchecked manual item below.
+
 ## Manual verification checklist
 
 Use synthetic features, responses, categories, and a disposable companion
 state. Do not capture operator configuration or real conversations.
 
+- [ ] Compare main and standalone chat at narrow/default widths, short/long
+      responses and document cards, light/dark, default/largest text sizes.
+      Confirm actions/time form the last row without overlap, clipping, duplicate
+      Copy/time, a lower timestamp band, or forced maximum-width short bubbles.
+- [ ] Confirm main-chat timestamps are new only on eligible assistants (including
+      Copy-only); users/in-flight messages remain timestamp-free. Standalone
+      retains user/status/voice times without adding ratings. Check time-only
+      standalone labels beside day pills versus contextual main-chat labels.
+- [ ] Change 12/24-hour preferences: bubble, same-day sidebar and Updated clocks
+      agree. Hover/VoiceOver exposes full timestamp details. Cross midnight and
+      reactivate the app: main context and standalone day pills refresh.
+- [ ] Copy a skimmed response and confirm the clipboard contains the complete
+      original reply, not the skim. Use keyboard and VoiceOver to reach rating,
+      Edit/Remove and error/conflict recovery; confirm selected/unavailable states.
 - [ ] In the synthetic demo, rate a response thumbs up and confirm the immediate
       saved **Helpful** state. Then open thumbs down and confirm all three
       starting reasons use the exact requested labels and start unselected.

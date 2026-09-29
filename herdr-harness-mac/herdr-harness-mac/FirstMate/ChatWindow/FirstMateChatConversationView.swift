@@ -376,6 +376,7 @@ struct FirstMateLeadSummaryCard: View {
     let conversations: [FirstMateConversation]
     let now: Date
     let open: (FirstMateConversation) -> Void
+    @Environment(\.firstMateTimestampContext) private var timestampContext
 
     var body: some View {
         let briefing = FirstMateLeadBriefing.build(conversations: conversations, now: now, calendar: .current)
@@ -395,7 +396,9 @@ struct FirstMateLeadSummaryCard: View {
                         .foregroundStyle(HerdrTheme.tertiaryText)
                 }
                 Spacer(minLength: 8)
-                Text("Updated \(FirstMateChatTime.clock(for: now, calendar: .current))")
+                let clock = (timestampContext ?? FirstMateTimestampContext()).clock(now)
+                Text("Updated \(clock)")
+                    .preference(key: FirstMateClockLabelKey.self, value: ["updated": clock])
                     .herdrFont(size: HerdrTheme.TextSize.micro)
                     .foregroundStyle(HerdrTheme.tertiaryText)
                     .monospacedDigit()

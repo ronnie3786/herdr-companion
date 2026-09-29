@@ -25,6 +25,8 @@ final class FirstMateHudController {
         case editor(FirstMateFleetFeatureID)
         /// Type to First Mate.
         case chat
+        /// A failed HUD send, including failures before a conversation opened.
+        case delivery
         /// First Mate's latest line beside the face.
         case latestLine
     }
@@ -108,6 +110,8 @@ final class FirstMateHudController {
     private(set) var voiceTarget: FirstMateFleetFeatureID?
     /// Words on their way to a feature or the lead.
     private(set) var isSending = false
+    /// Kept until accepted or explicitly discarded, never replaced by a new recording.
+    private(set) var delivery: FirstMateHudDelivery?
     /// The face's thinking look: sending, or the lead working on a reply.
     var isThinking: Bool { isSending || isLeadWorking }
     private(set) var speakingUntil: Date?
@@ -153,6 +157,7 @@ final class FirstMateHudController {
     @ObservationIgnored private weak var model: HerdrAppModel?
     @ObservationIgnored private weak var shell: HerdrShellState?
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let makeClient: (ServerConfiguration) -> any FirstMateClient
     @ObservationIgnored private let isInert: Bool
     @ObservationIgnored private var panel: HerdrHudPanel?
     @ObservationIgnored private var faceCenter: CGPoint?
@@ -182,9 +187,11 @@ final class FirstMateHudController {
 
     var voiceSamples: [CGFloat] { voice.samples }
 
-    init(defaults: UserDefaults = .standard, isInert: Bool = FirstMateFleetDriver.isHostedByTests) {
+    init(defaults: UserDefaults = .standard, isInert: Bool = FirstMateFleetDriver.isHostedByTests,
+         makeClient: @escaping (ServerConfiguration) -> any FirstMateClient = { HerdrAPIClient(configuration: $0) }) {
         self.defaults = defaults
         self.isInert = isInert
+        self.makeClient = makeClient
         isExpanded = defaults.bool(forKey: FirstMateHudPreferences.expandedKey)
         layout = FirstMateHudGeometry.layout(.init(
             faceCenter: .zero, visibleFrame: CGRect(x: 0, y: 0, width: 1440, height: 900),
@@ -372,7 +379,7 @@ final class FirstMateHudController {
                 if item(id) == nil { closeCard(card) }
             case .tucked:
                 if tuckedItems.isEmpty { closeCard(card) }
-            case .chat, .latestLine:
+            case .chat, .delivery, .latestLine:
                 break
             }
         }
@@ -491,6 +498,8 @@ final class FirstMateHudController {
             anchor = (isExpanded ? summaryRowCenterY() : FirstMateHudGeometry.orbRowDrop) - 24
         case .chat:
             key = "chat"
+        case .delivery:
+            return .init(size: CGSize(width: 340, height: 290), anchorY: anchor)
         case .latestLine:
             key = "latestLine"
         }
@@ -556,7 +565,7 @@ final class FirstMateHudController {
     // MARK: Face gestures
 
     func facePressBegan() {
-        guard voicePhase == .idle else { return }
+        guard canBeginSubmission(), voicePhase == .idle else { return }
         voicePhase = .pressing(Date())
         holdTask?.cancel()
         holdTask = Task { [weak self] in
@@ -613,7 +622,7 @@ final class FirstMateHudController {
 
     /// The message card's mic: hold to talk to that feature; letting go sends.
     func micPressBegan(target: FirstMateFleetFeatureID) {
-        guard voicePhase == .idle else { return }
+        guard canBeginSubmission(), voicePhase == .idle else { return }
         voiceTarget = target
         voicePhase = .pressing(Date())
         holdTask?.cancel()
@@ -705,7 +714,9 @@ final class FirstMateHudController {
     // MARK: Cards
 
     func toggleChat() {
-        if explicitCard == .chat {
+        if delivery != nil {
+            openExplicit(.delivery)
+        } else if explicitCard == .chat {
             closeCard(.chat)
         } else {
             openExplicit(.chat)
@@ -854,11 +865,11 @@ final class FirstMateHudController {
     /// the feature they name.
     func submit(_ text: String, byVoice: Bool = false) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, canBeginSubmission() else { return }
         if leadMachineID != nil {
             let payload = PromptComposerSubmission.payload(draft: trimmed, attachments: [], quotes: [], references: [],
                                                            containsDictation: byVoice)
-            if await sendToLead(payload), explicitCard != .chat {
+            if await sendToLead(payload, transcript: trimmed), explicitCard != .chat {
                 showLatestLine(LatestLine(text: "Asked First Mate. The answer shows here.", featureID: nil,
                                           expiresAt: Date().addingTimeInterval(Self.softNoteDuration), isLead: true))
             }
@@ -879,6 +890,7 @@ final class FirstMateHudController {
 
     /// The chat panel's send.
     func submitChat() {
+        guard canBeginSubmission() else { return }
         let text = chatDraft
         chatDraft = ""
         Task { await submit(text) }
@@ -887,7 +899,7 @@ final class FirstMateHudController {
     /// The message card's reply box.
     func submitReply(to id: FirstMateFleetFeatureID) {
         let text = replyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let item = item(id) else { return }
+        guard !text.isEmpty, let item = item(id), canBeginSubmission() else { return }
         replyDraft = ""
         Task {
             if await send(text, to: id) {
@@ -895,7 +907,7 @@ final class FirstMateHudController {
                 showLatestLine(LatestLine(text: "Sent to \(item.label).", featureID: nil,
                                           expiresAt: Date().addingTimeInterval(Self.softNoteDuration)))
                 speak()
-            } else {
+            } else if delivery == nil, replyDraft.isEmpty {
                 replyDraft = text
             }
         }
@@ -924,10 +936,10 @@ final class FirstMateHudController {
 
     /// Posts the words to the feature as the person's message.
     func send(_ text: String, to id: FirstMateFleetFeatureID) async -> Bool {
-        guard let model, let shell else { return false }
-        isSending = true
-        defer { isSending = false }
+        guard let model, let shell, canBeginSubmission() else { return false }
         if model.isDemoMode {
+            isSending = true
+            defer { isSending = false }
             // The chat window's demo store; the HUD's extra demo features
             // have no chat to send to.
             let store = shell.firstMateChatDemo.store
@@ -945,23 +957,67 @@ final class FirstMateHudController {
             }
             return sent
         }
-        guard let configuration = model.firstMateConfiguration(machineID: id.machineID) else {
-            showNotice("That machine isn't connected.")
+        let pending = makeDelivery(text, transcript: text, machineID: id.machineID,
+                                   featureID: id.featureID, label: item(id)?.label ?? "this feature")
+        return await performDelivery(pending)
+    }
+
+    /// A second press never overwrites an unsent transcript or starts a duplicate.
+    private func canBeginSubmission() -> Bool {
+        guard !isSending else { return false }
+        guard delivery == nil else {
+            openExplicit(.delivery)
             return false
         }
-        do {
-            let snapshot = try await HerdrAPIClient(configuration: configuration)
-                .sendFirstMateMessage(featureID: id.featureID, text: text, requestID: UUID().uuidString)
-            guard snapshot.ok else { throw APIError.invalidResponse }
-            Task {
-                await shell.refreshFirstMateStore(machineID: id.machineID)
-                await shell.firstMateFleet.refresh()
-            }
-            return true
-        } catch {
-            showNotice(error.localizedDescription)
-            return false
+        return true
+    }
+
+    private func makeDelivery(_ payload: String, transcript: String, machineID: String,
+                              featureID: String? = nil, label: String, store existingStore: FirstMateStore? = nil) -> FirstMateHudDelivery {
+        let configuration = model?.firstMateConfiguration(machineID: machineID)
+        let store = existingStore ?? FirstMateStore()
+        if existingStore == nil { store.configure(client: configuration.map(makeClient), demo: false) }
+        let lifecycle = store.lifecycle
+        let machineName = model?.machines.first { $0.id == machineID }?.name ?? "the selected machine"
+        return FirstMateHudDelivery(transcript: transcript, payload: payload,
+            destinationLabel: "\(label) on \(machineName)", store: store, featureID: featureID,
+            connectionIsCurrent: { [weak model, weak store] in
+                guard let model, let store, !model.isDemoMode,
+                      model.machines.contains(where: { $0.id == machineID }),
+                      store.lifecycle == lifecycle else { return false }
+                return model.firstMateConfiguration(machineID: machineID) == configuration
+            })
+    }
+
+    private func performDelivery(_ pending: FirstMateHudDelivery) async -> Bool {
+        delivery = pending
+        isSending = true
+        let accepted = await pending.send()
+        isSending = false
+        if accepted {
+            delivery = nil
+            closeCard(.delivery)
+            leadMessageSent()
+            if let store = leadStore { Task { await store.refreshLead() } }
+        } else {
+            openExplicit(.delivery)
         }
+        return accepted
+    }
+
+    func retryDelivery() async {
+        guard let delivery, !isSending else { return }
+        if await performDelivery(delivery) {
+            showLatestLine(LatestLine(text: "Sent to \(delivery.destinationLabel).", featureID: nil,
+                                      expiresAt: Date().addingTimeInterval(Self.softNoteDuration)))
+        }
+    }
+
+    func discardDelivery() {
+        guard !isSending else { return }
+        delivery?.discard()
+        delivery = nil
+        closeCard(.delivery)
     }
 
     /// Saves a new label (24 characters at most) and emoji.
@@ -1098,7 +1154,7 @@ extension FirstMateHudController {
         let identity = FirstMateConnectionIdentity(configuration: configuration, generation: model.connectionGeneration, isDemo: false)
         if let leadStore, leadStoreMachineID == machineID, leadStoreIdentity == identity { return leadStore }
         let store = FirstMateStore()
-        store.configure(client: HerdrAPIClient(configuration: configuration), demo: false)
+        store.configure(client: makeClient(configuration), demo: false)
         // Messages to this machine's lead carry a snapshot of the machines it
         // does not reach itself.
         store.leadContextProvider = { [weak shell, weak model] in
@@ -1146,7 +1202,13 @@ extension FirstMateHudController {
     }
 
     /// Sends words to the lead as your message.
-    func sendToLead(_ text: String) async -> Bool {
+    func sendToLead(_ text: String, transcript: String? = nil) async -> Bool {
+        guard canBeginSubmission(), let machineID = leadMachineID else { return false }
+        if !isDemo {
+            let pending = makeDelivery(text, transcript: transcript ?? text, machineID: machineID,
+                                       label: "First Mate", store: currentLeadStore())
+            return await performDelivery(pending)
+        }
         guard let store = currentLeadStore() else { return false }
         isSending = true
         defer { isSending = false }

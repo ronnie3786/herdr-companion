@@ -24,11 +24,14 @@ enum HerdrProse {
         case heading6
         case tableHeader
         case tableCell
+        /// First Mate chat prose, 16/22 at the default Dynamic Type size.
+        case bubble
 
         /// Base point size before Dynamic Type scaling.
         var baseSize: CGFloat {
             switch self {
             case .body, .quote, .listItem: 15
+            case .bubble: 16
             case .heading1: 20
             case .heading2: 17
             case .heading3: 15
@@ -41,7 +44,7 @@ enum HerdrProse {
 
         var weight: Font.Weight {
             switch self {
-            case .body, .quote, .listItem, .tableCell: .regular
+            case .body, .quote, .listItem, .tableCell, .bubble: .regular
             case .heading1, .heading2, .heading3: .semibold
             case .heading4: .semibold
             case .heading5, .heading6: .semibold
@@ -57,7 +60,7 @@ enum HerdrProse {
         /// sizes still scale Inter output on iOS.
         var textStyle: Font.TextStyle {
             switch self {
-            case .body, .quote, .listItem: .body
+            case .body, .quote, .listItem, .bubble: .body
             case .heading1: .title2
             case .heading2: .title3
             case .heading3: .headline
@@ -118,7 +121,7 @@ enum HerdrProse {
     /// Call sites for headings and tables keep their own existing tight
     /// spacing instead of calling this.
     static func lineSpacing(_ role: Role) -> CGFloat {
-        (role.baseSize * 0.35).rounded()
+        role == .bubble ? 6 : (role.baseSize * 0.35).rounded()
     }
 
     /// Extra space ABOVE a heading, added on top of `blockSpacing`, so

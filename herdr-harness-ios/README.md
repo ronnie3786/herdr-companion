@@ -6,6 +6,18 @@ No other orchestration server is required.
 
 ## First Mate
 
+**First Mate for iPhone, Phase 0:** the dark-only Mono theme, cached dusk/haze,
+static glass recipes, Dynamic Type ramp, and avatar primitives are available.
+Settings → Appearance saves Glass and Haze independently for this phone; Reduce
+Transparency wins. Existing tabs keep their layouts and opaque backgrounds,
+with a deeper neutral palette. The new conversation screens arrive in later
+phases; the legacy First Mate appearance menu is removed in Phase 2. Debug builds
+can open the synthetic theme sample with
+`-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample`. Render outputs go to
+`$HERDR_IOS_RENDER_DIR`. See the [phase plan](../docs/first-mate/ios-chat/IMPLEMENTATION-PLAN.md)
+and [verification guide](../docs/first-mate/ios.md). No server update is needed.
+
+
 The **First Mate** tab brings the feature workspace to iPhone and iPad. It opens
 on **All Machines**, combining features from every configured host with items
 waiting for your direction first; each combined card names its host. The host

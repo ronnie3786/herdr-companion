@@ -5,6 +5,34 @@ open a feature, and give its First Mate direction in plain English. The companio
 server owns the workflow, agents, checkpoints, documents, and saved sessions.
 Closing the phone app does not stop work on the host.
 
+## First Mate for iPhone rollout
+
+Phase 0 adds the dark-only Mono × Herdr theme foundation: a cached dusk image,
+6% haze band, static glass levels, touch-sized recipes, Dynamic Type fonts, and
+First Mate avatar primitives. **Settings → Appearance → Glass / Haze** stores
+phone-local preferences, both on by default; Reduce Transparency keeps surfaces
+opaque without discarding either preference. The new chrome is exercised in the
+synthetic theme sample and will be installed on the new conversations screen in
+Phase 2. Existing screens keep their layouts and opaque backgrounds in this
+phase, with legacy color names mapped onto the deeper Mono palette. The legacy
+First Mate appearance menu remains until its Phase 2 replacement.
+
+The [implementation plan](ios-chat/IMPLEMENTATION-PLAN.md) and its three research
+inventories travel with the source. Those inventories describe the original
+baseline, not a promise that later phases are already implemented. No Mac view,
+shared First Mate behavior, or server contract changes in Phase 0.
+
+For a Debug simulator build, launch with
+`-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample` to inspect the foundation.
+`IOSThemeDuskRenderTests` writes `theme-dusk-sample.png` (390 pt), a 402 pt sample,
+and an accessibility3 sample to `$HERDR_IOS_RENDER_DIR`. The native render harness
+supports `background: .dusk`; existing tests still default to `.ink`.
+`HerdrThemeAccessibilityTests` measures reading colors and the 0.75 breathing
+floor over the brightest cached dusk/haze stack. `HerdrGlassBackgroundTests`
+pins canonical bitmap hashes and verifies opacity, one-time darkening, and the
+haze fade. `HerdrThemeFoundationUITests` checks the live sample, Settings toggles,
+and the existing tab destinations with synthetic data.
+
 ## Navigation
 
 The **First Mate** tab opens on **All Machines**, combining the features of every

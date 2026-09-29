@@ -1,0 +1,168 @@
+import SwiftUI
+
+/// An emoji on First Mate's dark violet disc, with a faint lavender top
+/// highlight and a 1 pt lavender edge. No ring and no status badge. `edge`
+/// gives agent and picker avatars a status-colored edge instead.
+struct FirstMateEmojiDisc: View {
+    let emoji: String
+    let size: CGFloat
+    var edge: Color? = nil
+
+    var body: some View {
+        ZStack {
+            Circle().fill(HerdrTheme.firstMateAvatarFill)
+            // CSS `radial-gradient(circle at 50% 26%, accent 20%, transparent 68%)`:
+            // 68% of the distance to the farthest corner.
+            Circle().fill(RadialGradient(
+                colors: [HerdrTheme.accent.opacity(0.20), HerdrTheme.accent.opacity(0)],
+                center: UnitPoint(x: 0.5, y: 0.26),
+                startRadius: 0,
+                endRadius: size * 0.68 * hypot(0.5, 0.74)
+            ))
+            Circle().strokeBorder(edge.map { $0.opacity(0.55) } ?? HerdrTheme.accent.opacity(0.20), lineWidth: 1)
+            Text(emoji)
+                .font(.system(size: size * 0.5))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+        }
+        .frame(width: size, height: size)
+        .background {
+            if let edge { FirstMateAvatarGlow(size: size, color: edge.opacity(0.35), radius: 3, inset: 2) }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// First Mate's face: two rounded eyes and a smile in soft lavender on the
+/// violet disc. It blinks every 5.2 s, in step with every other face on
+/// screen, and holds still under Reduce Motion.
+struct FirstMateFaceOrb: View {
+    let size: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static let faceColor = Color(.sRGB, red: 0xD9 / 255, green: 0xD6 / 255, blue: 0xFF / 255, opacity: 1)
+    static let blinkPeriod: TimeInterval = 5.2
+
+    var body: some View {
+        ZStack {
+            Circle().fill(HerdrTheme.firstMateAvatarFill)
+            Circle().fill(RadialGradient(
+                colors: [HerdrTheme.accent.opacity(0.22), HerdrTheme.accent.opacity(0)],
+                center: UnitPoint(x: 0.5, y: 0.34),
+                startRadius: 0,
+                endRadius: size * 0.64 * hypot(0.5, 0.66)
+            ))
+            Circle().strokeBorder(HerdrTheme.accent.opacity(0.60), lineWidth: 1)
+            face.frame(width: size * 0.62, height: size * 0.62)
+        }
+        .frame(width: size, height: size)
+        .background {
+            FirstMateAvatarGlow(size: size, color: HerdrTheme.accent.opacity(0.30), radius: 7, inset: size * 0.08)
+        }
+        .overlay {
+            if size > 26 { Circle().strokeBorder(HerdrTheme.accent.opacity(0.32), lineWidth: 1).padding(-3) }
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var face: some View {
+        if reduceMotion {
+            FirstMateFace(eyeScale: 1)
+        } else {
+            TimelineView(FirstMateBlinkSchedule(period: Self.blinkPeriod)) { context in
+                FirstMateFace(eyeScale: Self.eyeScale(at: context.date))
+            }
+        }
+    }
+
+    /// Eyes close to 10% at 95.5% of each cycle; the phase comes from the
+    /// wall clock so every face blinks together.
+    static func eyeScale(at date: Date) -> CGFloat {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: blinkPeriod) / blinkPeriod
+        let (start, peak, end) = (0.93, 0.955, 0.98)
+        guard phase > start, phase < end else { return 1 }
+        let closing = phase < peak ? (phase - start) / (peak - start) : (end - phase) / (end - peak)
+        return 1 - 0.9 * closing
+    }
+}
+
+/// Display only: all drawing filters live in the fixed offscreen artwork bank.
+private struct FirstMateFace: View {
+    let eyeScale: CGFloat
+
+    var body: some View {
+        Image(uiImage: FirstMateFaceArtwork.image(eyeScale: eyeScale))
+            .resizable()
+            .interpolation(.high)
+    }
+}
+
+/// Redraws only around each blink: a single entry while the eyes are open,
+/// then about 30 frames a second for the quarter second they close.
+struct FirstMateBlinkSchedule: TimelineSchedule {
+    let period: TimeInterval
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> Entries {
+        Entries(period: period, pending: startDate, lowFrequency: mode == .lowFrequency)
+    }
+
+    struct Entries: Sequence, IteratorProtocol {
+        let period: TimeInterval
+        var pending: Date
+        let lowFrequency: Bool
+
+        mutating func next() -> Date? {
+            let current = pending
+            let time = current.timeIntervalSinceReferenceDate
+            let cycleStart = time - time.truncatingRemainder(dividingBy: period)
+            let blinkStart = cycleStart + period * 0.93
+            let blinkEnd = cycleStart + period * 0.98
+            if lowFrequency || time < blinkStart || time >= blinkEnd {
+                let upcoming = time < blinkStart ? blinkStart : cycleStart + period + period * 0.93
+                pending = Date(timeIntervalSinceReferenceDate: upcoming)
+            } else {
+                // Inside the blink: frame by frame, then one frame after it opens.
+                let frame = time + 1.0 / 30
+                pending = Date(timeIntervalSinceReferenceDate: frame < blinkEnd ? frame : blinkEnd + 0.001)
+            }
+            return current
+        }
+    }
+}
+
+/// The working label's breath: opacity 1 → ``floor`` → 1 over 2.4 s. The phase
+/// comes from the wall clock so every row breathes together. Off under Reduce
+/// Motion.
+struct FirstMateBreathing: ViewModifier {
+    static let period: TimeInterval = 2.4
+    /// The dimmest opacity: kept at 0.75 over the darkened Glass/Haze
+    /// backgrounds, where `working` still clears 4.5:1 over the sidebar and
+    /// pane glass at the dusk's brightest point, hovered or selected
+    /// (`HerdrThemeAccessibilityTests`).
+    static let floor = 0.75
+
+    var isActive = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if isActive && !reduceMotion {
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                content.opacity(Self.opacity(at: context.date))
+            }
+        } else {
+            content
+        }
+    }
+
+    /// An ease-in-out breath: 1 at the start of each period, ``floor`` halfway.
+    static func opacity(at date: Date) -> Double {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+        return floor + (1 - floor) * (0.5 + 0.5 * cos(2 * .pi * phase))
+    }
+}
+
+extension View {
+    func firstMateBreathing(_ isActive: Bool = true) -> some View {
+        modifier(FirstMateBreathing(isActive: isActive))
+    }
+}

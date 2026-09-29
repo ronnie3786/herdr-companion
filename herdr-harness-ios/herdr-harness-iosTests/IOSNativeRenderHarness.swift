@@ -7,6 +7,8 @@ import UIKit
 /// accessibility audit; accessibility behavior belongs in the UI test target.
 @MainActor
 struct IOSNativeRenderHarness {
+    enum Background { case ink, dusk }
+
     struct DynamicTypeFixture {
         let name: String
         let swiftUI: DynamicTypeSize
@@ -54,7 +56,8 @@ struct IOSNativeRenderHarness {
     func render<Content: View>(
         _ content: Content,
         width: CGFloat,
-        dynamicType: DynamicTypeFixture
+        dynamicType: DynamicTypeFixture,
+        background: Background = .ink
     ) async -> HostedRender {
         let collector = Collector()
         let root = AnyView(
@@ -62,7 +65,19 @@ struct IOSNativeRenderHarness {
                 .environment(\.dynamicTypeSize, dynamicType.swiftUI)
                 .frame(width: width, alignment: .topLeading)
                 .fixedSize(horizontal: false, vertical: true)
-                .background(HerdrTheme.ink)
+                .background {
+                    if background == .dusk {
+                        ZStack(alignment: .top) {
+                            HerdrDuskBackdrop()
+                            HerdrGlassBackground(level: HerdrTheme.Glass.pane)
+                            HerdrHazeBand()
+                        }
+                    } else {
+                        HerdrTheme.ink
+                    }
+                }
+                .environment(\.herdrGlassActive, background == .dusk)
+                .environment(\.herdrHazeActive, background == .dusk)
                 .overlayPreferenceValue(ComposerLayoutMeasurement.Anchors.self) { sources in
                     GeometryReader { geometry in
                         Color.clear.preference(

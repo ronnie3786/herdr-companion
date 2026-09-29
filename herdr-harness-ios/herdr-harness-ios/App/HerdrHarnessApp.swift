@@ -12,7 +12,9 @@ struct HerdrHarnessApp: App {
         WindowGroup {
             Group {
                 #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("-HerdrPiOptionsFixture") {
+                if ProcessInfo.processInfo.arguments.contains("-HerdrThemeDuskSample") {
+                    HerdrThemeSampleView()
+                } else if ProcessInfo.processInfo.arguments.contains("-HerdrPiOptionsFixture") {
                     PiOptionsUITestFixtureView()
                 } else {
                     AppRootView(model: model)

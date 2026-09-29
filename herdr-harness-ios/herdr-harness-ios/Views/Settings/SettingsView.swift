@@ -2,12 +2,16 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: HerdrAppModel
+    @AppStorage(HerdrAppearancePreferences.glassKey) private var glass = HerdrAppearancePreferences.glassDefault
+    @AppStorage(HerdrAppearancePreferences.hazeKey) private var haze = HerdrAppearancePreferences.hazeDefault
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         NavigationStack {
             Form {
                 statusSection
                 machinesSection
+                appearanceSection
                 carModeSection
                 voiceSection
                 alertSection
@@ -85,6 +89,23 @@ struct SettingsView: View {
         } footer: {
             Text("Use the private HTTPS address created by Tailscale Serve. Each bearer token is stored in Keychain and sent only to its machine.")
         }
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            Toggle("Glass", isOn: $glass)
+                .accessibilityIdentifier("settings-appearance-glass")
+            Toggle("Haze", isOn: $haze)
+                .disabled(!glass || reduceTransparency)
+                .accessibilityIdentifier("settings-appearance-haze")
+        } header: {
+            Text("Appearance")
+        } footer: {
+            Text(reduceTransparency
+                 ? "Reduce Transparency keeps dusk-glass surfaces opaque. Your Glass and Haze choices are retained."
+                 : "Glass reveals the cached dusk artwork. Haze adds a soft band above First Mate chats. These settings apply to dusk-glass screens as they roll out.")
+        }
+        .tint(HerdrTheme.controlAccent)
     }
 
     private var liveMachineCount: Int {

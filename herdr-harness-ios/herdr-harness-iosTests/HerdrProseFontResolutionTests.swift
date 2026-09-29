@@ -8,11 +8,12 @@ struct HerdrProseFontResolutionTests {
     func roleSizingAndAnchors() {
         let roles = HerdrProse.Role.allCases
 
-        #expect(roles.map(\.baseSize) == [15, 15, 15, 20, 17, 15, 13, 12, 11, 14, 14])
+        #expect(roles.map(\.baseSize) == [15, 15, 15, 20, 17, 15, 13, 12, 11, 14, 14, 16])
         #expect(roles.map(\.textStyle) == [
             .body, .body, .body, .title2, .title3, .headline,
-            .subheadline, .footnote, .caption, .callout, .callout,
+            .subheadline, .footnote, .caption, .callout, .callout, .body,
         ])
+        #expect(HerdrProse.lineSpacing(.bubble) == 6)
         #expect(HerdrProse.Role.quote.isItalic)
         #expect(!HerdrProse.Role.body.isItalic)
         #expect(HerdrProse.inlineCodeSize(for: .body) == 14)

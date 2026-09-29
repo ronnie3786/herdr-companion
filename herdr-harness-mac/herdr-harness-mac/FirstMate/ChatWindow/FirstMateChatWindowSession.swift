@@ -34,6 +34,7 @@ final class FirstMateChatWindowSession {
     var selection: Selection = .lead
     var search = ""
     var archiveCandidate: FirstMateFleetIndex.ArchiveTarget?
+    var presentationEditTarget: FirstMateConversation?
     /// nil follows the window width (open at 1280 pt and wider).
     var inspectorPreference: Bool? = nil
     /// A Dock-menu request that arrived before the window could apply it.
@@ -294,6 +295,36 @@ final class FirstMateChatWindowSession {
         let state = SkimDisplayState()
         skimStates[id] = state
         return state
+    }
+
+    /// Editing a row does not change the selected conversation.
+    func requestPresentationEdit(_ id: FirstMateFleetFeatureID) {
+        guard let conversation = conversations.first(where: { $0.id == id }) else { return }
+        presentationEditTarget = conversation
+    }
+
+    /// Returns nil after a successful save (or an unchanged draft), otherwise
+    /// an error for the sheet to display without dismissing it.
+    func savePresentation(_ id: FirstMateFleetFeatureID, label: String?, emoji: String?) async -> String? {
+        guard conversations.contains(where: { $0.id == id }) else { return "This conversation is no longer available. Refresh the list and try again." }
+        guard label != nil || emoji != nil else { return nil }
+        if isDemo {
+            shell.firstMateChatDemo.setPresentation(featureID: id.featureID, label: label, emoji: emoji)
+            conversationCache = nil
+            return nil
+        }
+        guard let configuration = configurationProvider(id.machineID) else {
+            return "This companion is not configured. Reconnect its machine and try again."
+        }
+        do {
+            let entry = try await makeClient(configuration).updateFirstMateHud(featureID: id.featureID, label: label, emoji: emoji)
+            guard entry.featureID == id.featureID else { throw APIError.invalidResponse }
+            shell.firstMateFleet.applyPresentation(entry, machineID: id.machineID)
+            didMutate(machineID: id.machineID)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     /// Capture the row's exact machine and feature, independent of selection.

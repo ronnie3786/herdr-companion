@@ -19,7 +19,7 @@ enum FirstMateLeadBriefing {
             segments.map { segment in
                 switch segment {
                 case .text(let text): text
-                case .mention(let conversation): conversation.title
+                case .mention(let conversation): conversation.name
                 }
             }.joined()
         }

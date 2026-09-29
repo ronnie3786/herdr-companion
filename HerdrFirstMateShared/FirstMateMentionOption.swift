@@ -36,8 +36,12 @@ struct FirstMateMentionOption: Identifiable, Equatable, Sendable {
         _ picks: [FirstMateMentionCandidate], draft: String,
         features: [FirstMateConversation], crew: [FirstMateAssignment]
     ) -> [FirstMateMentionCandidate] {
-        let named = features.map { FirstMateMentionCandidate(name: $0.title, target: .feature(featureID: $0.featureID)) }
-            + crew.filter { !$0.title.isEmpty }.map {
+        let named = features.flatMap { feature in
+            var seen = Set<String>()
+            return [feature.name, feature.title, feature.label]
+                .filter { !$0.isEmpty && seen.insert($0).inserted }
+                .map { FirstMateMentionCandidate(name: $0, target: .feature(featureID: feature.featureID)) }
+        } + crew.filter { !$0.title.isEmpty }.map {
                 FirstMateMentionCandidate(name: $0.title, target: .agent(featureID: $0.featureID, assignmentID: $0.id))
             }
         var result = picks
@@ -55,11 +59,11 @@ struct FirstMateMentionOption: Identifiable, Equatable, Sendable {
             needle.isEmpty || names.contains { $0.localizedCaseInsensitiveContains(needle) }
         }
         let featureOptions = features
-            .filter { matches($0.title, $0.label) }
+            .filter { matches($0.name, $0.title, $0.label) }
             .prefix(featureLimit)
             .map { conversation in
                 Self(
-                    candidate: FirstMateMentionCandidate(name: conversation.title, target: .feature(featureID: conversation.featureID)),
+                    candidate: FirstMateMentionCandidate(name: conversation.name, target: .feature(featureID: conversation.featureID)),
                     section: .features,
                     emoji: conversation.emoji,
                     status: conversation.hudStatus,

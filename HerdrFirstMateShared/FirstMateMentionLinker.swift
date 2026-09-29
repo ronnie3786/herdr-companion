@@ -58,15 +58,15 @@ struct FirstMateMentionCatalog: Equatable, Sendable {
         self.matchesPlainNames = matchesPlainNames
     }
 
-    /// Every listed feature (by title and, when different, its short label)
+    /// Every listed feature (by displayed name, title, and short label)
     /// and the crew of `snapshot`.
     init(conversations: [FirstMateConversation], snapshot: FirstMateSnapshot?) {
         var entries: [Entry] = []
         for conversation in conversations {
             let target = FirstMateMentionTarget.feature(featureID: conversation.featureID)
-            entries.append(Entry(name: conversation.title, emoji: conversation.emoji, status: conversation.hudStatus, target: target))
-            if conversation.label != conversation.title, !conversation.label.isEmpty {
-                entries.append(Entry(name: conversation.label, emoji: conversation.emoji, status: conversation.hudStatus, target: target))
+            var seen = Set<String>()
+            for name in [conversation.name, conversation.title, conversation.label] where !name.isEmpty && seen.insert(name).inserted {
+                entries.append(Entry(name: name, emoji: conversation.emoji, status: conversation.hudStatus, target: target))
             }
         }
         for assignment in snapshot?.assignments ?? [] where !assignment.title.isEmpty {

@@ -170,6 +170,7 @@ struct FirstMateChatSidebar: View {
                     showsDivider: index > 0 && !isHighlighted(selection) && !isHighlighted(.feature(rows[index - 1].id))
                 ) { choose(selection) }
                 .contextMenu {
+                    Button("Rename or Change Emoji…", systemImage: "pencil") { session.requestPresentationEdit(conversation.id) }
                     Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(conversation.id) }
                 }
                 .onHover { hovered = $0 ? selection : (hovered == selection ? nil : hovered) }
@@ -196,7 +197,7 @@ struct FirstMateChatSidebar: View {
             ForEach(session.conversations) { conversation in
                 let selection = FirstMateChatWindowSession.Selection.feature(conversation.id)
                 FirstMateRailItem(
-                    title: conversation.title,
+                    title: conversation.name,
                     accessibilityLabel: FirstMateConversationRow.accessibilityLabel(for: conversation),
                     dotColor: conversation.showsDot ? FirstMateChatStatusStyle.dotColor(for: conversation.hudStatus) : nil,
                     isSelected: session.selection == selection,
@@ -205,6 +206,7 @@ struct FirstMateChatSidebar: View {
                     FirstMateEmojiDisc(emoji: conversation.emoji, size: 48)
                 } action: { choose(selection) }
                 .contextMenu {
+                    Button("Rename or Change Emoji…", systemImage: "pencil") { session.requestPresentationEdit(conversation.id) }
                     Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(conversation.id) }
                 }
                 .onHover { hovered = $0 ? selection : (hovered == selection ? nil : hovered) }
@@ -342,7 +344,7 @@ struct FirstMateConversationRow: View {
 
     /// "Receipt export, Blocked, new message".
     static func accessibilityLabel(for conversation: FirstMateConversation) -> String {
-        var parts = [conversation.title, FirstMateChatStatusStyle.word(for: conversation)]
+        var parts = [conversation.name, FirstMateChatStatusStyle.word(for: conversation)]
         if conversation.showsDot { parts.append("new message") }
         return parts.joined(separator: ", ")
     }
@@ -358,7 +360,7 @@ struct FirstMateConversationRow: View {
                 FirstMateEmojiDisc(emoji: conversation.emoji, size: 48)
             } text: {
                 VStack(alignment: .leading, spacing: 0) {
-                    FirstMateRowTopLine(name: conversation.title, date: conversation.activityAt)
+                    FirstMateRowTopLine(name: conversation.name, date: conversation.activityAt)
                     preview
                         .padding(.top, 1)
                     FirstMateRowStatusWord(conversation: conversation)

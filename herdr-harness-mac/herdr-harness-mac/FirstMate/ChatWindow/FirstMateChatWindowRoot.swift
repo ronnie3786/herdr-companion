@@ -133,6 +133,11 @@ struct FirstMateChatWindowRoot: View {
                 FirstMateCreateSheet(store: store, initialGoal: session.createGoal)
             }
         }
+        .sheet(item: $session.presentationEditTarget) { conversation in
+            FirstMateConversationPresentationEditor(conversation: conversation) { label, emoji in
+                await session.savePresentation(conversation.id, label: label, emoji: emoji)
+            }
+        }
         .sheet(item: $session.archiveCandidate) { target in
             FirstMateArchiveConfirmation(feature: target.feature) { reason in
                 await session.archive(target, reason: reason)
@@ -165,6 +170,7 @@ struct FirstMateChatWindowRoot: View {
             }
             .contextMenu {
                 if case .feature(let id) = session.selection {
+                    Button("Rename or Change Emoji…", systemImage: "pencil") { session.requestPresentationEdit(id) }
                     Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(id) }
                 }
             }

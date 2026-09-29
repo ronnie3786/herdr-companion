@@ -10,11 +10,6 @@ enum FirstMateMachineScope: Hashable, Sendable {
     }
 }
 
-struct FirstMateFleetFeatureID: Hashable, Sendable {
-    let machineID: String
-    let featureID: String
-}
-
 struct FirstMateFleetFeature: Identifiable, Equatable, Sendable {
     let machineID: String
     let machineName: String

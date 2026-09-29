@@ -297,6 +297,8 @@ struct FirstMateChatParityTests {
         #expect(!secondStore.controlAvailable)
     }
 
+    #endif
+
     @Test("Composer lifecycle identity isolates reconnects and same feature IDs in different stores") @MainActor
     func composerLifecycleIdentity() throws {
         let firstStore = FirstMateStore()
@@ -512,6 +514,7 @@ struct FirstMateChatParityTests {
         #expect(presentation.summary.contains("new session"))
     }
 
+    #if os(macOS)
     @Test("Camel-case attachment envelopes decode without changing workspace compatibility")
     func camelCaseAttachment() throws {
         let data = Data(#"{"ok":true,"attachment":{"id":"attachment-1","filename":"sample.txt","originalFilename":"Sample.txt","contentType":"text/plain","size":12,"path":"first-mate:feature/attachment-1","workspaceId":"first-mate:feature","createdAt":"2030-01-01T12:00:00Z"}}"#.utf8)

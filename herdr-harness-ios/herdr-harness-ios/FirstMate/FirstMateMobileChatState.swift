@@ -111,7 +111,11 @@ final class FirstMateMobileChatState {
         return navigationToken
     }
 
+    var currentNavigationIntent: UUID { navigationToken }
     func isCurrentNavigation(_ intent: UUID) -> Bool { navigationToken == intent }
+
+    /// Captured before creation transport; never substituted after an await.
+    func creationSource(for machineID: String) -> FirstMateMobileFleetSource? { sources[machineID] }
 
     func select(_ selection: Selection?, navigationIntent: UUID? = nil) {
         if let navigationIntent {
@@ -178,7 +182,7 @@ final class FirstMateMobileChatState {
             let store = fleet.store(forMachineID: row.machineID)
             let feature = hosts.first(where: { $0.machineID == row.machineID })?.features.first { $0.id == row.featureID }
             if let cached = store?.snapshots[row.featureID]?.feature, cached.isArchived,
-               cached.revision >= (feature?.revision ?? 0) { return nil }
+               !FirstMateMobileListPresentation.activeInventorySupersedesArchive(feature, cached: cached) { return nil }
             let pending = FirstMateReplyProgress.isLocalReplyPending(
                 outgoing: store?.outgoingMessages(for: row.featureID) ?? [], snapshot: store?.snapshots[row.featureID],
                 hostFeatureUpdatedAt: feature?.updatedAt, fleetLatestFirstMateMessageID: row.latestFirstMateMessageID

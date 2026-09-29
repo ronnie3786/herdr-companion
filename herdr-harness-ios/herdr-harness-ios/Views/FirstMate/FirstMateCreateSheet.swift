@@ -180,10 +180,10 @@ struct FirstMateCreateSheet: View {
         localError = nil
         Task {
             let target = await fleet.create(on: machineID, title: submittedTitle, goal: submittedGoal, cwd: submittedCWD,
-                                            requestID: submittedID, expectedContext: context)
+                                            requestID: submittedID, expectedContext: context, navigationIntent: intent)
             guard isVisible else { return }
             isSubmitting = false
-            guard fleet.isCreating, fleet.creationMachineID == machineID, fleet.store(forMachineID: machineID) === store,
+            guard !Task.isCancelled, fleet.isCreating, fleet.creationMachineID == machineID, fleet.store(forMachineID: machineID) === store,
                   store.lifecycle == context.lifecycleIdentity, fleet.chat.isCurrentNavigation(intent) else { return }
             if let target {
                 fleet.isCreating = false

@@ -583,6 +583,34 @@ final class FirstMateStore {
         }
     }
 
+    /// Receives a creation receipt without selecting it or starting an internal
+    /// refresh. The caller owns navigation. Keep transport busy/error/lifecycle
+    /// handling here rather than exposing mutable store internals to adapters.
+    /// The existing Mac create method above deliberately retains its behavior.
+    func receiveCreation(
+        expectedContext: OperationContext,
+        operation: @MainActor () async throws -> FirstMateSnapshot
+    ) async -> FirstMateSnapshot? {
+        guard expectedContext == operationContext, !isSending, !Task.isCancelled else { return nil }
+        let capturedGeneration = generation
+        isSending = true
+        defer { if capturedGeneration == generation { isSending = false } }
+        do {
+            let value = try await operation()
+            guard capturedGeneration == generation else { return nil }
+            guard value.ok, !value.feature.id.isEmpty else { throw APIError.invalidResponse }
+            // Even if navigation moved elsewhere, the confirmed record belongs
+            // in this exact live owner's cache. receive never selects it.
+            receive(value)
+            if expectedContext == operationContext { error = nil }
+            return value
+        } catch {
+            guard capturedGeneration == generation, expectedContext == operationContext, !Task.isCancelled else { return nil }
+            record(error)
+            return nil
+        }
+    }
+
     func send(expectedContext: OperationContext? = nil, expectedText: String? = nil) async {
         if let expectedContext, expectedContext != operationContext { return }
         if let expectedText, expectedText != draft { return }

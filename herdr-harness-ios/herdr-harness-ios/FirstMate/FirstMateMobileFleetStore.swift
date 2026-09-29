@@ -284,21 +284,30 @@ final class FirstMateMobileFleetStore {
         goal: String,
         cwd: String,
         requestID: String,
-        expectedContext: FirstMateStore.OperationContext? = nil
+        expectedContext: FirstMateStore.OperationContext? = nil,
+        navigationIntent: UUID? = nil
     ) async -> FirstMateFeatureTarget? {
-        guard let store = stores[machineID] else { return nil }
-        if let expectedContext, expectedContext != store.operationContext { return nil }
-        guard await store.create(
-            title: title,
-            goal: goal,
-            cwd: cwd,
-            requestID: requestID
-        ) else { return nil }
+        guard let store = stores[machineID], let source = chat.creationSource(for: machineID) else { return nil }
+        let context = expectedContext ?? store.operationContext
+        let intent = navigationIntent ?? chat.currentNavigationIntent
+        guard context == store.operationContext, chat.isCurrentNavigation(intent), !Task.isCancelled else { return nil }
+        guard let receipt = await store.receiveCreation(expectedContext: context, operation: {
+            if source.isDemo { return FirstMateDemo.newFeature(title: title, goal: goal, cwd: cwd) }
+            guard let client = source.client else { throw APIError.noActiveConnection(machineID: machineID) }
+            return try await client.createFirstMateFeature(title: title, goal: goal, cwd: cwd, requestID: requestID)
+        }) else { return nil }
+        guard stores[machineID] === store, store.lifecycle == context.lifecycleIdentity else { return nil }
+        let target = FirstMateFeatureTarget(machineID: machineID, featureID: receipt.feature.id)
         mirrorHost(machineID: machineID)
-        guard stores[machineID] === store, let featureID = store.selectedFeatureID else { return nil }
+        // Receipt/cache ownership and navigation ownership are separate. Never
+        // call selection-mutating shared create and attempt to restore a newer
+        // selection later: no wrong selection may be exposed during refresh.
+        if !Task.isCancelled, chat.isCurrentNavigation(intent), store.operationContext == context {
+            _ = open(target, navigationIntent: intent)
+        }
         await didMutate(machineID: machineID)
-        guard stores[machineID] === store else { return nil }
-        return FirstMateFeatureTarget(machineID: machineID, featureID: featureID)
+        guard stores[machineID] === store, store.lifecycle == context.lifecycleIdentity else { return nil }
+        return target
     }
 
     // MARK: - Visible rows

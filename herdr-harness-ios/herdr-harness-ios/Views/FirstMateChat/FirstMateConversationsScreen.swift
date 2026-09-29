@@ -11,7 +11,7 @@ struct FirstMateConversationsScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsSearch = false
     @State private var archiveRequest: FirstMateMobileArchiveRequest?
-    @State private var mutationError: String?
+    @State private var mutationFeedback = FirstMateListMutationFeedback()
     @FocusState private var searchFocused: Bool
 
     private var presentation: FirstMateMobileListPresentation {
@@ -48,7 +48,7 @@ struct FirstMateConversationsScreen: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .listRowBackground(Color.clear).listRowSeparator(.hidden)
                 }
-                if let mutationError {
+                if let mutationError = mutationFeedback.message(in: fleet) {
                     Text(mutationError).herdrFont(.body).foregroundStyle(HerdrTheme.warning)
                         .listRowBackground(Color.clear).listRowSeparator(.hidden)
                 }
@@ -102,7 +102,10 @@ struct FirstMateConversationsScreen: View {
         .sheet(item: $archiveRequest) { request in
             FirstMateMobileArchiveSheet(model: model, fleet: fleet, request: request)
         }
-        .onChange(of: model.connectionGeneration) { _, _ in archiveRequest = nil }
+        .onChange(of: model.connectionGeneration) { _, _ in
+            archiveRequest = nil
+            mutationFeedback.reset()
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-conversations-screen")
     }
@@ -151,10 +154,10 @@ struct FirstMateConversationsScreen: View {
     private func unarchive(_ target: FirstMateFeatureTarget) {
         guard canArchive(target), let store = fleet.store(for: target) else { return }
         let context = store.operationContext
+        let operation = mutationFeedback.begin(target: target, store: store)
         Task {
             let succeeded = await fleet.setArchived(target, archived: false, expectedContext: context)
-            guard fleet.store(for: target) === store, store.lifecycle == context.lifecycleIdentity else { return }
-            if !succeeded { mutationError = store.error ?? "The conversation could not be unarchived." }
+            mutationFeedback.complete(operation, succeeded: succeeded, error: store.error, fleet: fleet)
         }
     }
 }

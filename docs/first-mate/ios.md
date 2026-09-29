@@ -137,13 +137,20 @@ still later phases.
 Creating from All Machines requires an explicit destination before accepting a
 repository folder; single-machine scope preselects that host. Recent folders
 belong to the destination, changing it clears the folder, and submitted values,
-request ID and owner context are frozen before asynchronous work. The capped
+request ID and owner context are frozen before asynchronous work. A creation
+receipt is cached without selecting it; only the still-current navigation intent
+can select the new feature, so an older create cannot steal a newer same-host chat.
+The capped
 form has Next field/Done keyboard controls. Ordinary Pi chats remain in Agents.
 
 Swipe or long-press a row to archive it. The restyled confirmation captures the
 exact store/lifecycle and optional reason, retains all records and explains when
 work continues. Active removal is optimistic and rolls back on failure; stale
-confirmations cannot target a replacement connection. **More → Show archived**
+confirmations cannot target a replacement connection. Archive freshness uses
+`updated_at`, not workflow revision: newer active inventory can reveal a remotely
+unarchived feature without fetching its full snapshot. Unarchive feedback clears
+on retry/success with owner/lifecycle/operation fencing; unrelated polling retains
+a genuine failure. **More → Show archived**
 uses a separate host-store inventory, not the active-only projection; swipe or
 long-press an archived row to unarchive it. Known presentation names/emoji survive
 local archiving; cold archived inventories use the metadata their host provides.

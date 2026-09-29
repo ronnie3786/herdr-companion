@@ -60,6 +60,16 @@ struct FirstMateMobileListPresentation {
         switch status { case .blocked: 0; case .turn: 1; case .ready: 2; default: 3 }
     }
 
+    /// Archive state changes update updated_at, not workflow revision. Only
+    /// genuinely newer authoritative active inventory can lift a cached local
+    /// archive; equal/older/unknown timestamps keep pre-mutation polls fenced.
+    static func activeInventorySupersedesArchive(_ inventory: FirstMateFeature?, cached: FirstMateFeature) -> Bool {
+        guard let inventory, !inventory.isArchived,
+              let incoming = HerdrTimestamp.date(from: inventory.updatedAt),
+              let archived = HerdrTimestamp.date(from: cached.updatedAt) else { return false }
+        return incoming > archived
+    }
+
     /// Archive inventory is deliberately not fed through the active-only
     /// shared builder. Retain known user presentation without inventing edits.
     static func archived(_ row: FirstMateMobileFleetFeature, known: FirstMateConversation?) -> FirstMateConversation {

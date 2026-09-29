@@ -65,6 +65,7 @@ private actor ArchivePresentationClient: FirstMateClient {
     private var feature = ChatFixtures.feature("feature", title: "Original receipt title", status: "blocked")
     private var gate: ChatTestGate?
     private var fails = false
+    private var archiveChange = 0
     private(set) var calls: [Call] = []
     func setGate(_ gate: ChatTestGate?, fails: Bool) { self.gate = gate; self.fails = fails }
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
@@ -85,7 +86,9 @@ private actor ArchivePresentationClient: FirstMateClient {
         await gate?.wait()
         if fails { throw APIError.server(status: 503, message: "Synthetic archive refusal") }
         feature.archivedAt = archived ? "2030-01-01T00:00:00Z" : nil
-        feature.revision += 1
+        // Match production: archive state advances updated_at, not revision.
+        archiveChange += 1
+        feature.updatedAt = String(format: "2030-01-01T00:00:%02dZ", archiveChange)
         return .init(feature: feature)
     }
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot { throw APIError.invalidResponse }

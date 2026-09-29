@@ -4236,6 +4236,12 @@ final class HerdrAppModel {
         resultArtifactPhases[presentationID] = .opened
     }
 
+    func dismissResultArtifacts(_ artifacts: [AgentResultArtifact]) {
+        for artifact in artifacts {
+            dismissResultArtifact(artifact)
+        }
+    }
+
     /// Internal visibility is intentional: focused tests exercise fleet-wide
     /// deduping without needing to manufacture a complete connection loop.
     func ingestResultArtifacts(

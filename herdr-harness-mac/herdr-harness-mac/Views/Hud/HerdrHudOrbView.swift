@@ -58,6 +58,8 @@ struct HerdrHudOrbView: View {
     /// Statuses corresponding to `attentionChipCount`, so completion can use
     /// the green signal while blocked and failed notifications remain alerts.
     var attentionChipStatuses: [AgentStatus] = []
+    /// Only the detached results docked beside this orb, never session chips.
+    var resultArtifacts: [AgentResultArtifact] = []
     /// Where the orb is in its morph out of the resting circle, 0 to 1. The
     /// glyph is revealed inside the opening rim a little after the face, so
     /// the icon reads as surfacing rather than being scaled up from nothing.
@@ -86,6 +88,7 @@ struct HerdrHudOrbView: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { controller.summon() }
+            .modifier(HerdrHudOrbClearAllAccessibility(model: model, artifacts: clearableResultArtifacts))
             .onHover { isHovered = $0 }
             // The AppKit target is the orb's single drop destination. It accepts
             // files, raw image data, and the screenshot preview's file promise,
@@ -106,10 +109,19 @@ struct HerdrHudOrbView: View {
                 Button("Capture frontmost window", systemImage: "viewfinder") {
                     controller.captureFrontmostWindow(trigger: .menu)
                 }
+                Divider()
+                Button(HerdrHudOrbResultClearing.menuTitle, systemImage: "xmark.circle") {
+                    model.dismissResultArtifacts(clearableResultArtifacts)
+                }
+                .disabled(clearableResultArtifacts.isEmpty)
             }
             .accessibilityIdentifier("hud-orb")
             .accessibilityLabel("Herdr HUD")
             .accessibilityValue(accessibilityValue)
+    }
+
+    private var clearableResultArtifacts: [AgentResultArtifact] {
+        HerdrHudOrbResultClearing.clearableArtifacts(resultArtifacts, phase: model.resultArtifactPhase(id:))
     }
 
     private var orb: some View {
@@ -281,6 +293,22 @@ struct HerdrHudOrbView: View {
             workingCount: model.workingCount,
             isConnected: model.connectionState == .live || model.isDemoMode
         )
+    }
+}
+
+private struct HerdrHudOrbClearAllAccessibility: ViewModifier {
+    let model: HerdrAppModel
+    let artifacts: [AgentResultArtifact]
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if artifacts.isEmpty {
+            content
+        } else {
+            content.accessibilityAction(named: HerdrHudOrbResultClearing.accessibilityActionName) {
+                model.dismissResultArtifacts(artifacts)
+            }
+        }
     }
 }
 

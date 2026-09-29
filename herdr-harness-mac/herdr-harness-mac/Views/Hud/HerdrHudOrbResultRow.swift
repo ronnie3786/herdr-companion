@@ -34,6 +34,7 @@ struct HerdrHudOrbResultRow: View {
                     session: session,
                     attentionChipCount: attentionChipCount,
                     attentionChipStatuses: attentionChipStatuses,
+                    resultArtifacts: artifacts,
                     morphProgress: morphProgress
                 )
                 .frame(width: HerdrHudMorph.orbDiameter, height: HerdrHudMorph.orbDiameter)

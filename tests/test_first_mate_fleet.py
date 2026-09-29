@@ -30,7 +30,7 @@ EMOJI_VECTORS = (
     ("fmf_9f8e7d6c5b4a39281706f5e4d3c2b1a0", 696065923, 14, "🧰"),
     ("fmf_ü✓", 1798211435, 5, "📋"),
 )
-ENTRY_FIELDS = {"feature_id", "title", "label", "emoji", "emoji_source", "status", "hud_status", "step_index",
+ENTRY_FIELDS = {"feature_id", "title", "label", "label_source", "emoji", "emoji_source", "status", "hud_status", "step_index",
                 "step_fraction", "percent", "now", "latest_message", "latest_first_mate_message_id",
                 "read_through_message_id", "unread", "working_on_reply", "activity_at", "updated_at", "archived_at"}
 SKIM_KEY = {"format": "breath_tight", "prompt_version": "skim-v2", "segmenter_version": 1, "skim_version": 1,
@@ -137,11 +137,21 @@ class PresentationRuleTests(unittest.TestCase):
             with self.assertRaises(fleet.PresentationError):
                 fleet.normalize_emoji(invalid)
 
-    def test_default_label_is_the_title_on_one_line(self):
-        self.assertEqual(fleet.default_label("  Receipt   export "), "Receipt export")
-        label = fleet.default_label("Receipt export for every storefront region")
-        self.assertEqual(label, "Receipt export for…")
-        self.assertLessEqual(len(label), 24)
+    def test_default_label_vectors_shared_with_swift(self):
+        # Keep these literal results in sync with FirstMateFleetDecodingTests.
+        for title, expected in (
+            ("Receipt export", "Receipt export"),
+            ("Receipt export for every storefront region", "Receipt export for…"),
+            ("Supercalifragilisticexpialidocious", "Supercalifragilisticexp…"),
+            ("  QA\t failed\n  twice.  ", "QA failed twice."),
+            ("\u001cReceipt\u00a0  export  ", "Receipt export"),
+            ("12345678901234567890123 next", "12345678901234567890123…"),
+            ("1234567890123456789012, next", "1234567890123456789012…"),
+            ("e\u0301" * 13, "e\u0301" * 11 + "e…"),
+        ):
+            with self.subTest(title=title):
+                self.assertEqual(fleet.default_label(title), expected)
+                self.assertLessEqual(len(expected), 24)
 
     def test_clip_cuts_at_a_word_boundary_with_an_ellipsis(self):
         exact = "a" * 120
@@ -279,6 +289,7 @@ class FleetStoreTests(FleetStoreFixture, unittest.TestCase):
         self.assertEqual(set(entry), ENTRY_FIELDS)
         self.assertEqual(entry["feature_id"], self.id)
         self.assertEqual(entry["label"], "Receipt export")
+        self.assertEqual(entry["label_source"], "default")
         self.assertEqual(entry["emoji"], fleet.default_emoji(self.id))
         self.assertEqual(entry["emoji_source"], "default")
         self.assertEqual((entry["status"], entry["hud_status"]), ("ready", "idle"))
@@ -367,12 +378,13 @@ class FleetStoreTests(FleetStoreFixture, unittest.TestCase):
     def test_set_presentation_sets_and_resets(self):
         row = self.store.set_presentation(self.id, {"label": "  Receipts  ", "emoji": "🧾"})
         entry = fleet.entry(row)
-        self.assertEqual((entry["label"], entry["emoji"], entry["emoji_source"]), ("Receipts", "🧾", "user"))
+        self.assertEqual((entry["label"], entry["label_source"], entry["emoji"], entry["emoji_source"]),
+                         ("Receipts", "user", "🧾", "user"))
         entry = fleet.entry(self.store.set_presentation(self.id, {"emoji": ""}))
-        self.assertEqual((entry["label"], entry["emoji"], entry["emoji_source"]),
-                         ("Receipts", fleet.default_emoji(self.id), "default"))
+        self.assertEqual((entry["label"], entry["label_source"], entry["emoji"], entry["emoji_source"]),
+                         ("Receipts", "user", fleet.default_emoji(self.id), "default"))
         entry = fleet.entry(self.store.set_presentation(self.id, {"label": None}))
-        self.assertEqual(entry["label"], "Receipt export")
+        self.assertEqual((entry["label"], entry["label_source"]), ("Receipt export", "default"))
         for invalid in ({}, {"title": "x"}, {"label": "x" * 25}, {"emoji": "a b"}, {"label": 3}):
             with self.assertRaises(FirstMateError) as error:
                 self.store.set_presentation(self.id, invalid)
@@ -537,6 +549,7 @@ class FleetHTTPTests(unittest.TestCase):
         self.assertEqual(set(entry), ENTRY_FIELDS)
         self.assertEqual(entry["feature_id"], feature_id)
         self.assertEqual(entry["emoji"], fleet.default_emoji(feature_id))
+        self.assertEqual(entry["label_source"], "default")
         self.assertEqual(self.request("/api/v1/first-mate/fleet?view=archived")[1]["features"], [])
         self.assertEqual(len(self.request("/api/v1/first-mate/fleet?view=all")[1]["features"]), 1)
         for bad in ("?view=closed", "?view=active&view=all", "?limit=3"):
@@ -590,13 +603,16 @@ class FleetHTTPTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(set(data), {"ok", "feature"})
         self.assertEqual(set(data["feature"]), ENTRY_FIELDS)
-        self.assertEqual((data["feature"]["label"], data["feature"]["emoji"], data["feature"]["emoji_source"]),
-                         ("Receipts", "🧾", "user"))
+        self.assertEqual((data["feature"]["label"], data["feature"]["label_source"],
+                          data["feature"]["emoji"], data["feature"]["emoji_source"]),
+                         ("Receipts", "user", "🧾", "user"))
         code, data = self.request(path, {"emoji": None})
         self.assertEqual(code, 200)
-        self.assertEqual((data["feature"]["label"], data["feature"]["emoji_source"]), ("Receipts", "default"))
+        self.assertEqual((data["feature"]["label"], data["feature"]["label_source"], data["feature"]["emoji_source"]),
+                         ("Receipts", "user", "default"))
         code, data = self.request(path, {"label": ""})
-        self.assertEqual(data["feature"]["label"], "Receipt export")
+        self.assertEqual(code, 200)
+        self.assertEqual((data["feature"]["label"], data["feature"]["label_source"]), ("Receipt export", "default"))
         for bad in ({}, {"title": "Receipts"}, {"label": "Receipts", "request_id": "hud-1"}, {"label": 5},
                     {"label": "x" * 25}, {"emoji": "🧾" * 17}, {"emoji": "🧾 🚀"}):
             code, error = self.request(path, bad)

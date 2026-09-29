@@ -81,6 +81,8 @@ struct FirstMateFleetEntry: Codable, Equatable, Sendable, Identifiable {
     var label: String
     var emoji: String
     var emojiSource: String?
+    /// `user` or `default` on companions that report the label's provenance.
+    var labelSource: String?
     var status: String
     var hudStatus: FirstMateHudStatus
     var stepIndex: Int?
@@ -100,7 +102,7 @@ struct FirstMateFleetEntry: Codable, Equatable, Sendable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case title, label, emoji, status, percent, now, unread
-        case featureID = "feature_id", emojiSource = "emoji_source", hudStatus = "hud_status"
+        case featureID = "feature_id", emojiSource = "emoji_source", labelSource = "label_source", hudStatus = "hud_status"
         case stepIndex = "step_index", stepFraction = "step_fraction"
         case latestMessage = "latest_message", latestFirstMateMessageID = "latest_first_mate_message_id"
         case readThroughMessageID = "read_through_message_id", workingOnReply = "working_on_reply"
@@ -111,12 +113,14 @@ struct FirstMateFleetEntry: Codable, Equatable, Sendable, Identifiable {
          status: String, hudStatus: FirstMateHudStatus? = nil, stepIndex: Int? = nil, stepFraction: Double? = nil,
          percent: Int? = nil, now: String? = nil, latestMessage: FirstMateFleetLatestMessage? = nil,
          latestFirstMateMessageID: String? = nil, readThroughMessageID: String? = nil, unread: Bool = false,
-         workingOnReply: Bool = false, activityAt: String? = nil, updatedAt: String? = nil, archivedAt: String? = nil) {
+         workingOnReply: Bool = false, activityAt: String? = nil, updatedAt: String? = nil, archivedAt: String? = nil,
+         labelSource: String? = nil) {
         self.featureID = featureID
         self.title = title
         self.label = label ?? Self.defaultLabel(title: title)
         self.emoji = emoji ?? FirstMateDefaultEmoji.emoji(for: featureID)
         self.emojiSource = emojiSource
+        self.labelSource = labelSource
         self.status = status
         self.hudStatus = hudStatus ?? .fallback(featureStatus: status)
         self.stepIndex = Self.validStep(stepIndex)
@@ -144,6 +148,7 @@ struct FirstMateFleetEntry: Codable, Equatable, Sendable, Identifiable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         self.emoji = emoji.flatMap { $0.isEmpty ? nil : $0 } ?? FirstMateDefaultEmoji.emoji(for: featureID)
         emojiSource = try? c.decodeIfPresent(String.self, forKey: .emojiSource)
+        labelSource = try? c.decodeIfPresent(String.self, forKey: .labelSource)
         status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "unknown"
         hudStatus = (try? c.decodeIfPresent(FirstMateHudStatus.self, forKey: .hudStatus)) ?? .fallback(featureStatus: status)
         stepIndex = Self.validStep(try? c.decodeIfPresent(Int.self, forKey: .stepIndex))
@@ -162,7 +167,52 @@ struct FirstMateFleetEntry: Codable, Equatable, Sendable, Identifiable {
 
     var isArchived: Bool { archivedAt != nil }
 
-    /// The companion's default label: the title, trimmed to 24 characters.
+    /// Prefer explicit provenance; on older companions compare against the
+    /// server's word-boundary clip rather than the client's legacy prefix.
+    var isUserLabel: Bool {
+        if let labelSource { return labelSource == "user" }
+        return !label.isEmpty && label != title && label != Self.serverDefaultLabel(title: title)
+    }
+
+    /// Exact port of the companion's `clip(title, 24)` for legacy entries.
+    /// Python counts Unicode code points, not Swift extended grapheme clusters.
+    static func serverDefaultLabel(title: String) -> String {
+        var line = ""
+        var separating = false
+        for scalar in title.unicodeScalars {
+            if pythonWhitespace(scalar) {
+                separating = !line.isEmpty
+            } else {
+                if separating { line.append(" "); separating = false }
+                line.unicodeScalars.append(scalar)
+            }
+        }
+        let scalars = Array(line.unicodeScalars)
+        guard scalars.count > 24 else { return line }
+
+        var head = Array(scalars.prefix(23))
+        if scalars[23] != " ", let lastSpace = head.lastIndex(of: " ") {
+            head = Array(head[..<lastSpace])
+        }
+        while let last = head.last, " ,.;:".unicodeScalars.contains(last) {
+            head.removeLast()
+        }
+        if head.isEmpty {
+            head = Array(scalars.prefix(23))
+            while let last = head.last, pythonWhitespace(last) { head.removeLast() }
+        }
+        return String(String.UnicodeScalarView(head)) + "…"
+    }
+
+    /// CPython `str.split()` whitespace (Unicode White_Space plus U+001C–U+001F).
+    private static func pythonWhitespace(_ scalar: Unicode.Scalar) -> Bool {
+        let value = scalar.value
+        return (9...13).contains(value) || (28...32).contains(value) || value == 0x85 || value == 0xA0
+            || value == 0x1680 || (0x2000...0x200A).contains(value) || value == 0x2028
+            || value == 0x2029 || value == 0x202F || value == 0x205F || value == 0x3000
+    }
+
+    /// The client's legacy fallback label for entries missing a label.
     static func defaultLabel(title: String) -> String {
         String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
     }

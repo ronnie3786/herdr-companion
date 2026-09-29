@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The chat window's conversation list: First Mate's header, search, My First
-/// Mate, then every feature across machines. Below 760 pt it collapses to a
-/// 76 pt rail of avatars and dots.
+/// Mate, then every feature across machines. Dragging it below the compact
+/// threshold leaves an avatar-and-status-dot rail with all text hidden.
 ///
 /// The top 40 pt band stays clear for the traffic lights and drags the window.
 struct FirstMateChatSidebar: View {
@@ -390,12 +390,12 @@ struct FirstMateConversationRow: View {
     }
 }
 
-/// Name (13.5 semibold) and time (11), baseline-aligned. The reference's
-/// 1.5 line height gives the name line 20 pt and the preview 18 pt, so a row
-/// is 10 + 20 + 1 + 18 + 3 + 17 + 10 = 79 pt.
-private struct FirstMateRowTopLine: View {
+/// Name (13.5 semibold) and time (11), first-baseline aligned. Names take up
+/// to two lines, so rows grow naturally instead of truncating most titles.
+struct FirstMateRowTopLine: View {
     static let nameHeight: CGFloat = 20
     static let previewHeight: CGFloat = 18
+    static let titleLineLimit = 2
 
     let name: String
     let date: Date?
@@ -406,9 +406,10 @@ private struct FirstMateRowTopLine: View {
                 .herdrFont(size: 13.5, weight: .semibold)
                 .tracking(-0.07)
                 .foregroundStyle(HerdrTheme.text)
-                .lineLimit(1)
+                .lineLimit(Self.titleLineLimit)
                 .truncationMode(.tail)
-                .frame(maxWidth: .infinity, minHeight: Self.nameHeight, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: Self.nameHeight, alignment: .topLeading)
             if let date {
                 Text(FirstMateChatTime.label(for: date, now: Date(), calendar: .current))
                     .herdrFont(size: HerdrTheme.TextSize.caption)

@@ -178,7 +178,7 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(skim.budget(5000)["max"], 90)
         self.assertEqual(skim.budget(5000, "terse")["max"], 35)
         self.assertEqual(skim.budget(600, "buddy", "breath_tight")["max"], 35)
-        self.assertIn("exactly one sentence of at most 25 words, then the next-step line",
+        self.assertIn("optional next-step line only when the reply explicitly contains that question or suggestion",
                       skim.shape(skim.budget(600, "buddy", "breath_tight"), "breath_tight"))
 
     def test_math_round_halves_round_up(self) -> None:
@@ -212,6 +212,32 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(normalized["rest"]["refs"], ["s6"])
         self.assertEqual(len(normalized["anchors"]), 4)
         self.assertEqual(len(document.segments), 6)
+
+
+class FollowupGroundingTests(unittest.TestCase):
+    def test_malformed_saved_skims_fall_back_without_breaking_history_reads(self):
+        for document in ({"blocks": ["stray"]}, {"blocks": "stray"},
+                         {"blocks": [{"kind": "ask", "tokens": None}]}):
+            self.assertIsNone(skim.ground_followups(document, "A result."))
+
+    def test_status_warning_or_planned_work_cannot_become_an_invented_offer(self):
+        for reply in ("The cleanup is running. I will stage the changes when tests pass.",
+                      "Some suites were not included in this run.",
+                      "Do not ask: Want me to deploy it?", "```text\nWant me to deploy it?\n```"):
+            output = "status: answer\nsay: [The update](s1) is available.\nask: Want me to [deploy it](s1)?"
+            _, result, _ = skim.skim_from_output(reply=reply, output=output)
+            self.assertEqual([b["kind"] for b in result["blocks"]], ["say"])
+            self.assertEqual(len(result["anchors"]), 1)
+
+    def test_explicit_question_or_suggestion_is_preserved_verbatim(self):
+        for ask in ("Want me to add the rollback?", "Which option do you prefer?", "I recommend reviewing the diff next."):
+            reply = "The change is ready.\n\n" + ask
+            _, result, _ = skim.skim_from_output(reply=reply, output="status: done\nsay: [The change is ready](s1).\nask: " + ask)
+            self.assertEqual([b["kind"] for b in result["blocks"]], ["say", "ask"])
+
+    def test_followup_cannot_add_scope_to_an_existing_question(self):
+        _, result, _ = skim.skim_from_output(reply="Want me to review the diff?", output="status: answer\nsay: A [review is proposed](s1).\nask: Want me to review and merge the diff?")
+        self.assertEqual([b["kind"] for b in result["blocks"]], ["say"])
 
 
 class PromptTests(unittest.TestCase):

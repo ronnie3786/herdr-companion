@@ -31,7 +31,7 @@ struct FirstMateGraphView: View {
                                 Text("Revision \(visit.revision)").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                             }
                             Spacer()
-                            FirstMateStatusLabel(status: visit.status)
+                            FirstMateStatusLabel(status: snapshot.displayStatus(for: visit))
                         }.contentShape(.rect)
                     }.buttonStyle(.herdrPlain)
                     Rectangle().fill(HerdrTheme.hairline).frame(height: 1)

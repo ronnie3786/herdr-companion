@@ -50,6 +50,8 @@ struct FirstMateHudTests {
 
     @Test("Percent is (step + fraction) / 6, complete is 100, unknown is nil")
     func percent() {
+        #expect(FirstMateHudProgress.percent(status: .working, step: 3, fraction: nil) == nil)
+        #expect(FirstMateHudProgress.segments(status: .working, step: 3, fraction: nil) == [0, 0, 0, 0, 0, 0])
         #expect(FirstMateHudProgress.percent(status: .blocked, step: 3, fraction: 0.45) == 58)
         #expect(FirstMateHudProgress.percent(status: .working, step: 0, fraction: 0) == 0)
         #expect(FirstMateHudProgress.percent(status: .working, step: 5, fraction: 1) == 100)
@@ -228,7 +230,7 @@ struct FirstMateHudTests {
         #expect(item("A", .working, step: 1).stateWord == "Building")
         #expect(item("B", .blocked, step: 3).stateWord == "Blocked")
         #expect(item("C", .idle, step: 0).stateWord == "Plan")
-        #expect(item("D", .done).stateWord == "Merged")
+        #expect(item("D", .done).stateWord == "Complete")
         #expect(item("E", .working).stateWord == "Working")
     }
 

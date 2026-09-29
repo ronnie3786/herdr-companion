@@ -25,8 +25,9 @@ In order, under the First Mate label (or the HUD answer):
 2. **A caveat**, with a rose rule, only when something failed or is risky.
 3. **Rest of the original**: everything the sentence doesn't link to, each
    block with its section heading.
-4. **The agent's suggested next step** as a question after an amber dot, always
-   the last line.
+4. **An optional question or suggestion** after an amber dot, only when that
+   complete sentence appears in the original response. The skim never invents
+   a follow-up to fill the template or turns ongoing work into an offer.
 
 **Full reply** / **Skim** switches each message, and the choice is kept while
 the chat is open. Copy, quotes, and response feedback always act on the full
@@ -44,13 +45,16 @@ iPad); there is no hover preview.
   (First Mate: `fm_message_skims`; HUD chats: `skim.json` beside the turn), so
   clients show "Skimming…" at once. The reply itself is never delayed or changed.
 - A pool of at most two workers runs one tool-free Pi inference per reply
-  (profile `first-mate-skim-v1`): the packaged prompt `skim-v2` with the
+  (profile `first-mate-skim-v1`): the packaged prompt `skim-v3` with the
   `breath_tight` format, no tools, extensions, skills, or context files, retries
   and compaction off, in a neutral temporary workspace. Each run has a 60-second
   limit. A skim is attempted once; a run cut short by a restart is resumed once.
 - The output is Skim markup (see the Skim lab's SPEC). The companion segments the
   reply, normalizes the markup, repairs routine model mistakes, and rejects
-  runaway output. Excerpts are never model text: clients slice them from the
+  runaway output. A deterministic source check drops optional follow-ups that
+  are not verbatim questions or suggestions from the reply, including follow-ups
+  in previously saved First Mate skims. Unsupported actions do not trigger another
+  inference. Excerpts are never model text: clients slice them from the
   reply they already have, using the stored segment offsets (UTF-16 code units
   into the reply with line endings as LF), and refuse a skim whose
   `reply_sha256` does not match.

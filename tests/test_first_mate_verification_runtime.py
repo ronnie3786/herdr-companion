@@ -382,8 +382,8 @@ class VerificationRuntimeTests(unittest.TestCase):
         snapshot = self.store.snapshot(self.feature["id"])
         checkpoint = next(message for message in snapshot["messages"]
                           if message["role"] == "assistant" and message["metadata"].get("checkpoint"))
-        self.assertIn("Verification coverage: Partially verified", checkpoint["text"])
-        self.assertIn("Missing suites", checkpoint["text"])
+        self.assertNotIn("Verification coverage:", checkpoint["text"])
+        self.assertNotIn("Missing suites", checkpoint["text"])
         self.assertEqual(checkpoint["metadata"]["verification"]["missing_suites"],
                          sorted(f"pkg/app/{name}" for name in SUITES[4:]))
         # Feature completion keeps the same partial verdict instead of promoting it.
@@ -413,11 +413,20 @@ class VerificationRuntimeTests(unittest.TestCase):
                                   verification=assessment)
         snapshot = self.store.snapshot(self.feature["id"])
         reply = next(item for item in reversed(snapshot["messages"]) if item["role"] == "assistant")
-        self.assertIn("Verification coverage: Partially verified", reply["text"])
-        self.assertIn("Missing suites", reply["text"])
+        self.assertEqual(reply["text"], "I finished this turn without a checkpoint.")
+        self.assertNotIn("Missing suites", reply["text"])
         self.assertEqual([entry["label"] for entry in reply["metadata"]["verification"]["gate_set"]],
                          [entry["label"] for entry in snapshot["feature"]["verification"]["gate_set"]])
         self.assertEqual(snapshot["feature"]["verification"]["status"], "partially_verified")
+        original = reply["text"]
+        legacy = original + "\n\n" + self.store._coverage_note(assessment)
+        self.store._db.execute("UPDATE fm_messages SET text=? WHERE id=?", (legacy, reply["id"]))
+        self.assertEqual(self.store.skim_source(reply["id"])["text"], original)
+        self.assertEqual(self.store._db.execute("SELECT text FROM fm_messages WHERE id=?", (reply["id"],)).fetchone()[0], legacy)
+        # Similar author-written prose is not stripped without the exact appendix.
+        authored = original + "\n\nVerification coverage: investigate the changed tests."
+        self.store._db.execute("UPDATE fm_messages SET text=? WHERE id=?", (authored, reply["id"]))
+        self.assertEqual(self.store.skim_source(reply["id"])["text"], authored)
 
     def test_legacy_feature_without_evidence_stays_conservatively_unavailable(self):
         self.stage_and_assignment(suffix="legacy")

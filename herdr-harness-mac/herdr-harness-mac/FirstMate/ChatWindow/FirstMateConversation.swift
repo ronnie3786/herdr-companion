@@ -8,7 +8,9 @@ struct FirstMateConversation: Identifiable, Equatable, Sendable {
     let featureID: String
     let title: String
     let label: String
+    let isUserNamed: Bool
     let emoji: String
+    let isUserEmoji: Bool
     var hudStatus: FirstMateHudStatus
     /// The raw feature status, for views that keep the native wording.
     let featureStatus: String
@@ -25,9 +27,39 @@ struct FirstMateConversation: Identifiable, Equatable, Sendable {
     let isUnread: Bool
     let isArchived: Bool
 
+    init(id: FirstMateFleetFeatureID, machineID: String, machineName: String, featureID: String,
+         title: String, label: String, isUserNamed: Bool = false, emoji: String, isUserEmoji: Bool = false,
+         hudStatus: FirstMateHudStatus, featureStatus: String, stepIndex: Int?, stepFraction: Double?,
+         now: String?, previewText: String, previewIsFromUser: Bool, isWorkingOnReply: Bool,
+         activityAt: Date?, latestFirstMateMessageID: String?, isUnread: Bool, isArchived: Bool) {
+        self.id = id
+        self.machineID = machineID
+        self.machineName = machineName
+        self.featureID = featureID
+        self.title = title
+        self.label = label
+        self.isUserNamed = isUserNamed
+        self.emoji = emoji
+        self.isUserEmoji = isUserEmoji
+        self.hudStatus = hudStatus
+        self.featureStatus = featureStatus
+        self.stepIndex = stepIndex
+        self.stepFraction = stepFraction
+        self.now = now
+        self.previewText = previewText
+        self.previewIsFromUser = previewIsFromUser
+        self.isWorkingOnReply = isWorkingOnReply
+        self.activityAt = activityAt
+        self.latestFirstMateMessageID = latestFirstMateMessageID
+        self.isUnread = isUnread
+        self.isArchived = isArchived
+    }
+
     /// The dot rule: a conversation shows its dot only when it needs you and
     /// has an unread message. Working, ready-to-plan, and complete never do.
     var showsDot: Bool { hudStatus.needsYou && isUnread }
+
+    var name: String { isUserNamed ? label : title }
 }
 
 enum FirstMateConversationList {
@@ -100,7 +132,9 @@ enum FirstMateConversationList {
             featureID: entry.featureID,
             title: title,
             label: entry.label.isEmpty ? title : entry.label,
+            isUserNamed: entry.isUserLabel,
             emoji: entry.emoji,
+            isUserEmoji: entry.emojiSource == "user" || (entry.emojiSource == nil && entry.emoji != FirstMateDefaultEmoji.emoji(for: entry.featureID)),
             hudStatus: entry.hudStatus,
             featureStatus: entry.status,
             stepIndex: entry.stepIndex,
@@ -127,7 +161,9 @@ enum FirstMateConversationList {
             featureID: feature.id,
             title: feature.title,
             label: FirstMateFleetEntry.defaultLabel(title: feature.title),
+            isUserNamed: false,
             emoji: FirstMateDefaultEmoji.emoji(for: feature.id),
+            isUserEmoji: false,
             hudStatus: hudStatus,
             featureStatus: feature.status,
             stepIndex: nil,

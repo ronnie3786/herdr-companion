@@ -127,7 +127,7 @@ private struct FirstMateLeadOverviewRow: View {
                     Text(conversation.emoji)
                         .font(.system(size: 13))
                         .accessibilityHidden(true)
-                    Text(conversation.title)
+                    Text(conversation.name)
                         .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
                         .foregroundStyle(isHovered ? HerdrTheme.accent : HerdrTheme.text)
                         .lineLimit(1)
@@ -156,9 +156,9 @@ private struct FirstMateLeadOverviewRow: View {
                 Rectangle().fill(HerdrTheme.rowDivider).frame(height: 1).accessibilityHidden(true)
             }
         }
-        .help("Open \(conversation.title)")
+        .help("Open \(conversation.name)")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([conversation.title, FirstMateChatStatusStyle.word(for: conversation), conversation.now]
+        .accessibilityLabel([conversation.name, FirstMateChatStatusStyle.word(for: conversation), conversation.now]
             .compactMap { $0 }.joined(separator: ", "))
         .accessibilityHint("Opens its chat")
         .accessibilityAddTraits(.isButton)

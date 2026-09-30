@@ -1,7 +1,7 @@
 # Companion 0.68.0b1
 
 This companion release adds First Mate simulator checkpoints through SimPortal and
-carries forward everything in 0.67.1b1.
+carries forward everything in 0.67.2b1.
 
 - Adds `first-mate-simulator-previews-v1`. First Mate workers and coordinators get an
   `fm_register_simulator_build` tool that saves a compiled iOS Simulator `.app` as a

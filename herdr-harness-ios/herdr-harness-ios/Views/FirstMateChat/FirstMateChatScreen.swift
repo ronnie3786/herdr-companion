@@ -50,6 +50,9 @@ struct FirstMateChatScreen: View {
     }
 
     var body: some View {
+        // A task may start after observable state has advanced. Its operation
+        // must use the exact value that supplied this render's task identity.
+        let attempt = readAttempt
         VStack(spacing: 0) {
             bar
             if let snapshot {
@@ -82,9 +85,9 @@ struct FirstMateChatScreen: View {
         .onChange(of: controls) { _, _ in updateLease() }
         .onChange(of: topmost) { _, _ in updateLease() }
         .onChange(of: store.lifecycle) { _, _ in updateLease() }
-        .task(id: readAttempt) {
-            guard let readAttempt, visibility.permitsRead, !Task.isCancelled else { return }
-            await fleet.chat.trackRead(target, through: readAttempt.messageID, store: store, fleet: fleet)
+        .task(id: attempt) {
+            guard let attempt, visibility.permitsRead, !Task.isCancelled else { return }
+            await fleet.chat.trackRead(target, through: attempt.messageID, store: store, fleet: fleet)
         }
         .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
         .sensoryFeedback(HerdrHaptic.completed.feedback, trigger: choicePulse)

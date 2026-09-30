@@ -106,6 +106,9 @@ struct FirstMateChatTranscript: View {
                     .frame(maxWidth: 720).frame(maxWidth: .infinity)
                 }
                 .defaultScrollAnchor(.bottom)
+                // Short transcripts remain fully visible without synthetic top
+                // insets competing with explicit bottom-scroll requests.
+                .defaultScrollAnchor(.topLeading, for: .alignment)
                 .defaultScrollAnchor(followsLatest ? .bottom : nil, for: .sizeChanges)
                 .task {
                     guard !positioned else { return }

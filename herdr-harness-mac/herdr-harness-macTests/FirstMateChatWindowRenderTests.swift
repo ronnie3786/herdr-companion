@@ -36,11 +36,12 @@ struct FirstMateChatWindowRenderTests {
         _ name: String,
         size: CGSize = Self.wide,
         sidebarWidth: Double = FirstMateChatPreferences.defaultSidebarWidth,
-        session: FirstMateChatWindowSession
+        session: FirstMateChatWindowSession,
+        interact: (@MainActor (NSWindow) async throws -> Void)? = nil
     ) async throws {
         let defaults = try #require(UserDefaults(suiteName: "FirstMateChatRender.Layout.\(UUID().uuidString)"))
         defaults.set(sidebarWidth, forKey: FirstMateChatPreferences.sidebarWidthKey)
-        let result = try await HerdrRenderHarness.renderWindow(name, size: size) {
+        let result = try await HerdrRenderHarness.renderWindow(name, size: size, interact: interact) {
             ZStack {
                 HerdrDuskBackdrop()
                 FirstMateChatWindowRoot(session: session, modelFavorites: ModelFavoritesStore())
@@ -92,10 +93,64 @@ struct FirstMateChatWindowRenderTests {
         result.expectSubstantial()
     }
 
-    @Test("At 1000 pt the inspector floats over chat without changing its column width")
-    func overlay() async throws {
+    @Test("At 1000 pt an open inspector is a trailing column beside chat")
+    func inspectorColumn() async throws {
         let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: true)
-        try await render("fmchat-chrome-overlay-1000.png", size: CGSize(width: 1000, height: 800), session: session)
+        try await render("fmchat-chrome-inspector-1000.png", size: CGSize(width: 1000, height: 800), session: session)
+    }
+
+    @Test("A narrow window collapses an expanded list to the rail instead of pushing it off screen")
+    func narrowWindowRail() async throws {
+        let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: false)
+        try await render(
+            "fmchat-chrome-narrow-560.png",
+            size: CGSize(width: 560, height: 700),
+            sidebarWidth: 420,
+            session: session
+        )
+    }
+
+    @Test("Shrinking a wide window keeps the list on screen and collapses it to the rail")
+    func liveShrink() async throws {
+        let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: false)
+        try await render(
+            "fmchat-chrome-live-shrink-560.png",
+            size: CGSize(width: 1100, height: 760),
+            sidebarWidth: 420,
+            session: session
+        ) { window in
+            for width in stride(from: 1060.0, to: 560, by: -60) {
+                window.setFrame(CGRect(x: 0, y: 0, width: width, height: 760), display: true)
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            window.setFrame(CGRect(x: 0, y: 0, width: 560, height: 760), display: true)
+            try await Task.sleep(for: .milliseconds(60))
+            #expect(window.frame.width == 560)
+            #expect(window.minSize.width == FirstMateChatWindowLayout.minimumWindowWidth)
+        }
+    }
+
+    @Test("Opening the inspector extends the window to the right and closing gives the width back")
+    func inspectorExtendsWindow() async throws {
+        let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: false)
+        try await render(
+            "fmchat-chrome-extended-1360.png",
+            size: CGSize(width: 1000, height: 760),
+            session: session
+        ) { window in
+            window.setFrame(CGRect(x: 40, y: 40, width: 1000, height: 760), display: true)
+            try await Task.sleep(for: .milliseconds(100))
+            session.inspectorPreference = true
+            try await Task.sleep(for: .milliseconds(700))
+            #expect(window.frame.width == 1360, "The window grows by the inspector's width")
+            #expect(window.frame.minX == 40, "It grows rightwards when the screen has room")
+            session.inspectorPreference = false
+            try await Task.sleep(for: .milliseconds(700))
+            #expect(window.frame.width == 1000, "Closing gives the width back")
+            session.inspectorPreference = true
+            try await Task.sleep(for: .milliseconds(700))
+            #expect(window.frame.width == 1360)
+        }
     }
 
     @Test("A dragged narrow sidebar is an avatar-only rail")
@@ -115,7 +170,7 @@ struct FirstMateChatWindowRenderTests {
         try await render(
             "fmchat-chrome-wrapping-titles-1000.png",
             size: CGSize(width: 1000, height: 800),
-            sidebarWidth: Double(FirstMateChatWindowLayout.compactBelow),
+            sidebarWidth: Double(FirstMateChatWindowLayout.minimumExpandedSidebarWidth),
             session: session
         )
     }
@@ -130,63 +185,101 @@ struct FirstMateChatWindowRenderTests {
 @Suite("First Mate chat window layout")
 @MainActor
 struct FirstMateChatWindowLayoutTests {
+    typealias Layout = FirstMateChatWindowLayout
+
     private func layout(
         _ width: CGFloat,
-        _ inspectorPreference: Bool? = nil,
         sidebarWidth: CGFloat = CGFloat(FirstMateChatPreferences.defaultSidebarWidth)
     ) -> FirstMateChatWindowLayout {
-        FirstMateChatWindowLayout.resolve(
-            width: width,
-            preferredSidebarWidth: sidebarWidth,
-            inspectorPreference: inspectorPreference
-        )
+        Layout.resolve(width: width, preferredSidebarWidth: sidebarWidth)
     }
 
-    @Test("Every visible inspector overlays chat, including at wide window sizes")
-    func inspectorModes() {
-        #expect(layout(1440).inspector == .overlay)
-        #expect(layout(1280).inspector == .overlay)
-        #expect(layout(1279).inspector == .hidden)
-        #expect(layout(1200).inspector == .hidden)
-        #expect(layout(1200, true).inspector == .overlay)
-        #expect(layout(1000, true).inspector == .overlay)
-        #expect(layout(700, true).inspector == .overlay)
-        #expect(layout(1440, false).inspector == .hidden)
-        #expect(layout(1000).inspector == .hidden)
+    @Test("The inspector opens by width only when there is no preference")
+    func inspectorVisibility() {
+        #expect(Layout.inspectorVisible(width: 1440, preference: nil))
+        #expect(Layout.inspectorVisible(width: 1280, preference: nil))
+        #expect(!Layout.inspectorVisible(width: 1279, preference: nil))
+        #expect(Layout.inspectorVisible(width: 700, preference: true))
+        #expect(!Layout.inspectorVisible(width: 1440, preference: false))
     }
 
     @Test("The width opens or closes the inspector once; resizing afterwards keeps the choice")
     func inspectorSettlesOnce() {
-        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1320, preference: nil) == true)
-        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1200, preference: nil) == false)
-        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 0, preference: nil) == nil)
+        #expect(Layout.settledInspectorPreference(width: 1320, preference: nil) == true)
+        #expect(Layout.settledInspectorPreference(width: 1200, preference: nil) == false)
+        #expect(Layout.settledInspectorPreference(width: 0, preference: nil) == nil)
         // Settled open at 1320 pt, then dragged to 1200 pt: still open.
-        let settled = FirstMateChatWindowLayout.settledInspectorPreference(width: 1320, preference: nil)
-        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1200, preference: settled) == true)
-        #expect(layout(1200, settled).inspector == .overlay)
-        #expect(FirstMateChatWindowLayout.settledInspectorPreference(width: 1440, preference: false) == false)
+        let settled = Layout.settledInspectorPreference(width: 1320, preference: nil)
+        #expect(Layout.settledInspectorPreference(width: 1200, preference: settled) == true)
+        #expect(Layout.settledInspectorPreference(width: 1440, preference: false) == false)
     }
 
-    @Test("The sidebar follows its dragged width and restores text at the compact threshold")
+    @Test("The list is either the rail or at least its minimum text width")
     func sidebarModes() {
-        #expect(layout(700).sidebar == .full)
-        #expect(layout(700).sidebarWidth == 320)
-        #expect(layout(1000, sidebarWidth: 219).sidebar == .rail)
-        #expect(layout(1000, sidebarWidth: 219).sidebarWidth == 219)
-        #expect(layout(1000, sidebarWidth: 220).sidebar == .full)
+        #expect(layout(1000).sidebar == .full)
+        #expect(layout(1000).sidebarWidth == 320)
+        #expect(layout(1000, sidebarWidth: Layout.minimumExpandedSidebarWidth).sidebar == .full)
+        #expect(layout(1000, sidebarWidth: Layout.minimumExpandedSidebarWidth - 1).sidebar == .rail)
+        #expect(layout(1000, sidebarWidth: 120).sidebarWidth == Layout.railWidth)
         #expect(layout(1000, sidebarWidth: 480).sidebarWidth == 480)
-        #expect(layout(1000, sidebarWidth: 999).sidebarWidth == 480)
-        #expect(layout(1000, sidebarWidth: 1).sidebarWidth == 76)
+        #expect(layout(1000, sidebarWidth: 999).sidebarWidth == Layout.maximumSidebarWidth)
         #expect(FirstMateRowTopLine.titleLineLimit == 2)
     }
 
-    @Test("A narrow window constrains the sidebar without taking the chat below its minimum")
+    @Test("A drag holds the minimum text width, then snaps to the rail past the collapse point")
+    func dragSnaps() {
+        #expect(Layout.snappedSidebarWidth(400) == 400)
+        #expect(Layout.snappedSidebarWidth(Layout.minimumExpandedSidebarWidth - 40) == Layout.minimumExpandedSidebarWidth)
+        #expect(Layout.snappedSidebarWidth(Layout.collapseBelow) == Layout.minimumExpandedSidebarWidth)
+        #expect(Layout.snappedSidebarWidth(Layout.collapseBelow - 1) == Layout.railWidth)
+        #expect(Layout.snappedSidebarWidth(-50) == Layout.railWidth)
+        #expect(Layout.snappedSidebarWidth(900) == Layout.maximumSidebarWidth)
+        // Arrow keys: the rail and the minimum text width are one step apart.
+        #expect(Layout.steppedSidebarWidth(from: Layout.railWidth, by: 20) == Layout.minimumExpandedSidebarWidth)
+        #expect(Layout.steppedSidebarWidth(from: Layout.railWidth, by: -20) == Layout.railWidth)
+        #expect(Layout.steppedSidebarWidth(from: Layout.minimumExpandedSidebarWidth, by: -20) == Layout.railWidth)
+        #expect(Layout.steppedSidebarWidth(from: 300, by: 20) == 320)
+        #expect(Layout.steppedSidebarWidth(from: 470, by: 20) == Layout.maximumSidebarWidth)
+    }
+
+    @Test("A narrow window collapses the list to the rail and widening restores it")
     func narrowWindowBounds() {
-        let constrained = layout(680, sidebarWidth: 480)
-        #expect(constrained.sidebarWidth == 320)
-        #expect(680 - constrained.sidebarWidth == FirstMateChatWindowLayout.minimumChatWidth)
-        #expect(layout(1000, sidebarWidth: 480).sidebarWidth == 480,
-                "The persisted preference returns when the window widens")
+        let tight = layout(700, sidebarWidth: 480)
+        #expect(tight.sidebar == .full)
+        #expect(700 - tight.sidebarWidth == Layout.minimumChatWidth)
+        let narrow = layout(Layout.minimumChatWidth + Layout.minimumExpandedSidebarWidth - 1, sidebarWidth: 480)
+        #expect(narrow.sidebar == .rail)
+        #expect(narrow.sidebarWidth == Layout.railWidth)
+        #expect(layout(Layout.minimumWindowWidth, sidebarWidth: 480).sidebar == .rail)
+        #expect(layout(1200, sidebarWidth: 480).sidebarWidth == 480, "The persisted preference returns when the window widens")
+    }
+
+    @Test("Columns always fill exactly the offered width")
+    func columnWidths() {
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1000, sidebar: 320, inspector: 0) == [320, 680, 0])
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1000, sidebar: 320, inspector: 360) == [320, 320, 360])
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 200, sidebar: 320, inspector: 360) == [200, 0, 0])
+        // While the edge slides, chat keeps its width and the inspector grows.
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1100, sidebar: 320, inspector: 360, pinnedChat: 680) == [320, 680, 100])
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1500, sidebar: 320, inspector: 360, pinnedChat: 680) == [320, 820, 360])
+    }
+
+    @Test("Opening the inspector grows the window rightwards, moving left only at the screen's edge")
+    func extenderFrames() {
+        let screen = NSRect(x: 0, y: 0, width: 1800, height: 1000)
+        let (roomy, roomyShift) = FirstMateChatWindowExtender.grownFrame(NSRect(x: 100, y: 50, width: 1000, height: 800), by: 360, within: screen)
+        #expect(roomy == NSRect(x: 100, y: 50, width: 1360, height: 800))
+        #expect(roomyShift == 0)
+
+        let (edge, edgeShift) = FirstMateChatWindowExtender.grownFrame(NSRect(x: 600, y: 50, width: 1000, height: 800), by: 360, within: screen)
+        #expect(edge == NSRect(x: 440, y: 50, width: 1360, height: 800))
+        #expect(edgeShift == 160)
+        let restored = FirstMateChatWindowExtender.shrunkFrame(edge, by: 360, restoring: edgeShift, within: screen)
+        #expect(restored == NSRect(x: 600, y: 50, width: 1000, height: 800))
+
+        let (full, fullShift) = FirstMateChatWindowExtender.grownFrame(NSRect(x: 0, y: 0, width: 1700, height: 900), by: 360, within: screen)
+        #expect(full == NSRect(x: 0, y: 0, width: 1800, height: 900), "A screen too narrow clamps the width")
+        #expect(fullShift == 0)
     }
 
     @Test("Root width updates use whole positive points")

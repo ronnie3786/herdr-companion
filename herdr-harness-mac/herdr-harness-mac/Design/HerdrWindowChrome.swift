@@ -102,6 +102,8 @@ struct HerdrMainWindowChromeModifier: ViewModifier {
     var background: Color = HerdrTheme.windowBackground
     /// The standalone First Mate preview is the first scene to reveal the desktop.
     var revealsDesktop = false
+    /// A controlled accessibility input for native render tests. Live scenes use macOS.
+    var reduceTransparencyOverride: Bool? = nil
     @State private var isFullScreen = false
     @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
     @AppStorage(HerdrAppearancePreferences.hazeEnabledKey) private var hazeEnabled = HerdrAppearancePreferences.defaultHazeEnabled
@@ -111,7 +113,7 @@ struct HerdrMainWindowChromeModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        let glass = HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparency, colorScheme: colorScheme)
+        let glass = HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparencyOverride ?? reduceTransparency, colorScheme: colorScheme)
         let desktopGlass = revealsDesktop && desktopTransparencyEnabled && glass
         content
             // The shell draws its own 40pt bars at the top edge; nothing below

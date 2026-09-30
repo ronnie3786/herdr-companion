@@ -84,6 +84,15 @@ struct HerdrDesktopGlassTests {
         #expect(!window.isOpaque)
         #expect(hasDesktopMaterial(hosting))
 
+        hosting.rootView = scene(defaults: defaults, revealsDesktop: true, reduceTransparency: true)
+        await settle(hosting)
+        #expect(window.isOpaque, "Reduce Transparency must override the saved appearance choice")
+        #expect(!hasDesktopMaterial(hosting))
+        hosting.rootView = scene(defaults: defaults, revealsDesktop: true)
+        await settle(hosting)
+        #expect(!window.isOpaque, "The appearance choice returns when Reduce Transparency is off")
+        #expect(hasDesktopMaterial(hosting))
+
         defaults.set(false, forKey: HerdrAppearancePreferences.glassEnabledKey)
         hosting.rootView = scene(defaults: defaults, revealsDesktop: true)
         await settle(hosting)
@@ -105,11 +114,14 @@ struct HerdrDesktopGlassTests {
     private func scene(
         defaults: UserDefaults,
         revealsDesktop: Bool,
-        scheme: ColorScheme = .dark
+        scheme: ColorScheme = .dark,
+        reduceTransparency: Bool = false
     ) -> some View {
         Color.clear
             .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
-            .modifier(HerdrMainWindowChromeModifier(revealsDesktop: revealsDesktop))
+            .modifier(HerdrMainWindowChromeModifier(
+                revealsDesktop: revealsDesktop, reduceTransparencyOverride: reduceTransparency
+            ))
             .defaultAppStorage(defaults)
             .environment(\.colorScheme, scheme)
     }

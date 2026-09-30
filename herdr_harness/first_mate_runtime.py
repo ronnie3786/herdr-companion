@@ -33,6 +33,8 @@ from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_context import FirstMateContext
+from .first_mate_read_cache import AssessmentReadCache
+from .first_mate_read_models import feature_summary, stable_verification
 from .first_mate_git_history import capture_baselines, capture_commits, capture_comparison_baseline, recorded_comparison_baseline
 from .first_mate_link_discovery import FirstMateLinkDiscovery
 from .first_mate_peers import PeerDirectory
@@ -719,6 +721,7 @@ class FirstMateRuntime:
         self._catalog_lock = threading.Lock()
         self._catalog_cache = None
         self._catalog_at = 0.0
+        self._assessment_reads = AssessmentReadCache()
         self.usage = FirstMateUsage(self.root / "sessions")
         self.context = FirstMateContext(self.jobs_root, self.context_target)
         from .first_mate_reliability import FirstMateReliability
@@ -783,8 +786,7 @@ class FirstMateRuntime:
         visit_id = feature.get("current_visit_id")
         if not visit_id:
             return None
-        return next((visit.get("stage_key") for visit in self.store.snapshot(feature["id"])["visits"]
-                     if visit.get("id") == visit_id), None)
+        return self.store.visit_stage_key(feature["id"], visit_id)
 
     def _policy(self, feature: Mapping[str, Any], *, kind: str,
                 claim: Mapping[str, Any]):
@@ -914,10 +916,13 @@ class FirstMateRuntime:
         )
 
     def list_features(self, view: str = "active") -> list[dict]:
+        features = self.store.list_features(view)
+        if not features:
+            return []
         jobs = self._jobs()
         ledger_sessions = self.store.list_session_records()
         result = []
-        for feature in self.store.list_features(view):
+        for feature in features:
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
             selection = self._policy(feature, kind="coordinator", claim={}).selection()
             result.append({**feature, "usage": account["usage"], "model_selection": selection,
@@ -935,7 +940,42 @@ class FirstMateRuntime:
                 "coordinator_context": self.context.project(feature, jobs)}
 
     def _live_verification(self, feature: Mapping[str, Any]) -> dict:
-        """Current recomputed verdict; a cached verdict is never presented as current.
+        """Reuse coverage only while freshly observed evidence and Git inputs match.
+
+        TTL bounds retention; it is never a substitute for checking workspace
+        HEAD/status. Mutating gate decisions use verification_assessment directly.
+        """
+        try:
+            return self._assessment_reads.get(
+                feature["id"], lambda: self._verification_read_identity(feature["id"]),
+                lambda: self._compute_live_verification(self.store.get_feature(feature["id"])))
+        except (FirstMateError, OSError, sqlite3.Error, subprocess.TimeoutExpired, VerificationValidationError) as exc:
+            return self._historical_unavailable(feature, feature.get("verification"),
+                "The current coverage inputs could not be checked: " + str(exc)[:300])
+
+    def _verification_read_identity(self, feature_id: str) -> str:
+        feature = self.store.get_feature(feature_id)
+        runs = self.store.list_verification_runs(feature_id)
+        inventories = self.store.list_suite_inventories(feature_id)
+        # Empty lists need no process or workspace scan at all.
+        if not runs and not inventories:
+            return json.dumps([feature.get("revision"), feature.get("verification")], sort_keys=True)
+        scope = self._verification_workspace_scope(feature)
+        observed = {identity: [self._git(path, "rev-parse", "HEAD"),
+                              self._git(path, "status", "--porcelain", "--untracked-files=normal")]
+                    for identity, path in scope["workspaces"].items()}
+        marker = [feature.get("revision"), feature.get("current_visit_id"), feature.get("verification_selection"),
+                  feature.get("verification_selection_explicit"), self._current_verification_selection(feature),
+                  scope, observed, runs, inventories]
+        # Porcelain status names paths and broad states, not content. Successive
+        # edits can remain `M path` (or `?? path`) while verification inputs
+        # change, so dirty worktrees are deliberately never cacheable.
+        if any(values[1].strip() for values in observed.values()):
+            marker.append(["dirty-worktree", uuid.uuid4().hex])
+        return hashlib.sha256(json.dumps(marker, sort_keys=True, default=sorted).encode()).hexdigest()
+
+    def _compute_live_verification(self, feature: Mapping[str, Any]) -> dict:
+        """Current verdict, recomputed when any observed input differs.
 
         Structured evidence is recomputed against the owned workspaces and the
         coordinator's retained gate selection. When recomputation is impossible,
@@ -953,7 +993,7 @@ class FirstMateRuntime:
             return persisted
         try:
             live = self.verification_assessment(feature["id"])
-        except (FirstMateError, OSError, subprocess.TimeoutExpired, VerificationValidationError) as exc:
+        except (FirstMateError, OSError, sqlite3.Error, subprocess.TimeoutExpired, VerificationValidationError) as exc:
             return self._historical_unavailable(
                 feature, persisted,
                 "The current coverage assessment could not be computed: " + str(exc)[:300])
@@ -992,14 +1032,37 @@ class FirstMateRuntime:
     def board(self, feature_id: str, **bounds) -> dict:
         """Bounded Agent view projection. It adds only the pure coordinator
         routing selection: no job scan, usage accounting, or context projection."""
-        board = self.store.board(feature_id, **bounds)
-        verification = self._live_verification(self.store.get_feature(feature_id))
+        requested_version = bounds.get("if_version")
+        verification = None
+        if requested_version is not None:
+            # Evidence-backed board tokens combine SQLite state with a freshly
+            # observed verification identity. Bracket that work with the store
+            # marker so an unchanged poll can skip every board array safely.
+            for _ in range(3):
+                before = self.store.read_version(feature_id)
+                candidate = self._live_verification(self.store.get_feature(feature_id))
+                if self.store.read_version(feature_id) != before:
+                    continue
+                verification = candidate
+                if candidate.get("evidence_present"):
+                    stable = {key: value for key, value in candidate.items() if key != "computed_at"}
+                    marker = json.dumps([before, stable], sort_keys=True, separators=(",", ":"))
+                    version = "bv1-" + hashlib.sha256(marker.encode()).hexdigest()[:20]
+                    if requested_version == version:
+                        return {"version": version, "unchanged": True}
+                break
+            else:
+                verification = None
+        board = self.store.board(
+            feature_id,
+            **({**bounds, "if_version": None} if verification and verification.get("evidence_present") else bounds))
+        if verification is None:
+            verification = self._live_verification(self.store.get_feature(feature_id))
         if verification.get("evidence_present"):
             # Git can change without a ledger event. Bind conditional board
             # reads to the current assessment as well as the SQLite version.
             # Computation time is not a semantic change and must not defeat
             # unchanged polling on every request.
-            requested_version = bounds.get("if_version")
             if board["unchanged"]:
                 board = self.store.board(feature_id, **{**bounds, "if_version": None})
             stable = {key: value for key, value in verification.items() if key != "computed_at"}
@@ -1089,6 +1152,88 @@ class FirstMateRuntime:
         result["sessions"] = account["sessions"][:1000]
         result["sessions_truncated"] = len(account["sessions"]) > 1000
         return result
+
+    def read_view(self, feature_id: str, *, view: str = "chat", messages: int = 60,
+                  before: str | None = None, if_version: str | None = None) -> dict:
+        if view not in {"chat", "overview", "details"}:
+            raise FirstMateError("Invalid read view", code="invalid_request", status=400)
+        if before is not None and view != "chat":
+            raise FirstMateError("Only chat supports a before cursor", code="invalid_request", status=400)
+        if type(messages) is not int or not 1 <= messages <= 200:
+            raise FirstMateError("Invalid messages limit", code="invalid_request", status=400)
+        if if_version is not None and (not isinstance(if_version, str) or len(if_version) > 200 or "\x00" in if_version):
+            raise FirstMateError("Invalid if_version", code="invalid_request", status=400)
+
+        # Runtime enrichment reads bounded session/job files outside SQLite. If
+        # the ledger changes around that work, retry instead of attaching a new
+        # version to an older projection. Persistent churn asks the client to
+        # retry rather than returning a conditionally cacheable stale body.
+        for _ in range(3):
+            if view == "details":
+                read_version = self.store.read_version(feature_id)
+                result = self.snapshot(feature_id, events="journal")
+                result["has_queued_work"] = self.store.has_queued_work(feature_id)
+            else:
+                header = self.store.read_header(feature_id, before=before)
+                read_version = header["read_version"]
+                raw_feature = header["feature"]
+                jobs = self._jobs()
+                account = self._usage_account(
+                    raw_feature, assignments=header["assignments"], jobs=jobs,
+                    ledger_sessions=self.store.list_session_records())
+                selection = self._policy(raw_feature, kind="coordinator", claim={}).selection()
+                enriched = {
+                    **raw_feature,
+                    "usage": account["usage"],
+                    "model_selection": selection,
+                    "verification": self._live_verification(raw_feature),
+                    "coordinator_context": self.context.project(raw_feature, jobs),
+                }
+                presented = feature_summary(enriched) if view == "chat" else enriched
+                coordinators = [session for session in account["sessions"]
+                                if session.get("kind") == "coordinator" or not session.get("assignment_id")]
+                current_id = raw_feature.get("native_session_id")
+                current = next((session for session in coordinators
+                                if current_id and session.get("native_session_id") == current_id), None)
+                if current is None and coordinators:
+                    current = coordinators[0]
+                sessions = [current] if current is not None else []
+                if self.store.read_version(feature_id) != read_version:
+                    continue
+                marker_feature = {key: value for key, value in presented.items() if key != "updated_at"}
+                marker_feature["verification"] = stable_verification(marker_feature.get("verification") or {})
+                if isinstance(marker_feature.get("usage"), dict):
+                    marker_feature["usage"] = {key: value for key, value in marker_feature["usage"].items()
+                                               if key != "updated_at"}
+                version = "r1-" + hashlib.sha256(json.dumps(
+                    [read_version, view, messages, before, marker_feature, sessions, header["has_queued_work"]],
+                    sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
+                if version == if_version:
+                    return {"version": version, "unchanged": True, "view": view}
+                result = self.store.read_projection(feature_id, view=view, messages=messages, before=before)
+                if result.pop("_read_version") != read_version:
+                    continue
+                result["feature"] = presented
+                result["sessions"] = sessions
+                result["has_queued_work"] = header["has_queued_work"]
+            if self.store.read_version(feature_id) == read_version:
+                break
+        else:
+            raise FirstMateError(
+                "First Mate changed while it was being read; retry the request",
+                code="read_changed", status=409)
+
+        if view == "details":
+            marker_result = dict(result)
+            marker_feature = {key: value for key, value in result["feature"].items() if key != "updated_at"}
+            marker_feature["verification"] = stable_verification(marker_feature.get("verification") or {})
+            marker_result["feature"] = marker_feature
+            version = "r1-" + hashlib.sha256(json.dumps(
+                [read_version, view, messages, before, marker_result],
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
+        if version == if_version:
+            return {"version": version, "unchanged": True, "view": view}
+        return {**result, "version": version, "unchanged": False, "view": view}
 
     def start(self) -> None:
         with self._mutex:
@@ -1717,7 +1862,7 @@ class FirstMateRuntime:
         _write_json(path, registration)
         return registration
 
-    def _verification_scope(self, feature: Mapping[str, Any]) -> dict:
+    def _verification_workspace_scope(self, feature: Mapping[str, Any]) -> dict:
         """Current revisions and cumulative changed paths from retained baselines.
 
         The earliest retained baseline along each assignment's
@@ -1729,8 +1874,7 @@ class FirstMateRuntime:
         Every value is observed from the owned workspace at assessment time,
         never taken from a report.
         """
-        snapshot = self.store.snapshot(feature["id"])
-        assignments = snapshot["assignments"]
+        assignments = self.store.list_assignments(feature_id=feature["id"])
         by_id = {assignment["id"]: assignment for assignment in assignments}
 
         def _metadata(assignment: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1827,6 +1971,14 @@ class FirstMateRuntime:
             if leaves:
                 aliases[self._workspace_identity(path)] = [self._workspace_identity(leaf) for leaf in leaves]
 
+        return {"workspaces": workspaces, "anchors": anchors, "registered_targets": sorted(registered_targets),
+                "aliases": aliases, "reasons": target_scope_reasons}
+
+    def _verification_scope(self, feature: Mapping[str, Any]) -> dict:
+        workspace_scope = self._verification_workspace_scope(feature)
+        workspaces, anchors = workspace_scope["workspaces"], workspace_scope["anchors"]
+        registered_targets, aliases = workspace_scope["registered_targets"], workspace_scope["aliases"]
+        target_scope_reasons = workspace_scope["reasons"]
         revisions: dict[str, str] = {}
         changed: dict[str, list[str]] = {}
         reasons: list[str] = target_scope_reasons
@@ -1895,7 +2047,7 @@ class FirstMateRuntime:
             return None
         current_visit = feature.get("current_visit_id")
         referenced: list[str] = []
-        for assignment in self.store.snapshot(feature["id"])["assignments"]:
+        for assignment in self.store.list_assignments(feature_id=feature["id"]):
             if assignment.get("visit_id") != current_visit:
                 continue
             for run_id in assignment.get("verification_run_ids", []):

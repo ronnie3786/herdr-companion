@@ -40,6 +40,8 @@ struct FirstMateWorkspaceView: View {
     @State private var selectedGitTargetIdentity: String?
     @State private var selectedGitCommitSHA: String?
     @State private var controlLease = FirstMateWorkspaceControlLease()
+    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var scheme
     @Environment(\.herdrHostsTitleBar) private var hostsTitleBar
 
@@ -107,6 +109,13 @@ struct FirstMateWorkspaceView: View {
                                 .frame(minWidth: 340, idealWidth: 420, maxWidth: .infinity)
                         }
                     }
+                } else if mode == .chat, store.selectedFeatureID != nil {
+                    HSplitView {
+                        ProgressView("Loading conversation…")
+                            .frame(minWidth: 330, maxWidth: .infinity, maxHeight: .infinity)
+                        FirstMateInspectorView(store: store)
+                            .frame(minWidth: 340, idealWidth: 420, maxWidth: .infinity)
+                    }
                 } else {
                     ContentUnavailableView {
                         Label(store.unsupported ? "First Mate needs a server update" : "A First Mate for every feature", systemImage: "sailboat")
@@ -136,7 +145,8 @@ struct FirstMateWorkspaceView: View {
         // above, the native bezel turns light gray behind a white label.
         .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.regular))
         .tint(palette.accent)
-        .task(id: FirstMateWorkspaceObservationID(store: store)) { await observe() }
+        .task(id: "\(store.lifecycle.opaqueID)|\(store.selectedFeatureID ?? "")|\(controlActiveState == .key)|\(scenePhase == .background)") { await observe() }
+        .task(id: store.lifecycle) { await observeList() }
         .onChange(of: gitTargetIdentity, initial: true) { _, target in
             guard let target else { return }
             if let selectedGitTargetIdentity, selectedGitTargetIdentity != target {
@@ -258,8 +268,17 @@ struct FirstMateWorkspaceView: View {
 
     private func observe() async {
         repeat {
-            await store.refresh()
-            do { try await Task.sleep(for: .seconds(2)) } catch { return }
-        } while !Task.isCancelled && !store.isDemo && !store.unsupported
+            await store.refreshConversation()
+            do { try await Task.sleep(for: .seconds(scenePhase == .background ? 30 : controlActiveState == .key ? 2 : 10)) } catch { return }
+        } while !Task.isCancelled && !store.isDemo
+    }
+
+    /// The main workspace still owns its feature list. Refreshing it must not
+    /// block a selection's conversation, or repeat on every selection change.
+    private func observeList() async {
+        repeat {
+            await store.refresh(includeConversation: false)
+            do { try await Task.sleep(for: .seconds(scenePhase == .background ? 30 : 10)) } catch { return }
+        } while !Task.isCancelled && !store.isDemo
     }
 }

@@ -225,9 +225,11 @@ struct FirstMateVerification: Codable, Equatable, Sendable {
     var coverageReasons: [String] = []
     var evidencePresent = false
     var computedAt: String?
+    var summary = false
+    var counts: [String: Int] = [:]
 
     enum CodingKeys: String, CodingKey {
-        case status, label
+        case status, label, summary, counts
         case featureRevision = "feature_revision"
         case assessedRevisions = "assessed_revisions"
         case sourceRevisions = "source_revisions"
@@ -283,6 +285,8 @@ struct FirstMateVerification: Codable, Equatable, Sendable {
         coverageReasons = try container.decodeIfPresent([String].self, forKey: .coverageReasons) ?? []
         evidencePresent = try container.decodeIfPresent(Bool.self, forKey: .evidencePresent) ?? false
         computedAt = try container.decodeIfPresent(String.self, forKey: .computedAt)
+        summary = try container.decodeIfPresent(Bool.self, forKey: .summary) ?? false
+        counts = try container.decodeIfPresent([String: Int].self, forKey: .counts) ?? [:]
     }
 
     /// True for the additive empty object a legacy companion returns when no
@@ -419,6 +423,9 @@ struct FirstMateVerificationPresentation: Equatable, Sendable {
 
     var accessibilitySummary: String {
         var parts = ["Verification: \(statusTitle)."]
+        if verification?.summary == true {
+            parts.append("Open Overview for the complete verification evidence.")
+        }
         if isLastReported {
             parts.append("Last reported while the companion connection was unavailable.")
         }

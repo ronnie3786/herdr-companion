@@ -11,6 +11,7 @@ struct FirstMateLeadScreen: View {
     let openInfo: (FirstMateFeatureTarget) -> Void
     let create: (String) -> Void
     var back: (() -> Void)? = nil
+    var embedded = false
     @State private var retry = 0
     @State private var error: String?
     @State private var loading = false
@@ -44,10 +45,10 @@ struct FirstMateLeadScreen: View {
         let intent = fleet.chat.currentNavigationIntent
         Group {
             if request.machineID == nil {
-                FirstMateLeadBriefingScreen(model: model, fleet: fleet, goal: $goal, openFeature: openFeature, create: create)
+                FirstMateLeadBriefingScreen(model: model, fleet: fleet, goal: $goal, openFeature: openFeature, create: create, embedded: embedded)
             } else if let target, let store = fleet.store(for: target) {
                 FirstMateChatScreen(model: model, fleet: fleet, store: store, target: target, topmost: topmost,
-                    openInfo: { _, _ in openInfo(target) }, readTrackingEnabled: true, back: back, followsLeadChoice: true)
+                    openInfo: { _, _ in openInfo(target) }, readTrackingEnabled: true, back: back, followsLeadChoice: true, embedded: embedded)
                     .id(target)
             } else {
                 VStack(spacing: 20) {
@@ -65,7 +66,7 @@ struct FirstMateLeadScreen: View {
                 }
                 .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .herdrFirstMateChrome().navigationTitle("My First Mate").navigationBarTitleDisplayMode(.inline)
-                .toolbar(.visible, for: .navigationBar).toolbarVisibility(.hidden, for: .tabBar)
+                .toolbar(.visible, for: .navigationBar).toolbarVisibility(embedded ? .visible : .hidden, for: .tabBar)
                 .accessibilityIdentifier("first-mate-lead-opening")
             }
         }

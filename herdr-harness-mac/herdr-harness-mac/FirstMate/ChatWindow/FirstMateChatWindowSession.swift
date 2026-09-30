@@ -59,8 +59,10 @@ final class FirstMateChatWindowSession {
     @ObservationIgnored private var selectionGeneration = 0
     /// The header's machine choice lives in UserDefaults; this publishes it.
     private var leadPinRevision = 0
-    /// The refresh loop's wait for its next pass; cancelling it wakes the loop.
-    @ObservationIgnored private var refreshSleep: Task<Void, Never>?
+    /// Selection wakes are independent of network completion. Cancelling a
+    /// slow read must never make the next conversation wait for its transport.
+    @ObservationIgnored private var refreshWake: AsyncStream<Void>.Continuation?
+    @ObservationIgnored private var refreshOwner = UUID()
 
     private struct ConversationCacheKey: Equatable {
         let hosts: [FirstMateFleetHost]
@@ -438,9 +440,17 @@ final class FirstMateChatWindowSession {
     }
 
     /// Wakes the refresh loop at once (a selection change or an open request).
+    private(set) var pollingInterval: Duration = .seconds(2)
+
+    func setActivity(isKey: Bool, isBackground: Bool) {
+        let interval: Duration = .seconds(isBackground ? 30 : isKey ? 2 : 10)
+        guard interval != pollingInterval else { return }
+        pollingInterval = interval
+        wakeRefresh()
+    }
+
     func wakeRefresh() {
-        refreshSleep?.cancel()
-        refreshSleep = nil
+        refreshWake?.yield(())
     }
 
     // MARK: Lifecycle
@@ -459,22 +469,42 @@ final class FirstMateChatWindowSession {
 
     private func refreshSelectedStore() async {
         let lease = FirstMateWorkspaceControlLease()
-        defer { lease.release() }
-        while !Task.isCancelled {
+        let owner = UUID()
+        refreshOwner = owner
+        let (wakes, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        refreshWake = continuation
+        var request: Task<Void, Never>?
+        defer {
+            request?.cancel()
+            continuation.finish()
+            if refreshOwner == owner { refreshWake = nil }
+            lease.release()
+        }
+        continuation.yield(())
+        for await _ in wakes {
+            guard !Task.isCancelled else { return }
+            request?.cancel()
             applyPendingOpen()
             let generation = selectionGeneration
-            let store = selectedStore
-            if let store {
-                lease.update(store: store, available: true)
-                if case .lead = selection, store.leadFeatureID == nil || store.selectedFeatureID != store.leadFeatureID {
-                    // Creates the lead on first use, loads it, and selects it.
-                    _ = await store.openLead()
+            lease.release()
+            request = Task {
+                while !Task.isCancelled, generation == selectionGeneration {
+                    guard let store = selectedStore else {
+                        lease.release()
+                        do { try await Task.sleep(for: pollingInterval) } catch { return }
+                        continue
+                    }
+                    lease.update(store: store, available: true)
+                    if case .lead = selection, store.leadFeatureID == nil || store.selectedFeatureID != store.leadFeatureID {
+                        // Opening already fetches the snapshot. Do not fetch it
+                        // a second time immediately after that succeeds.
+                        _ = await store.openLead()
+                    } else {
+                        await store.refreshConversation()
+                    }
+                    do { try await Task.sleep(for: pollingInterval) } catch { return }
                 }
-                await store.refresh()
-            } else {
-                lease.release()
             }
-            await waitForNextRefresh(since: generation, timed: store != nil)
         }
     }
 
@@ -494,25 +524,6 @@ final class FirstMateChatWindowSession {
             do { try await Task.sleep(for: Self.fleetObserverCheckInterval) } catch { return }
         }
     }
-
-    /// Sleeps until the next pass, or until ``wakeRefresh()``. With no chat
-    /// selected (My First Mate) nothing refreshes, so it waits only for a wake.
-    private func waitForNextRefresh(since generation: Int, timed: Bool) async {
-        guard generation == selectionGeneration, pendingOpen == nil, !Task.isCancelled else { return }
-        let interval = timed ? Self.refreshInterval : Self.idleWakeInterval
-        let sleep = Task { _ = try? await Task.sleep(for: interval) }
-        refreshSleep = sleep
-        await withTaskCancellationHandler {
-            await sleep.value
-        } onCancel: {
-            sleep.cancel()
-        }
-        if refreshSleep == sleep { refreshSleep = nil }
-    }
-
-    /// My First Mate's wait: long enough to be idle, short enough that a
-    /// missed wake is harmless.
-    static let idleWakeInterval: Duration = .seconds(60)
 
     /// Marks the chat read when it shows in a key window, scrolled to its
     /// newest message. The marker is the newest First Mate message the

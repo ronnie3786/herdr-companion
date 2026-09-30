@@ -14,7 +14,7 @@ struct FirstMateDocumentRow: View {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "doc.text")
                     .font(.title2)
-                    .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                    .foregroundStyle(HerdrTheme.accent)
                     .padding(.top, 2)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 7) {
@@ -22,15 +22,15 @@ struct FirstMateDocumentRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Text(snapshot.author(of: document)?.title ?? "Source retained with document")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                     if showsVisit, let visit = snapshot.visits.first(where: { $0.id == document.visitID }) {
-                        Text(visit.title).font(.footnote).foregroundStyle(.secondary)
+                        Text(visit.title).font(.footnote).foregroundStyle(HerdrTheme.secondaryText)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.right")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                     .padding(.top, 4)
                     .accessibilityHidden(true)
             }

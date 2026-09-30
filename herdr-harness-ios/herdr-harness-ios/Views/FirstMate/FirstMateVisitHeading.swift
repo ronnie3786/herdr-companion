@@ -13,12 +13,12 @@ struct FirstMateVisitHeading: View {
                 HStack(spacing: 10) {
                     FirstMateStatusLabel(status: displayStatus ?? visit.status)
                         .fixedSize(horizontal: true, vertical: true)
-                    Text("Revision \(visit.revision)").font(.footnote).foregroundStyle(.secondary)
+                    Text("Revision \(visit.revision)").font(.footnote).foregroundStyle(HerdrTheme.secondaryText)
                         .fixedSize(horizontal: true, vertical: true)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     FirstMateStatusLabel(status: displayStatus ?? visit.status)
-                    Text("Revision \(visit.revision)").font(.footnote).foregroundStyle(.secondary)
+                    Text("Revision \(visit.revision)").font(.footnote).foregroundStyle(HerdrTheme.secondaryText)
                 }
             }
         }

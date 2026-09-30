@@ -32,6 +32,27 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     private var _sentRequestIDs: [String] = []
     private var _beforeSend: (@Sendable () async throws -> Void)?
     private var _beforeEnsure: (@Sendable () async throws -> Void)?
+    private var _beforeFeatureList: (@Sendable () async throws -> Void)?
+    typealias PresentationHandler = @Sendable (String, FirstMateReadView, String?, String?) async throws -> FirstMatePresentationResponse
+    private var _presentation: PresentationHandler?
+    var presentation: PresentationHandler? {
+        get { lock.withLock { _presentation } }
+        set { lock.withLock { _presentation = newValue } }
+    }
+    func fetchFirstMatePresentation(_ id: String, view: FirstMateReadView, before: String?, ifVersion: String?) async throws -> FirstMatePresentationResponse {
+        if let handler = presentation { return try await handler(id, view, before, ifVersion) }
+        return .init(snapshot: try await fetchFirstMateFeature(id))
+    }
+    private var _beforeFeature: (@Sendable (String) async throws -> Void)?
+
+    var beforeFeatureList: (@Sendable () async throws -> Void)? {
+        get { lock.withLock { _beforeFeatureList } }
+        set { lock.withLock { _beforeFeatureList = newValue } }
+    }
+    var beforeFeature: (@Sendable (String) async throws -> Void)? {
+        get { lock.withLock { _beforeFeature } }
+        set { lock.withLock { _beforeFeature = newValue } }
+    }
 
     var sentRequestIDs: [String] { lock.withLock { _sentRequestIDs } }
     var beforeSend: (@Sendable () async throws -> Void)? {
@@ -108,7 +129,8 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
         return FirstMateCapabilities(ok: true, capabilities: try result.get())
     }
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
-        let result = lock.withLock { _featureListCalls += 1; return _features }
+        let (result, before) = lock.withLock { _featureListCalls += 1; return (_features, _beforeFeatureList) }
+        try await before?()
         return FirstMateFeatureList(ok: true, features: try result.get())
     }
     func fetchFirstMateFleet() async throws -> FirstMateFleetResponse {
@@ -138,7 +160,8 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
         return try await handler(featureID, throughMessageID)
     }
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
-        let snapshot = lock.withLock { _featureCalls += 1; return _snapshots[id] }
+        let (snapshot, before) = lock.withLock { _featureCalls += 1; return (_snapshots[id], _beforeFeature) }
+        try await before?(id)
         if let snapshot { return snapshot }
         if case .success(let features) = features, let feature = features.first(where: { $0.id == id }) {
             return FirstMateSnapshot(feature: feature)

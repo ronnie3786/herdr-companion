@@ -19,7 +19,7 @@ struct AttentionPaneCard: View {
                         .foregroundStyle(.primary)
                     Text("\(model.workspace(containing: pane)?.label ?? pane.workspaceID) · \(pane.displayAgentName)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                         .lineLimit(1)
                 }
 

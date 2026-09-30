@@ -12,7 +12,7 @@ struct FirstMateResourceHeader: View {
             case .document(let document):
                 Label("Attached evidence", systemImage: "doc.text")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 if let visit = store.snapshot?.visits.first(where: { $0.id == document.visitID }) {
                     Text(visit.title).font(.subheadline.weight(.medium))
                 }
@@ -37,14 +37,14 @@ struct FirstMateResourceHeader: View {
             case .session(let agent):
                 Text("\(agent.role) · generation \(agent.generation)")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 FirstMateStatusLabel(status: agent.status)
                 FirstMateSessionHistoryView(store: store, resource: resource)
                 FirstMateResourceMetadataView(resource: resource)
             case .history(let session):
                 Text("\(session.kindDisplayName) · \(session.role.replacingOccurrences(of: "_", with: " ").capitalized) · generation \(session.generation)")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 FirstMateStatusLabel(status: session.status)
                 FirstMateSessionHistoryView(store: store, resource: resource)
                 FirstMateResourceMetadataView(resource: resource)

@@ -14,15 +14,16 @@ phone-local preferences, both on by default; Reduce Transparency keeps surfaces
 opaque without discarding either preference. Phase 2 installs the chrome on the
 new conversations screen, client-built briefing and create/archive sheets. The
 **First Mates** tab is dark-only; the legacy System/Light/Dark menu is removed.
-Other app tabs keep their existing layouts and opaque backgrounds until Phase 6.
+Phase 6 puts the cached dusk under the whole TabView while preserving the other
+tabs' navigation, content and note-paper colors.
 
 Selected and pressed rows in the new chrome share the quiet 6% `codeFill`
-background with 10 pt corners; message bubbles keep 18 pt corners. New First Mate
-chrome caps Dynamic Type at `.xxxLarge`, including UIKit-hosted Markdown and
+background with 10 pt corners; message bubbles keep 18 pt corners. The whole app
+caps Dynamic Type at `.xxxLarge`, including UIKit-hosted Markdown and
 metric-scaled controls. This limits scaling, **not message length**: complete
 messages remain readable and scrollable, with at least 44 pt control targets.
-The Phase 3 chat uses the same cap without shortening its transcript. Other tabs stay uncapped until the app-wide Phase 6 adoption. Working
-passive OS motion/transparency fallbacks remain; they are not independent release
+The cap includes UIKit-hosted Markdown without shortening its transcript.
+Passive OS motion/transparency fallbacks remain; they are not independent release
 gates or a separate test matrix.
 
 The [implementation plan](ios-chat/IMPLEMENTATION-PLAN.md) and its three research
@@ -33,7 +34,7 @@ provides the shared/mobile data layer below. Phase 2 adds the conversations UI;
 Phase 3 adds feature chat, composer v1, pushed Info and briefing readouts. Phase 4
 adds real lead chat, machine choice, stand-in/recovery, frozen context and lead
 Overview. Phase 5 adds attachment, voice, model, mention and feedback controls.
-Info/iPad polish plus app-wide dusk (Phase 6) remains planned.
+Phase 6 adds the Info restyle, three-column iPad layout and app-wide dusk/capped text.
 Each phase retains automated verification/review/landing gates,
 without a first-push approval or per-phase device-test pause. One final signed iOS
 build is delivered after Phase 6; Phase 7, Mac releases, server deployment and
@@ -257,15 +258,16 @@ frozen context, including nil. Polls never resend or migrate the submission.
 Phone-owned read hooks require an appeared, active, topmost First Mates chat at
 the end with a server read key represented by the current transcript and its fresh
 layout observation. A newer fleet summary alone cannot acknowledge an unfetched
-reply, and collapsed additional responses confer no read authority. Info, offscreen
-render hosts, sheets, root covers, other tabs and background scenes do not acknowledge
-reads. Optimistic clearing does not cancel its own transport. Failure deadlines
+reply, and collapsed additional responses confer no read authority. Pushed Info,
+offscreen render hosts, sheets, root covers, other tabs and background scenes do
+not acknowledge reads. Inline iPad Info leaves the visible chat eligible; opening
+its document or saved-session sheet covers chat and cancels its pending marker. Optimistic clearing does not cancel its own transport. Failure deadlines
 schedule visibility/source-fenced retries at 8–180 seconds even when healthy polls
 publish no changes; shared last-seen semantics are unchanged. Mounted native-host
-tests use cancellation-aware held clients and a virtual retry clock. Chat and Info
+tests use cancellation-aware held clients and a virtual retry clock. Chat and pushed Info
 use exact-store control leases; stale disappearance cannot revoke a newer grant.
-The old detail/chat/message/composer and inspector-sheet host are removed; Info
-continues hosting existing workflow/document/session views until Phase 6 polish.
+Inline Info shares chat's lease, so hiding it cannot revoke a chat control grant.
+The old detail/chat/message/composer and inspector-sheet host are removed.
 
 Creating from All Machines requires an explicit destination before accepting a
 repository folder; single-machine scope preselects that host. Recent folders
@@ -290,10 +292,15 @@ local archiving; cold archived inventories use the metadata their host provides.
 Hosts without `first-mate-archive-v1` keep their active list and update guidance.
 
 On iPhone, a feature opens its conversation. Use the feature controls to inspect
-Overview, Workflow, Agents, or Documents, then return to the same conversation.
-On iPad, the feature list stays in a sidebar and Info pushes within the detail
-stack; the three-column inspector layout remains Phase 6. First Mates uses dark Mono/dusk chrome, capped scalable text and
-native scrolling/navigation; it no longer offers a light appearance.
+Overview, Agents, Documents or Workflow, then return to the same conversation.
+Underline tabs scroll horizontally at narrow widths. A persistent footer shows
+sync state and revision. Mention navigation highlights only the exact assignment
+inside that owner, including its saved-session action. A different feature starts
+on Overview; rotation keeps the current feature, inspector, route and draft.
+On iPad, a NavigationSplitView keeps the conversation list, chat and Info in three
+columns. The lead has only Overview, and older-host briefing remains explicit.
+The whole app uses dark dusk chrome and capped scalable text with native scrolling.
+Widget colors are unchanged.
 
 The conversation holds only your messages and First Mate's replies, stage
 results, and requests for your direction, as on Mac. Background activity,
@@ -341,6 +348,17 @@ asynchronously. Pause, resume, and cancel act on that feature. Cancel requires
 confirmation. Viewing a document or saved session does not send an agent a prompt.
 
 ## Local verification
+
+Phase 6 adds `FirstMateInfoRenderTests` for all four Info tabs and resource sheets
+at 320/402 points, default/capped text, plus actual three-column 1024/1366-point
+renders on an iPad simulator. `FirstMateReadHostTests` mounts chat beside Info and
+checks held reads through tab changes, inspector disappearance and resource-sheet
+coverage. `HerdrFirstMatePolishUITests` walks Info/resources and all app tabs at the
+text cap on iPhone, and preserves selection, Info and an unsent draft through iPad
+rotation. `HerdrThemeAccessibilityTests` covers the brightest dusk/card stacks and
+all six note-paper/ink pairs at 4.5:1. These are synthetic simulator checks; physical
+microphone, Photos and two-companion peer acceptance use the final Hub build.
+
 
 Phase 3 uses `FirstMateMobileTranscriptTests` plus existing shared conversation,
 mention/outgoing and mobile read/navigation/lifecycle suites. `FirstMateChatRenderTests`

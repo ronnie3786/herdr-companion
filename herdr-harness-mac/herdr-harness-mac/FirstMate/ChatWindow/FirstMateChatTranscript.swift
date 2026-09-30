@@ -13,7 +13,9 @@ struct FirstMateChatTranscript: View {
 
     @Environment(\.controlActiveState) private var controlActiveState
     @State private var followsLatest = true
+    @State private var earlierAnchor: String?
     @State private var transcriptClock = FirstMateTranscriptClock()
+    @State private var fileCards = FirstMateTranscriptFileCards()
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
     /// Only the clamped, whole-point bubble width is state, so resize frames
     /// that do not change it do not rebuild the transcript.
@@ -34,10 +36,24 @@ struct FirstMateChatTranscript: View {
         let messages = messages
         let rows = FirstMateTranscriptLayout.rows(for: messages, typing: isTyping,
             pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: transcriptClock.now, calendar: .current)
-        let cards = FirstMateTranscriptLayout.fileCards(messages: messages, documents: snapshot.documents)
+        let cardInput = FirstMateTranscriptFileCards.Input(messages: messages, documents: snapshot.documents)
+        let cards = fileCards.cards
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if store.earlierMessageCursors[snapshot.feature.id] != nil {
+                        Button(store.loadingEarlierMessages.contains(snapshot.feature.id) ? "Loading earlier messages…" : "Load earlier messages") {
+                            earlierAnchor = rows.first?.id
+                            followsLatest = false
+                            Task { await store.loadEarlierMessages() }
+                        }
+                        .disabled(store.loadingEarlierMessages.contains(snapshot.feature.id))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .accessibilityIdentifier("first-mate-load-earlier-messages")
+                    }
+                    if let error = store.earlierMessagesErrors[snapshot.feature.id] {
+                        Text(error).font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+                    }
                     ForEach(rows) { row in
                         if let day = row.dayLabel {
                             FirstMateDayPill(label: day)
@@ -79,9 +95,17 @@ struct FirstMateChatTranscript: View {
             // Opens at the newest message and follows growth, but a short
             // conversation starts at the top like any chat.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .defaultScrollAnchor(followsLatest ? .bottom : .top, for: .sizeChanges)
             .defaultScrollAnchor(.top, for: .alignment)
             .onGeometryChange(for: CGFloat.self) { Self.bubbleMaxWidth(forWidth: $0.size.width) } action: { bubbleMaxWidth = $0 }
+            .onChange(of: rows.first?.id) { _, _ in
+                guard let anchor = earlierAnchor else { return }
+                // A newly loaded checkpoint may group the former first reply
+                // under Additional responses. Anchor its surviving container.
+                let target = rows.first { $0.id == anchor || $0.additionalReplies.contains { $0.id == anchor } }?.id
+                if let target { withAnimation(nil) { proxy.scrollTo(target, anchor: .top) } }
+                earlierAnchor = nil
+            }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 40
             } action: { _, nearBottom in
@@ -95,6 +119,7 @@ struct FirstMateChatTranscript: View {
             }
         }
         .modifier(FirstMateTranscriptClockLifecycle(clock: transcriptClock))
+        .task(id: cardInput) { await fileCards.update(cardInput) }
         .onAppear(perform: markRead)
         .onChange(of: FirstMateTranscriptLayout.ReadKey(
             followsLatest: followsLatest,

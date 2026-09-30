@@ -15,11 +15,11 @@ struct FirstMateTimelineVisit: View {
             VStack(spacing: 0) {
                 Image(systemName: visit.status == "completed" ? "checkmark.circle.fill" : isCurrent ? "largecircle.fill.circle" : "circle")
                     .font(.title3)
-                    .foregroundStyle(isCurrent ? FirstMatePalette(scheme: scheme).accent : FirstMatePalette(scheme: scheme).secondaryText)
+                    .foregroundStyle(isCurrent ? HerdrTheme.accent : HerdrTheme.secondaryText)
                     .frame(width: 24, height: 30)
                 if !isLast {
                     Rectangle()
-                        .fill(FirstMatePalette(scheme: scheme).line)
+                        .fill(HerdrTheme.outline)
                         .frame(width: 2)
                 }
             }
@@ -27,7 +27,7 @@ struct FirstMateTimelineVisit: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(isCurrent ? "CURRENT STEP" : "STEP \(index + 1)")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(isCurrent ? FirstMatePalette(scheme: scheme).accent : FirstMatePalette(scheme: scheme).secondaryText)
+                    .foregroundStyle(isCurrent ? HerdrTheme.accent : HerdrTheme.secondaryText)
                 FirstMateVisitHeading(visit: visit, isCurrent: isCurrent, displayStatus: snapshot.displayStatus(for: visit))
                 FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
             }

@@ -90,6 +90,26 @@ struct HerdrThemeAccessibilityTests {
         }
     }
 
+    @Test("App cards and all six note papers retain readable text")
+    func appSurfaces() throws {
+        let dusk = try ThemeRaster(HerdrDusk.image).brightest
+        let pane = ThemeContrast.over(HerdrGlass.darkened(HerdrTheme.base, scheme: .dark).opacity(HerdrTheme.Glass.pane), dusk)
+        for fills in [[HerdrTheme.cardFill], [HerdrTheme.rowHighlightFill], [HerdrTheme.cardFill, HerdrTheme.fieldFill]] {
+            let background = fills.reduce(pane) { ThemeContrast.over($1, $0) }
+            for (_, ink) in text { #expect(ThemeContrast.ratio(ThemeContrast.rgb(ink), background) >= 4.5) }
+        }
+        for tint in [HerdrTheme.warning, HerdrTheme.success, HerdrTheme.alert, HerdrTheme.accent, HerdrTheme.secondaryText] {
+            let capsule = ThemeContrast.over(tint.opacity(0.1), ThemeContrast.over(HerdrTheme.cardFill, pane))
+            #expect(ThemeContrast.ratio(ThemeContrast.rgb(tint), capsule) >= 4.5)
+        }
+        for paper in RemoteNoteColor.allCases {
+            let background = ThemeContrast.rgb(paper.fill)
+            for ink in [HerdrTheme.crust, HerdrTheme.crust.opacity(0.8)] {
+                #expect(ThemeContrast.ratio(ThemeContrast.over(ink, background), background) >= 4.5, "Note \(paper.rawValue)")
+            }
+        }
+    }
+
     @Test("Legacy aliases retain readable opaque surfaces and unchanged layout metrics")
     func aliases() {
         for surface in [HerdrTheme.ink, HerdrTheme.graphite, HerdrTheme.elevated, HerdrTheme.input, HerdrTheme.surface] {

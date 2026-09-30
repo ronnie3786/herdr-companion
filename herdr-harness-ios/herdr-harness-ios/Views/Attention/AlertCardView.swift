@@ -29,7 +29,7 @@ struct AlertCardView: View {
                     if !alert.message.isEmpty {
                         Text(alert.message)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HerdrTheme.secondaryText)
                             .lineLimit(3)
                     }
                     Label(agentLabel, systemImage: pane == nil ? "archivebox" : "cpu")

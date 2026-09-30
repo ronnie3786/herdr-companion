@@ -24,7 +24,7 @@ struct FirstMateDocumentMenu: View {
             Label(countTitle, systemImage: "doc.text")
                 .padding(.horizontal, 12)
                 .frame(minHeight: 44)
-                .background(FirstMatePalette(scheme: scheme).accent.opacity(0.08), in: .rect(cornerRadius: 12))
+                .background(HerdrTheme.accent.opacity(0.08), in: .rect(cornerRadius: 12))
         }
         .disabled(documents.isEmpty)
         .accessibilityLabel("\(countTitle) for \(visit.title)")

@@ -216,7 +216,7 @@ struct SettingsView: View {
                         .font(.headline.bold())
                     Text("Remote command deck · 0.1")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
             }
         }

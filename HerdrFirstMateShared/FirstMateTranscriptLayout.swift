@@ -129,11 +129,17 @@ enum FirstMateTranscriptLayout {
 
     /// Each document's card shows once, on the earliest reply (First Mate's or
     /// an agent's) that names its title as whole words.
-    static func fileCards(messages: [FirstMateMessage], documents: [FirstMateDocument]) -> [String: [FirstMateDocument]] {
+    static func fileCards(messages: [FirstMateMessage], documents: [FirstMateDocument],
+                          isCancelled: () -> Bool = { false }) -> [String: [FirstMateDocument]] {
         var cards: [String: [FirstMateDocument]] = [:]
         var shown = Set<String>()
+        let titles = documents.map { WholeWordPhrase($0.title) }
         for message in messages where speaker(for: message) != .user {
-            for document in documents where !shown.contains(document.id) && containsWholeWords(document.title, in: message.text) {
+            if isCancelled() { return [:] }
+            // Bridge each reply once, rather than once for every title search.
+            let text = message.text as NSString
+            for (document, title) in zip(documents, titles) where !shown.contains(document.id)
+                && title.matches(in: message.text, bridged: text) {
                 shown.insert(document.id)
                 cards[message.id, default: []].append(document)
             }
@@ -142,20 +148,38 @@ enum FirstMateTranscriptLayout {
     }
 
     static func containsWholeWords(_ phrase: String, in text: String) -> Bool {
-        let phrase = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !phrase.isEmpty else { return false }
-        var searchStart = text.startIndex
-        func isWord(_ character: Character) -> Bool { character.isLetter || character.isNumber || character == "_" }
-        while searchStart < text.endIndex,
-              let found = text.range(of: phrase, options: .literal, range: searchStart..<text.endIndex) {
-            searchStart = found.upperBound
-            let before = found.lowerBound > text.startIndex ? text[text.index(before: found.lowerBound)] : nil
-            let after = found.upperBound < text.endIndex ? text[found.upperBound] : nil
-            let leadingOK = before.map { !(isWord($0) && isWord(phrase.first!)) } ?? true
-            let trailingOK = after.map { !(isWord($0) && isWord(phrase.last!)) } ?? true
-            if leadingOK && trailingOK { return true }
+        WholeWordPhrase(phrase).matches(in: text, bridged: text as NSString)
+    }
+
+    private struct WholeWordPhrase {
+        let text: String
+        let startsWithWord: Bool
+        let endsWithWord: Bool
+
+        init(_ phrase: String) {
+            text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            startsWithWord = text.first.map(Self.isWord) ?? false
+            endsWithWord = text.last.map(Self.isWord) ?? false
         }
-        return false
+
+        static func isWord(_ character: Character) -> Bool { character.isLetter || character.isNumber || character == "_" }
+
+        func matches(in source: String, bridged: NSString) -> Bool {
+            guard !text.isEmpty else { return false }
+            var start = 0
+            while start < bridged.length {
+                let match = bridged.range(of: text, options: .literal, range: NSRange(location: start, length: bridged.length - start))
+                guard match.location != NSNotFound else { return false }
+                start = NSMaxRange(match)
+                guard let found = Range(match, in: source) else { continue }
+                let before = found.lowerBound > source.startIndex ? source[source.index(before: found.lowerBound)] : nil
+                let after = found.upperBound < source.endIndex ? source[found.upperBound] : nil
+                let leadingOK = !startsWithWord || !(before.map(Self.isWord) ?? false)
+                let trailingOK = !endsWithWord || !(after.map(Self.isWord) ?? false)
+                if leadingOK && trailingOK { return true }
+            }
+            return false
+        }
     }
 
     /// Suggested replies: the newest message's skim `reply` blocks, only when

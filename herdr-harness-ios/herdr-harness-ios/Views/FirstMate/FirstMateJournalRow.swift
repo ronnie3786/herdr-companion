@@ -7,7 +7,7 @@ struct FirstMateJournalRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: event.type.contains("handoff") ? "arrow.turn.down.right" : "clock")
-                .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                .foregroundStyle(HerdrTheme.accent)
                 .padding(.top, 3)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 6) {
@@ -15,7 +15,7 @@ struct FirstMateJournalRow: View {
                 if let date = ISO8601DateFormatter().date(from: event.createdAt) {
                     Text(date, format: .dateTime.month(.abbreviated).day().hour().minute())
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
             }
         }

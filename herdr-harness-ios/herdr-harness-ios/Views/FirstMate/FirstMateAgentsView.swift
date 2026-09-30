@@ -11,7 +11,7 @@ struct FirstMateAgentsView: View {
                     .accessibilityIdentifier("first-mate-agents")
                 Text("\(snapshot.assignments.count) \(snapshot.assignments.count == 1 ? "assignment" : "assignments"), grouped by the step they belong to. Open an agent to see its saved session.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             if !snapshot.coordinatorSessions.isEmpty {
                 FirstMateCoordinatorHistoryView(store: store, sessions: snapshot.coordinatorSessions)
@@ -35,7 +35,7 @@ struct FirstMateAgentsView: View {
             if snapshot.sessionsTruncated {
                 Text("Showing the newest \(snapshot.sessions.count) saved \(snapshot.sessions.count == 1 ? "session" : "sessions"). Earlier sessions remain retained on the companion.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
         }
     }

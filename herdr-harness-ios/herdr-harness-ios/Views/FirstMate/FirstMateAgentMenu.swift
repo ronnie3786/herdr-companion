@@ -43,7 +43,7 @@ struct FirstMateAgentMenu: View {
             Label(countTitle, systemImage: "person.2")
                 .padding(.horizontal, 12)
                 .frame(minHeight: 44)
-                .background(FirstMatePalette(scheme: scheme).accent.opacity(0.08), in: .rect(cornerRadius: 12))
+                .background(HerdrTheme.accent.opacity(0.08), in: .rect(cornerRadius: 12))
         }
         .disabled(agents.isEmpty)
         .accessibilityLabel("\(countTitle) for \(visit.title)")

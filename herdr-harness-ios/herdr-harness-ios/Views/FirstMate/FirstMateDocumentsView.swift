@@ -21,11 +21,11 @@ struct FirstMateDocumentsView: View {
                     .accessibilityIdentifier("first-mate-documents")
                 Text("Evidence stays connected to the step and agent that produced it.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             if !presentedDocuments.isEmpty {
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                    Image(systemName: "magnifyingglass").foregroundStyle(HerdrTheme.secondaryText).accessibilityHidden(true)
                     TextField("Find a document, agent, or step", text: $query)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -34,12 +34,12 @@ struct FirstMateDocumentsView: View {
                         Button("Clear search", systemImage: "xmark.circle.fill") { query = "" }
                             .labelStyle(.iconOnly)
                             .frame(minWidth: 44, minHeight: 44)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HerdrTheme.secondaryText)
                     }
                 }
                 .frame(minHeight: 44)
                 .padding(.horizontal, 12)
-                .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 12))
+                .herdrField()
             }
             LazyVStack(spacing: 0) {
                 ForEach(documents) { document in

@@ -113,12 +113,13 @@ struct FirstMateMobileFeedbackEditor: View {
                     if saving { ProgressView("Saving feedback…") }
                 }.padding(16).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).background(HerdrTheme.base) }
+            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+            .herdrNavigationBarChrome()
             .navigationTitle("Feedback").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .task { await load() }
-        .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize).preferredColorScheme(.dark).tint(HerdrTheme.accent)
+        .herdrAppChrome(separateSurface: true)
         .accessibilityIdentifier("first-mate-feedback-sheet")
     }
 

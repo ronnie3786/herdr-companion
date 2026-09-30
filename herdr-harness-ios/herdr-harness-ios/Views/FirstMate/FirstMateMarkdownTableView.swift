@@ -14,7 +14,7 @@ struct FirstMateMarkdownTableView: View {
                             .font(.subheadline.weight(.semibold))
                             .frame(minWidth: 120, idealWidth: 160, maxWidth: 220, alignment: .leading)
                             .padding(12)
-                            .background(FirstMatePalette(scheme: scheme).accent.opacity(0.08))
+                            .background(HerdrTheme.accent.opacity(0.08))
                     }
                 }
                 ForEach(Array(table.rows.enumerated()), id: \.offset) { _, cells in
@@ -31,7 +31,7 @@ struct FirstMateMarkdownTableView: View {
                 }
             }
         }
-        .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 12))
+        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 12))
         .clipShape(.rect(cornerRadius: 12))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Table with \(table.headers.count) columns and \(table.rows.count) rows")

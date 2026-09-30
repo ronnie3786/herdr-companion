@@ -298,10 +298,11 @@ struct FirstMateMobileContextSheet: View {
                     }.fixedSize(horizontal: false, vertical: true).padding(16).frame(maxWidth: 640, alignment: .leading)
                 } else { ContentUnavailableView("Context unavailable", systemImage: "info.circle") }
             }.frame(maxWidth: .infinity)
-                .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).background(HerdrTheme.base) }
+                .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+                .herdrNavigationBarChrome()
                 .navigationTitle("Context").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }.dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize).preferredColorScheme(.dark)
+        }.herdrAppChrome(separateSurface: true)
             .accessibilityIdentifier("first-mate-context-sheet")
     }
 }

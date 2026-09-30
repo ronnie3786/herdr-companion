@@ -8,7 +8,7 @@ struct FirstMateSessionPaginationView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("\(store.sessionLoadedMessages) of \(total) saved \(total == 1 ? "message" : "messages")")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 if store.sessionNextBefore != nil {
                     Button(action: loadEarlier) {
                         HStack(spacing: 8) {
@@ -24,7 +24,7 @@ struct FirstMateSessionPaginationView: View {
                 if let error = store.sessionPageError {
                     Label(error, systemImage: "exclamationmark.circle")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
             }
         }

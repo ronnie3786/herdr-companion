@@ -363,6 +363,12 @@ separate, consistent backup and a state migration plan.
 
 ### First Mate feature workflows
 
+First Mate keeps one feature worktree and branch across sequential stages,
+feedback, builds, and recovery. Independent parallel work uses an explicit fork;
+workspace locks prevent overlapping writers. Existing features adopt an
+unambiguous retained checkout without resetting edits. This companion/Pi update
+requires no native app update. See [feature workspace lifecycle](docs/first-mate/workspaces.md).
+
 Open **First Mate** in the Mac sidebar or iOS tab and create a feature with its
 goal and project folder on the connected companion host. Each feature has one saved Pi
 coordinator conversation. Workers run independently, return typed outcomes and

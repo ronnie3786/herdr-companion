@@ -183,11 +183,16 @@ resource discovery. Current launch policy and charter are applied on every new
 dispatch, including turns in an existing saved coordinator session. `read_only`
 expresses the requirement to leave the shared workspace unchanged, not a security
 sandbox or tool capability boundary. Writable
-assignments use private Git worktrees and `codex/first-mate-…` branches. An explicit
-source assignment selects the actual implementation/integration worktree for
-review. Review verdicts are tied to its clean commit revision. A changed review
-source cannot complete a stage using stale evidence. Branches and worktrees are
-retained until an explicit cleanup decision.
+assignments reuse a persistent feature worktree and branch across stages,
+feedback, builds, and recovery. The first writable assignment creates it; only
+an explicit `workspace_strategy: fork` with a `fork_reason` allocates another
+checkout for independent work. An explicit source assignment selects the actual
+implementation/integration worktree to continue or review. Workspace locks
+serialize writers and allow concurrent read-only workers. Review verdicts stay
+tied to clean commit revisions; `fm_retry` refreshes a completed review after its
+source changes. Branches and worktrees are retained until an explicit cleanup
+decision. See [feature workspaces](workspaces.md) for ownership, legacy adoption,
+concurrency, recovery, and compatibility.
 
 Managed dispatches set `HERDR_FIRST_MATE_MANAGED_ROLE`, never the legacy role
 variable. The selected extension also verifies that its real module path matches

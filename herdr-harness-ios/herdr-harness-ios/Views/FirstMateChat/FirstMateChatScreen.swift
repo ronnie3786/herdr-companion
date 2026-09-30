@@ -24,6 +24,7 @@ struct FirstMateChatScreen: View {
     @State private var sendPulse = 0
     @State private var failurePulse = 0
     @State private var choicePulse = 0
+    private var material: FirstMateMobileComposerDraft { fleet.chat.composerDrafts.draft(for: target, store: store) }
     private var snapshot: FirstMateSnapshot? { store.snapshots[target.featureID] }
     private var conversation: FirstMateConversation? {
         fleet.chat.conversation(for: target, fleet: fleet)
@@ -66,7 +67,7 @@ struct FirstMateChatScreen: View {
                     openFeature: { destination in
                         guard destination.machineID == target.machineID else { return }
                         openMention(FirstMateMention.url(for: .feature(featureID: destination.featureID)))
-                    })
+                    }, canRate: controls)
                     .background(alignment: .top) { HerdrHazeBand() }
             } else if let error = store.error {
                 ContentUnavailableView {
@@ -223,9 +224,11 @@ struct FirstMateChatScreen: View {
                         .frame(maxWidth: .infinity, alignment: .leading).background(HerdrTheme.warning.opacity(0.08))
                         .accessibilityIdentifier("first-mate-checkpoint-status")
                 }
-                FirstMateMessageComposer(text: $store.draft, placeholder: isLead ? "Ask First Mate about any feature…" : "Message \(conversation?.name ?? "First Mate")",
-                    canControl: controls, isSending: busy, send: { _ = send() }, openDocuments: isLead ? nil : { openInfo(.documents, nil) },
-                    unavailableHint: isLead ? "Read-only host. Your draft stays here." : "Reconnect to send. Your draft stays here.")
+                FirstMateConversationComposer(model: model, fleet: fleet, store: store, material: material, target: target,
+                    placeholder: isLead ? "Ask First Mate about any feature…" : "Message \(conversation?.name ?? "First Mate")",
+                    canControl: controls, active: appeared && topmost, send: { send() },
+                    openDocuments: isLead ? nil : { openInfo(.documents, nil) },
+                    presentationChanged: { shown in if shown { excerpts.insert("composer-sheet") } else { excerpts.remove("composer-sheet") } })
             }
         }
         .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
@@ -265,19 +268,24 @@ struct FirstMateChatScreen: View {
         }
     }
     @discardableResult private func send(reply: String? = nil) -> Bool {
-        guard let handle = FirstMateMobileSubmission.begin(store: store, target: target, fleet: fleet, canControl: controls, reply: reply) else { return false }
+        let material = material
+        guard let handle = FirstMateMobileSubmission.begin(store: store, target: target, fleet: fleet, canControl: controls, reply: reply, material: material) else { return false }
         if reply == nil { sendPulse += 1 } else { choicePulse += 1 }
         Task {
             let state = await store.completeOutgoingMessage(handle)
+            if reply == nil { material.settle(handle, state: state, store: store) }
             if state?.isFailure == true && store.lifecycle == handle.context.lifecycleIdentity { failurePulse += 1 }
             if fleet.store(for: target) === store && store.lifecycle == handle.context.lifecycleIdentity { await fleet.didMutate(machineID: target.machineID) }
         }
         return true
     }
     private func retry(_ outgoing: FirstMateOutgoingMessage) {
+        let material = material
         guard !closed, let handle = FirstMateMobileSubmission.retryHandle(outgoing, store: store, target: target, fleet: fleet, canControl: controls) else { return }
+        material.prepareRetry(handle, store: store)
         Task {
             let state = await store.retryOutgoingMessage(handle)
+            material.settle(handle, state: state, store: store)
             if state?.isFailure == true && store.lifecycle == handle.context.lifecycleIdentity { failurePulse += 1 }
             if fleet.store(for: target) === store && store.lifecycle == handle.context.lifecycleIdentity { await fleet.didMutate(machineID: target.machineID) }
         }

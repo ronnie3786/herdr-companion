@@ -21,6 +21,7 @@ enum FirstMateMobileDemo {
         if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateOlderHosts") {
             return FirstMateDemo.features(step: 0) + FirstMateDemo.chatWindowFeatures()
         }
+        if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateComposerScenarios") { return composerSnapshots() }
         if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateAdditionalResponse") { return [additionalResponseSnapshot()] }
         if FirstMateTranscriptPerformanceProbe.enabled { return [transcriptPerformanceSnapshot()] }
         if FirstMateListPerformanceProbe.enabled { return performanceSnapshots() + [FirstMateDemo.chatWindowLead()] }
@@ -50,6 +51,22 @@ enum FirstMateMobileDemo {
     }
 
     #if DEBUG
+    static func composerSnapshots() -> [FirstMateSnapshot] {
+        var values = FirstMateDemo.features(step: 0) + FirstMateDemo.chatWindowFeatures() + [FirstMateDemo.chatWindowLead()]
+        if let index = values.firstIndex(where: { $0.feature.id == "demo-receipts" }) {
+            var feature = values[index].feature
+            feature.nativeSessionID = "synthetic-receipts-session"
+            feature.coordinatorModel = "synthetic/sample-reasoner"
+            feature.coordinatorThinking = "high"
+            feature.modelSelection = .init(profile: "synthetic", requestedModel: "synthetic/sample-reasoner", requestedThinking: "high",
+                actualModel: "synthetic/sample-fast", actualThinking: "low", source: "synthetic")
+            feature.coordinatorContext = .init(nativeSessionID: "synthetic-receipts-session", status: .measured,
+                tokens: 38_400, contextWindow: 100_000, handoffTargetTokens: 80_000)
+            values[index].feature = feature
+        }
+        return values
+    }
+
     static func additionalResponseSnapshot() -> FirstMateSnapshot {
         var snapshot = FirstMateDemo.chatWindowFeatures().first { $0.feature.id == "demo-receipts" }!
         let turn = "synthetic-additional-turn"

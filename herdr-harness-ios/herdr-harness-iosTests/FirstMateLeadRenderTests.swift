@@ -24,7 +24,7 @@ final class FirstMateLeadRenderTests: XCTestCase {
                                 openInfo: { _, _ in }, followsLeadChoice: true)
                         }.frame(height: 840), width: width, dynamicType: size)
                     XCTAssertTrue(chat.drewHierarchy)
-                    for id in ["chat-back-control", "lead-machine-control", "chat-info-control", "chat-more-control", "composer-send-control"] {
+                    for id in ["chat-back-control", "lead-machine-control", "chat-info-control", "chat-more-control", "composer-microphone-control"] {
                         let frame = try XCTUnwrap(chat.element(identifier: id), chat.measurementDiagnostics).frame
                         XCTAssertGreaterThanOrEqual(frame.width, 43.99, id); XCTAssertGreaterThanOrEqual(frame.height, 43.99, id)
                         XCTAssertGreaterThanOrEqual(frame.minX, -0.01, id); XCTAssertLessThanOrEqual(frame.maxX, width + 0.01, id)

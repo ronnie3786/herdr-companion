@@ -29,15 +29,15 @@ and shared reply-progress projection for rows and the global badge. Phase 3 adds
 bottom-following chat, exact-owner mentions/resources, frozen optimistic sends,
 explicit retry, topmost-only phone read hooks and native swipe-back. Phase 4 adds
 real My First Mate chat, owned machine selection/stand-in/recovery, frozen lead
-context, assistant-aware reads and Overview-only Info. Phases 5–6 (composer parity
-and Info/iPad/app-wide theme polish) remain planned, with per-phase automated verification and one final signed
+context, assistant-aware reads and Overview-only Info. Phase 5 adds owned
+attachments, voice, model/context controls, mentions and response feedback.
+Phase 6 Info/iPad/app-wide polish remains planned, with automated verification and one final signed
 iOS build after Phase 6
 rather than intermediate phone-test pauses. No first-push approval gate remains.
 No server update, Mac release or Phase 7 work is included. Lead metadata never
 replaces saved connection identity; unknown/ambiguous link origins do not fall
 back to another machine. First Mate POSTs retain the 86,400-second mutation
-budget, with 90-second uploads, 120-second voice and 15-second reads. These are
-transport/data foundations, not completion of the later composer UI.
+budget, with 90-second uploads, 120-second voice and 15-second reads.
 
 
 The **First Mates** tab opens on **All Machines**, with needs-you features in a
@@ -68,8 +68,12 @@ stay with their original owners. Lead Info shows your features at a glance, not
 feature-only workflow/action controls. When no host advertises lead capability,
 an explicitly client-built briefing retains capsule readouts and a creation goal
 without discarding its draft on cancel/failure. A capable lead failure shows a
-retry/read-only state rather than pretending it is an older host. Composer v1
-uses a 1–7-line text pill and explicit send; feature chats' plus menu opens documents. Attachment, voice, model, mention-picker and rating controls remain Phase 5. Swipe/context
+retry/read-only state rather than pretending it is an older host. The composer
+uses a 1–7-line text pill and explicit send. Plus offers Photos, Files, Paste code
+and documents; hold the mic to dictate, or type @ for owned feature/crew mentions.
+Expandable model/context controls preserve host capability and confirmation gates.
+Long-press a response to rate it. Draft attachments, picks and voice provenance
+stay with the original host and feature, including after a failed send. Swipe/context
 archive actions capture the exact owner and roll back optimistic removal on error.
 
 The matching companion server with `first-mate-v1` is required. Work continues on

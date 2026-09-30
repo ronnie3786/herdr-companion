@@ -421,7 +421,9 @@ host. Choose a specific host to filter the list; creating a feature from the
 combined view still requires choosing its destination host. An explicit host
 selection remains in effect until you change it. On iPhone and iPad, the First
 Mate host menu uses the same All Machines default, per-host filtering, and
-explicit creation destination; see
+explicit creation destination. Its conversation composer supports owned Photos/Files
+attachments, code paste, hold-to-talk, same-machine mentions, safe model changes
+and response feedback; see
 [mobile behavior and verification](docs/first-mate/ios.md).
 
 The companion server runs the durable queue, execution watcher, bounded recovery,
@@ -443,8 +445,7 @@ See the [runtime and operations guide](docs/first-mate/runtime.md),
 
 The native demo launch arguments `-HerdrDemoMode -HerdrFirstMateDemo` use entirely
 synthetic records and never dispatch agents. On Mac, add `-HerdrFirstMateDark` to
-start in dark mode. On iOS, use `-herdr.firstMate.appearance dark` or change the
-appearance in First Mate options, and the First Mate demo configures two
+start in dark mode. iOS First Mates uses the dark theme, and its demo configures two
 synthetic hosts so the combined All Machines list and single-machine filtering
 are visible without live agents. This demo is for UI exploration and explainer
 captures; real execution uses the active companion connection.

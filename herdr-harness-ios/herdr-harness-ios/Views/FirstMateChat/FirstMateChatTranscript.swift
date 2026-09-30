@@ -15,6 +15,8 @@ struct FirstMateChatTranscript: View {
     let fleet: FirstMateMobileFleetStore
     let ownerMachineID: String
     let openFeature: (FirstMateFeatureTarget) -> Void
+    var canRate = false
+    @State private var feedbackRequest: FirstMateMobileFeedbackRequest?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var readout: FirstMateMobileReadoutRequest?
     @State private var positioned = false
@@ -30,6 +32,7 @@ struct FirstMateChatTranscript: View {
     }
 
     var body: some View {
+        let feedbackContext = store.operationContext
         let messages = messages
         let readoutConversations = fleet.conversations.filter { $0.machineID == ownerMachineID }
         let typing = !FirstMateMobileTranscriptPolicy.isClosed(snapshot) && typing
@@ -68,7 +71,9 @@ struct FirstMateChatTranscript: View {
                                 replies: row.id == rows.last?.id ? replies : [], choice: choices[row.id], canReply: canControl,
                                 sendReply: { reply in if sendReply(reply) { choices[row.id] = reply } },
                                 presentationChanged: presentationChanged, readoutConversations: readoutConversations,
-                                showReadout: { readout = .capture($0, fleet: fleet) })
+                                showReadout: { readout = .capture($0, fleet: fleet) },
+                                feedback: store.feedback(for: snapshot.feature.id, messageID: row.message.id),
+                                rate: feedbackAction(row.message))
                                 .padding(.top, row.isFirstInGroup ? 8 : 0)
                                 .id(row.id)
                             if !row.additionalReplies.isEmpty {
@@ -77,7 +82,9 @@ struct FirstMateChatTranscript: View {
                                         FirstMateChatBubble(row: .init(message: message, speaker: FirstMateTranscriptLayout.speaker(for: message),
                                             isFirstInGroup: true, isLastInGroup: true), snapshot: snapshot, maximumWidth: width,
                                             skimState: skimState, catalog: catalog, sendReply: { _ in }, presentationChanged: presentationChanged, readoutConversations: readoutConversations,
-                                            showReadout: { readout = .capture($0, fleet: fleet) })
+                                            showReadout: { readout = .capture($0, fleet: fleet) },
+                                            feedback: store.feedback(for: snapshot.feature.id, messageID: message.id),
+                                            rate: feedbackAction(message))
                                         resources(files: files[message.id] ?? [], links: links[message.id] ?? [], width: width)
                                     }
                                 }
@@ -141,8 +148,13 @@ struct FirstMateChatTranscript: View {
                         readout = nil; openFeature(request.target)
                     }.presentationCompactAdaptation(.popover)
                 }
+                .sheet(item: $feedbackRequest) { request in FirstMateMobileFeedbackEditor(request: request, fleet: fleet) }
+                .onChange(of: feedbackRequest != nil) { _, shown in presentationChanged("feedback", shown) }
+                .task(id: feedbackContext) {
+                    if feedbackContext.matchesFeature(snapshot.feature.id), store.feedbackSupported { _ = await store.loadFeedback(expectedContext: feedbackContext) }
+                }
                 .onChange(of: readout != nil) { _, shown in presentationChanged("readout", shown) }
-                .onDisappear { readLayout = nil; presentationChanged("readout", false) }
+                .onDisappear { readLayout = nil; presentationChanged("readout", false); presentationChanged("feedback", false) }
                 #if DEBUG
                 .overlay(alignment: .topTrailing) {
                     if FirstMateTranscriptPerformanceProbe.enabled {
@@ -152,6 +164,26 @@ struct FirstMateChatTranscript: View {
                     }
                 }
                 #endif
+            }
+        }
+    }
+
+    private func feedbackAction(_ message: FirstMateMessage) -> ((FirstMateFeedbackRating?) -> Void)? {
+        let target = FirstMateFeatureTarget(machineID: ownerMachineID, featureID: snapshot.feature.id)
+        guard canRate, store.feedbackSupported, store.controlAvailable,
+              let request = FirstMateMobileFeedbackRequest.capture(message, target: target, store: store, fleet: fleet) else { return nil }
+        return { rating in
+            guard request.isCurrent(fleet: fleet), store.controlAvailable else { return }
+            if rating == .up {
+                Task {
+                    guard request.isCurrent(fleet: fleet), store.controlAvailable else { return }
+                    if !(await store.rateFeedback(.up, messageID: message.id, expectedContext: request.context)), request.isCurrent(fleet: fleet) {
+                        feedbackRequest = request
+                    }
+                }
+            } else {
+                var editRequest = request; editRequest.requestedRating = rating
+                feedbackRequest = editRequest
             }
         }
     }

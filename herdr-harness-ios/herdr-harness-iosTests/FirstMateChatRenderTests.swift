@@ -22,7 +22,7 @@ final class FirstMateChatRenderTests: XCTestCase {
                     NavigationStack { FirstMateChatScreen(model: model, fleet: fleet, store: store, target: target, topmost: true, openInfo: { _, _ in }) }.frame(height: 840),
                     width: width, dynamicType: size)
                 XCTAssertTrue(render.drewHierarchy)
-                for id in ["chat-back-control", "chat-title-control", "chat-info-control", "chat-more-control", "composer-plus-control", "composer-send-control"] {
+                for id in ["chat-back-control", "chat-title-control", "chat-info-control", "chat-more-control", "composer-plus-control", "composer-microphone-control"] {
                     try assertControl(id, render, width)
                 }
                 try save(render, "phase3-receipts-\(Int(width))-\(size.name)")

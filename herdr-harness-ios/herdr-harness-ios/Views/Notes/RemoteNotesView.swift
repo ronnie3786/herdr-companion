@@ -95,13 +95,22 @@ struct RemoteNotesView: View {
             Text("Your Mac HUD notes, on your phone.")
                 .font(.subheadline)
                 .foregroundStyle(HerdrTheme.mist)
-            Picker("Notes from", selection: $selectedMachineID) {
-                Text("All Macs").tag("")
-                ForEach(model.machines) { machine in
-                    Text(machine.name).tag(machine.id)
+            Menu {
+                Picker("Notes from", selection: $selectedMachineID) {
+                    Text("All Macs").tag("")
+                    ForEach(model.machines) { machine in
+                        Text(machine.name).tag(machine.id)
+                    }
                 }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(selectedMachineID.isEmpty ? "All Macs" : machineName(selectedMachineID))
+                    Image(systemName: "chevron.down").font(.caption)
+                }
+                .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
             }
-            .pickerStyle(.menu)
+            .accessibilityLabel("Notes from")
+            .accessibilityValue(selectedMachineID.isEmpty ? "All Macs" : machineName(selectedMachineID))
             .accessibilityIdentifier("notes-machine-picker")
             Text("Edit a note here to sync it back to your Mac. Changes appear automatically while Notes is open.")
                 .font(.caption)

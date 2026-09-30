@@ -11,7 +11,7 @@ struct FirstMateWorkflowView: View {
                     .accessibilityIdentifier("first-mate-workflow")
                 Text("Every step keeps its crew, documents, and decisions together.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             Picker("Workflow presentation", selection: $store.graphMode) {
                 Text("Timeline").tag(false)

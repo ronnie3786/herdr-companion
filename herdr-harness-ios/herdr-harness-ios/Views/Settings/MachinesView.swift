@@ -58,7 +58,7 @@ struct MachineListRow: View {
                 Text(machine.name)
                 Text(machineHost(machine))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
         }
         .accessibilityElement(children: .combine)

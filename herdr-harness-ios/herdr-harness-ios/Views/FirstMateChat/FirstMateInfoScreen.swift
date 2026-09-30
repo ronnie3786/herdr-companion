@@ -13,6 +13,7 @@ struct FirstMateInfoScreen: View {
     let target: FirstMateFeatureTarget
     var assignmentID: String? = nil
     var openFeature: (FirstMateFeatureTarget) -> Void = { _ in }
+    var embedded = false
     @State private var lease = FirstMateWorkspaceControlLease()
     @State private var appeared = false
     private var controls: Bool {
@@ -20,7 +21,13 @@ struct FirstMateInfoScreen: View {
             && store.snapshots[target.featureID] != nil && model.firstMateCanControl(machineID: target.machineID)
     }
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            if embedded {
+                Text(store.snapshots[target.featureID]?.feature.isLead == true ? "My First Mate" : "Feature info")
+                    .herdrFont(.body, weight: .semibold).frame(maxWidth: .infinity, minHeight: 44)
+                    .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+                    .herdrHairline(.bottom)
+            }
             if let snapshot = store.snapshots[target.featureID] {
                 if snapshot.feature.isLead {
                     FirstMateLeadOverview(fleet: fleet, snapshot: snapshot, openFeature: openFeature)
@@ -33,13 +40,19 @@ struct FirstMateInfoScreen: View {
             } else { ProgressView("Opening feature info…") }
         }
         .herdrFirstMateChrome().navigationTitle(store.snapshots[target.featureID]?.feature.isLead == true ? "My First Mate" : "Feature info").navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarVisibility(.hidden, for: .tabBar)
-        .onAppear { appeared = true; lease.update(store: store, available: controls) }
+        .toolbar(embedded ? .hidden : .visible, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarVisibility(embedded ? .visible : .hidden, for: .tabBar)
+        .onAppear { appeared = true; updateLease() }
         .onDisappear { appeared = false; lease.release() }
-        .onChange(of: controls) { _, _ in if appeared { lease.update(store: store, available: controls) } }
-        .onChange(of: store.lifecycle) { _, _ in if appeared { lease.update(store: store, available: controls) } }
+        .onChange(of: controls) { _, _ in if appeared { updateLease() } }
+        .onChange(of: store.lifecycle) { _, _ in if appeared { updateLease() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-info-screen")
+    }
+    private func updateLease() {
+        // Inline Info shares the visible chat's lease. Acquiring another lease
+        // would let an inspector dismissal revoke control from that chat.
+        if appeared && !embedded { lease.update(store: store, available: controls) }
+        else { lease.release() }
     }
 }

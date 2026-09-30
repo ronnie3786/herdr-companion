@@ -11,6 +11,7 @@ struct FirstMateChatScreen: View {
     var readTrackingEnabled = false
     var back: (() -> Void)? = nil
     var followsLeadChoice = false
+    var embedded = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var appeared = false
@@ -79,7 +80,7 @@ struct FirstMateChatScreen: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .herdrFirstMateChrome()
         .toolbar(.hidden, for: .navigationBar)
-        .toolbarVisibility(.hidden, for: .tabBar)
+        .toolbarVisibility(embedded ? .visible : .hidden, for: .tabBar)
         .background(FirstMateInteractiveBack())
         .sheet(item: $archiveRequest) { request in FirstMateMobileArchiveSheet(model: model, fleet: fleet, request: request) }
         .onAppear { appeared = true; updateLease() }

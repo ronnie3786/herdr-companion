@@ -18,7 +18,7 @@ struct FirstMateMarkdownBlockView: View {
         case .code(_, let language, let code):
             VStack(alignment: .leading, spacing: 10) {
                 if let language, !language.isEmpty {
-                    Text(language).font(.footnote).foregroundStyle(.secondary)
+                    Text(language).font(.footnote).foregroundStyle(HerdrTheme.secondaryText)
                 }
                 ScrollView(.horizontal) {
                     Text(code).font(.subheadline.monospaced())
@@ -27,7 +27,7 @@ struct FirstMateMarkdownBlockView: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 12))
+            .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 12))
         case .list(_, let items):
             VStack(alignment: .leading, spacing: 9) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -38,11 +38,11 @@ struct FirstMateMarkdownBlockView: View {
             Text(FirstMateMentionText.render(text, catalog: catalog))
                 .font(HerdrProse.font(.bubble))
                 .lineSpacing(4)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.secondaryText)
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(FirstMatePalette(scheme: scheme).accent.opacity(0.5))
+                        .fill(HerdrTheme.accent.opacity(0.5))
                         .frame(width: 3)
                         .accessibilityHidden(true)
                 }

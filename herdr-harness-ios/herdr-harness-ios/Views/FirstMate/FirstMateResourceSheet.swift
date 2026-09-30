@@ -49,31 +49,34 @@ struct FirstMateResourceSheet: View {
                         }
                         Label(store.isDemo ? "Synthetic demo recording" : "Saved history. Your First Mate conversation stays in the feature.", systemImage: "clock.arrow.circlepath")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HerdrTheme.secondaryText)
                             .padding(.top, 12)
                     }
                 }
-                .padding(20)
+                .padding(16)
                 .frame(maxWidth: 720, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
-            .background(FirstMatePalette(scheme: scheme).background)
-            .foregroundStyle(FirstMatePalette(scheme: scheme).text)
+            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+            .foregroundStyle(HerdrTheme.primaryText, HerdrTheme.secondaryText, HerdrTheme.tertiaryText)
+            .herdrNavigationBarChrome()
             .navigationTitle(resource.nativeSessionID == nil ? "Document" : "Saved session")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(scheme, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done", action: store.closeResource)
+                    Button(action: store.closeResource) {
+                        Text("Done").frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                            .composerLayoutMeasurement(id: "resource-close-control")
+                    }
                         .buttonStyle(.plain)
-                        .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
-                        .frame(minWidth: 44, minHeight: 44)
+                        .foregroundStyle(HerdrTheme.accent)
                         .accessibilityIdentifier("first-mate-resource-close")
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
         }
-        .tint(FirstMatePalette(scheme: scheme).accent)
+        .herdrAppChrome(separateSurface: true)
         .presentationDragIndicator(.visible)
     }
 

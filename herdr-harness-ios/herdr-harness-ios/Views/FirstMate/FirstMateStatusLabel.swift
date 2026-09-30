@@ -2,7 +2,6 @@ import SwiftUI
 
 struct FirstMateStatusLabel: View {
     let status: String
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Label(title, systemImage: symbol)
@@ -43,12 +42,12 @@ struct FirstMateStatusLabel: View {
     private var color: Color {
         switch status {
         case "awaiting_direction", "blocked", "paused", "recovering":
-            scheme == .light ? Color(red: 0.55, green: 0.35, blue: 0.05) : .orange
+            HerdrTheme.warning
         case "completed", "complete", "passed":
-            scheme == .light ? Color(red: 0.12, green: 0.43, blue: 0.34) : .green
-        case "failed", "error": .red
-        case "running", "coordinating", "waiting_children": FirstMatePalette(scheme: scheme).accent
-        default: FirstMatePalette(scheme: scheme).secondaryText
+            HerdrTheme.success
+        case "failed", "error": HerdrTheme.alert
+        case "running", "coordinating", "waiting_children": HerdrTheme.accent
+        default: HerdrTheme.secondaryText
         }
     }
 }

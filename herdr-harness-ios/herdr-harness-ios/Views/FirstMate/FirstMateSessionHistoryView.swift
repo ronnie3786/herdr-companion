@@ -12,7 +12,7 @@ struct FirstMateSessionHistoryView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Earlier generations remain available after a handoff.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                         .padding(.vertical, 8)
                     ForEach(sessions.reversed()) { session in
                         FirstMateSessionRow(store: store, session: session,

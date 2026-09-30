@@ -18,16 +18,18 @@ struct AttentionView: View {
                             Text("Recent signals").font(.headline.bold())
                             Spacer()
                             if model.unreadAlertCount > 0 {
-                                Button("Mark all read") {
+                                Button {
                                     Task { await model.markAllAlertsRead() }
+                                } label: {
+                                    Text("Mark all read").font(.caption.monospaced().bold())
+                                        .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
                                 }
-                                .font(.caption.monospaced().bold())
                                 .foregroundStyle(HerdrTheme.accent)
                                 .accessibilityIdentifier("attention-mark-all-read")
                             }
                             Text("\(model.unreadAlertCount)")
                                 .font(.caption.bold())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(HerdrTheme.secondaryText)
                         }
                         ForEach(model.alerts.filter { !$0.isRead }) { alert in
                             AttentionAlertRow(
@@ -69,7 +71,10 @@ struct AttentionView: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Activity feed", systemImage: "clock.arrow.circlepath", action: openActivity)
+                Button(action: openActivity) {
+                    Image(systemName: "clock.arrow.circlepath").frame(width: 44, height: 44).contentShape(.rect)
+                }
+                    .accessibilityLabel("Activity feed")
                     .accessibilityIdentifier("open-activity-feed")
             }
         }
@@ -82,7 +87,7 @@ struct AttentionView: View {
                 .fontDesign(.rounded)
             Text("Blocked first, then unseen completions. The queue stays quiet until there’s a decision worth making.")
                 .font(.body)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -93,7 +98,7 @@ struct AttentionView: View {
             Spacer()
             Text("\(count)")
                 .font(.caption.bold())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.secondaryText)
         }
     }
 }

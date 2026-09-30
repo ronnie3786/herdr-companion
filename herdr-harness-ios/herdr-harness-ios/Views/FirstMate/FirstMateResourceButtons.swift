@@ -18,6 +18,6 @@ struct FirstMateResourceButtons: View {
             }
         }
         .font(.subheadline.weight(.medium))
-        .tint(FirstMatePalette(scheme: scheme).accent)
+        .tint(HerdrTheme.accent)
     }
 }

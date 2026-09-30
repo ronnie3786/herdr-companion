@@ -13,7 +13,7 @@ struct FirstMateCoordinatorHistoryView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Retained coordinator and advisor sessions stay inspectable across handoffs.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
                 ForEach(sessions.reversed()) { session in
                     FirstMateSessionRow(store: store, session: session)
                 }
@@ -25,11 +25,11 @@ struct FirstMateCoordinatorHistoryView: View {
                     .accessibilityIdentifier(accessibilityID)
                 Text("\(sessions.count) saved \(sessions.count == 1 ? "session" : "sessions")")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             .frame(minHeight: 44)
         }
         .padding(16)
-        .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 18))
+        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 18))
     }
 }

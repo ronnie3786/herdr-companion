@@ -99,6 +99,7 @@ struct AppRootView: View {
         } message: {
             Text(model.errorMessage ?? "Unknown error")
         }
+        .herdrAppChrome()
     }
 
     private var firstMateObservation: FirstMateObservationContext {
@@ -127,10 +128,22 @@ struct AppRootView: View {
         )
     }
 
+    @ViewBuilder private var firstMateWorkspace: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateSizeClassScenarios") {
+            FirstMateSizeClassScenario(model: model)
+        } else {
+            FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
+        }
+        #else
+        FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
+        #endif
+    }
+
     private var appTabs: some View {
         TabView(selection: Binding(get: { model.selectedTab }, set: { model.selectTab($0) })) {
             Tab("First Mates", systemImage: "sailboat", value: .firstMate) {
-                FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
+                firstMateWorkspace
             }
             .badge(model.firstMateFleet.badgeCount)
 
@@ -154,3 +167,24 @@ struct AppRootView: View {
         }
     }
 }
+
+#if DEBUG
+/// Drives the real workspace through iPad window size-class changes in UI tests.
+private struct FirstMateSizeClassScenario: View {
+    let model: HerdrAppModel
+    @State private var compact = true
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("Use compact layout") { compact = true }
+                    .accessibilityIdentifier("size-class-compact")
+                Button("Use regular layout") { compact = false }
+                    .accessibilityIdentifier("size-class-regular")
+            }
+            .buttonStyle(HerdrButtonStyle(kind: .outline))
+            FirstMateWorkspaceView(model: model, fleet: model.firstMateFleet)
+                .environment(\.horizontalSizeClass, compact ? .compact : .regular)
+        }
+    }
+}
+#endif

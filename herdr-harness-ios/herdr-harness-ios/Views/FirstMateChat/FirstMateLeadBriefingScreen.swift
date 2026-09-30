@@ -7,10 +7,11 @@ struct FirstMateLeadBriefingScreen: View {
     @Binding var goal: String
     let openFeature: (FirstMateFeatureTarget) -> Void
     var create: ((String) -> Void)?
+    var embedded = false
 
     init(model: HerdrAppModel, fleet: FirstMateMobileFleetStore, goal: Binding<String> = .constant(""),
-         openFeature: @escaping (FirstMateFeatureTarget) -> Void, create: ((String) -> Void)? = nil) {
-        self.model = model; self.fleet = fleet; _goal = goal; self.openFeature = openFeature; self.create = create
+         openFeature: @escaping (FirstMateFeatureTarget) -> Void, create: ((String) -> Void)? = nil, embedded: Bool = false) {
+        self.model = model; self.fleet = fleet; _goal = goal; self.openFeature = openFeature; self.create = create; self.embedded = embedded
     }
     var body: some View {
         let conversations = fleet.conversations
@@ -71,7 +72,7 @@ struct FirstMateLeadBriefingScreen: View {
         .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
         .herdrFirstMateChrome().navigationTitle("My First Mate").navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbarVisibility(.hidden, for: .tabBar)
+        .toolbarVisibility(embedded ? .visible : .hidden, for: .tabBar)
         .accessibilityElement(children: .contain).accessibilityIdentifier("first-mate-lead-briefing")
     }
     private func beginCreating() {

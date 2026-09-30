@@ -6,23 +6,22 @@ struct FirstMateLeadOverview: View {
     let openFeature: (FirstMateFeatureTarget) -> Void
     private var rows: [FirstMateConversation] { fleet.conversations }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Your features at a glance").herdrFont(.headline)
-                VStack(alignment: .leading, spacing: 8) {
-                    HerdrMicroLabel(text: "GOAL")
-                    Text(snapshot.feature.goal).font(HerdrProse.font(.bubble))
-                        .foregroundStyle(HerdrTheme.proseText).fixedSize(horizontal: false, vertical: true)
-                }
-                group("Needs you", rows: rows.filter { $0.hudStatus.needsYou })
-                group("Moving", rows: rows.filter { !$0.hudStatus.needsYou && $0.hudStatus != .done })
-                group("Done", rows: rows.filter { $0.hudStatus == .done })
-                Text(fleet.isDemo ? "Synthetic data · no agents launched" :
-                    fleet.hosts.contains(where: { $0.error != nil }) ? "Connection needs attention · last known features" : "Synced with companion")
-                    .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("\(rows.count) features").herdrFont(.caption2).foregroundStyle(HerdrTheme.secondaryText)
-            }.padding(16).frame(maxWidth: 720).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Your features at a glance").herdrFont(.headline)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HerdrMicroLabel(text: "GOAL")
+                        Text(snapshot.feature.goal).font(HerdrProse.font(.bubble))
+                            .foregroundStyle(HerdrTheme.proseText).fixedSize(horizontal: false, vertical: true)
+                    }
+                    group("Needs you", rows: rows.filter { $0.hudStatus.needsYou })
+                    group("Moving", rows: rows.filter { !$0.hudStatus.needsYou && $0.hudStatus != .done })
+                    group("Done", rows: rows.filter { $0.hudStatus == .done })
+                    Text("\(rows.count) features").herdrFont(.caption2).foregroundStyle(HerdrTheme.secondaryText)
+                }.padding(16).frame(maxWidth: 720).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            FirstMateSyncFooter(isDemo: fleet.isDemo, hasError: fleet.hosts.contains { $0.error != nil }, revision: snapshot.feature.revision)
         }
         .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
         .accessibilityElement(children: .contain)

@@ -6,38 +6,33 @@ No other orchestration server is required.
 
 ## First Mate
 
-**First Mate for iPhone, Phase 0:** the dark-only Mono theme, cached dusk/haze,
-static glass recipes, Dynamic Type ramp, and avatar primitives are available.
-New First Mate chrome uses a quiet 6% selected/pressed row fill, 10 pt row corners,
-and a `.xxxLarge` text-scaling cap. Bubbles retain 18 pt corners; messages stay
-complete and scrollable, and controls retain 44 pt targets. The cap moves app-wide
-in Phase 6. Settings → Appearance saves Glass and Haze independently for this
-phone; passive Reduce Motion/Transparency fallbacks remain, without separate
-release gates. Existing tabs keep their layouts and opaque backgrounds,
-with a deeper neutral palette. Phase 2 now installs the dark conversations list,
-client-built lead briefing and restyled create/archive sheets; the legacy First
-Mate appearance menu is removed. Phase 3 replaces the old detail/chat helpers with
-a grouped bubble transcript, text composer v1, pushed Info and briefing readouts. Debug builds
-can open the synthetic theme sample with
-`-HerdrDemoMode -HerdrFirstMateDemo -HerdrThemeDuskSample`. Render outputs go to
-`$HERDR_IOS_RENDER_DIR`. See the [phase plan](../docs/first-mate/ios-chat/IMPLEMENTATION-PLAN.md)
-and [verification guide](../docs/first-mate/ios.md). Phase 1 now adds the shared
-fleet/chat rules, app-active polling, global feature-dot tab badge, exact-owner
-links, fenced read/lead state and concrete authenticated client gaps. Phase 2 adds
-the compact bar, lead + six needs-you pins with overflow, two-line recency rows,
-and shared reply-progress projection for rows and the global badge. Phase 3 adds
-bottom-following chat, exact-owner mentions/resources, frozen optimistic sends,
-explicit retry, topmost-only phone read hooks and native swipe-back. Phase 4 adds
-real My First Mate chat, owned machine selection/stand-in/recovery, frozen lead
-context, assistant-aware reads and Overview-only Info. Phase 5 adds owned
-attachments, voice, model/context controls, mentions and response feedback.
-Phase 6 Info/iPad/app-wide polish remains planned, with automated verification and one final signed
-iOS build after Phase 6
-rather than intermediate phone-test pauses. No first-push approval gate remains.
-No server update, Mac release or Phase 7 work is included. Lead metadata never
-replaces saved connection identity; unknown/ambiguous link origins do not fall
-back to another machine. First Mate POSTs retain the 86,400-second mutation
+First Mate uses dark Mono chrome over a cached dusk background. The same dusk
+and `.xxxLarge` Dynamic Type cap now apply throughout the app, including Agents,
+Attention, Notes, Settings and modal controls. Complete messages remain scrollable.
+Settings → Appearance saves Glass and Haze independently for this phone; passive
+Reduce Motion and Reduce Transparency fallbacks retain those choices.
+
+The conversations list combines exact-owner features from every configured host.
+Feature chat and My First Mate share grouped transcripts, frozen optimistic sends,
+explicit retries, owned attachments and voice, safe model changes, context, mentions
+and response feedback. iPhone pushes Info; iPad shows conversations, chat and Info
+in three columns. Info uses Overview, Agents, Documents and Workflow underline tabs
+with a persistent sync footer. Documents and saved sessions remain separate sheets.
+The lead keeps its Overview-only inspector. Rotation preserves the selected owner,
+Info tab and draft, and inline Info does not revoke chat's control or read visibility.
+
+Phases 0–6 retain independent review, privacy checks and exact-source Verify gates.
+One final signed iOS build is delivered through Mobile App Hub. Phase 7, Mac releases,
+server deployment and companion package publication are outside this delivery.
+Lead metadata never replaces connection identity; unknown or ambiguous link origins
+do not select another machine. First Mate POSTs retain the 86,400-second mutation
 budget, with 90-second uploads, 120-second voice and 15-second reads.
+
+For synthetic exploration, use `-HerdrDemoMode -HerdrFirstMateDemo`. Add
+`-HerdrThemeDuskSample` for the theme sample or `-HerdrAppAppearanceProbe` to report
+the effective text cap in Debug builds. Native captures use `$HERDR_IOS_RENDER_DIR`.
+See the [phase plan](../docs/first-mate/ios-chat/IMPLEMENTATION-PLAN.md) and
+[verification guide](../docs/first-mate/ios.md).
 
 
 The **First Mates** tab opens on **All Machines**, with needs-you features in a
@@ -59,8 +54,8 @@ destination clears the previous folder. Every message, archive action, and saved
 resource resolves the machine that owns the feature, even when two hosts share a
 feature ID. One offline or older companion shows its own notice without hiding a
 healthy host's features. iPhone pushes Info from chat; documents and sessions still
-open as sheets from Info. iPad keeps a feature sidebar and pushed detail navigation;
-the three-column inspector is Phase 6. First Mates is dark-only, with capped `.xxxLarge`
+open as sheets from Info. iPad keeps the conversation list, chat and inspector
+visible in three columns. The app is dark-only, with capped `.xxxLarge`
 scaling and full readable messages. My First Mate opens the real lead on a capable
 host, with Automatic/pinned selection and a named stand-in after two failed LIST
 polls. Recovery returns to the preferred host; drafts, history and pending sends

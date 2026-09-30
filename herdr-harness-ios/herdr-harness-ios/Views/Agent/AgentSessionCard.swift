@@ -31,11 +31,7 @@ struct AgentSessionCard: View {
         .multilineTextAlignment(.leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(HerdrTheme.graphite, in: .rect(cornerRadius: HerdrTheme.compactRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
-                .strokeBorder(HerdrTheme.surface.opacity(0.6), lineWidth: 1)
-        }
+        .herdrCard(radius: HerdrTheme.Radius.row)
         .accessibilityElement(children: .combine)
     }
 }

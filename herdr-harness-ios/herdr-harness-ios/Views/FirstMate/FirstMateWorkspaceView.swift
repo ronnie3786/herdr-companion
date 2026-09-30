@@ -4,40 +4,74 @@ struct FirstMateWorkspaceView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var fleet: FirstMateMobileFleetStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    // One semantic path survives size-class changes. Regular presentation uses
+    // its chat and inspector side by side without popping or recreating routes.
     @State private var path: [FirstMateChatRoute] = []
-    @State private var showsBriefing = false
+    @State private var columns: NavigationSplitViewVisibility = .all
     @State private var briefingGoal = ""
     @State private var creationGoal: String?
     private var regular: Bool { horizontalSizeClass == .regular }
+    private var showsBriefing: Bool {
+        // Info decorates its conversation. Popping a feature back to the global
+        // lead must restore automatic choice before either presentation mounts.
+        for route in path.reversed() {
+            switch route {
+            case .lead: return true
+            case .chat: return false
+            case .info: continue
+            }
+        }
+        return false
+    }
     private var availableMachineIDs: [String] { fleet.hosts.map(\.machineID) }
 
     var body: some View {
         Group {
             if regular {
-                NavigationSplitView { conversations.navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380) } detail: {
-                    NavigationStack(path: $path) {
-                        Group {
-                            if showsBriefing { briefing }
-                            else if let target = fleet.selectedTarget { chat(target, topmost: path.isEmpty) }
-                            else { ContentUnavailableView("Choose a conversation", systemImage: "sailboat") }
-                        }
-                        .navigationDestination(for: FirstMateChatRoute.self, destination: destination)
+                NavigationSplitView(columnVisibility: $columns) {
+                    conversations
+                        .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 360)
+                        .composerLayoutMeasurement(id: "first-mate-sidebar-column")
+                } content: {
+                    Group {
+                        if showsBriefing { briefing }
+                        else if let target = fleet.selectedTarget { chat(target, topmost: true) }
+                        else { ContentUnavailableView("Choose a conversation", systemImage: "sailboat") }
                     }
-                }.navigationSplitViewStyle(.balanced)
+                    .navigationSplitViewColumnWidth(min: 300, ideal: 520, max: .infinity)
+                    .composerLayoutMeasurement(id: "first-mate-chat-column")
+                    .accessibilityIdentifier("first-mate-chat-column")
+                } detail: {
+                    Group {
+                        if let target = fleet.selectedTarget, let store = fleet.store(for: target) {
+                            FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target,
+                                assignmentID: assignmentID(for: target), openFeature: openFeature, embedded: true)
+                                .id(target)
+                        } else {
+                            ContentUnavailableView("Conversation info", systemImage: "info.circle",
+                                description: Text("Select a conversation to see its overview and saved evidence."))
+                        }
+                    }
+                    .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 420)
+                    .composerLayoutMeasurement(id: "first-mate-info-column")
+                    .accessibilityIdentifier("first-mate-info-column")
+                }
+                .navigationSplitViewStyle(.balanced)
+                .toolbarVisibility(.visible, for: .tabBar)
             } else {
                 NavigationStack(path: $path) {
                     conversations.navigationDestination(for: FirstMateChatRoute.self, destination: destination)
                 }
             }
         }
-        .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize).preferredColorScheme(.dark).tint(HerdrTheme.accent)
+        .herdrFirstMateChrome()
         .sheet(isPresented: $fleet.isCreating, onDismiss: { creationGoal = nil }) {
             FirstMateCreateSheet(model: model, fleet: fleet, onCreated: { target in
                 if let creationGoal, briefingGoal == creationGoal { briefingGoal = "" }
                 openFeature(target)
             }, initialGoal: creationGoal ?? "")
         }
-        .onChange(of: model.connectionGeneration) { _, _ in path = []; showsBriefing = false; fleet.isCreating = false }
+        .onChange(of: model.connectionGeneration) { _, _ in path = []; fleet.isCreating = false }
         .onChange(of: availableMachineIDs) { _, machineIDs in
             path.removeAll { route in
                 switch route {
@@ -51,37 +85,42 @@ struct FirstMateWorkspaceView: View {
         }
         .onChange(of: path) { old, current in
             if old.count > current.count { model.beginAppNavigation() }
-            if !regular {
-                switch current.last {
-                case .chat(let target), .info(let target, _):
-                    if fleet.selectedTarget != target { _ = fleet.open(target) }
-                case .lead:
-                    if fleet.chat.selection != .lead { fleet.selectTarget(nil); fleet.chat.select(.lead) }
-                case nil: fleet.selectTarget(nil)
-                }
+            switch current.last {
+            case .chat(let target), .info(let target, _):
+                if fleet.selectedTarget != target { _ = fleet.open(target) }
+            case .lead:
+                if fleet.chat.selection != .lead { fleet.selectTarget(nil); fleet.chat.select(.lead) }
+            case nil:
+                if !regular { fleet.selectTarget(nil) }
             }
+        }
+        .onChange(of: regular) { _, _ in
+            // A presentation change must not mint a navigation intent, select
+            // another owner, reset the Info tab, or consume an in-flight draft.
+            columns = .all
         }
         .onChange(of: fleet.chat.route, initial: true) { _, route in
             guard let route else { return }
-            showsBriefing = false; fleet.isCreating = false
+            fleet.isCreating = false
             let store = fleet.store(for: route.target)
             store?.graphMode = route.graph
             store?.inspector = route.inspector ?? .overview
-            path = regular ? [] : [.chat(route.target)]
-            if let _ = route.inspector { path.append(.info(route.target, assignmentID: route.assignmentID)) }
+            path = [.chat(route.target)]
+            if route.inspector != nil { path.append(.info(route.target, assignmentID: route.assignmentID)) }
         }
         .accessibilityIdentifier("first-mate-workspace")
     }
+
     private var conversations: some View {
         FirstMateConversationsScreen(model: model, fleet: fleet, openFeature: openFeature,
             openInfo: { target in openFeature(target); showInfo(target, inspector: .overview, assignmentID: nil) }, openLead: openBriefing)
     }
     private var briefing: some View {
         FirstMateLeadScreen(model: model, fleet: fleet, goal: $briefingGoal,
-            topmost: regular ? path.isEmpty : path.last == .lead, openFeature: openFeature,
+            topmost: regular || path.last == .lead, openFeature: openFeature,
             openInfo: { showInfo($0, inspector: .overview, assignmentID: nil) },
             create: { goal in creationGoal = goal; model.beginAppNavigation(); fleet.beginCreating() },
-            back: regular && path.isEmpty ? { showsBriefing = false; fleet.selectTarget(nil) } : nil)
+            back: regular ? { clearSelection() } : nil, embedded: regular)
     }
     @ViewBuilder private func destination(_ route: FirstMateChatRoute) -> some View {
         switch route {
@@ -89,7 +128,8 @@ struct FirstMateWorkspaceView: View {
         case .chat(let target): chat(target, topmost: path.last == route)
         case .info(let target, let assignmentID):
             if let store = fleet.store(for: target) {
-                FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target, assignmentID: assignmentID, openFeature: openFeature)
+                FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target,
+                    assignmentID: assignmentID, openFeature: openFeature)
             }
         }
     }
@@ -97,27 +137,32 @@ struct FirstMateWorkspaceView: View {
         if let store = fleet.store(for: target) {
             FirstMateChatScreen(model: model, fleet: fleet, store: store, target: target, topmost: topmost,
                 openInfo: { showInfo(target, inspector: $0, assignmentID: $1) }, readTrackingEnabled: true,
-                back: regular && path.isEmpty ? { fleet.selectTarget(nil) } : nil)
+                back: regular ? { clearSelection() } : nil, embedded: regular)
                 .id(target)
         }
+    }
+    private func assignmentID(for target: FirstMateFeatureTarget) -> String? {
+        guard case .info(let owner, let id) = path.last, owner == target else { return nil }
+        return id
+    }
+    private func clearSelection() {
+        model.beginAppNavigation(); path = []; fleet.selectTarget(nil)
     }
     private func openFeature(_ target: FirstMateFeatureTarget) {
         let previous = fleet.selectedTarget
         guard fleet.open(target) else { return }
         if previous != target { fleet.store(for: target)?.inspector = .overview }
-        showsBriefing = false
-        if regular { path = [] }
-        else if path.contains(.lead) { path.append(.chat(target)) }
+        if !regular && path.contains(.lead) { path.append(.chat(target)) }
         else { path = [.chat(target)] }
     }
     private func showInfo(_ target: FirstMateFeatureTarget, inspector: FirstMateInspector, assignmentID: String?) {
         guard fleet.selectedTarget == target, let store = fleet.store(for: target) else { return }
-        model.beginAppNavigation()
-        store.inspector = inspector
-        if path.last != .info(target, assignmentID: assignmentID) { path.append(.info(target, assignmentID: assignmentID)) }
+        model.beginAppNavigation(); store.inspector = inspector
+        if case .info = path.last { path.removeLast() }
+        path.append(.info(target, assignmentID: assignmentID))
     }
     private func openBriefing() {
-        fleet.selectTarget(nil); fleet.chat.select(.lead); showsBriefing = true
-        path = regular ? [] : [.lead]
+        fleet.selectTarget(nil); fleet.chat.select(.lead)
+        path = [.lead]
     }
 }

@@ -423,7 +423,10 @@ selection remains in effect until you change it. On iPhone and iPad, the First
 Mate host menu uses the same All Machines default, per-host filtering, and
 explicit creation destination. Its conversation composer supports owned Photos/Files
 attachments, code paste, hold-to-talk, same-machine mentions, safe model changes
-and response feedback; see
+and response feedback. iPhone pushes Info with underline tabs and a persistent sync
+footer; iPad shows the list, chat and Info in three columns. The cached dusk and
+`.xxxLarge` text cap apply throughout the iOS app, with complete scrollable messages.
+See
 [mobile behavior and verification](docs/first-mate/ios.md).
 
 The companion server runs the durable queue, execution watcher, bounded recovery,

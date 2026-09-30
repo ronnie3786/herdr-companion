@@ -131,6 +131,7 @@ struct FirstMateCreateSheet: View {
             .scrollDismissesKeyboard(.interactively)
             .disabled(isSubmitting || destinationStore?.isSending == true)
             .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
+            .herdrNavigationBarChrome()
             .navigationTitle("New feature").navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -154,7 +155,7 @@ struct FirstMateCreateSheet: View {
             }
             .onChange(of: destinationStore?.lifecycle) { _, _ in clearDestinationFolder(fleet.creationMachineID) }
         }
-        .herdrFirstMateChrome()
+        .herdrAppChrome(separateSurface: true)
         .tint(HerdrTheme.accent)
         .interactiveDismissDisabled(isSubmitting)
         .onDisappear { isVisible = false }

@@ -152,9 +152,12 @@ struct HerdrTabs<Value: Hashable>: View {
         // At large text sizes the tabs scroll instead of truncating their names
         // or shrinking their text. Regular inspector tabs retain a 44pt bar.
         if dynamicType.isAccessibilitySize || style == .underline {
-            ScrollView(.horizontal) { strip }
-                .scrollIndicators(.hidden)
-                .fixedSize(horizontal: false, vertical: true)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) { strip }
+                    .scrollIndicators(.hidden)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onChange(of: selection, initial: true) { _, value in proxy.scrollTo(value, anchor: .center) }
+            }
         } else {
             strip
         }
@@ -187,6 +190,8 @@ struct HerdrTabs<Value: Hashable>: View {
                 .accessibilityLabel(tab.count.map { "\(tab.title), \($0)" } ?? tab.title)
                 .accessibilityAddTraits(selected ? .isSelected : [])
                 .accessibilityIdentifier(tab.accessibilityIdentifier ?? "")
+                .composerLayoutMeasurement(id: "info-tab-\(tab.title.lowercased())")
+                .id(tab.value)
             }
         }
         .accessibilityElement(children: .contain)

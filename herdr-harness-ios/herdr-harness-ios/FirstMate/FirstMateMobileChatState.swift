@@ -7,6 +7,7 @@ import Observation
 final class FirstMateMobileChatState {
     enum Selection: Equatable { case lead, feature(FirstMateFeatureTarget) }
     let index = FirstMateFleetIndex()
+    @ObservationIgnored let composerDrafts = FirstMateMobileComposerDrafts()
     private(set) var selection: Selection?
     private(set) var readState = FirstMateReadState()
     private var leadReadObservations: [FirstMateFleetFeatureID: LeadReadObservation] = [:]
@@ -74,6 +75,7 @@ final class FirstMateMobileChatState {
             || Set(nextTokens.keys) != Set(sources.keys) {
             beginNavigation()
         }
+        composerDrafts.retain(machines: retained)
         rowPresentations = rowPresentations.filter { retained.contains($0.key.machineID) }
         readState.overrides = readState.overrides.filter { retained.contains($0.key.machineID) }
         leadReadObservations = leadReadObservations.filter { retained.contains($0.key.machineID) }
@@ -98,6 +100,7 @@ final class FirstMateMobileChatState {
     }
 
     func retire() {
+        composerDrafts.discardAll()
         beginNavigation()
         leadReadObservations = [:]
         rowPresentations = [:]

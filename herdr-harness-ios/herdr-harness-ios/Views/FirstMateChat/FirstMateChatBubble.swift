@@ -15,6 +15,8 @@ struct FirstMateChatBubble: View {
     var readoutConversations: [FirstMateConversation] = []
     var showReadout: (FirstMateConversation) -> Void = { _ in }
 
+    var feedback: FirstMateFeedback?
+    var rate: ((FirstMateFeedbackRating?) -> Void)?
     private var human: Bool { row.speaker == .user }
     private var shape: UnevenRoundedRectangle {
         .init(topLeadingRadius: 18, bottomLeadingRadius: !human && row.isLastInGroup ? 5 : 18,
@@ -79,6 +81,13 @@ struct FirstMateChatBubble: View {
                     }
                 }
             }
+            if let feedback, let rating = feedback.rating {
+                Button { rate?(nil) } label: {
+                    Label(rating == .up ? "Rated helpful" : "Feedback saved", systemImage: rating == .up ? "hand.thumbsup.fill" : "hand.thumbsdown.fill")
+                        .herdrFont(.caption).frame(minHeight: 44)
+                }.buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                    .accessibilityIdentifier("first-mate-reaction-\(message.id)")
+            }
             HStack(spacing: 6) {
                 Spacer(minLength: 0)
                 if message.skim?.status == .pending && !human {
@@ -100,6 +109,10 @@ struct FirstMateChatBubble: View {
         .frame(maxWidth: .infinity, alignment: human ? .trailing : .leading)
         .contextMenu {
             Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.text }
+            if let rate {
+                Button("Rate helpful", systemImage: "hand.thumbsup") { rate(.up) }
+                Button("Give feedback", systemImage: "hand.thumbsdown") { rate(.down) }
+            }
             ForEach(mentionedConversations(in: display.body)) { conversation in
                 Button("Readout: \(conversation.name)", systemImage: "info.circle") { showReadout(conversation) }
             }

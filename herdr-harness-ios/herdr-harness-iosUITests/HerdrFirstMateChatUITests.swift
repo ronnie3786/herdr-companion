@@ -9,7 +9,7 @@ final class HerdrFirstMateChatUITests: XCTestCase {
         reach(receipt, app: app, downward: false); receipt.tap()
         XCTAssertTrue(app.buttons["first-mate-chat-title"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.tabBars.buttons["First Mates"].isHittable)
-        for id in ["first-mate-chat-back", "first-mate-chat-title", "first-mate-chat-inspector-toggle", "first-mate-feature-options", "first-mate-composer-plus", "first-mate-send"] {
+        for id in ["first-mate-chat-back", "first-mate-chat-title", "first-mate-chat-inspector-toggle", "first-mate-feature-options", "first-mate-composer-plus", "first-mate-microphone"] {
             let control = app.buttons[id]
             XCTAssertGreaterThanOrEqual(control.frame.width, 43.99, id)
             XCTAssertGreaterThanOrEqual(control.frame.height, 43.99, id)

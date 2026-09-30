@@ -32,8 +32,8 @@ shared First Mate behavior, or server contract changes in Phase 0. Phase 1 now
 provides the shared/mobile data layer below. Phase 2 adds the conversations UI;
 Phase 3 adds feature chat, composer v1, pushed Info and briefing readouts. Phase 4
 adds real lead chat, machine choice, stand-in/recovery, frozen context and lead
-Overview. Attachment/voice/model/rating controls (Phase 5), and Info/iPad polish
-plus app-wide dusk (Phase 6) remain planned.
+Overview. Phase 5 adds attachment, voice, model, mention and feedback controls.
+Info/iPad polish plus app-wide dusk (Phase 6) remains planned.
 Each phase retains automated verification/review/landing gates,
 without a first-push approval or per-phase device-test pause. One final signed iOS
 build is delivered after Phase 6; Phase 7, Mac releases, server deployment and
@@ -180,6 +180,48 @@ Info/readout/back, stand-in/recovery and old-host creation. Debug demo flags
 Final two-companion peer acceptance remains part of the single Phase 6 build,
 not an intermediate release or live companion permission.
 
+## Composer parity (Phase 5)
+
+Photos and Files upload to the conversation's exact host. The tray offers progress,
+retry and remove, with the shared limits of 10 files, 20 MiB per file and 40 MiB
+per message. Pending or failed uploads block send. Paste code preserves fences;
+uploaded paths become attachment lines. Draft material is kept per machine,
+feature and store lifecycle, alongside text. A reservation freezes its complete
+payload and detaches it immediately. Explicit retry uses that payload and request
+ID; completion never consumes newer edits or moves material to another host.
+
+Hold the mic for 300 ms, then release to transcribe and send. Holding for 2.65 s
+locks recording; Stop and send commits it. A quick tap shows guidance, sliding
+away or Cancel revokes sending, and VoiceOver activation toggles locked recording
+and send. Transcription uses this conversation's companion, with Apple fallback
+only after an ordinary provider failure. Cancellation, navigation, backgrounding
+or control loss never starts fallback or sends. Recognized text stays with its
+original draft; a concurrent edit preserves the result separately for explicit
+Append to draft. Voice messages retain the existing dictation caveat.
+
+The expandable accessory area shows coordinator context and Model and thinking.
+Settings load from the same host. Running-session changes require confirmation,
+a revision-pinned proposal and safe-model capability. Busy/queued turns, pending
+outgoing submissions, closed features and lost ownership disable mutations.
+Current-session observations remain separate from requested next-turn settings;
+Use host default clears both overrides. Context uses the shared unknown/zero/
+pressure presentation. Typing @ offers same-machine features and current crew;
+chosen names serialize to owned links when sending.
+
+Long-press a canonical First Mate response to Copy, Rate up or Rate down. Saved
+ratings appear as reaction badges, including on older and closed conversations.
+The feedback sheet supports categories, comments, clear, retry and explicit
+conflict reload without discarding the edit. Local optimistic message IDs never
+become feedback API targets.
+
+`FirstMateMobileComposerTests` and `FirstMateMobileVoiceTests` exercise ownership,
+material reservation/retry, limits, model enablement and cancellation. Native
+renders cover 320/402-point composer and sheets at default/capped text. The
+`-HerdrFirstMateComposerScenarios` DEBUG fixture provides synthetic attachments,
+model confirmation, canned voice and feedback for UI tests without network or
+agent dispatch. Physical microphone/Photos and real-companion acceptance use the
+single final Mobile App Hub build.
+
 ## Feature chat (Phase 3)
 
 Chat hides the tab bar and uses a custom glass back/title/Info/More bar, retaining
@@ -204,10 +246,10 @@ chat, agent links validate ownership before opening Agents, and long-press offer
 readouts for mentioned features. Retained popovers cannot override newer navigation.
 
 Composer v1 has a 1–7-line scrolling text pill, explicit send, Return for newline,
-⌘ Return for send and per-host/per-feature in-memory drafts. Plus currently opens
-**View documents**, not a nonfunctional attachment picker. Attachment/voice/model
-and mention-picker controls remain Phase 5. A synchronous `beginOutgoingMessage`
-reservation detaches only submitted text before transport. Rejected reservations
+⌘ Return for send and per-host/per-feature in-memory drafts. Phase 5 extends the
+plus menu with Photos, Files and Paste code, and retains View documents. A
+synchronous `beginOutgoingMessage` reservation detaches only submitted text,
+attachments, mention picks and dictation provenance before transport. Rejected reservations
 keep it; newer edits survive completion. Failed/uncertain delivery offers explicit
 Retry/Copy; retry keeps the original owner, lifecycle, payload, request ID and
 frozen context, including nil. Polls never resend or migrate the submission.

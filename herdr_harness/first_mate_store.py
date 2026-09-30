@@ -187,7 +187,12 @@ _BOARD_VERSION_SQL = f"""SELECT f.*,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_assignments WHERE feature_id=f.id) AS board_assignments,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_visits WHERE feature_id=f.id) AS board_visits,
                 (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_sessions WHERE feature_id=f.id) AS board_sessions,
-                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_message_skims WHERE feature_id=f.id) AS board_skims
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_message_skims WHERE feature_id=f.id) AS board_skims,
+                (SELECT count(*)||'/'||ifnull(max(created_at),'') FROM fm_documents WHERE feature_id=f.id) AS board_documents,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_handoffs WHERE feature_id=f.id) AS board_handoffs,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_links WHERE feature_id=f.id) AS board_links,
+                (SELECT count(*)||'/'||ifnull(max(created_at),'') FROM fm_verification_runs WHERE feature_id=f.id) AS board_verification_runs,
+                (SELECT count(*)||'/'||ifnull(max(updated_at),'') FROM fm_suite_inventories WHERE feature_id=f.id) AS board_suite_inventories
                 FROM fm_features f WHERE f.id=?"""
 # A skim is a second presentation of one finished conversation reply (see
 # skim_service.py). Rows hold ids, offsets, and the normalized document only;
@@ -1614,6 +1619,110 @@ class FirstMateStore:
 
     def _event_cursor(self, feature_id: str) -> int:
         return self._db.execute("SELECT COALESCE(max(sequence),0) FROM fm_events WHERE feature_id=?", (feature_id,)).fetchone()[0]
+
+    def read_version(self, feature_id: str) -> str:
+        with self._lock:
+            return self._board_version(feature_id)
+
+    def has_queued_work(self, feature_id: str) -> bool:
+        with self._lock:
+            feature = self._one("fm_features", feature_id)
+            return bool(feature.get("coordinator_owner") or self._db.execute(
+                "SELECT 1 FROM fm_messages WHERE feature_id=? AND status IN ('queued','processing') LIMIT 1",
+                (feature_id,)).fetchone())
+
+    def read_header(self, feature_id: str, *, before: str | None = None) -> dict:
+        """Small conditional-read identity plus the rows runtime metadata needs.
+
+        Cursor validation happens in the same snapshot as the marker, before a
+        caller is allowed to return unchanged.
+        """
+        if before is not None:
+            _text(before, "before", 200)
+        with self._read():
+            feature = self._one("fm_features", feature_id)
+            if before is not None:
+                self._conversation_cursor(feature_id, before)
+            return {
+                "read_version": self._board_version(feature_id),
+                "feature": feature,
+                "assignments": [dict(row) for row in self._db.execute(
+                    f"SELECT {BOARD_ASSIGNMENT_COLUMNS} FROM fm_assignments WHERE feature_id=? ORDER BY created_at,id",
+                    (feature_id,))],
+                "has_queued_work": bool(feature.get("coordinator_owner") or self._db.execute(
+                    "SELECT 1 FROM fm_messages WHERE feature_id=? AND status IN ('queued','processing') LIMIT 1",
+                    (feature_id,)).fetchone()),
+            }
+
+    def _conversation_cursor(self, feature_id: str, before: str):
+        roles = ",".join("?" for _ in BOARD_MESSAGE_ROLES)
+        cursor = self._db.execute(
+            f"SELECT created_at,id FROM fm_messages WHERE feature_id=? AND id=? AND visibility=? AND role IN ({roles})",
+            (feature_id, before, CONVERSATION, *BOARD_MESSAGE_ROLES)).fetchone()
+        if cursor is None:
+            raise FirstMateError("Conversation cursor not found", code="invalid_request", status=400)
+        return cursor
+
+    def read_projection(self, feature_id: str, *, view: str, messages: int = 60,
+                        before: str | None = None) -> dict:
+        """Chat and Overview read only their own columns, never event histories.
+
+        A message ID is a feature-owned keyset cursor. The (created_at, id)
+        ordering is identical to the legacy snapshot, including tied timestamps.
+        """
+        if view not in {"chat", "overview"}:
+            raise FirstMateError("Invalid read view", code="invalid_request", status=400)
+        if type(messages) is not int or not 1 <= messages <= 200:
+            raise FirstMateError("Invalid messages limit", code="invalid_request", status=400)
+        if before is not None:
+            _text(before, "before", 200)
+        with self._read():
+            read_version = self._board_version(feature_id)
+            feature = self._one("fm_features", feature_id)
+            result = {"feature": feature, "visits": [], "messages": [], "events": [],
+                      "assignments": [], "documents": [], "sessions": [], "handoffs": [],
+                      "links": [], "event_cursor": self._event_cursor(feature_id),
+                      "_read_version": read_version,
+                      "has_queued_work": bool(feature.get("coordinator_owner") or self._db.execute(
+                          "SELECT 1 FROM fm_messages WHERE feature_id=? AND status IN ('queued','processing') LIMIT 1",
+                          (feature_id,)).fetchone())}
+            result["assignments"] = [dict(row) for row in self._db.execute(
+                f"SELECT {BOARD_ASSIGNMENT_COLUMNS} FROM fm_assignments WHERE feature_id=? ORDER BY created_at,id",
+                (feature_id,))]
+            result["documents"] = [dict(row) for row in self._db.execute(
+                "SELECT id,feature_id,visit_id,assignment_id,native_session_id,generation,input_revision,"
+                "title,media_type,content_hash,created_at FROM fm_documents d WHERE feature_id=? "
+                "AND NOT EXISTS(SELECT 1 FROM fm_handoffs h WHERE h.feature_id=d.feature_id AND h.document_id=d.id) "
+                "ORDER BY created_at,id",
+                (feature_id,))]
+            result["links"] = [self._link_projection(self._decode(row)) for row in self._db.execute(
+                "SELECT * FROM fm_links WHERE feature_id=? ORDER BY created_at,id", (feature_id,))]
+            if feature.get("current_visit_id"):
+                result["visits"] = [self._decode(row) for row in self._db.execute(
+                    "SELECT * FROM fm_visits WHERE feature_id=? AND id=?",
+                    (feature_id, feature["current_visit_id"]))]
+            if view == "overview":
+                rows = self._db.execute(
+                    f"SELECT sequence,id,feature_id,type,summary,created_at FROM fm_events INDEXED BY fm_events_journal "
+                    f"WHERE feature_id=? AND {JOURNAL_EVENT_SQL} ORDER BY sequence DESC LIMIT 4", (feature_id,)).fetchall()
+                result["events"] = [self._decode(row) for row in reversed(rows)]
+                return result
+            roles = ",".join("?" for _ in BOARD_MESSAGE_ROLES)
+            args: list[Any] = [feature_id, *BOARD_MESSAGE_ROLES, CONVERSATION]
+            where = ""
+            if before:
+                cursor = self._conversation_cursor(feature_id, before)
+                where = " AND (created_at,id)<(?,?)"
+                args.extend(cursor)
+            args.append(messages + 1)
+            rows = self._db.execute(
+                f"SELECT * FROM fm_messages WHERE feature_id=? AND role IN ({roles}) AND visibility=?{where} "
+                "ORDER BY created_at DESC,id DESC LIMIT ?", args).fetchall()
+            page = [self._decode(row) for row in reversed(rows[:messages])]
+            result["messages"] = self._with_skims(page, feature_id=feature_id)
+            result["next_before"] = page[0]["id"] if len(rows) > messages else None
+            result["has_more"] = len(rows) > messages
+            return result
 
     def _board_version(self, feature_id: str) -> str:
         row = self._db.execute(_BOARD_VERSION_SQL, (feature_id,)).fetchone()

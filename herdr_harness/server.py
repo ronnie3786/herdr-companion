@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import gzip
 import hmac
 import html
 import json
@@ -19,6 +20,7 @@ from typing import Any, Mapping, Optional
 from . import attachments, chat_tab_colors, first_mate_fleet, first_mate_peers, issue_reports, response_audio, result_artifacts, voice
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
+from .first_mate_read_models import feature_summary
 from .first_mate_verification import VERIFICATION_CAPABILITY
 from .pr_review_store import PRReviewError
 from .agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
@@ -710,10 +712,31 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
 
         def _json_response(self, data: dict, status: int = 200) -> None:
             body = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            compressed = False
+            if self.command == "GET" and status == 200 and len(body) >= 1024:
+                encodings = {}
+                for entry in self.headers.get("Accept-Encoding", "").split(","):
+                    name, *parameters = entry.strip().lower().split(";")
+                    quality = 1.0
+                    for parameter in parameters:
+                        if parameter.strip().startswith("q="):
+                            try:
+                                quality = float(parameter.strip()[2:])
+                            except ValueError:
+                                quality = 0.0
+                    encodings[name] = quality
+                if 0 < encodings.get("gzip", encodings.get("*", 0)) <= 1:
+                    packed = gzip.compress(body, compresslevel=5, mtime=0)
+                    if len(packed) < len(body):
+                        body, compressed = packed, True
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
+                if self.command == "GET":
+                    self.send_header("Vary", "Accept-Encoding")
+                if compressed:
+                    self.send_header("Content-Encoding", "gzip")
                 self._common_headers()
                 self.end_headers()
                 self.wfile.write(body)
@@ -1142,6 +1165,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-context-v1", "first-mate-safe-model-settings-v1",
                     "first-mate-git-v1", "first-mate-runtime-health-v1", "first-mate-reliability-v1",
                     "first-mate-board-v1", "first-mate-journal-events-v1",
+                    "first-mate-read-views-v1", "first-mate-verification-summary-v1",
                     "first-mate-feedback-v1",
                     "first-mate-links-v1",
                     "first-mate-quiet-chat-v1",
@@ -1214,7 +1238,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     view = (query.get("view") or ["active"])[0]
                     if view not in {"active", "archived", "all"}:
                         raise HTTPValidationError("Invalid feature view", code="invalid_request")
-                    return {"ok": True, "features": features_view(view), "runtime_health": runtime.health()}
+                    features = features_view(view)
+                    if query.get("summary") == ["1"]:
+                        features = [feature_summary(feature) for feature in features]
+                    return {"ok": True, "features": features, "runtime_health": runtime.health()}
                 if method == "POST":
                     if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id"}:
                         raise HTTPValidationError("Feature contains an unsupported field")
@@ -1313,6 +1340,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     if events == ["journal"]:
                         return {"ok": True, **snapshot_view(feature_id, events="journal"), "runtime_health": runtime.health()}
                     return {"ok": True, **snapshot_view(feature_id), "runtime_health": runtime.health()}
+                if tail[2:] == ["presentation"] and method == "GET":
+                    if set(query) - {"view", "messages", "before", "if_version"} or any(len(values) != 1 for values in query.values()):
+                        raise HTTPValidationError("Invalid First Mate presentation query")
+                    if not hasattr(runtime, "read_view"):
+                        raise HTTPValidationError("First Mate read views unavailable", code="not_found", status=404)
+                    result = runtime.read_view(feature_id,
+                        view=(query.get("view") or ["chat"])[0],
+                        messages=_query_int(query, "messages", default=60, minimum=1, maximum=200),
+                        before=_string(query["before"][0], "before", maximum=200) if "before" in query else None,
+                        if_version=_string(query["if_version"][0], "if_version", maximum=200, allow_empty=True) if "if_version" in query else None)
+                    return {"ok": True, **result, "runtime_health": runtime.health()}
                 if tail[2:] == ["board"] and method == "GET":
                     if set(query) - {"messages", "journal", "if_version"}:
                         raise HTTPValidationError("First Mate board request contains an unsupported query field")

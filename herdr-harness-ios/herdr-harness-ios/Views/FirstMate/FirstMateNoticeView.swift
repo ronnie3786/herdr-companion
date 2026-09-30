@@ -14,10 +14,10 @@ struct FirstMateNoticeView: View {
                 Text(message).font(.caption).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .foregroundStyle(FirstMatePalette(scheme: scheme).secondaryText)
+        .foregroundStyle(HerdrTheme.secondaryText)
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 14))
+        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 14))
         .accessibilityElement(children: .combine)
     }
 }

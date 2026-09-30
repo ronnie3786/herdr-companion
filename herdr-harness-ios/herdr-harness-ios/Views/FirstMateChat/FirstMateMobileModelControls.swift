@@ -122,11 +122,12 @@ struct FirstMateMobileModelControls: View {
                 }
                 .padding(16).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).background(HerdrTheme.base) }
+            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+            .herdrNavigationBarChrome()
             .navigationTitle("Model and thinking").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize).preferredColorScheme(.dark).tint(HerdrTheme.accent)
+        .herdrAppChrome(separateSurface: true)
         .task(id: capturedContext) { await load(capturedContext) }
         .onChange(of: identity) { _, _ in
             if !saving { proposal.cancel(); confirms = false }

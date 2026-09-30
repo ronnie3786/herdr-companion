@@ -83,9 +83,11 @@ struct FirstMateChatBubble: View {
             }
             if let feedback, let rating = feedback.rating {
                 Button { rate?(nil) } label: {
-                    Label(rating == .up ? "Rated helpful" : "Feedback saved", systemImage: rating == .up ? "hand.thumbsup.fill" : "hand.thumbsdown.fill")
-                        .herdrFont(.caption).frame(minHeight: 44)
-                }.buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                    Text(rating == .up ? "👍" : "👎").font(.system(size: 13))
+                        .frame(width: 22, height: 22).background(HerdrTheme.chipFill, in: .capsule)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                }.buttonStyle(.plain)
+                    .accessibilityLabel(rating == .up ? "Rated helpful. Edit feedback" : "Feedback saved. Edit feedback")
                     .accessibilityIdentifier("first-mate-reaction-\(message.id)")
             }
             HStack(spacing: 6) {

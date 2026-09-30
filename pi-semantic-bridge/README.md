@@ -128,6 +128,30 @@ until Pi saves its first assistant response, and `--no-session` stays ephemeral.
 Already running sessions need to load the updated package before tracking newly
 spawned work. Follow the upgrade steps below.
 
+## Connection recovery under load
+
+The semantic socket keeps updates in order when the companion temporarily falls
+behind. A full socket buffer pauses writes until it drains; new updates wait in
+a bounded per-connection queue instead of immediately disconnecting the chat.
+The queue allows up to 2048 pending writes and 4 MiB including Node's writable
+buffer. A reader that exceeds those limits or fails to drain for 30 seconds is
+disconnected so it can recover through the existing replay/checkpoint protocol.
+Shutdown drains accepted final events before closing, subject to the same bounds.
+
+The companion validates each newline-delimited record separately, including when
+one socket read contains the end of a large record and the start of another.
+Repeated short-lived connections back off from 250 ms up to 10 seconds; a
+connection that stays open for 30 seconds resets that delay. Disconnect warnings
+include an opaque pane key, a reason code, an OS error number when available, and
+a suppressed-error count. They are limited to one per pane every 30 seconds and
+exclude transcript contents, paths, and raw exception messages.
+
+These changes require the updated companion server and Pi package on the machine
+that owns the session. The wire protocol remains version 1, and existing Mac,
+iPhone, and web clients remain compatible. A Mac app update alone does not
+install this server/package fix. Reload or resume existing Pi sessions as below
+after updating the installed package.
+
 ## Upgrade running Pi sessions
 
 New Pi sessions load the updated global package automatically. If a running

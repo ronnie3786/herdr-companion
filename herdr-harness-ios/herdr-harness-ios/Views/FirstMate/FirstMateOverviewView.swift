@@ -20,29 +20,29 @@ struct FirstMateOverviewView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Label("The goal", systemImage: "scope")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                    .foregroundStyle(HerdrTheme.accent)
                 Text(snapshot.feature.goal)
                     .font(.title3)
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("first-mate-overview")
             }
-            .padding(20)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
+            .herdrCard()
 
             FirstMateVerificationSummaryView(
                 verification: snapshot.feature.verification,
                 isLastReported: !store.isDemo && store.error != nil
             )
-            .padding(20)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
+            .herdrCard()
 
             FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
-                .padding(20)
+                .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
+                .herdrCard()
 
             if let visit = snapshot.currentVisit {
                 VStack(alignment: .leading, spacing: 14) {
@@ -52,7 +52,7 @@ struct FirstMateOverviewView: View {
                     if visit.status == "awaiting_direction" {
                         Label("The next step waits for your direction in the conversation.", systemImage: "bubble.left.and.text.bubble.right")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HerdrTheme.secondaryText)
                     }
                 }
             }
@@ -78,7 +78,7 @@ struct FirstMateOverviewView: View {
                 } else if currentAgents.isEmpty {
                     Text("Your First Mate will assemble the crew when you choose a next step.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
             }
 
@@ -90,7 +90,7 @@ struct FirstMateOverviewView: View {
                 if latestMilestones.isEmpty {
                     Text("Decisions and progress will appear here as the feature moves forward.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                 }
                 Button("Open workflow", systemImage: "arrow.right") { store.inspector = .workflow }
                     .font(.subheadline.weight(.semibold))

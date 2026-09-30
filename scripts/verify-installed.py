@@ -28,6 +28,8 @@ def main():
         assert all(resources.values()), resources
         lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); assert (p/'extensions/session-context-discovery.ts').is_file(); print('ok')")
         assert lineage.strip() == "ok"
+        transport = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/socket-writer.ts').is_file(); assert '../lib/socket-writer.ts' in (p/'extensions/pi-semantic-bridge.ts').read_text(); print('ok')")
+        assert transport.strip() == "ok"
         session_context_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-session-context' and e.value == 'herdr_harness.commands:session_context' for e in eps); print('ok')")
         assert session_context_entry.strip() == "ok"
         pr_review_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-pr-review' and e.value == 'herdr_harness.commands:pr_review' for e in eps); print('ok')")

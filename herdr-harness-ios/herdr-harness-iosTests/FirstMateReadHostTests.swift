@@ -104,6 +104,41 @@ struct FirstMateReadHostTests {
         }
     }
 
+    @Test("Inline Info keeps the visible chat's read alive, while its resource sheet covers the chat")
+    func inlineInspectorAndResourceCoverage() async throws {
+        let fixture = try await ReadHostFixture(controllable: true)
+        let clock = ReadHostClock()
+        fixture.fleet.chat.clock = { clock.now }
+        fixture.fleet.chat.readSleep = { try await clock.sleep($0) }
+        await fixture.client.setHeldReads(true)
+        fixture.mount(width: 900)
+        defer { fixture.unmount() }
+        try await fixture.wait { await fixture.client.readIDs == ["A"] }
+        #expect(fixture.model.firstMateCanControl(machineID: fixture.target.machineID))
+        #expect(fixture.store.controlAvailable, "The mounted chat owns an actual control lease")
+        fixture.presentation.inlineInfo = true
+        await fixture.settle()
+        fixture.store.inspector = .documents
+        await fixture.settle()
+        #expect(await fixture.client.cancellations == 0)
+        fixture.presentation.inlineInfo = false
+        await fixture.settle()
+        #expect(fixture.store.controlAvailable, "Dismissing inline Info cannot release the chat's lease")
+        fixture.presentation.inlineInfo = true
+        await fixture.settle()
+        #expect(fixture.store.controlAvailable)
+        var document = try #require(FirstMateDemo.chatWindowFeatures().first?.documents.first)
+        document.featureID = fixture.target.featureID
+        await fixture.store.open(.document(document))
+        try await fixture.wait { await fixture.client.cancellations == 1 }
+        #expect(fixture.unreadCount == 1)
+        fixture.store.closeResource()
+        await fixture.settle()
+        clock.advance(180)
+        try await fixture.wait { await fixture.client.readIDs.count == 2 }
+        await fixture.client.finishRead()
+    }
+
     @Test("Offscreen render hosts cannot read until tracking is explicitly enabled", arguments: [false, true])
     func offscreenTracking(lead: Bool) async throws {
         let fixture = try await ReadHostFixture(lead: lead)
@@ -256,6 +291,7 @@ private final class ReadHostPresentation {
     var phase = ScenePhase.active
     var mounted = true
     var tracking = true
+    var inlineInfo = false
 }
 
 @MainActor
@@ -263,10 +299,17 @@ private struct ReadHostRoot: View {
     let fixture: ReadHostFixture
     var body: some View {
         if fixture.presentation.mounted {
-            FirstMateChatScreen(model: fixture.model, fleet: fixture.fleet, store: fixture.store,
-                target: fixture.target, topmost: fixture.presentation.topmost, openInfo: { _, _ in },
-                readTrackingEnabled: fixture.presentation.tracking)
-                .environment(\.scenePhase, fixture.presentation.phase)
+            HStack(spacing: 0) {
+                FirstMateChatScreen(model: fixture.model, fleet: fixture.fleet, store: fixture.store,
+                    target: fixture.target, topmost: fixture.presentation.topmost, openInfo: { _, _ in },
+                    readTrackingEnabled: fixture.presentation.tracking, embedded: fixture.presentation.inlineInfo)
+                    .frame(maxWidth: .infinity)
+                if fixture.presentation.inlineInfo {
+                    FirstMateInfoScreen(model: fixture.model, fleet: fixture.fleet, store: fixture.store,
+                        target: fixture.target, embedded: true).frame(width: 320)
+                }
+            }
+            .environment(\.scenePhase, fixture.presentation.phase)
         }
     }
 }
@@ -298,7 +341,7 @@ private final class ReadHostFixture {
         }
         return fleet.badgeCount
     }
-    init(unread: Bool = true, lead: Bool = false) async throws {
+    init(unread: Bool = true, lead: Bool = false, controllable: Bool = false) async throws {
         let configuredModel = HerdrAppModel(credentials: TestCredentialStore(), arguments: [],
             userDefaults: UserDefaults(suiteName: "ReadHost.\(UUID())")!, bootstrapMachines: [])
         model = configuredModel
@@ -306,6 +349,11 @@ private final class ReadHostFixture {
         let scriptedClient = ReadHostClient(unread: unread, lead: lead)
         client = scriptedClient
         let machine = ChatFixtures.machine("synthetic")
+        if controllable {
+            configuredModel.hasCompletedSetup = true
+            configuredModel.machines = [machine]
+            configuredModel.machineStates[machine.id] = .live
+        }
         let fleet = configuredModel.firstMateFleet
         fleet.activate(sources: [.init(machine: machine,
             configuration: .init(urlString: machine.urlString, token: "synthetic"), client: scriptedClient)], connectionGeneration: 1)
@@ -314,7 +362,7 @@ private final class ReadHostFixture {
         if lead { #expect(await fleet.chat.openLead(fleet: fleet) == target) }
         else { #expect(fleet.open(target)); await fleet.refreshSelected(target) }
     }
-    func mount() {
+    func mount(width: CGFloat? = nil) {
         previousWindow = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first(where: \.isKeyWindow)
         let controller = UIHostingController(rootView: ReadHostRoot(fixture: self))
         guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
@@ -322,7 +370,7 @@ private final class ReadHostFixture {
             return
         }
         let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        window.frame = CGRect(x: 0, y: 0, width: width ?? (presentation.inlineInfo ? 900 : 402), height: 874)
         window.rootViewController = controller
         window.makeKeyAndVisible()
         controller.view.frame = window.bounds

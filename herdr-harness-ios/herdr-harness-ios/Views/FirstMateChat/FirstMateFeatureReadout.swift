@@ -27,6 +27,6 @@ struct FirstMateFeatureReadout: View {
         }
         .padding(16).frame(width: 300, alignment: .leading)
         .foregroundStyle(HerdrTheme.primaryText).background(HerdrTheme.base)
-        .herdrFirstMateChrome().accessibilityElement(children: .contain).accessibilityIdentifier("first-mate-feature-readout")
+        .herdrAppChrome(separateSurface: true).accessibilityElement(children: .contain).accessibilityIdentifier("first-mate-feature-readout")
     }
 }

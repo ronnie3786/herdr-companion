@@ -83,7 +83,7 @@ struct HudChatCatalogView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Machine")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(HerdrTheme.secondaryText)
                         Text(selectedMachineName)
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)

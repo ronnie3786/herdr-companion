@@ -11,11 +11,11 @@ struct FirstMateGraphView: View {
             ForEach(Array(snapshot.visits.enumerated()), id: \.element.id) { index, visit in
                 if index > 0 {
                     VStack(spacing: 0) {
-                        Rectangle().fill(FirstMatePalette(scheme: scheme).accent.opacity(0.4))
+                        Rectangle().fill(HerdrTheme.accent.opacity(0.4))
                             .frame(width: 2, height: 16)
                         Image(systemName: "arrowtriangle.down.fill")
                             .font(.footnote)
-                            .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                            .foregroundStyle(HerdrTheme.accent)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 6)
@@ -29,7 +29,7 @@ struct FirstMateGraphView: View {
             }
             Text("Recorded step order. Open a step to see its crew and evidence.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(HerdrTheme.secondaryText)
                 .padding(.top, 16)
                 .accessibilityIdentifier("first-mate-graph")
         }

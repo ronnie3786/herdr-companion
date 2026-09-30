@@ -32,7 +32,7 @@ struct FirstMateAgentGroup: View {
                     .accessibilityIdentifier("first-mate-agent-group-\(visit.id)")
                 Text("\(agents.count) \(agents.count == 1 ? "agent" : "agents") · \(completed) complete")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
             .frame(minHeight: 44)
         }
@@ -40,6 +40,6 @@ struct FirstMateAgentGroup: View {
             if agents.contains(where: { $0.id == id }) { isExpanded = true }
         }
         .padding(16)
-        .background(FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 18))
+        .herdrCard()
     }
 }

@@ -16,19 +16,19 @@ struct FirstMateGraphNode: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: symbol)
                         .font(.title2)
-                        .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                        .foregroundStyle(HerdrTheme.accent)
                         .padding(.top, 2)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 8) {
                         if isCurrent {
                             Text("CURRENT STEP").font(.footnote.weight(.semibold))
-                                .foregroundStyle(FirstMatePalette(scheme: scheme).accent)
+                                .foregroundStyle(HerdrTheme.accent)
                         }
                         FirstMateVisitHeading(visit: visit, isCurrent: isCurrent, displayStatus: snapshot.displayStatus(for: visit))
                     }
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(HerdrTheme.secondaryText)
                         .padding(.top, 4)
                         .accessibilityHidden(true)
                 }
@@ -46,10 +46,10 @@ struct FirstMateGraphNode: View {
             }
         }
         .padding(18)
-        .background(isCurrent ? FirstMatePalette(scheme: scheme).accent.opacity(0.07) : FirstMatePalette(scheme: scheme).surface, in: .rect(cornerRadius: 20))
+        .background(isCurrent ? HerdrTheme.accent.opacity(0.07) : HerdrTheme.cardFill, in: .rect(cornerRadius: 20))
         .overlay {
             RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(isCurrent ? FirstMatePalette(scheme: scheme).accent.opacity(0.55) : FirstMatePalette(scheme: scheme).line, lineWidth: 1)
+                .strokeBorder(isCurrent ? HerdrTheme.accent.opacity(0.55) : HerdrTheme.outline, lineWidth: 1)
         }
     }
 

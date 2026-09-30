@@ -53,6 +53,7 @@ struct FirstMateMobileArchiveSheet: View {
                 .padding(20)
             }
             .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
+            .herdrNavigationBarChrome()
             .navigationTitle("Archive feature?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
@@ -62,7 +63,7 @@ struct FirstMateMobileArchiveSheet: View {
                 }
             }
         }
-        .herdrFirstMateChrome()
+        .herdrAppChrome(separateSurface: true)
         .tint(HerdrTheme.accent)
         .interactiveDismissDisabled(isSubmitting)
         .onChange(of: isCurrent, initial: true) { _, current in if !current { dismiss() } }

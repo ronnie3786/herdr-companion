@@ -24,7 +24,7 @@ struct FirstMateStageDetailView: View {
             if agents.isEmpty && documents.isEmpty {
                 Text("Agents and documents will appear when this step begins.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(HerdrTheme.secondaryText)
             }
         }
     }

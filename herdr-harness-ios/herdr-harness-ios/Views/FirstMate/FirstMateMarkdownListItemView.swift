@@ -6,7 +6,7 @@ struct FirstMateMarkdownListItemView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
-            Text(marker).foregroundStyle(.secondary).accessibilityHidden(true)
+            Text(marker).foregroundStyle(HerdrTheme.secondaryText).accessibilityHidden(true)
             Text(FirstMateMentionText.render(item.text, catalog: catalog))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

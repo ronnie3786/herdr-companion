@@ -411,6 +411,17 @@ def _pick(record: Mapping[str, Any] | None, names: tuple[str, ...]) -> dict:
     return {name: record.get(name) for name in names if name in record}
 
 
+def _checkpoint_conversation(messages: list[dict]) -> list[dict]:
+    """Carry conversation text, not repeated per-message verification archives.
+
+    Human instructions and the questions they answer remain verbatim. Full
+    message metadata stays in the store; current routing evidence is supplied
+    separately. Apply this projection to saved checkpoints as well as new ones.
+    """
+    return [_pick(message, ("id", "role", "text", "created_at"))
+            for message in messages[-30:]]
+
+
 def _bounded_agent_data(value: Any, *, text_limit: int = 2400, depth: int = 0) -> Any:
     """Context is a reference index, never a recursively embedded work archive."""
     if isinstance(value, str):
@@ -1655,6 +1666,8 @@ class FirstMateRuntime:
         if kind == "coordinator" and not current_feature.get("native_session_id"):
             checkpoint = _read_json(self.root / "checkpoints" / (current_feature["id"] + ".json"))
             if checkpoint:
+                checkpoint = {**checkpoint, "recent_conversation":
+                    _checkpoint_conversation(checkpoint.get("recent_conversation", []))}
                 prompt += "\n\nRetained First Mate checkpoint from the predecessor conversation. Use it as evidence; current authoritative state above takes precedence:\n" + json.dumps(checkpoint, ensure_ascii=False)
         session.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         job = {"id": identifier, "kind": kind, "feature_id": current_feature["id"], "cwd": current_feature["cwd"],
@@ -3702,9 +3715,9 @@ class FirstMateRuntime:
                                      for message in snapshot["messages"] if message["role"] == "user"],
                 # Short answers such as "yes" retain meaning only beside
                 # the coordinator question they answer.
-                "recent_conversation": [message for message in snapshot["messages"]
+                "recent_conversation": _checkpoint_conversation([message for message in snapshot["messages"]
                                         if message["role"] in {"user", "assistant"}
-                                        and message.get("visibility", "conversation") == "conversation"][-30:]}
+                                        and message.get("visibility", "conversation") == "conversation"])}
 
     @staticmethod
     def _lead_checkpoint(job: dict, snapshot: dict) -> dict:

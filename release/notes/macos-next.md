@@ -1,5 +1,33 @@
 # Next macOS update — unreleased
 
+## First Mate simulator checkpoints
+
+- A First Mate's **Builds** section now also lists **simulator checkpoints**:
+  iOS Simulator builds its agents saved along the way, for example at the end
+  of each implementation round. Each one shows its checkpoint label, app
+  version, stage, and the agent that made it. A Mobile App Hub build that has a
+  simulator copy gets an **Open in Simulator** button right under it. In
+  **Workflow**, a stage with saved builds gets a simulator button (a menu when
+  it has several).
+- **Open in Simulator** opens a native window for that exact build: the
+  feature's emoji and name, its machine, the checkpoint, app version, and
+  stage on top, and the live simulator below. You can tap, drag, scroll,
+  type, paste (⌘V), and use Home (⇧⌘H) and Lock (⌘L). While a new simulator
+  starts, the window shows SimPortal's steps and shows the screen as soon as
+  iOS boots, while the app is still installing. Opening the same build again
+  shows the running simulator instead of starting another.
+- The window never changes SimPortal's focused simulator. **Open in Browser**
+  opens that exact simulator's page in SimPortal and asks first, because
+  SimPortal's browser viewer does make it the focused simulator.
+- Closing the window doesn't stop anything. **Shut Down** stops the simulator
+  now (its data is kept). Otherwise the companion shuts it down after 20
+  minutes with no viewer, and a hidden window pauses its picture after a
+  minute. At most two Herdr simulators run per machine by default.
+- Requires a companion advertising `first-mate-simulator-previews-v1`, with
+  SimPortal set up on the machine that compiles the builds (see
+  docs/first-mate/simulator-previews.md). Without it, nothing new appears.
+  The Mac updater does not install companion packages.
+
 ## Feedback
 
 - Help → **Report a Bug or Request a Feature…** (⌘⌥F) and Settings → General → Feedback open a sheet that files through this Mac's companion, or the first connected companion, as a public GitHub issue with your final edited title and verbatim description and up to six attachments. Included environment details are listed before sending and never contain machine names or hostnames.

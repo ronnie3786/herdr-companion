@@ -313,6 +313,26 @@ Continue from the latest checkpoint and reuse still-valid checks on the same
 revision. A failed command is a diagnostic to investigate, not by itself a reason
 to ask the human to restart the assignment.
 """
+# Appended to the charter only when this machine's companion has SimPortal configured.
+SIMULATOR_CHECKPOINT_GUIDANCE = {
+    "worker": """Simulator checkpoints: this machine saves iOS Simulator builds the human can open
+from First Mate. When your assignment changes an iOS app and you finish a meaningful
+round (the end of an implementation, fix, or QA round), build the app for an iOS
+Simulator destination with the project's own build workflow (the scheme and
+configuration you test with), then call fm_register_simulator_build with the exact
+path of the built .app from the build products (for example
+.../Build/Products/Debug-iphonesimulator/App.app) and a short label such as
+"Round 1: onboarding flow". If you also published a device build to Mobile App Hub,
+pass that build's ID as hub_build_id. Register only a build that compiled
+successfully; never a device build, an archive, or another feature's build. A saved
+build is a preview for the human, not verification evidence, and never replaces
+fm_record_verification.""",
+    "coordinator": """Simulator checkpoints: this machine saves iOS Simulator builds the human can open
+from First Mate. For iOS app work, include in each implementation or fix assignment
+that the worker registers its successful simulator build with
+fm_register_simulator_build at the end of the round. A saved build is a preview, not
+verification evidence.""",
+}
 LEAD_PROMPT = """You are First Mate, the human's lead across every First Mate feature on their
 machines. Each feature has its own First Mate (its "second mate") that runs that
 feature's stages and workers. You answer the human about all of them, check
@@ -661,9 +681,11 @@ class FirstMateRuntime:
     """Run saved Pi coordinators and workers independently of client windows."""
 
     def __init__(self, store: Any, *, environ: Mapping[str, str] | None = None,
-                 runtime_root: str | Path | None = None, profile_snapshot=None) -> None:
+                 runtime_root: str | Path | None = None, profile_snapshot=None, simulator_previews: Any = None) -> None:
         self.store = store
         self._profile_snapshot = profile_snapshot
+        # SimPortal checkpoints (fm_register_simulator_build); None or unconfigured hides the tool.
+        self.simulator_previews = simulator_previews
         self.environ = dict(os.environ if environ is None else environ)
         self.root = Path(runtime_root or self.environ.get("HERDR_HARNESS_FIRST_MATE_RUNS_ROOT") or self.environ.get("HERDR_FIRST_MATE_RUNTIME_ROOT")
                          or str(Path(self.environ.get("HERDR_STATE_DIR") or "~/.local/share/herdr-companion").expanduser() / "first-mate-runs")).expanduser().resolve()
@@ -1472,10 +1494,14 @@ class FirstMateRuntime:
                 self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 86400, 30, 604800)
         if retry:
             job["retry_not_before"] = retry.get("not_before", 0)
+        simulator = self.simulator_previews
+        if kind in {"coordinator", "worker"} and simulator is not None and getattr(simulator, "configured", False):
+            job["simulator_previews"] = True
         if kind == "coordinator" and current_feature.get("kind") == LEAD_KIND:
             # The lead reuses the coordinator's conversation, context, and
             # handoff machinery with its own charter and fleet tools.
             job["lead"] = True
+            job.pop("simulator_previews", None)
             job["charter"] = LEAD_PROMPT
         if self._profile_snapshot:
             # Keep coordinator conversations and assignment retries pinned; new
@@ -2647,6 +2673,80 @@ class FirstMateRuntime:
                     "code": getattr(exc, "code", "tool_failed"),
                     "next_permitted_actions": getattr(exc, "next_permitted_actions", [])})
 
+    def _register_simulator_build(self, job: dict, params: dict, request_id: str) -> dict:
+        """Save a compiled iOS Simulator app as this feature's checkpoint (SimPortal).
+
+        Fenced exactly like link saves: only the live coordinator owner or the
+        running worker of the current visit may register, and the feature,
+        visit, assignment, and native session come from the validated dispatch,
+        never from the caller. The copy and SimPortal handoff run off the
+        runtime loop; the spool request stays pending (DeferredOperation) until
+        the build settles, and a restart resumes the same durable registration.
+        """
+        from .simulator_previews import SimulatorPreviewError
+
+        simulator = self.simulator_previews
+        if simulator is None or not getattr(simulator, "configured", False):
+            raise FirstMateError("Simulator checkpoints are not configured on this machine",
+                                 code="simulator_unconfigured", status=400)
+        if not isinstance(params, dict):
+            raise FirstMateError("Simulator build parameters must be an object", code="invalid_request", status=400)
+        # Each reconcile pass asks again while SimPortal works; the fence and
+        # context were checked when this registration was submitted.
+        future = simulator.registration(request_id)
+        if future is None:
+            future = self._submit_simulator_build(simulator, job, params, request_id)
+        if not future.done():
+            raise DeferredOperation("Waiting for SimPortal to save the simulator build")
+        simulator.release_registration(request_id)
+        try:
+            return future.result()
+        except SimulatorPreviewError as exc:
+            raise FirstMateError(str(exc), code=exc.code, status=exc.status) from None
+
+    def _submit_simulator_build(self, simulator: Any, job: dict, params: dict, request_id: str):
+        from .simulator_previews import CheckpointContext, SimulatorPreviewError
+
+        feature_id = job["feature_id"]
+        feature = self.store.get_feature(feature_id)
+        claim = job.get("claim") or {}
+        assignment = None
+        extra_roots: list[str] = []
+        if job["kind"] == "coordinator" and not job.get("lead"):
+            if feature.get("coordinator_owner") != job.get("owner"):
+                raise FirstMateError("Coordinator ownership changed", code="stale_owner")
+            extra_roots.append(str(self.root / "worktrees"))
+        elif job["kind"] == "worker":
+            claim_id = claim.get("id")
+            if not isinstance(claim_id, str) or not claim_id:
+                raise FirstMateError("Simulator build registration is outside this execution's active assignment scope")
+            assignment = self.store.get_assignment(claim_id)
+            if (assignment["feature_id"] != feature_id
+                    or assignment.get("generation") != claim.get("generation")
+                    or assignment.get("native_session_id") != job.get("native_session_id")
+                    or assignment.get("status") != "running"
+                    or feature.get("status") != "running"
+                    or not self.store.assignment_is_in_current_visit(assignment["id"])):
+                raise FirstMateError("Simulator build registration is outside this execution's active assignment scope",
+                                     code="stale_owner")
+        else:
+            raise ValueError("Tool is outside this execution's role and assignment scope")
+        visit_id = (assignment or {}).get("visit_id") or feature.get("current_visit_id")
+        visit_title = None
+        if visit_id:
+            visit_title = next((visit.get("title") for visit in self.store.snapshot(feature_id)["visits"]
+                                if visit.get("id") == visit_id), None)
+        context = CheckpointContext(
+            feature_id=feature_id, feature_title=str(feature.get("title") or ""),
+            visit_id=visit_id, visit_title=visit_title,
+            assignment_id=(assignment or {}).get("id"), assignment_title=(assignment or {}).get("title"),
+            native_session_id=job.get("native_session_id"), workspace=str(job.get("cwd") or feature.get("cwd") or ""),
+            role=job["kind"], extra_roots=tuple(extra_roots))
+        try:
+            return simulator.submit_registration(request_id, context, params, on_done=self.wake)
+        except SimulatorPreviewError as exc:
+            raise FirstMateError(str(exc), code=exc.code, status=exc.status) from None
+
     def _save_link(self, job: dict, params: dict) -> dict:
         """Agent-facing link registration fenced to the exact live execution.
 
@@ -2761,6 +2861,8 @@ class FirstMateRuntime:
             return session
         if action == "fm_save_link":
             return self._save_link(job, params)
+        if action == "fm_register_simulator_build":
+            return self._register_simulator_build(job, params, request_id)
         if action == "fm_delegate" and job["kind"] == "worker":
             parent = self.store.get_assignment(claim["id"])
             if parent["generation"] != claim["generation"] or parent["native_session_id"] != job["native_session_id"] or parent["status"] != "running":
@@ -3690,6 +3792,8 @@ def _pi_command(job: dict) -> list[str]:
                "advisor": ADVISOR_PROMPT}[job["kind"]]
     if job["kind"] == "coordinator" and job.get("lead"):
         charter = LEAD_PROMPT
+    elif job.get("simulator_previews") and job["kind"] in SIMULATOR_CHECKPOINT_GUIDANCE:
+        charter = charter + "\n" + SIMULATOR_CHECKPOINT_GUIDANCE[job["kind"]]
     snapshot = job.get("agent_profile_snapshot")
     if isinstance(snapshot, dict) and snapshot.get("prompt"):
         from .agent_profiles import write_prompt_snapshot

@@ -163,6 +163,19 @@ skim_min_words = 80 # Shorter replies are shown as they are.
 # skim_backfill_hours = 24 # Skim recent earlier replies once; 0 skims only new ones.
 # Ambiguous delivery is logged, without an automatic duplicate phone alert.
 
+[simportal]
+# Optional First Mate simulator checkpoints and previews through SimPortal on
+# THIS machine (docs/first-mate/simulator-previews.md). Inert until url is set.
+# url = "http://127.0.0.1:4280"
+# token_file = "~/.config/herdr-companion/secrets/simportal-token" # Owner-only file with SimPortal's service token.
+# intake_root = "~/.simportal/builds" # Must be one of SimPortal's lifecycle.artifactRoots.
+# project_id = "herdr"
+# device_type = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+# runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-2" # Omit for the newest compatible installed iOS runtime.
+# idle_shutdown_minutes = 20 # Shut down a Herdr preview nobody has watched this long; 0 turns it off.
+# max_running_previews = 2
+# server_id = "" # Set only to accept a replaced SimPortal server explicitly.
+
 [remote_activity]
 # url = "https://worker.example.invalid"
 # token = { env = "WORKER_HERDR_TOKEN" }

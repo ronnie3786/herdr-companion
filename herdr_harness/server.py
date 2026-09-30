@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from . import attachments, chat_tab_colors, first_mate_fleet, first_mate_peers, issue_reports, response_audio, result_artifacts, voice
+from . import simulator_previews, websocket_relay
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .first_mate_verification import VERIFICATION_CAPABILITY
@@ -273,6 +274,13 @@ def _string(
     return text
 
 
+def _simulator_uuid(value: Any, label: str) -> str:
+    text = _string(value, label, maximum=64)
+    if not re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", text):
+        raise HTTPValidationError(f"{label} must be a SimPortal build ID", code="not_found", status=404)
+    return text
+
+
 def _pr_review_media_type(value: str) -> str:
     if len(value) > 255 or any(ord(character) < 32 or ord(character) == 127 for character in value) or not re.fullmatch(r"[A-Za-z0-9!#$&^_.+\-]+/[A-Za-z0-9!#$&^_.+\-]+", value):
         raise HTTPValidationError("content_type is invalid")
@@ -456,6 +464,7 @@ def api_description() -> dict:
             first_mate_peers.CAPABILITY,
             first_mate_fleet.CAPABILITY,
             VERIFICATION_CAPABILITY,
+            simulator_previews.CAPABILITY,
             "pr-review-v1",
             "pr-review-guide-v1",
             "pr-review-context-v2",
@@ -491,6 +500,10 @@ def api_description() -> dict:
             "firstMateHud": "/api/v1/first-mate/features/{featureId}/hud",
             "firstMateLead": "/api/v1/first-mate/lead",
             "firstMateLeadRemote": "/api/v1/first-mate/lead/remote",
+            "firstMateSimulator": "/api/v1/first-mate/simulator",
+            "firstMateSimulatorBuilds": "/api/v1/first-mate/features/{featureId}/simulator-builds",
+            "firstMateSimulatorPreview": "/api/v1/first-mate/features/{featureId}/simulator-previews/{previewId}",
+            "firstMateSimulatorStream": "/api/v1/first-mate/features/{featureId}/simulator-previews/{previewId}/stream",
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
@@ -577,6 +590,8 @@ def api_description() -> dict:
             "POST /api/v1/first-mate/features/{featureId}/read|hud",
             "POST /api/v1/first-mate/lead",
             "POST /api/v1/first-mate/lead/remote",
+            "POST /api/v1/first-mate/features/{featureId}/simulator-builds/{buildId}/preview",
+            "POST /api/v1/first-mate/features/{featureId}/simulator-previews/{previewId}/stop",
             "PATCH|DELETE /api/v1/notes/{noteId}",
             "POST /api/v1/workspaces",
             "PATCH|DELETE /api/v1/workspaces/{workspaceId}",
@@ -988,6 +1003,11 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except FirstMateError as exc:
                 self._json_response({"ok": False, "error": {"code": exc.code, "message": str(exc),
                                      "next_permitted_actions": exc.next_permitted_actions}}, exc.status)
+            except simulator_previews.SimulatorPreviewError as exc:
+                error = {"code": exc.code, "message": str(exc)}
+                if exc.details:
+                    error["details"] = exc.details
+                self._json_response({"ok": False, "error": error, "generatedAt": utc_now()}, exc.status)
             except PRReviewError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except IssueReportError as exc:
@@ -1128,6 +1148,69 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return False
             return True
 
+        def _simulator_route(self, method: str, feature_id: str, tail: list[str], query: dict, body: dict):
+            """SimPortal checkpoints and previews of one feature (first-mate-simulator-previews-v1)."""
+            if self._authorization_scope != "main":
+                raise HTTPValidationError("A valid bearer token is required", code="unauthorized", status=401)
+            service.first_mate_store.get_feature(feature_id)
+            simulator = service.simulator_previews
+            if tail == ["simulator-builds"] and method == "GET":
+                if query:
+                    raise HTTPValidationError("Simulator builds request does not accept query fields")
+                return {"ok": True, **simulator.feature_builds(feature_id)}
+            if len(tail) == 3 and tail[0] == "simulator-builds" and tail[2] == "preview" and method == "POST":
+                if query or set(body) - {"request_id", "device_type", "runtime"}:
+                    raise HTTPValidationError("Simulator preview request contains an unsupported field")
+                build_id = _simulator_uuid(tail[1], "build_id")
+                request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                device_type = _string(body["device_type"], "device_type", maximum=200) if body.get("device_type") is not None else None
+                runtime_id = _string(body["runtime"], "runtime", maximum=200) if body.get("runtime") is not None else None
+                return {"ok": True, **simulator.open_preview(feature_id, build_id, request_id=request_id,
+                                                             device_type=device_type, runtime=runtime_id)}
+            if len(tail) >= 2 and tail[0] == "simulator-previews":
+                preview_id = _string(tail[1], "preview_id", maximum=64)
+                if not re.fullmatch(r"fmsp_[0-9a-f]{32}", preview_id):
+                    raise HTTPValidationError("Unknown simulator preview", code="not_found", status=404)
+                if len(tail) == 2 and method == "GET":
+                    if query:
+                        raise HTTPValidationError("Simulator preview request does not accept query fields")
+                    return {"ok": True, **simulator.preview_detail(feature_id, preview_id)}
+                if tail[2:] == ["stop"] and method == "POST":
+                    if query or set(body) - {"request_id", "mode"}:
+                        raise HTTPValidationError("Simulator stop request contains an unsupported field")
+                    request_id = _string(body.get("request_id"), "request_id", maximum=200)
+                    mode = _string(body.get("mode", "shutdown"), "mode", maximum=16)
+                    return {"ok": True, **simulator.stop_preview(feature_id, preview_id, request_id=request_id, mode=mode)}
+                if tail[2:] == ["stream"] and method == "GET":
+                    if query:
+                        raise HTTPValidationError("Simulator stream request does not accept query fields")
+                    return self._serve_simulator_stream(feature_id, preview_id)
+            raise HTTPValidationError("First Mate simulator endpoint not found", code="not_found", status=404)
+
+        def _serve_simulator_stream(self, feature_id: str, preview_id: str) -> None:
+            """Upgrade to a WebSocket relayed to the preview's exact simulator viewer.
+
+            SimPortal is dialed (with its credential in a header) before the
+            client is upgraded, so every refusal is an ordinary HTTP error.
+            """
+            key = websocket_relay.upgrade_key(self.headers)
+            if key is None:
+                raise HTTPValidationError("The simulator stream needs a WebSocket upgrade", code="upgrade_required", status=426)
+            stream = service.simulator_previews.open_stream(feature_id, preview_id)
+            self.close_connection = True
+            try:
+                self.send_response(101, "Switching Protocols")
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", websocket_relay.accept_value(key))
+                self.end_headers()
+                self.wfile.flush()
+            except OSError:
+                stream.abandon()
+                return None
+            stream.run(self.connection, self.rfile)
+            return None
+
         def _first_mate_route(self, method: str, tail: list[str], query: dict, body: dict):
             store = service.first_mate_store
             runtime = service.first_mate
@@ -1150,6 +1233,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     first_mate_peers.CAPABILITY,
                     first_mate_fleet.CAPABILITY,
                     VERIFICATION_CAPABILITY,
+                    simulator_previews.CAPABILITY,
                 ], **runtime.capabilities(),
                     **({"skim": service.skims.capabilities()} if hasattr(service, "skims") else {})}
             if method == "GET" and tail == ["models"]:
@@ -1198,6 +1282,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         _string(body.get("request_id"), "request_id", maximum=200)
                     existed = store.lead() is not None
                     return {"ok": True, "lead": runtime.ensure_lead()}, (200 if existed else 201)
+            if tail == ["simulator"] and method == "GET":
+                if self._authorization_scope != "main":
+                    raise HTTPValidationError("A valid bearer token is required", code="unauthorized", status=401)
+                if set(query) - {"fresh"}:
+                    raise HTTPValidationError("Simulator status accepts only the fresh query field")
+                fresh = (query.get("fresh") or ["0"])[0] in {"1", "true"}
+                return {"ok": True, "simulator": service.simulator_previews.status(fresh=fresh)}
             if method == "GET" and tail == ["fleet"]:
                 # Store SQL only: never the runtime's per-feature job and usage scan.
                 if set(query) - {"view"} or any(len(values) != 1 for values in query.values()):
@@ -1226,6 +1317,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return {"ok": True, "feature": feature_view(feature["id"])}, 201
             if len(tail) >= 2 and tail[0] == "features":
                 feature_id = _string(tail[1], "feature_id", maximum=128)
+                if len(tail) >= 3 and tail[2] in {"simulator-builds", "simulator-previews"}:
+                    return self._simulator_route(method, feature_id, tail[2:], query, body)
                 if tail[2:] == ["git", "workspaces"] and method == "GET":
                     if query:
                         raise HTTPValidationError("Git workspace request contains an unsupported query field")

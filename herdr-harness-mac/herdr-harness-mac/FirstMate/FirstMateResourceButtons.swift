@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// A stage's agents and documents as 22pt chips (MonoCode's `.chipdoc`).
+/// A stage's agents, documents, and saved simulator builds as 22pt chips
+/// (MonoCode's `.chipdoc`).
 struct FirstMateResourceButtons: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
@@ -33,6 +34,7 @@ struct FirstMateResourceButtons: View {
             }
             .disabled(documents.isEmpty)
             .accessibilityIdentifier("first-mate-visit-documents-\(visit.id)")
+            FirstMateSimulatorVisitChip(visitID: visit.id)
         }
         .menuStyle(.button)
         .buttonStyle(.herdrPlain)

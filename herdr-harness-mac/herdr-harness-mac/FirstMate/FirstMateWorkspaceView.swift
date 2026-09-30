@@ -103,6 +103,7 @@ struct FirstMateWorkspaceView: View {
                                 selectedGitTargetIdentity = gitTargetIdentity
                                 mode = .git
                             })
+                                .firstMateSimulator(model: model, machineID: owningMachineID, featureID: snapshot.feature.id)
                                 .frame(minWidth: 340, idealWidth: 420, maxWidth: .infinity)
                         }
                     }

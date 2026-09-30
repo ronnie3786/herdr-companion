@@ -431,6 +431,14 @@ footer; iPad shows the list, chat and Info in three columns. The cached dusk and
 See
 [mobile behavior and verification](docs/first-mate/ios.md).
 
+First Mate lists and conversations remain readable while live verification is
+slow or another refresh is checking the same feature. Companion 0.67.2b1 bounds
+display verification to three seconds per list or compact read and never queues
+competing display assessments. Incomplete checks show verification unavailable
+with prior evidence kept historical; workflow gates still run full verification.
+Install and restart the companion separately on each affected host. Existing
+native apps remain compatible and need no update for this repair.
+
 The companion server runs the durable queue, execution watcher, bounded recovery,
 and work log. Closing the Mac window does not stop the work. The optional browser
 view is served at `/first-mate/` and uses the same authenticated API and records.

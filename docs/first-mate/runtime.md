@@ -354,6 +354,15 @@ membership. Old evidence retains its original revision and session provenance.
 
 ### Storage faults and engine health
 
+Display verification shares a three-second budget across a feature list and
+across compact-read retries. A read never waits for another assessment of the
+same feature. Git probes use the remaining budget and disable optional index
+writes. If the budget expires or another read is busy, the list or conversation
+still loads with verification unavailable and any prior assessment marked as
+historical. A late result cannot enter the read cache. These presentation limits
+do not apply to authoritative workflow gates, which continue to compute full
+verification independently of the read cache.
+
 The scheduler catches both reconciliation failures and failures writing its error
 record. Diagnostic persistence is best-effort, never a prerequisite for keeping
 the loop alive. Failed passes retry with an interruptible 1–30 second exponential

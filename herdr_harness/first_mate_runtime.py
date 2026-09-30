@@ -33,7 +33,7 @@ from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_context import FirstMateContext
-from .first_mate_read_cache import AssessmentReadCache
+from .first_mate_read_cache import AssessmentReadBusy, AssessmentReadCache
 from .first_mate_read_models import feature_summary, stable_verification
 from .first_mate_git_history import capture_baselines, capture_commits, capture_comparison_baseline, recorded_comparison_baseline
 from .first_mate_link_discovery import FirstMateLinkDiscovery
@@ -61,6 +61,13 @@ _PI_SESSION_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 CHECKPOINT_SUMMARY_LIMIT = 1200
 CHECKPOINT_RECOMMENDATION_LIMIT = 400
 NOTICE_LIMIT = 600
+# Leave room for accounting, JSON and transport inside native read deadlines.
+# Authoritative workflow gates do not use this presentation budget.
+VERIFICATION_READ_SECONDS = 3.0
+
+
+class _VerificationReadUnavailable(Exception):
+    """Stop a display assessment without weakening a workflow gate."""
 
 
 class _ExecutionBudget:
@@ -722,6 +729,7 @@ class FirstMateRuntime:
         self._catalog_cache = None
         self._catalog_at = 0.0
         self._assessment_reads = AssessmentReadCache()
+        self._verification_read_context = threading.local()
         self.usage = FirstMateUsage(self.root / "sessions")
         self.context = FirstMateContext(self.jobs_root, self.context_target)
         from .first_mate_reliability import FirstMateReliability
@@ -916,6 +924,7 @@ class FirstMateRuntime:
         )
 
     def list_features(self, view: str = "active") -> list[dict]:
+        verification_deadline = time.monotonic() + VERIFICATION_READ_SECONDS
         features = self.store.list_features(view)
         if not features:
             return []
@@ -926,7 +935,7 @@ class FirstMateRuntime:
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
             selection = self._policy(feature, kind="coordinator", claim={}).selection()
             result.append({**feature, "usage": account["usage"], "model_selection": selection,
-                           "verification": self._live_verification(feature),
+                           "verification": self._live_verification(feature, deadline=verification_deadline),
                            "coordinator_context": self.context.project(feature, jobs)})
         return result
 
@@ -939,19 +948,42 @@ class FirstMateRuntime:
                 "verification": self._live_verification(feature),
                 "coordinator_context": self.context.project(feature, jobs)}
 
-    def _live_verification(self, feature: Mapping[str, Any]) -> dict:
-        """Reuse coverage only while freshly observed evidence and Git inputs match.
+    def _live_verification(self, feature: Mapping[str, Any], *, deadline: float | None = None) -> dict:
+        """Bound display work and reuse only freshly validated coverage.
 
         TTL bounds retention; it is never a substitute for checking workspace
         HEAD/status. Mutating gate decisions use verification_assessment directly.
         """
+        if deadline is None:
+            deadline = time.monotonic() + VERIFICATION_READ_SECONDS
+        previous_deadline = getattr(self._verification_read_context, "deadline", None)
+
+        def bounded(read):
+            self._check_verification_read_deadline()
+            value = read()
+            self._check_verification_read_deadline()
+            return value
+
         try:
+            self._verification_read_context.deadline = deadline
+            self._check_verification_read_deadline()
             return self._assessment_reads.get(
-                feature["id"], lambda: self._verification_read_identity(feature["id"]),
-                lambda: self._compute_live_verification(self.store.get_feature(feature["id"])))
-        except (FirstMateError, OSError, sqlite3.Error, subprocess.TimeoutExpired, VerificationValidationError) as exc:
+                feature["id"],
+                lambda: bounded(lambda: self._verification_read_identity(feature["id"])),
+                lambda: bounded(lambda: self._compute_live_verification(self.store.get_feature(feature["id"]))),
+                wait=False)
+        except (FirstMateError, OSError, sqlite3.Error, subprocess.TimeoutExpired, VerificationValidationError,
+                AssessmentReadBusy, _VerificationReadUnavailable) as exc:
             return self._historical_unavailable(feature, feature.get("verification"),
                 "The current coverage inputs could not be checked: " + str(exc)[:300])
+        finally:
+            self._verification_read_context.deadline = previous_deadline
+
+    def _check_verification_read_deadline(self) -> None:
+        deadline = getattr(self._verification_read_context, "deadline", None)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _VerificationReadUnavailable(
+                "Current verification exceeded the display time budget; workflow gates still run full verification.")
 
     def _verification_read_identity(self, feature_id: str) -> str:
         feature = self.store.get_feature(feature_id)
@@ -1155,6 +1187,7 @@ class FirstMateRuntime:
 
     def read_view(self, feature_id: str, *, view: str = "chat", messages: int = 60,
                   before: str | None = None, if_version: str | None = None) -> dict:
+        verification_deadline = time.monotonic() + VERIFICATION_READ_SECONDS
         if view not in {"chat", "overview", "details"}:
             raise FirstMateError("Invalid read view", code="invalid_request", status=400)
         if before is not None and view != "chat":
@@ -1186,7 +1219,7 @@ class FirstMateRuntime:
                     **raw_feature,
                     "usage": account["usage"],
                     "model_selection": selection,
-                    "verification": self._live_verification(raw_feature),
+                    "verification": self._live_verification(raw_feature, deadline=verification_deadline),
                     "coordinator_context": self.context.project(raw_feature, jobs),
                 }
                 presented = feature_summary(enriched) if view == "chat" else enriched
@@ -1686,7 +1719,26 @@ class FirstMateRuntime:
         return job
 
     def _git(self, cwd: str, *args: str) -> str:
-        result = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=30)
+        deadline = getattr(self._verification_read_context, "deadline", None)
+        timeout = 30.0
+        options = {}
+        if deadline is not None:
+            self._check_verification_read_deadline()
+            timeout = min(timeout, deadline - time.monotonic())
+            if timeout <= 0:
+                self._check_verification_read_deadline()
+            # Display probes must not contend with agents updating Git indexes.
+            options["env"] = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+        try:
+            result = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
+                                    timeout=timeout, **options)
+        except subprocess.TimeoutExpired:
+            if deadline is not None:
+                # Scope's per-workspace error recovery must not keep scanning
+                # after the shared budget expires.
+                raise _VerificationReadUnavailable(
+                    "Current verification exceeded the display time budget; workflow gates still run full verification.") from None
+            raise
         if result.returncode:
             raise FirstMateError("Git workspace operation failed: " + result.stderr.strip()[:500])
         return result.stdout.strip()

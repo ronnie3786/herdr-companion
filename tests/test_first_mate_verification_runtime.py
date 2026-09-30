@@ -8,8 +8,10 @@ and Git observations are evaluated.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -30,6 +32,107 @@ def gate(name: str, outcome: str = "passed", package: str = "pkg/app", **counts)
 
 
 class VerificationRuntimeTests(unittest.TestCase):
+    def prepare_verified_feature(self):
+        self.stage_and_assignment()
+        self.record_inventory(SUITES, revision=self.base)
+        self.record_run("read-budget-evidence", SUITES, revision=self.base)
+        current = self.runtime.verification_assessment(self.feature["id"])
+        self.assertEqual(current["status"], "verified")
+        return {**self.store.get_feature(self.feature["id"]), "verification": current}
+
+    def test_expired_display_budget_keeps_prior_green_historical(self):
+        feature = self.prepare_verified_feature()
+        with patch.object(self.runtime, "_git", side_effect=AssertionError("Git after deadline")):
+            value = self.runtime._live_verification(feature, deadline=0)
+        self.assertEqual(value["status"], "unavailable")
+        self.assertEqual(value["historical_evidence"]["status"], "verified")
+        self.assertIn("time budget", value["coverage_reasons"][0])
+
+    def test_git_timeout_stops_display_scope_and_restores_gate_timeout(self):
+        feature = self.prepare_verified_feature()
+        with patch("herdr_harness.first_mate_runtime.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired(["git"], 0.01)) as git:
+            value = self.runtime._live_verification(feature)
+        self.assertEqual(value["status"], "unavailable")
+        self.assertEqual(value["historical_evidence"]["status"], "verified")
+        self.assertEqual(git.call_count, 1, "Do not keep scanning worktrees after timeout")
+        self.assertGreater(git.call_args.kwargs["timeout"], 0)
+        self.assertLessEqual(git.call_args.kwargs["timeout"], 3)
+        self.assertEqual(git.call_args.kwargs["env"]["GIT_OPTIONAL_LOCKS"], "0")
+        with patch("herdr_harness.first_mate_runtime.subprocess.run",
+                   return_value=subprocess.CompletedProcess(["git"], 0, self.base, "")) as git:
+            self.assertEqual(self.runtime._git(str(self.repo), "rev-parse", "HEAD"), self.base)
+        self.assertEqual(git.call_args.kwargs["timeout"], 30)
+        self.assertNotIn("env", git.call_args.kwargs)
+        self.assertEqual(self.runtime.verification_assessment(self.feature["id"])["status"], "verified")
+
+    def test_late_success_is_not_cached_or_promoted_to_current_verified(self):
+        feature = self.prepare_verified_feature()
+        now = [100.0]
+
+        def assessment(_):
+            now[0] = 104.0
+            return feature["verification"]
+
+        with patch.object(self.runtime, "_verification_read_identity", return_value="same"), \
+             patch.object(self.runtime, "_compute_live_verification", side_effect=assessment), \
+             patch("herdr_harness.first_mate_runtime.time.monotonic", side_effect=lambda: now[0]):
+            value = self.runtime._live_verification(feature)
+        self.assertEqual(value["status"], "unavailable")
+        self.assertIsNone(self.runtime._verification_read_context.deadline)
+        self.assertEqual(self.runtime._assessment_reads._entries, {})
+        self.assertEqual(self.runtime._assessment_reads._flights, {})
+
+    def test_slow_verification_does_not_hide_list_or_chat_or_block_workflow_gate(self):
+        feature = self.prepare_verified_feature()
+        entered, release = threading.Event(), threading.Event()
+        original = self.runtime._verification_read_identity
+
+        def identity(feature_id):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return original(feature_id)
+
+        with ThreadPoolExecutor(max_workers=1) as pool, \
+             patch.object(self.runtime, "_verification_read_identity", side_effect=identity):
+            first = pool.submit(self.runtime._live_verification, feature)
+            try:
+                self.assertTrue(entered.wait(5))
+                features = self.runtime.list_features()
+                self.assertEqual([row["id"] for row in features], [feature["id"]])
+                self.assertEqual(features[0]["verification"]["status"], "unavailable")
+                chat = self.runtime.read_view(feature["id"])
+                self.assertEqual(chat["feature"]["id"], feature["id"])
+                self.assertTrue(chat["messages"])
+                self.assertEqual(chat["feature"]["verification"]["status"], "unavailable")
+                self.assertEqual(self.runtime.verification_assessment(feature["id"])["status"], "verified")
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=5)["status"], "verified")
+
+    def test_display_deadline_does_not_leak_to_other_threads(self):
+        self.prepare_verified_feature()
+        self.runtime._verification_read_context.deadline = 0
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(self.runtime.verification_assessment, self.feature["id"]).result(timeout=10)
+            self.assertEqual(result["status"], "verified")
+        finally:
+            self.runtime._verification_read_context.deadline = None
+
+    def test_feature_list_shares_one_verification_budget(self):
+        self.prepare_verified_feature()
+        self.store.create_feature({"title": "Another synthetic feature", "goal": "Inspect only",
+                                   "cwd": str(self.repo), "request_id": "second-feature"})
+        with patch.object(self.runtime, "_live_verification", wraps=self.runtime._live_verification) as assess, \
+             patch("herdr_harness.first_mate_runtime.VERIFICATION_READ_SECONDS", 0), \
+             patch.object(self.runtime, "_git", side_effect=AssertionError("Git after list deadline")):
+            features = self.runtime.list_features()
+        self.assertEqual(len(features), 2)
+        self.assertEqual(assess.call_count, 2)
+        self.assertEqual(assess.call_args_list[0].kwargs["deadline"], assess.call_args_list[1].kwargs["deadline"])
+        self.assertTrue(all(row["verification"]["status"] == "unavailable" for row in features))
+
     def test_verification_and_worker_policy_reads_do_not_materialize_telemetry(self):
         assignment = self.stage_and_assignment()
         self.record_inventory(SUITES, revision=self.base)

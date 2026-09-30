@@ -5,10 +5,36 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import unittest
 
-from herdr_harness.first_mate_read_cache import AssessmentReadCache
+from herdr_harness.first_mate_read_cache import AssessmentReadBusy, AssessmentReadCache
 
 
 class AssessmentReadCacheTests(unittest.TestCase):
+    def test_display_read_does_not_queue_or_reuse_unvalidated_cached_green(self):
+        cache = AssessmentReadCache()
+        cache.get("feature", lambda: "old", lambda: {"status": "verified"})
+        entered, release = threading.Event(), threading.Event()
+
+        def identity():
+            entered.set()
+            self.assertTrue(release.wait(5))
+            return "new"
+
+        def unexpected():
+            self.fail("A competing display read must not probe or compute")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(cache.get, "feature", identity, lambda: {"status": "failed"}, wait=False)
+            try:
+                self.assertTrue(entered.wait(5))
+                with self.assertRaises(AssessmentReadBusy):
+                    cache.get("feature", unexpected, unexpected, wait=False)
+                self.assertEqual(cache.get("other", lambda: "new", lambda: "independent", wait=False),
+                                 "independent")
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=5), {"status": "failed"})
+        self.assertEqual(cache.get("feature", lambda: "new", unexpected, wait=False), {"status": "failed"})
+
     def test_hit_invalidation_ttl_and_copy_isolation(self):
         now = [0.0]
         identity = ["one"]

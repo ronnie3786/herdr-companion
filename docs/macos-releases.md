@@ -12,7 +12,7 @@ binary is already available or that publisher signing credentials are configured
 
 ## Install an available update
 
-In a configured release build, background checks run every ten minutes while the
+In a configured release build, background checks run every two minutes while the
 app is running (the first about two minutes after launch), so the window's top bar
 shows a clickable version badge as soon as a release is available.
 **Herdr Companion → Check for Updates…** and **Settings → Updates → Check for Updates…**
@@ -142,46 +142,71 @@ both stable and preview builds already in the feed.
 ## Commit and verify the exact source
 
 Commit the version metadata and all reviewed application, tooling, and documentation
-changes. Push the commit, then wait for the latest **Verify** workflow run for that
-exact commit to succeed. Keep the working tree clean, including untracked files.
+changes. Keep the working tree clean, including untracked files. Push the commit.
+Two checks must then pass for that exact commit:
+
+- the **Verify** workflow on GitHub: privacy and credential scans, the Python, Pi and
+  web suites, and an installed-wheel check;
+- the **Mac tests (local)** commit status, posted by `scripts/local-verify.py` on a
+  Mac. It runs the Mac unit tests (and the iOS unit tests when anything the iOS app
+  builds from changed) in a clean checkout of exactly that commit, so uncommitted or
+  untracked files in your working copy never count. It keeps that checkout and its
+  build products under `~/Library/Caches/herdr-companion/local-verify`, so
+  consecutive runs build incrementally, and runs one verification at a time.
+
 For example, after a version-only bump:
 
 ```sh
 git add release/macos.json
 git commit -m "Prepare next macOS preview"
 git push
+.venv/bin/python scripts/local-verify.py
 gh run list --workflow Verify --commit "$(git rev-parse HEAD)" \
   --limit 1 --json headSha,status,conclusion
 ```
 
-A successful run on a previous commit is insufficient. Preparation may start as
-soon as Verify has started for the exact commit, because it builds, signs, and
-checks locally and publishes nothing; it refuses a commit Verify has not seen or
-whose latest run failed. Publication requires the latest run for that exact commit
-to have passed, and `publish --wait-for-ci MINUTES` waits for a run still in
-progress. A failing test or privacy check must be repaired before publishing.
+`local-verify.py` takes a revision (default `HEAD`), `--ios always|never` to override
+the iOS decision, `--force` to test again, and `--no-post` to test a commit without
+posting a status (for example, before pushing). Its status description is public and
+names no paths or machines; the full log stays in the cache directory.
 
-Verify tests each commit once. A pull request from a branch of this repository
-leaves the tests to the push run of the same commit, which tests exactly that
-commit, and a commit that already passed on a push is not tested again. When a
-test fails, only the failed tests run again (up to ten, against the same build),
-and a pass on retry leaves a **Flaky tests** warning on the run.
+A successful result on a previous commit is insufficient. Preparation may start as
+soon as Verify has started for the exact commit, because it builds, signs, and
+checks locally and publishes nothing; it refuses a commit Verify has not seen, or
+where Verify or the local Mac tests failed. Publication requires both to have
+passed, and `publish --wait-for-ci MINUTES` waits for either still in progress. A
+failing test or privacy check must be repaired before publishing.
+
+Each commit is tested once, and tested code is not tested again:
+
+- A pull request from a branch of this repository leaves the checks to the push run
+  of the same commit, and a commit that already passed is not checked again.
+- A squash merge whose tree is identical to a pull request head that passed reuses
+  that head's results.
+- A commit that changes only `docs/`, `design/`, top-level Markdown files,
+  `release/notes/` or `release/macos.json`, on top of a parent that passed, reuses
+  the parent's results. Verify waits up to 20 minutes for a parent still being checked.
+  The privacy scan still runs on every new commit.
+
+The rules live in `scripts/verification_policy.py` and are shared by Verify and
+`local-verify.py`. When a test fails, only the failed tests run again (up to ten,
+against the same build), and a pass on retry leaves a **Flaky tests** warning.
 
 ### Land a pull request without testing it twice
 
-A merge commit is a new revision, so the release would wait for Verify to test the
-same code again. Land a verified pull request by fast-forwarding `main` to its
-exact head instead:
+A merge commit is a new revision, so the release would wait for the same code to be
+tested again. Land a verified pull request by fast-forwarding `main` to its exact
+head instead:
 
 ```sh
 .venv/bin/python scripts/land-pr.py 123 --delete-branch
 ```
 
 The branch must already contain `main` (merge `origin/main` into it and push
-first), and the latest push run of Verify for its head must have passed. GitHub
-marks the pull request merged, the push to `main` skips its tests because that
-commit already passed, and preparation can start right away. The Code Factory
-keeps its own merge flow.
+first). The latest push run of Verify and the **Mac tests (local)** status for its
+head must have passed. GitHub marks the pull request merged, the push to `main`
+skips its checks because that commit already passed, and preparation can start right
+away. The Code Factory keeps its own merge flow.
 
 ## Prepare and review the artifacts
 

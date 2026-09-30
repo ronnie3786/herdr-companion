@@ -60,6 +60,8 @@ RELEASE_RETRY_MIN_SECONDS = 600
 RELEASE_RETRY_MAX_SECONDS = 6 * 3600
 AUTO_RETRY_DELAY_SECONDS = 300
 VERIFY_POLL_MAX_ERRORS = 5
+VERIFY_START_SECONDS = 180
+LOCAL_VERIFY_SCRIPT = "scripts/local-verify.py"
 PRIVACY_CHECK_SCRIPT = "scripts/check-public-source.py"
 RELEASE_VERSION_FILE = "release/macos.json"
 MAX_CHECK_OUTPUT_CHARS = 1024 * 1024
@@ -79,6 +81,37 @@ _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 Runner = Callable[..., Any]
 Logger = Callable[[str], None]
+
+
+class LocalVerifyRun:
+    """One ``scripts/local-verify.py`` process: the Mac (and iOS) tests for a commit.
+
+    Verify on GitHub no longer runs those suites. The script tests the exact commit in
+    its own clean checkout and posts the "Mac tests (local)" status itself; ``poll``
+    returns its JSON summary once it exits.
+    """
+
+    def __init__(self, process: subprocess.Popen[Any], output: Path):
+        self._process = process
+        self._output = output
+        self._result: dict[str, Any] | None = None
+
+    def poll(self) -> dict[str, Any] | None:
+        if self._result is None and self._process.poll() is not None:
+            text = self._output.read_text(encoding="utf-8", errors="replace")
+            self._result = _local_verify_summary(text, self._process.returncode)
+        return self._result
+
+
+def _local_verify_summary(text: str, returncode: int) -> dict[str, Any]:
+    for line in reversed(text.strip().splitlines()):
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and "ok" in payload:
+            return {**payload, "ok": payload["ok"] is True and returncode == 0}
+    return {"ok": False, "state": "error", "excerpt": text[-4000:] or f"exit status {returncode}"}
 
 
 def _default_log(message: str) -> None:
@@ -224,6 +257,7 @@ class CodeFactory:
         log: Logger | None = None,
         check_runner: Runner | None = None,
         message_runner: Runner | None = None,
+        local_verifier: Callable[[str, Path], Any] | None = None,
     ):
         self._settings = settings
         self._store = store
@@ -234,6 +268,10 @@ class CodeFactory:
         self._sleep = sleep
         self._check_runner: Runner = check_runner or subprocess.run
         self._message_runner: Runner = message_runner or subprocess.run
+        self._local_verifier: Callable[[str, Path], Any] = local_verifier or self._start_local_verify
+        self._local_runs: dict[str, Any] = {}
+        self._local_failures: dict[str, str] = {}
+        self._local_lock = threading.Lock()
         self._log: Logger = log or _default_log
         self._lock = threading.RLock()
         self._active: set[int] = set()
@@ -1066,19 +1104,42 @@ class CodeFactory:
         *,
         on_warning: Callable[[str], None] | None = None,
         cancel: Callable[[], bool] | None = None,
+        worktree: Path | None = None,
     ) -> str:
-        """Poll the Verify workflow for ``sha``; returns success, failure, timeout or interrupted.
+        """Poll the Verify workflow and the local Mac tests for ``sha``; returns success,
+        failure, timeout or interrupted.
 
-        A failing ``gh run list`` (rate limit, 5xx, network blip) is reported through
-        ``on_warning`` and polling continues within the same deadline; only
-        ``VERIFY_POLL_MAX_ERRORS`` consecutive failures propagate.
+        With a ``worktree``, the local Mac tests (``scripts/local-verify.py``) run alongside
+        Verify, and both must pass. A failing ``gh run list`` (rate limit, 5xx, network blip)
+        is reported through ``on_warning`` and polling continues within the same deadline;
+        only ``VERIFY_POLL_MAX_ERRORS`` consecutive failures propagate.
         """
+        local = self._local_run(sha, worktree) if worktree is not None else None
+        try:
+            return self._poll_verify(sha, local, on_status, on_warning=on_warning, cancel=cancel)
+        finally:
+            if local is not None and local.poll() is not None:
+                with self._local_lock:
+                    if self._local_runs.get(sha) is local:
+                        del self._local_runs[sha]
+
+    def _poll_verify(
+        self,
+        sha: str,
+        local: Any | None,
+        on_status: Callable[[str], None] | None,
+        *,
+        on_warning: Callable[[str], None] | None,
+        cancel: Callable[[], bool] | None,
+    ) -> str:
         started = self._clock()
         errors = 0
         while True:
             status: str | None
             try:
                 status = self._github.verify_status(sha)
+                if local is not None:
+                    status = self._with_local_result(sha, status, local)
                 errors = 0
             except CodeFactoryError as exc:
                 errors += 1
@@ -1099,6 +1160,53 @@ class CodeFactory:
             if self._stop_event.is_set() or (cancel is not None and cancel()):
                 return "interrupted"
             self._sleep(VERIFY_POLL_SECONDS)
+
+    def _with_local_result(self, sha: str, ci: str, local: Any) -> str:
+        """Verify's state combined with the local Mac tests: both must pass."""
+        result = local.poll()
+        if result is None:
+            local_state = "pending"
+        elif result.get("ok"):
+            local_state = "success"
+        else:
+            local_state = "failure"
+            self._local_failures[sha] = str(result.get("excerpt") or result.get("error") or result.get("description") or "")
+        if "failure" in (ci, local_state):
+            return "failure"
+        if ci == "success" and local_state == "success":
+            return "success"
+        return "none" if ci == "none" else "pending"
+
+    def _local_run(self, sha: str, worktree: Path) -> Any:
+        """The running (or finished, not yet consumed) local Mac test run for ``sha``."""
+        with self._local_lock:
+            run = self._local_runs.get(sha)
+            if run is None:
+                self._local_failures.pop(sha, None)
+                run = self._local_verifier(sha, worktree)
+                self._local_runs[sha] = run
+            return run
+
+    def _start_local_verify(self, sha: str, worktree: Path) -> LocalVerifyRun:
+        # The script fetches the commit from this checkout into its own clean checkout.
+        cwd = worktree if (worktree / LOCAL_VERIFY_SCRIPT).is_file() else self._settings.checkout
+        output = self._settings.runs_root / "local-verify" / f"{sha}.log"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("w", encoding="utf-8") as handle:
+            process = subprocess.Popen(
+                [self._settings.python, LOCAL_VERIFY_SCRIPT, sha], cwd=str(cwd), stdout=handle,
+                stderr=subprocess.STDOUT, env=self._git.environment(), start_new_session=True,
+            )
+        self._log(f"local Mac tests started for {sha[:12]}")
+        return LocalVerifyRun(process, output)
+
+    def _verify_failure_log(self, sha: str) -> str:
+        """CI failure excerpts plus the local Mac test failure, if any."""
+        parts = [self._github.failed_run_log(sha)]
+        local = self._local_failures.get(sha)
+        if local:
+            parts.append(f"Mac tests (local) failed:\n{local}")
+        return "\n\n".join(part for part in parts if part)
 
     # -- stages ---------------------------------------------------------------------
 
@@ -1331,7 +1439,7 @@ class CodeFactory:
         status = self._wait_for_verify(
             head, lambda value: self._store.update_issue(number, ciStatus=value),
             on_warning=lambda message: self._store.add_event(number, "verify", "warning", message),
-            cancel=lambda: self._cancel_requested(number),
+            cancel=lambda: self._cancel_requested(number), worktree=self._worktree_path(number),
         )
         if status == "interrupted":
             raise _Interrupted()
@@ -1357,7 +1465,7 @@ class CodeFactory:
                 self._store.update_issue(number, ciFailures=attempt, ciRerunRequested=head, ciStatus="pending")
                 self._store.add_event(number, "verify", "warning", f"Verify failed on {head[:12]}; re-running failed jobs once")
                 return "verify"
-            log = self._github.failed_run_log(head)
+            log = self._verify_failure_log(head)
             plan = self._plan_for(issue)
             plan["ci_log"] = log[-prompts.MAX_LOG_CHARS:]
             plan["last_review"] = None
@@ -1872,6 +1980,8 @@ class CodeFactory:
                     self._store.add_event(number, "release", "info",
                                           f"Resuming release {tag} at {source_sha[:12]} (version already on {settings.base_branch})")
                 manifest = self._prepared_manifest(resumed, tag, source_sha)
+                if manifest is not None:
+                    self._log(f"release {tag}: reusing the prepared manifest at {manifest}")
             else:
                 part = "minor" if any(issue["kind"] == "feature" for issue in issues) else "patch"
                 expected = script.next_version(current, part, settings.release_channel)
@@ -1888,16 +1998,26 @@ class CodeFactory:
                 self._push_base(worktree)
                 source_sha = self._git.head(worktree)
             self._store.update_release(tag, sourceSha=source_sha, status="verifying")
-            status = self._wait_for_verify(source_sha, on_warning=lambda message: self._log(f"release {tag}: {message}"))
+            if manifest is None:
+                # Preparation overlaps Verify and the local Mac tests, as in the manual flow: it builds
+                # and signs locally and publishes nothing. outputDir is recorded at once so a retry
+                # reuses the prepared manifest (the script refuses to overwrite assets from an earlier
+                # prepare with different digests).
+                self._local_run(source_sha, worktree)
+                if self._await_verify_start(source_sha) != "failure":
+                    output = self._release_output_dir(version_label, label)
+                    self._store.update_release(tag, outputDir=str(output))
+                    manifest = self._prepare_release(worktree, notes_rel, output)
+            status = self._wait_for_verify(source_sha, on_warning=lambda message: self._log(f"release {tag}: {message}"),
+                                           worktree=worktree)
             if status != "success":
                 raise CodeFactoryError(f"Verify {status} on {settings.base_branch} commit {source_sha[:12]}", code="ci_failed")
-            output = manifest.parent if manifest is not None else self._release_output_dir(version_label, label)
-            # outputDir is recorded before publish so a retry can reuse the prepared manifest
-            # (the script refuses to overwrite assets from an earlier prepare with different digests).
-            self._store.update_release(tag, status="publishing", outputDir=str(output))
-            published_tag = self._run_release_script(worktree, notes_rel, output, tag, manifest=manifest)
+            if manifest is None:
+                raise CodeFactoryError("release prepare did not run", code="release_failed")
+            self._store.update_release(tag, status="publishing", outputDir=str(manifest.parent))
+            published_tag = self._publish_release(worktree, manifest, tag)
             url = f"https://github.com/{settings.repository}/releases/tag/{published_tag}"
-            self._store.update_release(tag, status="published", url=url, outputDir=str(output), finishedAt=utc_now(), error=None)
+            self._store.update_release(tag, status="published", url=url, outputDir=str(manifest.parent), finishedAt=utc_now(), error=None)
             for issue in issues:
                 self._finish_released_issue(issue, published_tag, version_label, url)
             self._release_failures = 0
@@ -2046,28 +2166,38 @@ class CodeFactory:
             output = root / f"{version_label}-{label}"
         return output
 
-    def _run_release_script(
-        self, worktree: Path, notes_rel: str, output: Path, tag: str, *, manifest: Path | None = None,
-    ) -> str:
+    def _await_verify_start(self, sha: str) -> str:
+        """Wait (bounded) until Verify has a run for ``sha``: preparation refuses a commit it has not seen."""
+        started = self._clock()
+        while True:
+            status = self._github.verify_status(sha)
+            if status != "none" or self._clock() - started >= VERIFY_START_SECONDS or self._stop_event.is_set():
+                return status
+            self._sleep(5)
+
+    def _release_arguments(self) -> tuple[list[str], list[str]]:
         settings = self._settings
-        base = [settings.python, "scripts/release-macos.py"]
         config: list[str] = []
         if settings.config_path:
             config += ["--config", settings.config_path]
         if settings.machine:
             config += ["--machine", settings.machine]
-        if manifest is None:
-            prepared = self._release_command(
-                [*base, "prepare", *config, "--notes", str(worktree / notes_rel), "--output", str(output)], worktree, "prepare",
-            )
-            value = prepared.get("prepared")
-            manifest_path = Path(value) if isinstance(value, str) and value else output / "prepared.json"
-            if not manifest_path.is_file():
-                raise CodeFactoryError("release prepare did not produce prepared.json", code="release_failed")
-        else:
-            manifest_path = manifest
-            self._log(f"release {tag}: reusing the prepared manifest at {manifest_path}")
-        published = self._release_command([*base, "publish", str(manifest_path), *config], worktree, "publish")
+        return [settings.python, "scripts/release-macos.py"], config
+
+    def _prepare_release(self, worktree: Path, notes_rel: str, output: Path) -> Path:
+        base, config = self._release_arguments()
+        prepared = self._release_command(
+            [*base, "prepare", *config, "--notes", str(worktree / notes_rel), "--output", str(output)], worktree, "prepare",
+        )
+        value = prepared.get("prepared")
+        manifest_path = Path(value) if isinstance(value, str) and value else output / "prepared.json"
+        if not manifest_path.is_file():
+            raise CodeFactoryError("release prepare did not produce prepared.json", code="release_failed")
+        return manifest_path
+
+    def _publish_release(self, worktree: Path, manifest: Path, tag: str) -> str:
+        base, config = self._release_arguments()
+        published = self._release_command([*base, "publish", str(manifest), *config], worktree, "publish")
         value = published.get("published")
         return value if isinstance(value, str) and value.strip() else tag
 

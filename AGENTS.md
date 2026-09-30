@@ -15,6 +15,12 @@ Use config.example.toml and entirely synthetic data in source, tests, screenshot
 and documentation. Never copy a filled-in configuration or captured session into
 this repository. Run scripts/check-public-source.py before committing.
 
+The Verify workflow does not run the Mac and iOS unit targets. After pushing a
+commit you deliver, run `scripts/local-verify.py` on a Mac: it tests that exact
+commit and posts the "Mac tests (local)" status that land-pr.py, release
+publication, and the Code Factory require. Do not run the full Mac suite by hand
+before pushing as well; that repeats the same work.
+
 For requested deliveries, diagnose and fix build, test, and configuration failures
 within the requested scope. Preserve legitimate validation and authentication
 checks. Report the delivered revision, verification, and how to find or test any

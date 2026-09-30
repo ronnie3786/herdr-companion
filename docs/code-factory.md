@@ -59,7 +59,10 @@ This is an experimental personal automation. Read the safety section before enab
    privacy check and gives Sol one chance to fix findings.
 7. **Pull request and CI.** The daemon pushes the branch, opens a PR that references the
    issue (`Refs #n`, never `Closes`, so the issue stays open until released), and waits
-   for the **Verify** workflow on the exact head commit.
+   for the **Verify** workflow on the exact head commit. Verify does not run the Mac and
+   iOS unit targets, so the daemon runs `scripts/local-verify.py` for the same commit
+   alongside it; both must pass, and a local failure excerpt reaches the reviser like a
+   CI log.
 8. **Opus reviews.** A session on `anthropic/claude-opus-5-5` with thinking `high`
    receives the bounded original issue body and the downloaded
    image attachments again, independently derives observable outcomes, and compares the
@@ -139,8 +142,11 @@ This is an experimental personal automation. Read the safety section before enab
     fresh worktree runs `scripts/release-macos.py bump` (patch for bug-only batches,
     minor when a feature is included, on the configured channel), writes the release
     notes under `release/notes/`, and commits. The daemon validates the commit, pushes
-    `main`, waits for Verify on that commit, then runs the existing `prepare` and
-    `publish` steps with your private configuration. Each included issue gets a comment
+    `main`, and runs `prepare` as soon as Verify has a run for that commit, while Verify
+    and the local Mac tests finish. It runs `publish` only after both passed. A version
+    and notes commit on top of tested code reuses those results (see
+    [macos-releases.md](macos-releases.md#commit-and-verify-the-exact-source)), so this
+    wait is short. Each included issue gets a comment
     with the released version, the `released` label, and is closed.
 
 ## Setup
@@ -345,7 +351,8 @@ branch history cannot be rebuilt.
   `stop()` gives up waiting, so build workers such as `swift-frontend` cannot outlive
   them as orphans.
 - **Existing gates stay.** The public-source privacy check runs before every push. CI
-  must be green on the exact commit before merge and again before release preparation.
+  and the local Mac tests must be green on the exact commit before merge and again
+  before release publication. Preparation may overlap them; it publishes nothing.
   The release script keeps its signing, notarization, feed, and publisher-lock checks.
 - **Server code changes.** A merged fix that touches the companion server is released
   only as a Mac app update by this pipeline. Publish the companion package separately,
@@ -442,9 +449,10 @@ python3 -m unittest tests.test_issue_reports tests.test_issue_reports_http tests
   tests.test_code_factory_pipeline tests.test_code_factory_dashboard tests.test_code_factory_cli
 ```
 
-The GitHub **Verify** Mac job runs only `-only-testing:herdr-harness-macTests`.
-The expanded command below adds the UI suite for the validation owner; it is not
-part of Verify and must be run explicitly on the delivered revision.
+`scripts/local-verify.py` runs only `-only-testing:herdr-harness-macTests` (and the iOS
+unit target when iOS sources changed). The expanded command below adds the UI suite for
+the validation owner; it is not part of either gate and must be run explicitly on the
+delivered revision.
 
 Mac (from the repository root):
 

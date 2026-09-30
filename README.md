@@ -313,7 +313,7 @@ builds.
 An available update appears both in the window's top bar — a version badge you can click at any time —
 and in a banner at the top of the window: choose **Review update…**, then use Sparkle's confirmation
 to install and relaunch. **Later** hides the banner while the top-bar badge stays until the update is
-installed or superseded. Background checks run every ten minutes while Herdr is running (the first
+installed or superseded. Background checks run every two minutes while Herdr is running (the first
 one about two minutes after launch), and **Settings → Updates** shows the active channel and the last
 and next check. Preview builds are included by default because every Herdr release is published on
 the preview channel; turn the toggle off to stay on stable releases only. This updates the Mac app
@@ -482,7 +482,11 @@ git config core.hooksPath .githooks
 ```
 
 CI also checks source, scans Git history for credentials, runs the Python/web/Pi
-suites and native unit targets, and tests a wheel from an empty working directory.
+suites, and tests a wheel from an empty working directory. The Mac and iOS unit
+targets run on a Mac instead: push, then run `scripts/local-verify.py`, which tests
+that exact commit in a clean checkout and posts the **Mac tests (local)** commit
+status that landing and publication require (see
+[docs/macos-releases.md](docs/macos-releases.md#commit-and-verify-the-exact-source)).
 To repeat the independent-install check locally:
 
 ```sh

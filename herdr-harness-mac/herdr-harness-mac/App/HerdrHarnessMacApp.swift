@@ -126,9 +126,10 @@ struct HerdrHarnessMacApp: App {
         // main window owns every `herdr://` route.
         Window("First Mate", id: HerdrWindowID.firstMateChat) {
             FirstMateChatWindowRoot(model: model, shell: shell, modelFavorites: modelFavorites)
+                .containerBackground(.clear, for: .window)
                 .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell, modelFavorites: modelFavorites))
                 .modifier(FirstMateChatWindowDismissal())
-                .modifier(HerdrMainWindowChromeModifier())
+                .modifier(HerdrMainWindowChromeModifier(revealsDesktop: true))
                 .environment(herdPulse)
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 680, minHeight: 620)

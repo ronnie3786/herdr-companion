@@ -71,6 +71,8 @@ struct SettingsView: View {
     @State private var hoveredPane: SettingsPane?
     @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
     @AppStorage(HerdrAppearancePreferences.hazeEnabledKey) private var hazeEnabled = HerdrAppearancePreferences.defaultHazeEnabled
+    @AppStorage(HerdrAppearancePreferences.desktopTransparencyEnabledKey)
+    private var desktopTransparencyEnabled = HerdrAppearancePreferences.defaultDesktopTransparencyEnabled
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
@@ -554,6 +556,11 @@ struct SettingsView: View {
                 .tint(HerdrTheme.controlAccent)
                 .disabled(reduceTransparency)
                 .accessibilityIdentifier("settings-appearance-glass")
+            Toggle("Desktop transparency", systemImage: "macwindow", isOn: $desktopTransparencyEnabled)
+                .tint(HerdrTheme.controlAccent)
+                .disabled(reduceTransparency || !glassEnabled)
+                .help("Softly blurs the desktop and windows behind the standalone First Mate window.")
+                .accessibilityIdentifier("settings-appearance-desktop-transparency")
             Toggle("Haze behind the chat", systemImage: "sun.haze", isOn: $hazeEnabled)
                 .tint(HerdrTheme.controlAccent)
                 .disabled(reduceTransparency || !glassEnabled)
@@ -566,7 +573,7 @@ struct SettingsView: View {
             SettingsSectionFooter {
                 Text(reduceTransparency
                      ? "Reduce Transparency is on in System Settings, so Herdr draws opaque surfaces."
-                     : "Glass shows a soft dusk through the sidebar, panes and HUD. Haze adds a brighter band behind the chat.")
+                     : "Glass adds a purple dusk to Herdr's surfaces. Desktop transparency softly blurs what's behind the First Mate window. Turn it off to keep the purple background opaque. Haze adds a brighter band behind the chat.")
             }
         }
     }

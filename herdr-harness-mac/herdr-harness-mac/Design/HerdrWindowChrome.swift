@@ -16,9 +16,11 @@ struct HerdrWindowChrome: NSViewRepresentable {
     static let trafficLightInset: CGFloat = 80
 
     @Binding var isFullScreen: Bool
+    var isTranslucent = false
 
     func makeNSView(context: Context) -> ChromeView {
         let view = ChromeView()
+        view.isTranslucent = isTranslucent
         view.onFullScreenChange = { value in
             if isFullScreen != value { isFullScreen = value }
         }
@@ -26,6 +28,7 @@ struct HerdrWindowChrome: NSViewRepresentable {
     }
 
     func updateNSView(_ view: ChromeView, context: Context) {
+        view.isTranslucent = isTranslucent
         view.onFullScreenChange = { value in
             if isFullScreen != value { isFullScreen = value }
         }
@@ -35,6 +38,7 @@ struct HerdrWindowChrome: NSViewRepresentable {
     final class ChromeView: NSView {
         static let toolbarIdentifier = NSToolbar.Identifier("herdr.main.chrome")
         var onFullScreenChange: ((Bool) -> Void)?
+        var isTranslucent = false
         private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
@@ -54,6 +58,9 @@ struct HerdrWindowChrome: NSViewRepresentable {
 
         func applyChrome() {
             guard let window else { return }
+            if window.isOpaque == isTranslucent { window.isOpaque = !isTranslucent }
+            let background: NSColor = isTranslucent ? .clear : .windowBackgroundColor
+            if window.backgroundColor != background { window.backgroundColor = background }
             if !window.styleMask.contains(.fullSizeContentView) {
                 window.styleMask.insert(.fullSizeContentView)
             }
@@ -93,14 +100,21 @@ extension EnvironmentValues {
 struct HerdrMainWindowChromeModifier: ViewModifier {
     /// The window's opaque background while glass is off.
     var background: Color = HerdrTheme.windowBackground
+    /// The standalone First Mate preview is the first scene to reveal the desktop.
+    var revealsDesktop = false
+    /// A controlled accessibility input for native render tests. Live scenes use macOS.
+    var reduceTransparencyOverride: Bool? = nil
     @State private var isFullScreen = false
     @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
     @AppStorage(HerdrAppearancePreferences.hazeEnabledKey) private var hazeEnabled = HerdrAppearancePreferences.defaultHazeEnabled
+    @AppStorage(HerdrAppearancePreferences.desktopTransparencyEnabledKey)
+    private var desktopTransparencyEnabled = HerdrAppearancePreferences.defaultDesktopTransparencyEnabled
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        let glass = HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparency, colorScheme: colorScheme)
+        let glass = HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparencyOverride ?? reduceTransparency, colorScheme: colorScheme)
+        let desktopGlass = revealsDesktop && desktopTransparencyEnabled && glass
         content
             // The shell draws its own 40pt bars at the top edge; nothing below
             // them should treat the transparent title bar as a safe area.
@@ -108,13 +122,26 @@ struct HerdrMainWindowChromeModifier: ViewModifier {
             .environment(\.herdrWindowIsFullScreen, isFullScreen)
             .environment(\.herdrGlassActive, glass)
             .environment(\.herdrHazeActive, glass && hazeEnabled)
+            .environment(\.herdrDesktopGlassActive, desktopGlass)
             // One dusk behind both columns; their glass levels sit over it.
             .background {
                 Group {
-                    if glass { HerdrDuskBackdrop() } else { background }
+                    if glass {
+                        ZStack {
+                            if desktopGlass {
+                                HerdrDesktopMaterial()
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                            HerdrDuskBackdrop()
+                                .opacity(desktopGlass ? HerdrGlass.desktopDuskOpacity() : 1)
+                        }
+                    } else {
+                        background
+                    }
                 }
                 .ignoresSafeArea()
             }
-            .background { HerdrWindowChrome(isFullScreen: $isFullScreen) }
+            .background { HerdrWindowChrome(isFullScreen: $isFullScreen, isTranslucent: desktopGlass) }
     }
 }

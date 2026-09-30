@@ -401,6 +401,8 @@ struct FirstMateRowTopLine: View {
 
     let name: String
     let date: Date?
+    @Environment(\.firstMateTimestampContext) private var timestampContext
+    @Environment(\.firstMateTranscriptNow) private var transcriptNow
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -413,7 +415,11 @@ struct FirstMateRowTopLine: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, minHeight: Self.nameHeight, alignment: .topLeading)
             if let date {
-                Text(FirstMateChatTime.label(for: date, now: Date(), calendar: .current))
+                let label = FirstMateMessageTimestamp.sidebarLabel(
+                    for: date, now: transcriptNow ?? .now, context: timestampContext ?? FirstMateTimestampContext()
+                )
+                Text(label)
+                    .preference(key: FirstMateClockLabelKey.self, value: ["sidebar": label])
                     .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(HerdrTheme.tertiaryText)
                     .monospacedDigit()

@@ -11,6 +11,7 @@ struct FirstMateChatView: View {
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.firstMateMarkRead) private var markRead
     @State private var followsLatest = true
+    @State private var transcriptClock = FirstMateTranscriptClock()
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
     /// Skim or Full reply per message, kept while this chat is open.
     @State private var skimState = SkimDisplayState()
@@ -46,6 +47,7 @@ struct FirstMateChatView: View {
             }
 
             transcript
+                .modifier(FirstMateTranscriptClockLifecycle(clock: transcriptClock))
                 .modifier(FirstMateArchiveContextMenu(store: store, feature: snapshot.feature, canControl: canControl))
             FirstMateSendErrorView(store: store, featureID: snapshot.feature.id)
             featureStatus

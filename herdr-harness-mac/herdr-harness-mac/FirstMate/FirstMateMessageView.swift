@@ -15,6 +15,8 @@ struct FirstMateMessageView: View {
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.herdrFontScale) private var fontScale
+    @Environment(\.firstMateTranscriptNow) private var transcriptNow
+    @Environment(\.firstMateTimestampContext) private var timestampContext
 
     private var human: Bool { message.role == "user" || message.role == "human" }
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
@@ -90,7 +92,7 @@ struct FirstMateMessageView: View {
                     .environment(\.chatProsePalette, prosePalette)
             }
 
-            VStack(alignment: .leading, spacing: 0) {
+            FirstMateBubbleStack(spacing: 0) {
                 // A long reply shows its skim when one is ready; the full reply
                 // stays what Copy, quotes, and feedback act on.
                 SkimmableReply(messageID: message.id, reply: message.text, skim: message.skim) {
@@ -105,7 +107,7 @@ struct FirstMateMessageView: View {
                 .environment(\.saveChatQuote, canQuote ? saveQuote : nil)
                 .environment(\.chatQuoteSource, quoteSource)
                 .environment(\.chatProsePalette, prosePalette)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .firstMateFooterPart(message.id, "content")
                 .padding(.top, 8)
                 .padding(.horizontal, 13)
                 .padding(.bottom, 4)
@@ -114,8 +116,10 @@ struct FirstMateMessageView: View {
                     responseActions
                         .padding(.horizontal, 9)
                         .padding(.bottom, 4)
+                        .layoutValue(key: FirstMateBubbleFullWidthKey.self, value: true)
                 }
             }
+            .firstMateFooterPart(message.id, "bubble")
             .background(HerdrTheme.inkFill(0.06), in: .rect(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(HerdrTheme.hairline, lineWidth: 1))
             // Keep the existing right-click route without drawing a second,
@@ -134,24 +138,19 @@ struct FirstMateMessageView: View {
         .accessibilityLabel("First Mate")
     }
 
-    @ViewBuilder private var responseActions: some View {
-        if let feedback {
-            FirstMateResponseFeedbackFooter(
-                messageID: message.id,
-                presentation: feedback,
-                copyText: message.text,
-                onRateUp: { rateFeedback(.up) },
-                onEditFeedback: editFeedback,
-                onRemoveRating: removeFeedback,
-                onRetry: retryFeedback,
-                onResolveConflict: resolveFeedbackConflict
-            )
-        } else {
-            PiCopyButton(
-                text: message.text,
-                label: "Copy response",
-                accessibilityIdentifier: "first-mate-copy-\(message.id)"
-            )
-        }
+    private var responseActions: some View {
+        FirstMateMessageFooter(
+            messageID: message.id,
+            feedback: feedback,
+            copyText: message.text,
+            timestamp: (timestampContext ?? FirstMateTimestampContext()).timestamp(
+                message.createdAt, surface: .mainChat, now: transcriptNow ?? .now
+            ),
+            onRateUp: { rateFeedback(.up) },
+            onEditFeedback: editFeedback,
+            onRemoveRating: removeFeedback,
+            onRetry: retryFeedback,
+            onResolveConflict: resolveFeedbackConflict
+        )
     }
 }

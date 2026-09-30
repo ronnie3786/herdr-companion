@@ -112,6 +112,35 @@ struct FirstMateFeedbackPresentationTests {
         }
     }
 
+    @Test("Footer polish preserves loading, offline, saving and recovery state gates")
+    func polishedFooterStateGates() throws {
+        let message = syntheticMessage(id: "footer-states", role: "assistant", status: "done", text: "Synthetic response")
+        for loaded in [false, true] {
+            for writable in [false, true] {
+                for saving in [false, true] {
+                    for rating in [FirstMateFeedbackRating.up, .down] {
+                        let record = syntheticRecord(rating: rating, categoryIDs: ["synthetic-reason"], comment: "Synthetic note")
+                        let presentation = try #require(FirstMateResponseFeedbackPresentation.make(
+                            message: message, supported: true, writable: writable, isSaving: saving,
+                            record: record, saveErrorMessage: "Synthetic retry", hasConflict: true,
+                            isFeedbackLoaded: loaded
+                        ))
+                        #expect(presentation.isWritable == (loaded && writable))
+                        #expect(presentation.isSaving == saving)
+                        #expect(presentation.rating == rating)
+                        #expect(presentation.hasConflict)
+                        #expect(presentation.saveErrorMessage == "Synthetic retry")
+                        #expect(presentation.statusText != nil)
+                    }
+                }
+            }
+        }
+        // The same eligible response still gets a local Copy/time-only footer
+        // on unsupported/HUD surfaces; no presentation is manufactured to rate it.
+        #expect(FirstMateResponseFeedbackPresentation.make(message: message, supported: false,
+            writable: true, isSaving: false, record: nil) == nil)
+    }
+
     @Test("Saved status wording never relies on tint alone")
     func statusWording() throws {
         func status(

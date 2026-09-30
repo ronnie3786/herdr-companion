@@ -1,7 +1,7 @@
 import { createJiti } from "jiti";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { createConnection } from "node:net";
+import { createConnection, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -150,10 +150,15 @@ function readRecords(socket, until) {
 			clearTimeout(timeout);
 			socket.off("data", onData);
 			socket.off("error", onError);
+			socket.off("close", onClose);
 		};
 		const onError = (error) => {
 			cleanup();
 			reject(error);
+		};
+		const onClose = () => {
+			cleanup();
+			reject(new Error("bridge connection closed before expected records"));
 		};
 		const onData = (chunk) => {
 			buffered += chunk.toString("utf8");
@@ -176,6 +181,7 @@ function readRecords(socket, until) {
 		}, 3000);
 		socket.on("data", onData);
 		socket.on("error", onError);
+		socket.on("close", onClose);
 	});
 }
 
@@ -230,6 +236,37 @@ try {
 	assert.equal(hello.capabilities.setModel, true);
 	assert.equal(hello.capabilities.setThinkingLevel, true);
 	assert.equal(hello.capabilities.compact, true);
+
+	// A write returning false has accepted its bytes. Another event in the same
+	// flush must wait for drain rather than disconnecting a healthy subscriber.
+	const originalWrite = Socket.prototype.write;
+	let pressuredSocket;
+	const burstPromise = readRecords(subscription, (records) =>
+		records.filter((record) => record.event?.assistantMessageEvent?.delta?.startsWith("transport-test-")).length === 3);
+	try {
+		Socket.prototype.write = function (bytes, ...args) {
+			const result = originalWrite.call(this, bytes, ...args);
+			if (!pressuredSocket && Buffer.isBuffer(bytes) && bytes.includes('"delta":"transport-test-0"')) {
+				pressuredSocket = this;
+				setImmediate(() => this.emit("drain"));
+				return false;
+			}
+			return result;
+		};
+		for (let index = 0; index < 3; index += 1) {
+			handlers.get("message_update")({
+				type: "message_update",
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `transport-test-${index}` },
+			}, context);
+		}
+		const burst = await burstPromise;
+		assert.ok(pressuredSocket, "the subscriber experienced backpressure");
+		assert.equal(pressuredSocket.destroyed, false);
+		assert.deepEqual(burst.filter((record) => record.event?.assistantMessageEvent?.delta?.startsWith("transport-test-"))
+			.map((record) => record.event.assistantMessageEvent.delta), ["transport-test-0", "transport-test-1", "transport-test-2"]);
+	} finally {
+		Socket.prototype.write = originalWrite;
+	}
 
 	assert.ok(Math.abs(snapshot.state.cost.totalUSD - 0.035) < 1e-9);
 	assert.equal(snapshot.state.cost.totalTokens, 195);

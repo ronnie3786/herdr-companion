@@ -12,6 +12,7 @@ import copy
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import os
 import re
 import socket
@@ -37,6 +38,7 @@ PI_SESSION_CONTEXT_MAX_CHARACTERS = 120_000
 PI_SESSION_CONTEXT_MAX_SESSIONS = 4096
 _PI_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\Z")
 _CONTEXT_OMISSION = "[... earlier visible conversation omitted by Herdr ...]"
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass
@@ -1324,10 +1326,15 @@ class PiSemanticManager:
 
     def _watch(self, pane_id: str, stop: threading.Event) -> None:
         delay = 0.25
+        next_failure_log = 0.0
+        suppressed_failures = 0
+        pane_key = hashlib.sha256(f"{self.namespace}:{pane_id}".encode()).hexdigest()[:12]
         while not stop.is_set():
             connection: Optional[socket.socket] = None
+            connected_at: Optional[float] = None
             try:
                 connection = self._connect(pane_id, timeout=2.0)
+                connected_at = time.monotonic()
                 instance_id, sequence = self.journal.source_position(pane_id, namespace=self.namespace)
                 request = {
                     "protocol": copy.deepcopy(PI_SEMANTIC_PROTOCOL),
@@ -1339,7 +1346,6 @@ class PiSemanticManager:
                 }
                 connection.sendall(_json_bytes(request) + b"\n")
                 connection.settimeout(1.0)
-                delay = 0.25
                 buffer = bytearray()
                 authenticated = False
                 while not stop.is_set():
@@ -1350,11 +1356,11 @@ class PiSemanticManager:
                     if not chunk:
                         raise PiSemanticError("Pi semantic extension disconnected", code="pi_bridge_disconnected", status=503)
                     buffer.extend(chunk)
-                    if len(buffer) > PI_SEMANTIC_MAX_LINE_BYTES:
-                        raise PiSemanticError("Pi semantic record exceeded the size limit", code="pi_payload_too_large", status=502)
                     while b"\n" in buffer:
                         raw, _, remainder = buffer.partition(b"\n")
                         buffer = bytearray(remainder)
+                        if len(raw) > PI_SEMANTIC_MAX_LINE_BYTES:
+                            raise PiSemanticError("Pi semantic record exceeded the size limit", code="pi_payload_too_large", status=502)
                         if not raw.strip():
                             continue
                         try:
@@ -1387,10 +1393,30 @@ class PiSemanticManager:
                         ):
                             if self._on_event is not None:
                                 self._on_event(copy.deepcopy(event))
-            except (PiSemanticError, OSError):
+                    # A recv can finish one valid large line and start another.
+                    # Bound individual records, not the combined socket read.
+                    if len(buffer) > PI_SEMANTIC_MAX_LINE_BYTES:
+                        raise PiSemanticError("Pi semantic record exceeded the size limit", code="pi_payload_too_large", status=502)
+            except (PiSemanticError, OSError) as exc:
                 changed = self.journal.mark_connected(pane_id, False, namespace=self.namespace)
                 if changed is not None and self._on_event is not None:
                     self._on_event(copy.deepcopy(changed))
+                now = time.monotonic()
+                code = exc.code if isinstance(exc, PiSemanticError) else "pi_bridge_io_error"
+                if not stop.is_set() and (changed is not None or code != "pi_bridge_unavailable"):
+                    if now >= next_failure_log:
+                        # Never include exception text, socket paths, or transcript
+                        # contents. Rate-limit independently for each watched pane.
+                        _LOG.warning("Pi bridge disconnected pane=%s reason=%s errno=%s suppressed=%d",
+                                     pane_key, code, getattr(exc, "errno", None), suppressed_failures)
+                        next_failure_log = now + 30.0
+                        suppressed_failures = 0
+                    else:
+                        suppressed_failures += 1
+                # A successful connect/hello alone must not reset the backoff:
+                # a peer that immediately closes would otherwise spin forever.
+                if connected_at is not None and now - connected_at >= 30.0:
+                    delay = 0.25
             finally:
                 if connection is not None:
                     try:

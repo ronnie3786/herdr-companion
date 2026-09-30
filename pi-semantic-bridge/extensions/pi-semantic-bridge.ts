@@ -12,6 +12,7 @@ import { createServer, Socket, type Server } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerSessionLineage, savedParentSessionId } from "../lib/session-lineage.ts";
+import { SocketWriter } from "../lib/socket-writer.ts";
 
 const PROTOCOL = { name: "herdr.pi.semantic", version: 1 } as const;
 // Mirrors @earendil-works/pi-agent-core's ThinkingLevel union exactly (not
@@ -361,7 +362,7 @@ class BridgeRuntime {
 	private replay: Array<{ record: WireRecord; bytes: Buffer }> = [];
 	private replayBytes = 0;
 	private subscribers = new Set<Socket>();
-	private blocked = new Set<Socket>();
+	private writers = new Map<Socket, SocketWriter>();
 	private latestContext?: ExtensionContext;
 	private active = false;
 	private ownsSocket = false;
@@ -701,39 +702,17 @@ class BridgeRuntime {
 	}
 
 	private write(socket: Socket, bytes: Buffer): void {
-		if (socket.destroyed || !socket.writable) return;
-		if (this.blocked.has(socket)) {
-			socket.destroy();
-			return;
-		}
-		let flushed: boolean;
-		try {
-			flushed = socket.write(bytes);
-		} catch {
-			// A peer can vanish between the writable check and the write; the
-			// failure must never escape into Pi's process.
-			socket.destroy();
-			return;
-		}
-		if (!flushed && this.subscribers.has(socket)) {
-			// A subscriber can recover from the bounded replay on reconnect. Keeping
-			// an unbounded per-client buffer here would threaten Pi's TUI process.
-			this.blocked.add(socket);
-		}
+		this.writers.get(socket)?.write(bytes);
 	}
 
 	private accept(socket: Socket): void {
 		socket.setNoDelay(true);
 		socket.unref();
-		// A peer that vanishes mid-write surfaces EPIPE as a socket "error"
-		// event; without a listener Node escalates it to an uncaughtException
-		// that kills Pi's whole TUI process. Drop the connection instead.
-		socket.on("error", () => socket.destroy());
+		this.writers.set(socket, new SocketWriter(socket));
 		let buffer = Buffer.alloc(0);
-		socket.on("drain", () => this.blocked.delete(socket));
 		socket.on("close", () => {
 			this.subscribers.delete(socket);
-			this.blocked.delete(socket);
+			this.writers.delete(socket);
 		});
 		socket.on("data", (chunk: Buffer) => {
 			buffer = Buffer.concat([buffer, chunk]);
@@ -928,9 +907,8 @@ class BridgeRuntime {
 		this.clearCompaction();
 		this.flush();
 		this.active = false;
-		for (const socket of this.subscribers) socket.end();
+		for (const writer of this.writers.values()) writer.finish();
 		this.subscribers.clear();
-		this.blocked.clear();
 		this.server?.close();
 		this.server = undefined;
 		if (this.ownsSocket && this.ownedSocketIdentity) {

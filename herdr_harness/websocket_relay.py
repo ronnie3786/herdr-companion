@@ -22,6 +22,7 @@ from typing import Any, BinaryIO, Mapping
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 OP_CONTINUATION, OP_TEXT, OP_BINARY, OP_CLOSE, OP_PING, OP_PONG = 0x0, 0x1, 0x2, 0x8, 0x9, 0xA
 MAX_HANDSHAKE_BYTES = 16 * 1024
+MAX_FRAGMENTS = 1024
 
 
 class WebSocketClosed(Exception):
@@ -58,6 +59,12 @@ def upgrade_key(headers: Mapping[str, str] | Any) -> str | None:
     return key
 
 
+def valid_close_code(code: int) -> bool:
+    """Codes an endpoint may send (RFC 6455 section 7.4)."""
+
+    return 1000 <= code <= 1003 or 1007 <= code <= 1011 or 3000 <= code <= 4999
+
+
 class FrameSocket:
     """Blocking message reader/writer over one connected stream."""
 
@@ -68,6 +75,8 @@ class FrameSocket:
         self.max_message = max_message
         self._write_lock = threading.Lock()
         self._closed = False
+        # The close code the peer sent, if any, so a relay can pass it on.
+        self.peer_close_code: int | None = None
 
     def _read_exact(self, count: int) -> bytes:
         if count == 0:
@@ -117,7 +126,9 @@ class FrameSocket:
             if opcode == OP_PONG:
                 continue
             if opcode == OP_CLOSE:
-                self.close()
+                code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else None
+                self.peer_close_code = code if code is not None and valid_close_code(code) else None
+                self.close(code=self.peer_close_code or 1000)
                 raise WebSocketClosed("peer closed")
             if opcode == OP_CONTINUATION:
                 if not fragments:
@@ -131,6 +142,8 @@ class FrameSocket:
             total += len(payload)
             if total > self.max_message:
                 raise WebSocketProtocolError("message too big")
+            if len(fragments) >= MAX_FRAGMENTS:
+                raise WebSocketProtocolError("too many fragments")
             fragments.append(payload)
             if fin:
                 return message_opcode, b"".join(fragments)

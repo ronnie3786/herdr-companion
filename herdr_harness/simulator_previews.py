@@ -213,6 +213,22 @@ def _clip(text: Any, maximum: int) -> str:
     return cleaned if len(cleaned) <= maximum else cleaned[: maximum - 1].rstrip() + "…"
 
 
+def _clip_utf16(text: Any, maximum: int) -> str:
+    """Like _clip, but counted in UTF-16 units, as SimPortal (JavaScript) measures its limits."""
+
+    cleaned = _clip(text, maximum)
+    if len(cleaned.encode("utf-16-le")) // 2 <= maximum:
+        return cleaned
+    kept, units = [], 0
+    for ch in cleaned:
+        width = 2 if ord(ch) > 0xFFFF else 1
+        if units + width > maximum - 1:
+            break
+        kept.append(ch)
+        units += width
+    return "".join(kept).rstrip() + "…"
+
+
 def _version_tuple(value: Any) -> tuple[int, ...]:
     parts = []
     for piece in str(value or "").split("."):
@@ -748,11 +764,11 @@ class SimulatorPreviews:
             source["target"] = _clip(target, 128)
         body = {
             "requestId": request_id, "buildId": build_id,
-            "name": _clip(f"{app['name']} · {label}", _NAME_MAX),
+            "name": _clip_utf16(f"{app['name']} · {label}", _NAME_MAX),
             "appPath": str(intake_dir / app["bundle_name"]),
             "scope": {"projectId": self.settings.project_id, "featureId": feature_scope,
                       "sessionId": _scope_session(context.native_session_id), "checkpointId": checkpoint_id,
-                      "checkpointLabel": label},
+                      "checkpointLabel": _clip_utf16(label, _LABEL_MAX)},
             "source": source,
         }
         stamp = _iso(self._now())
@@ -926,11 +942,11 @@ class SimulatorPreviews:
     # Outbox ---------------------------------------------------------------------------
 
     def _flush_outbox(self, *, build_id: str | None = None, preview_id: str | None = None) -> bool:
-        """Send due entries exactly as persisted. Returns True while any remain pending."""
+        """Send due entries exactly as persisted. Returns True while an entry is due soon."""
 
-        discovery = self._discover(max_age=CAPABILITY_TTL)
+        discovery = self._discover(max_age=ADMISSION_TTL)
         if discovery.state not in {"ready", "storage_low"}:
-            return bool(self._rows("SELECT 1 FROM sim_outbox WHERE state='pending' LIMIT 1"))
+            return False
         clauses, args = ["state='pending'", "next_attempt_at<=?"], [self._now()]
         if build_id:
             clauses.append("build_id=?")
@@ -957,9 +973,16 @@ class SimulatorPreviews:
                     continue
                 state = "conflict" if exc.code in {"request_conflict", "build_conflict"} else "rejected"
                 self._outbox_result(entry, state=state, error=exc.code, message=str(exc))
+                if entry["action"] == "stop" and exc.code != "simulator_deleted" and entry.get("preview_id"):
+                    # The stop was refused: SimPortal's portal is the truth about whether it still runs.
+                    refused = self._row("SELECT * FROM sim_previews WHERE id=?", (entry["preview_id"],))
+                    if refused is not None:
+                        self._observe_preview(refused, refresh_portal=True)
                 continue
             self._accept(entry, response)
-        return bool(self._rows("SELECT 1 FROM sim_outbox WHERE state='pending' LIMIT 1"))
+        # Backing-off entries are not busy work: the regular cadence retries them.
+        return bool(self._rows("SELECT 1 FROM sim_outbox WHERE state='pending' AND next_attempt_at<=? LIMIT 1",
+                               (self._now() + 2.0,)))
 
     def _outbox_retry(self, entry: Mapping[str, Any], attempts: int, when: float, error: str) -> None:
         with self._transaction() as db:
@@ -976,16 +999,25 @@ class SimulatorPreviews:
                 db.execute("UPDATE sim_builds SET status=?,error_json=?,updated_at=? WHERE build_id=?",
                            ("failed" if state == "rejected" else "conflict", failure, stamp, entry["build_id"]))
             elif entry["action"] == "start":
-                db.execute("UPDATE sim_previews SET status=?,error_json=?,updated_at=? WHERE id=?",
+                # Nothing started, so a stop the user asked for meanwhile has nothing left to do.
+                db.execute("UPDATE sim_previews SET status=?,error_json=?,pending_stop=NULL,updated_at=? WHERE id=?",
                            ("failed" if state == "rejected" else "conflict", failure, stamp, entry["preview_id"]))
             elif entry["action"] in {"stop", "cancel"} and error == "simulator_deleted":
                 db.execute("UPDATE sim_previews SET status='simulator_deleted',error_json=NULL,pending_stop=NULL,"
                            "updated_at=? WHERE id=?", (stamp, entry["preview_id"]))
-            elif entry["action"] in {"stop", "cancel"}:
+            elif entry["action"] == "cancel":
+                # The start may simply have finished first. Keep the user's stop: the next observation
+                # sends it once the start has settled.
+                if error not in {"operation_terminal", "not_cancellable"}:
+                    db.execute("UPDATE sim_previews SET error_json=?,updated_at=? WHERE id=?",
+                               (failure, stamp, entry["preview_id"]))
+            elif entry["action"] == "stop":
                 db.execute("UPDATE sim_previews SET error_json=?,pending_stop=NULL,updated_at=? WHERE id=?",
                            (failure, stamp, entry["preview_id"]))
-        if entry["action"] == "register_build" and entry.get("feature_id"):
-            self._record_event(entry["feature_id"], entry["build_id"], "failed")
+        if entry["action"] == "register_build":
+            self._release_intake(entry["build_id"])
+            if entry.get("feature_id"):
+                self._record_event(entry["feature_id"], entry["build_id"], "failed")
 
     def _accept(self, entry: Mapping[str, Any], response: Mapping[str, Any]) -> None:
         operation = _operation_snapshot(response.get("operation"))
@@ -1000,6 +1032,7 @@ class SimulatorPreviews:
                                 message="SimPortal's acknowledgement was incomplete")
             return
         stamp = _iso(self._now())
+        mismatched_build = None
         with self._transaction() as db:
             db.execute("UPDATE sim_outbox SET state='accepted',operation_id=?,updated_at=? WHERE request_id=?",
                        (operation_id, stamp, entry["request_id"]))
@@ -1009,19 +1042,21 @@ class SimulatorPreviews:
                     db.execute("UPDATE sim_builds SET status='conflict',error_json=?,updated_at=? WHERE build_id=?",
                                (_dumps({"code": "simulator_identity_mismatch", "message": "SimPortal returned a different build"}),
                                 stamp, entry["build_id"]))
-                    return
-                # Settled statuses are only accepted from observation, which also checks scope,
-                # records the artifact, and releases the intake copy.
-                pending = str(build.get("status") or operation["status"])[:40]
-                if pending in BUILD_SETTLED_STATUSES or operation["status"] in TERMINAL_OPERATION_STATUSES:
-                    pending = "queued"
-                db.execute("UPDATE sim_builds SET operation_id=?,operation_json=?,status=?,updated_at=? WHERE build_id=?",
-                           (operation_id, _dumps(operation), pending, stamp, entry["build_id"]))
+                    mismatched_build = entry["build_id"]
+                else:
+                    # Settled statuses are only accepted from observation, which also checks scope,
+                    # records the artifact, and releases the intake copy.
+                    pending = str(build.get("status") or operation["status"])[:40]
+                    if pending in BUILD_SETTLED_STATUSES or operation["status"] in TERMINAL_OPERATION_STATUSES:
+                        pending = "queued"
+                    db.execute("UPDATE sim_builds SET operation_id=?,operation_json=?,status=?,updated_at=? WHERE build_id=?",
+                               (operation_id, _dumps(operation), pending, stamp, entry["build_id"]))
             elif entry["action"] == "start":
                 portal = response.get("portal") if isinstance(response.get("portal"), Mapping) else {}
                 portal_id = response.get("portalId")
                 if not is_uuid(portal_id) or portal.get("id") not in {None, portal_id}:
-                    db.execute("UPDATE sim_previews SET status='conflict',error_json=?,updated_at=? WHERE id=?",
+                    db.execute("UPDATE sim_previews SET status='conflict',error_json=?,pending_stop=NULL,updated_at=? "
+                               "WHERE id=?",
                                (_dumps({"code": "simulator_identity_mismatch", "message": "SimPortal returned an invalid preview"}),
                                 stamp, entry["preview_id"]))
                     return
@@ -1041,6 +1076,10 @@ class SimulatorPreviews:
             elif entry["action"] == "cancel":
                 db.execute("UPDATE sim_previews SET operation_json=?,updated_at=? WHERE id=?",
                            (_dumps(operation), stamp, entry["preview_id"]))
+        if mismatched_build is not None:
+            self._release_intake(mismatched_build)
+            if entry.get("feature_id"):
+                self._record_event(entry["feature_id"], mismatched_build, "failed")
         self.wake()
 
     # Observation ---------------------------------------------------------------------------
@@ -1050,16 +1089,22 @@ class SimulatorPreviews:
             return False
         busy = self._flush_outbox()
         self._expire_stale_preparations()
+        # Work recorded against another SimPortal server stays as history; following it would only
+        # repeat requests the new server can't answer.
+        discovery = self._discover(max_age=CAPABILITY_TTL)
+        pinned = discovery.pinned_server_id if discovery.state in {"ready", "storage_low"} else None
         settled = ",".join("'" + status + "'" for status in sorted(BUILD_SETTLED_STATUSES))
-        for row in self._rows("SELECT * FROM sim_builds WHERE operation_id IS NOT NULL AND status NOT IN "
-                              f"({settled},'preparing')"):
-            self._observe_build(row)
-            busy = True
-        for row in self._rows("SELECT * FROM sim_previews WHERE latest_operation_id IS NOT NULL"):
+        for row in self._rows("SELECT * FROM sim_builds WHERE operation_id IS NOT NULL AND server_id=? AND status NOT IN "
+                              f"({settled},'preparing')", (pinned,)):
+            busy = bool(self._observe_build(row)) or busy
+        for row in self._rows("SELECT * FROM sim_previews WHERE latest_operation_id IS NOT NULL AND server_id=?", (pinned,)):
             operation = _loads(row["operation_json"], {}) or {}
             if operation.get("status") not in TERMINAL_OPERATION_STATUSES or row["pending_stop"]:
-                self._observe_preview(row, refresh_portal=False)
-                busy = True
+                fresh = self._observe_preview(row, refresh_portal=False)
+                current = _loads(fresh.get("operation_json"), {}) or {}
+                observed = fresh.get("updated_at") != row.get("updated_at")
+                busy = busy or (observed and (current.get("status") not in TERMINAL_OPERATION_STATUSES
+                                              or bool(fresh.get("pending_stop"))))
         if self._now() - self._last_reap >= REAP_INTERVAL:
             self._last_reap = self._now()
             self._discover(max_age=CAPABILITY_TTL)
@@ -1114,10 +1159,17 @@ class SimulatorPreviews:
                        "error_json=?,observed_at=?,updated_at=? WHERE build_id=?",
                        (status, _dumps(operation), _dumps(_artifact_record(artifact)) if artifact else None,
                         _dumps(error) if error else None, stamp, stamp, row["build_id"]))
-        if status in {"ready", "failed", "cancelled"} or (status == "conflict"):
-            if status in {"ready", "failed", "cancelled"}:
-                self._remove_intake(row["build_id"], row.get("intake_dir"))
+        if status in BUILD_SETTLED_STATUSES or operation["status"] in TERMINAL_OPERATION_STATUSES:
+            # SimPortal's staged copy is authoritative once registration settles, however it ended; an
+            # interrupted or uncertain registration is never resumed, so the intake copy has no further use.
+            self._remove_intake(row["build_id"], row.get("intake_dir"))
             self._record_event(row["feature_id"], row["build_id"], "ready" if status == "ready" else "failed")
+        return operation["status"] not in TERMINAL_OPERATION_STATUSES
+
+    def _release_intake(self, build_id: str) -> None:
+        row = self._row("SELECT intake_dir FROM sim_builds WHERE build_id=?", (build_id,))
+        if row is not None:
+            self._remove_intake(build_id, row["intake_dir"])
 
     def _remove_intake(self, build_id: str, intake_dir: Any) -> None:
         """Drop Herdr's own intake copy once SimPortal settled; its private copy is authoritative."""
@@ -1263,9 +1315,12 @@ class SimulatorPreviews:
         op_kind = operation.get("kind")
         if status in {"submitting", "queued"} or (op_kind == "start" and op_status not in TERMINAL_OPERATION_STATUSES
                                                    and status not in {"failed", "conflict"}):
-            return "stopping" if row.get("pending_stop") and op_status == "cancel_requested" else "starting"
+            # The user's stop is durably recorded; it is sent (cancel, then shutdown) as the start allows.
+            return "stopping" if row.get("pending_stop") else "starting"
         if status in SIMULATOR_DELETED_STATUSES:
             return "stopped"
+        if status in {"failed", "conflict"} and not row.get("portal_id"):
+            return "failed"
         if status in {"stopping", "releasing_stream", "shutting_down"} or (op_kind == "stop" and op_status not in TERMINAL_OPERATION_STATUSES):
             return "stopping"
         if row.get("pending_stop"):
@@ -1340,7 +1395,7 @@ class SimulatorPreviews:
             evicted = self._make_room(discovery.pinned_server_id)
             preview_id = "fmsp_" + uuid.uuid4().hex
             start_request = str(uuid.uuid4())
-            body = {"requestId": start_request, "name": _clip("Herdr · " + build["checkpoint_label"], _NAME_MAX),
+            body = {"requestId": start_request, "name": _clip_utf16("Herdr · " + build["checkpoint_label"], _NAME_MAX),
                     "buildId": build_id, "deviceType": device["device_type"], "runtime": device["runtime"]}
             stamp = _iso(self._now())
             with self._transaction() as db:
@@ -1367,16 +1422,19 @@ class SimulatorPreviews:
         active = [p for p in self._previews_on(server_id) if self._phase(p) in {"starting", "running"}]
         if len(active) < self.settings.max_running:
             return []
+        # A preview shut down or deleted outside Herdr since the last pass no longer counts.
+        active = [self._observe_preview(p, refresh_portal=True) if self._phase(p) == "running" else p for p in active]
+        active = [p for p in active if self._phase(p) in {"starting", "running"}]
+        if len(active) < self.settings.max_running:
+            return []
         candidates = []
         for preview in active:
             if self._phase(preview) != "running" or self._relay_count(preview["id"]) > 0:
                 continue
-            fresh = self._observe_preview(preview, refresh_portal=True)
-            observation = _loads(fresh.get("observation_json"), {}) or {}
+            observation = _loads(preview.get("observation_json"), {}) or {}
             if isinstance(observation.get("viewer_count"), int) and observation["viewer_count"] > 0:
                 continue
-            if self._phase(fresh) == "running":
-                candidates.append(fresh)
+            candidates.append(preview)
         needed = len(active) - self.settings.max_running + 1
         if needed > len(candidates):
             details = {"running": [self._project_preview(p, brief=True) for p in active],
@@ -1725,17 +1783,25 @@ class SimulatorPreviews:
     def _relay_opened(self, preview_id: str) -> None:
         with self._relay_lock:
             self._relays[preview_id] = self._relays.get(preview_id, 0) + 1
-        self._touch(preview_id)
+        try:
+            self._touch(preview_id)
+        except sqlite3.Error:
+            pass  # Bookkeeping only; the watcher count above is what the policy reads.
 
     def _relay_closed(self, preview_id: str) -> None:
-        with self._relay_lock:
-            remaining = self._relays.get(preview_id, 0) - 1
-            if remaining > 0:
-                self._relays[preview_id] = remaining
-            else:
-                self._relays.pop(preview_id, None)
-        self._touch(preview_id)
-        self._stream_slots.release()
+        try:
+            with self._relay_lock:
+                remaining = self._relays.get(preview_id, 0) - 1
+                if remaining > 0:
+                    self._relays[preview_id] = remaining
+                else:
+                    self._relays.pop(preview_id, None)
+            try:
+                self._touch(preview_id)
+            except sqlite3.Error:
+                pass
+        finally:
+            self._stream_slots.release()
 
 
 class PreviewStream:
@@ -1765,12 +1831,13 @@ class PreviewStream:
         """Relay until either side closes. Blocks the calling (request) thread."""
 
         downstream = ws.FrameSocket(client_sock, client_reader, client=False, max_message=MAX_CLIENT_MESSAGE)
-        client_sock.settimeout(STREAM_IDLE_TIMEOUT)
-        self.upstream.sock.settimeout(STREAM_IDLE_TIMEOUT)
-        self.owner._relay_opened(self.preview_id)
         pump = threading.Thread(target=self._pump_upstream, args=(downstream,), name="simulator-stream", daemon=True)
-        pump.start()
+        # Everything after the slot was taken sits inside the try, so the slot is always given back.
+        self.owner._relay_opened(self.preview_id)
         try:
+            client_sock.settimeout(STREAM_IDLE_TIMEOUT)
+            self.upstream.sock.settimeout(STREAM_IDLE_TIMEOUT)
+            pump.start()
             while True:
                 opcode, payload = downstream.receive()
                 if opcode != ws.OP_TEXT:
@@ -1782,7 +1849,10 @@ class PreviewStream:
                     now = self.owner._now()
                     if now - self._last_touch > 15:
                         self._last_touch = now
-                        self.owner._touch(self.preview_id)
+                        try:
+                            self.owner._touch(self.preview_id)
+                        except sqlite3.Error:
+                            pass
                 self.upstream.send_text(_dumps(message))
         except (ws.WebSocketClosed, ws.WebSocketProtocolError, OSError):
             pass
@@ -1791,7 +1861,8 @@ class PreviewStream:
             self.upstream.close()
             downstream.shutdown()
             self.upstream.shutdown()
-            pump.join(timeout=5)
+            if pump.is_alive():
+                pump.join(timeout=5)
             try:
                 self.upstream.sock.close()
             except OSError:
@@ -1806,7 +1877,9 @@ class PreviewStream:
         except (ws.WebSocketClosed, ws.WebSocketProtocolError, OSError):
             pass
         finally:
-            downstream.close()
+            # Pass on why SimPortal closed (for example, the simulator is no longer running), so the
+            # client stops instead of reconnecting.
+            downstream.close(code=self.upstream.peer_close_code or 1000)
             downstream.shutdown()
 
 
@@ -1925,17 +1998,32 @@ def _copy_tree(source: Path, destination: Path) -> None:
 
 
 def _git(workspace: str, *args: str) -> str | None:
+    # The workspace is agent-controlled: keep the companion's secrets out of anything its git
+    # configuration runs, and skip the fsmonitor hook.
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("HERDR_")}
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
     try:
-        result = subprocess.run(["git", "-C", workspace, *args], capture_output=True, text=True, timeout=10,
-                                env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+        result = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", workspace, *args], capture_output=True,
+                                text=True, timeout=10, env=environment)
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout if result.returncode == 0 else None
 
 
 def _git_toplevel(workspace: str) -> str | None:
+    """The repository root, only when it really contains the workspace (core.worktree can point anywhere)."""
+
     output = _git(workspace, "rev-parse", "--show-toplevel")
-    return output.strip() if output else None
+    if not output:
+        return None
+    try:
+        top = Path(output.strip()).resolve()
+        inside = Path(workspace).resolve()
+    except OSError:
+        return None
+    if top in {Path("/"), Path.home().resolve()} or not _is_within(inside, top):
+        return None
+    return str(top)
 
 
 def _git_state(workspace: str) -> tuple[str | None, str]:

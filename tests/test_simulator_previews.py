@@ -19,6 +19,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -69,6 +70,8 @@ class FakeSimPortal:
         self.receipts: dict[str, tuple[str, str]] = {}
         self.requests: list[tuple[str, str, dict | None]] = []
         self.lose_next: set[str] = set()
+        # path prefix -> (status, body): refuse the next matching mutation before committing anything.
+        self.fail_next: dict[str, tuple[int, dict]] = {}
         self.viewer_counts: dict[str, int] = {}
         self.device_states: dict[str, str] = {}
         self.ws_messages: list[dict] = []
@@ -263,6 +266,10 @@ class FakeSimPortal:
                 path = self.path
                 with fake.lock:
                     fake.requests.append(("POST", path, body))
+                    refusal = next((prefix for prefix in fake.fail_next if path.startswith(prefix)), None)
+                    if refusal is not None:
+                        status, payload = fake.fail_next.pop(refusal)
+                        return self._send(status, payload)
                     request_id = body.get("requestId")
                     canonical = json.dumps(body, sort_keys=True)
                     if request_id in fake.receipts:
@@ -778,6 +785,94 @@ device_type = "{IPHONE}"
         row = self.previews._row("SELECT * FROM sim_previews WHERE id=?", (preview["id"],))
         self.assertEqual((row["status"], row["error_json"], row["pending_stop"]), ("simulator_deleted", None, None))
         self.assertEqual(self.previews._phase(row), "stopped")
+
+    def test_a_stop_that_arrives_after_the_start_finished_is_still_sent(self):
+        build = self.register()
+        preview = self.previews.open_preview(self.feature["id"], build["build_id"], request_id="open-1")["preview"]
+        start = self.fake.portals[preview["portal_id"]]["operationId"]
+        self.fake.advance(start, "launching")
+        # The cancel is lost to a transient error; by its retry the start has finished, and SimPortal
+        # answers that a finished operation can't be cancelled.
+        self.fake.fail_next["/api/operations/"] = (503, {"error": "busy", "code": "unavailable"})
+        stopped = self.previews.stop_preview(self.feature["id"], preview["id"], request_id="stop-1")["preview"]
+        self.assertEqual(stopped["phase"], "stopping")
+        self.fake.finish(start)
+        self.clock[0] += 5
+        for _ in range(3):
+            self.previews.tick()
+        stops = [b for b in self.fake.mutations("/api/portals/") if "mode" in b]
+        self.assertEqual([b["mode"] for b in stops], ["shutdown"], "the user's stop is sent once the start settled")
+        row = self.previews._row("SELECT * FROM sim_previews WHERE id=?", (preview["id"],))
+        self.assertIsNone(row["error_json"], "a start that simply finished first is not an error")
+        self.fake.finish(self.fake.portals[preview["portal_id"]]["operationId"])
+        self.previews.tick()
+        self.assertEqual(self.previews.preview_detail(self.feature["id"], preview["id"])["preview"]["phase"], "stopped")
+
+    def test_a_refused_or_unsettled_registration_releases_its_intake_copy(self):
+        self.fake.fail_next["/api/builds"] = (400, {"error": "bad metadata", "code": "invalid_request"})
+        refused = self.register(spool="refused")
+        self.assertEqual(refused["status"], "failed")
+        self.assertEqual(list(self.artifacts.rglob("*.app")), [], "a refused registration keeps nothing")
+        # An interrupted registration is never resumed, so its intake copy goes too.
+        app = make_app(self.workspace / "other/Build/Products/Debug-iphonesimulator")
+        with patch.object(SimulatorPreviews, "_observe_build", lambda *args, **kwargs: None):
+            future = self.previews.submit_registration("interrupted", self.context(), {"app_path": str(app)})
+            for _ in range(250):
+                if self.fake.builds and len(self.fake.builds) == 1:
+                    break
+                time.sleep(0.02)
+        [registered] = self.fake.builds.values()
+        self.fake.finish(registered["operationId"], "interrupted",
+                         {"code": "server_interrupted", "message": "Server stopped before completion."})
+        result = future.result(timeout=30)
+        self.previews.release_registration("interrupted")
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(list(self.artifacts.rglob("*.app")), [])
+
+    def test_a_start_refused_after_the_user_pressed_stop_ends_as_failed(self):
+        build = self.register()
+        self.fake.fail_next["/api/portals"] = (503, {"error": "busy", "code": "unavailable"})
+        preview = self.previews.open_preview(self.feature["id"], build["build_id"], request_id="open-1")["preview"]
+        self.previews.stop_preview(self.feature["id"], preview["id"], request_id="stop-1")
+        self.fake.fail_next["/api/portals"] = (409, {"error": "not ready", "code": "build_not_ready"})
+        self.clock[0] += 5
+        self.previews.tick()
+        row = self.previews._row("SELECT * FROM sim_previews WHERE id=?", (preview["id"],))
+        self.assertIsNone(row["pending_stop"])
+        self.assertEqual(self.previews._phase(row), "failed", "never stuck shutting down")
+
+    def test_capacity_counts_only_previews_that_still_run(self):
+        first, second, third = [self.register(spool=f"cap-{n}", app=make_app(self.workspace / f"c{n}/Debug-iphonesimulator", f"Cap{n}"))
+                                for n in range(3)]
+        p1 = self.ready_preview(first["build_id"], request="open-1")
+        self.ready_preview(second["build_id"], request="open-2")
+        # p1 was shut down outside Herdr since the last pass.
+        portal = self.fake.portals[p1["portal_id"]]
+        portal["status"] = "stopped"
+        self.fake.device_states[portal["udid"]] = "Shutdown"
+        opened = self.previews.open_preview(self.feature["id"], third["build_id"], request_id="open-3")
+        self.assertEqual(opened["stopped_to_make_room"], [])
+        self.assertEqual([b for b in self.fake.mutations("/api/portals/") if "mode" in b], [])
+
+    def test_a_replaced_simportal_is_not_polled_for_old_work(self):
+        build = self.register()
+        preview = self.previews.open_preview(self.feature["id"], build["build_id"], request_id="open-1")["preview"]
+        self.fake.advance(self.fake.portals[preview["portal_id"]]["operationId"], "booting")
+        self.fake.server_id = str(uuid.uuid4())
+        self.previews.status(fresh=True)
+        before = len(self.fake.requests)
+        busy = [self.previews.tick() for _ in range(3)]
+        self.assertEqual(busy, [False, False, False])
+        operation_reads = [path for method, path, _ in self.fake.requests[before:] if path.startswith("/api/operations/")]
+        self.assertEqual(operation_reads, [])
+
+    def test_labels_are_clipped_in_simportal_units(self):
+        from herdr_harness.simulator_previews import _clip_utf16
+        label = "🧪" * 90  # 90 code points, 180 UTF-16 units
+        clipped = _clip_utf16(label, 160)
+        self.assertLessEqual(len(clipped.encode("utf-16-le")) // 2, 160)
+        self.assertTrue(clipped.endswith("…"))
+        self.assertEqual(_clip_utf16("Round 1", 160), "Round 1")
 
     def test_catalog_sync_includes_same_scope_builds_and_cleanup(self):
         result = self.register()

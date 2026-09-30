@@ -7,8 +7,8 @@
   a separate local service that saves compiled iOS Simulator builds and
   streams simulators. The feature is inert until the private configuration has
   a `[simportal]` section (`url`, `token_file`, `intake_root`; optional
-  `project_id`, `device_type`, `runtime`, `idle_shutdown_minutes` (default 20),
-  `max_running_previews` (default 2), and `server_id`).
+  `project_id`, `device_type`, `runtime`, `idle_shutdown_minutes` (default 60),
+  `max_running_previews` (default 4), and `server_id`).
 - Managed coordinators and workers on a configured machine get
   `fm_register_simulator_build`. The companion derives the feature, stage,
   assignment, and session itself (like `fm_save_link`), validates that the path

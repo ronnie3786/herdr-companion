@@ -348,7 +348,7 @@ struct FirstMateChatConversationTests {
         let linked = FirstMateMentionLinker.link(source, catalog: Self.catalog)
         let text = String(linked.characters)
         #expect(text.contains("🧾\u{00A0}Receipt export"))
-        #expect(text.contains("\u{2009}🧪\u{00A0}Device QA\u{2009},"))
+        #expect(text.contains("\u{2009}\u{2060}🧪\u{00A0}Device QA\u{2060}\u{2009},"))
         let links = linked.runs.compactMap(\.link)
         #expect(links.contains(FirstMateMention.url(for: .agent(featureID: "fmf_1", assignmentID: "as_1"))))
         #expect(links.contains(URL(string: "https://example.invalid")!))

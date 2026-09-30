@@ -113,10 +113,9 @@ struct FirstMateMobileFeedbackEditor: View {
                     if saving { ProgressView("Saving feedback…") }
                 }.padding(16).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
-            .herdrNavigationBarChrome()
+            .herdrSheetSurface()
             .navigationTitle("Feedback").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { HerdrSheetCloseButton { dismiss() } } }
         }
         .task { await load() }
         .herdrAppChrome(separateSurface: true)

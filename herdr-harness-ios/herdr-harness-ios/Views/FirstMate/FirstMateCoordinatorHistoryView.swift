@@ -9,6 +9,7 @@ struct FirstMateCoordinatorHistoryView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Retained coordinator and advisor sessions stay inspectable across handoffs.")
@@ -20,16 +21,17 @@ struct FirstMateCoordinatorHistoryView: View {
             }
             .padding(.top, 12)
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                Label(title, systemImage: symbol).font(.headline)
+            HStack(spacing: 8) {
+                Label(title, systemImage: symbol).herdrFont(.body, weight: .semibold).foregroundStyle(HerdrTheme.primaryText)
                     .accessibilityIdentifier(accessibilityID)
+                Spacer(minLength: 8)
                 Text("\(sessions.count) saved \(sessions.count == 1 ? "session" : "sessions")")
-                    .font(.footnote)
-                    .foregroundStyle(HerdrTheme.secondaryText)
+                    .herdrFont(.footnote).foregroundStyle(HerdrTheme.tertiaryText)
             }
             .frame(minHeight: 44)
         }
-        .padding(16)
-        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 18))
+        .tint(HerdrTheme.iconTint)
+        Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
+        }
     }
 }

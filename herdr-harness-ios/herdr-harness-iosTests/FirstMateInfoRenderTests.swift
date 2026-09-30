@@ -44,10 +44,9 @@ final class FirstMateInfoRenderTests: XCTestCase {
                     FirstMateResourceSheet(store: store, resource: resource).frame(height: 840),
                     width: width, dynamicType: .accessibility3)
                 XCTAssertTrue(render.drewHierarchy)
-                let close = try XCTUnwrap(render.element(identifier: "resource-close-control"), render.measurementDiagnostics)
-                XCTAssertGreaterThanOrEqual(close.frame.width, 43.99)
-                XCTAssertGreaterThanOrEqual(close.frame.height, 43.99)
-                XCTAssertTrue(render.bounds.contains(close.frame), "Close must remain visible at \(width) points: \(close.frame)")
+                // Close is the system glass close button (a UIKit bar item, so it
+                // has no SwiftUI anchor). HerdrFirstMatePolishUITests reaches and
+                // taps `first-mate-resource-close` on the real sheet.
                 try save(render, "phase6-\(resource.nativeSessionID == nil ? "document" : "session")-\(Int(width))-capped")
                 store.closeResource()
             }

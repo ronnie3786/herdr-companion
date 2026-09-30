@@ -94,8 +94,7 @@ struct FirstMateCreateSheet: View {
                     .padding(16).herdrCard()
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(destinationName.map { "Repository on \($0)" } ?? "Repository")
-                            .herdrFont(.footnote, weight: .semibold).foregroundStyle(HerdrTheme.secondaryText)
+                        HerdrMicroLabel(text: destinationName.map { "Repository on \($0)" } ?? "Repository")
                         if !recentFolders.isEmpty {
                             Menu("Choose a recent folder", systemImage: "folder") {
                                 ForEach(recentFolders, id: \.self) { folder in Button(folder) { cwd = folder } }
@@ -120,8 +119,10 @@ struct FirstMateCreateSheet: View {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .herdrFont(.body).foregroundStyle(HerdrTheme.warning)
                     }
-                    Button(isSubmitting ? "Creating feature…" : "Create feature", action: create)
-                        .buttonStyle(HerdrButtonStyle(kind: .primary))
+                    Button(action: create) {
+                        Text(isSubmitting ? "Creating feature…" : "Create feature").frame(maxWidth: .infinity)
+                    }
+                        .buttonStyle(HerdrButtonStyle(kind: .primary, height: 50))
                         .disabled(!canCreate)
                         .accessibilityIdentifier("first-mate-create-submit")
                         .composerLayoutMeasurement(id: "create-submit-control")
@@ -130,12 +131,11 @@ struct FirstMateCreateSheet: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .disabled(isSubmitting || destinationStore?.isSending == true)
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
-            .herdrNavigationBarChrome()
+            .herdrSheetSurface()
             .navigationTitle("New feature").navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(isSubmitting) }
+                ToolbarItem(placement: .cancellationAction) { HerdrSheetCloseButton(title: "Cancel") { dismiss() }.disabled(isSubmitting) }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Next field") {

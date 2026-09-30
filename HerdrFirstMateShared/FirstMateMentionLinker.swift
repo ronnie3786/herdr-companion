@@ -97,9 +97,12 @@ struct FirstMateMentionCatalog: Hashable, Sendable {
 /// message text itself is never rewritten; the emoji exists only on screen.
 enum FirstMateMentionLinker {
     /// A thin space either side pads the tint; a no-break space keeps the
-    /// emoji with its name.
+    /// emoji with its name. The word joiners keep each thin space with the
+    /// run, so a line never ends on a lone tinted space.
     static let edge = "\u{2009}"
     static let joiner = "\u{00A0}"
+    static let leadingEdge = edge + "\u{2060}"
+    static let trailingEdge = "\u{2060}" + edge
 
     struct Span: Equatable {
         var range: NSRange
@@ -133,7 +136,7 @@ enum FirstMateMentionLinker {
             let attributes = result[range].runs.first?.attributes ?? AttributeContainer()
             let name = String(plain[stringRange])
             let prefix = span.entry.emoji.isEmpty ? "" : span.entry.emoji + joiner
-            var run = AttributedString(edge + prefix + name + edge, attributes: attributes)
+            var run = AttributedString(leadingEdge + prefix + name + trailingEdge, attributes: attributes)
             style(&run, entry: span.entry)
             result.replaceSubrange(range, with: run)
         }

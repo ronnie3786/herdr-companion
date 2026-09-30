@@ -52,14 +52,13 @@ struct FirstMateMobileArchiveSheet: View {
                 }
                 .padding(20)
             }
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
-            .herdrNavigationBarChrome()
+            .herdrSheetSurface()
             .navigationTitle("Archive feature?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.disabled(isSubmitting)
+                    HerdrSheetCloseButton(title: "Cancel") { dismiss() }.disabled(isSubmitting)
                 }
             }
         }

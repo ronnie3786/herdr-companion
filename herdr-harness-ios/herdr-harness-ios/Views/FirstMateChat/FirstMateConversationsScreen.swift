@@ -79,18 +79,31 @@ struct FirstMateConversationsScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .environment(\.defaultMinListRowHeight, 0)
             .refreshable { await fleet.refreshAll() }
+            .herdrEdgeFade(.top)
             .accessibilityIdentifier("first-mate-feature-list")
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     FirstMateConversationsBar(model: model, fleet: fleet, showsSearch: $showsSearch)
                     if showsSearch {
-                        TextField("", text: $fleet.search, prompt: Text("Search conversations").foregroundStyle(HerdrTheme.tertiaryText))
-                            .herdrFont(.body).foregroundStyle(HerdrTheme.primaryText)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .padding(12).frame(minHeight: 44).herdrField(focused: searchFocused)
-                            .focused($searchFocused)
-                            .accessibilityIdentifier("first-mate-chat-search")
-                            .padding(.horizontal, 16).padding(.bottom, 10)
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass").foregroundStyle(HerdrTheme.iconTint).accessibilityHidden(true)
+                            TextField("", text: $fleet.search, prompt: Text("Search conversations").foregroundStyle(HerdrTheme.tertiaryText))
+                                .herdrFont(.body).foregroundStyle(HerdrTheme.primaryText)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .submitLabel(.search)
+                                .focused($searchFocused)
+                                .accessibilityIdentifier("first-mate-chat-search")
+                            if !fleet.search.isEmpty {
+                                Button { fleet.search = "" } label: {
+                                    Image(systemName: "xmark.circle.fill").foregroundStyle(HerdrTheme.iconTint)
+                                        .frame(width: 32, height: 44).contentShape(.rect)
+                                }.buttonStyle(.herdrPlain).accessibilityLabel("Clear search")
+                            }
+                        }
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                        .herdrControlGlass(in: .capsule, interactive: false)
+                        .padding(.horizontal, 16).padding(.bottom, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
             }

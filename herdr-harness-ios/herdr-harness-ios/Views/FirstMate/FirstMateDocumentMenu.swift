@@ -21,10 +21,7 @@ struct FirstMateDocumentMenu: View {
                 }
             }
         } label: {
-            Label(countTitle, systemImage: "doc.text")
-                .padding(.horizontal, 12)
-                .frame(minHeight: 44)
-                .background(HerdrTheme.accent.opacity(0.08), in: .rect(cornerRadius: 12))
+            FirstMateResourceChip(title: countTitle, systemImage: "doc.text")
         }
         .disabled(documents.isEmpty)
         .accessibilityLabel("\(countTitle) for \(visit.title)")

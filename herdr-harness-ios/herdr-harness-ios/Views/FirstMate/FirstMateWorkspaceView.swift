@@ -36,7 +36,7 @@ struct FirstMateWorkspaceView: View {
                     Group {
                         if showsBriefing { briefing }
                         else if let target = fleet.selectedTarget { chat(target, topmost: true) }
-                        else { ContentUnavailableView("Choose a conversation", systemImage: "sailboat") }
+                        else { ContentUnavailableView("Choose a conversation", systemImage: "sailboat").herdrEmptyColumn() }
                     }
                     .navigationSplitViewColumnWidth(min: 300, ideal: 520, max: .infinity)
                     .composerLayoutMeasurement(id: "first-mate-chat-column")
@@ -50,6 +50,7 @@ struct FirstMateWorkspaceView: View {
                         } else {
                             ContentUnavailableView("Conversation info", systemImage: "info.circle",
                                 description: Text("Select a conversation to see its overview and saved evidence."))
+                                .herdrEmptyColumn()
                         }
                     }
                     .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 420)
@@ -164,5 +165,15 @@ struct FirstMateWorkspaceView: View {
     private func openBriefing() {
         fleet.selectTarget(nil); fleet.chat.select(.lead)
         path = [.lead]
+    }
+}
+
+private extension View {
+    /// An empty iPad column keeps the dusk and pane glass instead of the
+    /// split view's plain black column.
+    func herdrEmptyColumn() -> some View {
+        frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane, drawsDusk: true).ignoresSafeArea() }
+            .foregroundStyle(HerdrTheme.secondaryText)
     }
 }

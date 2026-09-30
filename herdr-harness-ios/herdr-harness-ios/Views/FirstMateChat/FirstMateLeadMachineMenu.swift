@@ -23,12 +23,13 @@ struct FirstMateLeadMachineMenu: View {
             }
         } label: {
             HStack(spacing: 7) {
-                FirstMateFaceOrb(size: 24)
+                FirstMateFaceOrb(size: 28)
                 Text("My First Mate").herdrFont(.body, weight: .semibold).fixedSize(horizontal: false, vertical: true)
-                Image(systemName: "chevron.down").font(.caption2)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
             }
-            .padding(.horizontal, 10).frame(minHeight: 44).frame(maxWidth: .infinity)
-            .background(HerdrTheme.codeFill, in: .capsule)
+            .padding(.leading, 8).padding(.trailing, 14).frame(minHeight: 44).frame(maxWidth: .infinity)
+            .herdrControlGlass(in: .capsule)
         }
         .buttonStyle(.plain).accessibilityIdentifier("first-mate-lead-machine-menu")
         .composerLayoutMeasurement(id: "lead-machine-control")

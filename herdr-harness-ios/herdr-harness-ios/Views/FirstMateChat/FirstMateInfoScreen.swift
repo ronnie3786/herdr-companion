@@ -20,13 +20,33 @@ struct FirstMateInfoScreen: View {
         fleet.store(for: target) === store && fleet.selectedTarget == target && store.selectedFeatureID == target.featureID
             && store.snapshots[target.featureID] != nil && model.firstMateCanControl(machineID: target.machineID)
     }
+    private var isLead: Bool { store.snapshots[target.featureID]?.feature.isLead == true }
+    /// The feature's own name, as the Mac chat header shows it; "Feature
+    /// info" only while the snapshot is still loading.
+    private var title: String {
+        if isLead { return "My First Mate" }
+        let conversation = fleet.chat.conversation(for: target, fleet: fleet)
+        return conversation?.name ?? store.snapshots[target.featureID]?.feature.title ?? "Feature info"
+    }
+    private var subtitle: String {
+        let machine = model.machineName(target.machineID)
+        guard !isLead, let snapshot = store.snapshots[target.featureID] else { return machine }
+        let status = FirstMateMobileTranscriptPolicy.statusWord(snapshot: snapshot, conversation: fleet.chat.conversation(for: target, fleet: fleet))
+        return "\(status) · \(machine)"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if embedded {
-                Text(store.snapshots[target.featureID]?.feature.isLead == true ? "My First Mate" : "Feature info")
-                    .herdrFont(.body, weight: .semibold).frame(maxWidth: .infinity, minHeight: 44)
-                    .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
-                    .herdrHairline(.bottom)
+                VStack(spacing: 1) {
+                    Text(title).herdrFont(.body, weight: .semibold).lineLimit(1)
+                    Text(subtitle).herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .padding(.horizontal, 16)
+                // The same pane glass as the inspector below, so the header
+                // reads as one surface with it rather than bare dusk.
+                .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea(edges: .top) }
             }
             if let snapshot = store.snapshots[target.featureID] {
                 if snapshot.feature.isLead {
@@ -39,7 +59,7 @@ struct FirstMateInfoScreen: View {
                 }
             } else { ProgressView("Opening feature info…") }
         }
-        .herdrFirstMateChrome().navigationTitle(store.snapshots[target.featureID]?.feature.isLead == true ? "My First Mate" : "Feature info").navigationBarTitleDisplayMode(.inline)
+        .herdrFirstMateChrome().navigationTitle(title).navigationSubtitle(subtitle).navigationBarTitleDisplayMode(.inline)
         .toolbar(embedded ? .hidden : .visible, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarVisibility(embedded ? .visible : .hidden, for: .tabBar)
         .onAppear { appeared = true; updateLease() }

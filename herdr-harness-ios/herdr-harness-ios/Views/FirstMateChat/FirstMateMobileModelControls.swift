@@ -80,27 +80,10 @@ struct FirstMateMobileModelControls: View {
                     if let reason { Text(reason).foregroundStyle(HerdrTheme.warning) }
                     if loading { ProgressView("Loading this machine's models…") }
                     if let catalog {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HerdrMicroLabel(text: "MODEL")
-                            ForEach(catalog.models, id: \.id) { option in
-                                Button { stage(model: option.id, thinking: feature?.coordinatorThinking ?? "") } label: {
-                                    HStack {
-                                        Text(option.name.isEmpty ? option.id : option.name).fixedSize(horizontal: false, vertical: true)
-                                        Spacer()
-                                        if feature?.coordinatorModel == option.id { Image(systemName: "checkmark") }
-                                    }.frame(minHeight: 44)
-                                }.disabled(!enabled)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            HerdrMicroLabel(text: "THINKING")
-                            ForEach(catalog.thinkingLevels, id: \.self) { level in
-                                Button { stage(model: feature?.coordinatorModel ?? "", thinking: level) } label: {
-                                    HStack { Text(level.capitalized); Spacer(); if feature?.coordinatorThinking == level { Image(systemName: "checkmark") } }
-                                        .frame(minHeight: 44)
-                                }.disabled(!enabled)
-                            }
-                        }
+                        optionGroup("Model", options: catalog.models.map { ($0.id, $0.name.isEmpty ? $0.id : $0.name) },
+                                    selected: feature?.coordinatorModel) { stage(model: $0, thinking: feature?.coordinatorThinking ?? "") }
+                        optionGroup("Thinking", options: catalog.thinkingLevels.map { ($0, $0.capitalized) },
+                                    selected: feature?.coordinatorThinking) { stage(model: feature?.coordinatorModel ?? "", thinking: $0) }
                         Button("Use host default", systemImage: "arrow.uturn.backward") { stage(model: "", thinking: "") }
                             .buttonStyle(HerdrButtonStyle(kind: .outline)).disabled(!enabled)
                             .accessibilityIdentifier("first-mate-model-default")
@@ -122,10 +105,9 @@ struct FirstMateMobileModelControls: View {
                 }
                 .padding(16).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
-            .herdrNavigationBarChrome()
+            .herdrSheetSurface()
             .navigationTitle("Model and thinking").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { HerdrSheetCloseButton { dismiss() } } }
         }
         .herdrAppChrome(separateSurface: true)
         .task(id: capturedContext) { await load(capturedContext) }
@@ -160,6 +142,36 @@ struct FirstMateMobileModelControls: View {
             catalog = value; error = nil
         } catch is CancellationError { }
         catch { if captured == store.operationContext { self.error = error.localizedDescription } }
+    }
+
+    /// A settings group as an inset card: one row per option, a divider
+    /// between rows, and an accent checkmark on the current choice.
+    private func optionGroup(_ title: String, options: [(id: String, name: String)], selected: String?,
+                             choose: @escaping (String) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HerdrMicroLabel(text: title)
+            VStack(spacing: 0) {
+                ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+                    Button { choose(option.id) } label: {
+                        HStack(spacing: 10) {
+                            Text(option.name).herdrFont(.body).foregroundStyle(HerdrTheme.primaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            if selected == option.id {
+                                Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(HerdrTheme.accent)
+                            }
+                        }
+                        .padding(.horizontal, 14).frame(minHeight: 48).contentShape(.rect)
+                    }
+                    .buttonStyle(.herdrPlain).disabled(!enabled)
+                    .accessibilityAddTraits(selected == option.id ? .isSelected : [])
+                    .overlay(alignment: .bottom) {
+                        if index < options.count - 1 { Rectangle().fill(HerdrTheme.rowDivider).frame(height: 1).padding(.leading, 14) }
+                    }
+                }
+            }
+            .herdrCard(radius: HerdrTheme.Radius.card)
+        }
     }
 
     private func stage(model: String, thinking: String) {

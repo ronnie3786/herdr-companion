@@ -40,10 +40,7 @@ struct FirstMateAgentMenu: View {
                 store.inspector = .agents
             }
         } label: {
-            Label(countTitle, systemImage: "person.2")
-                .padding(.horizontal, 12)
-                .frame(minHeight: 44)
-                .background(HerdrTheme.accent.opacity(0.08), in: .rect(cornerRadius: 12))
+            FirstMateResourceChip(title: countTitle, systemImage: "person.2")
         }
         .disabled(agents.isEmpty)
         .accessibilityLabel("\(countTitle) for \(visit.title)")

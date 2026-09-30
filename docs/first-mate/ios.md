@@ -168,8 +168,8 @@ cancellable retry deadlines as features. A latest USER summary is not a read key
 the matching snapshot supplies the covered assistant; an unloaded newer user or
 assistant keeps the lead unread. The lead orb never contributes to feature dots,
 even with search/scope changes. Lead Info is Overview only: GOAL, Needs you,
-Moving, Done, native status/machine/now and sync state, with exact-owner capsule
-readouts and Open chat. Feature-only archive/pause/cancel controls are absent.
+Moving, Done, native status/machine/now and sync state, as Mac-style rows whose
+exact-owner readouts offer Open chat. Feature-only archive/pause/cancel controls are absent.
 
 Synthetic tests cover nil/read-only/unsupported lead, ensure and snapshot races,
 pins/removal/ties, failed-poll thresholds, context provenance and frozen retries.
@@ -200,7 +200,11 @@ or control loss never starts fallback or sends. Recognized text stays with its
 original draft; a concurrent edit preserves the result separately for explicit
 Append to draft. Voice messages retain the existing dictation caveat.
 
-The expandable accessory area shows coordinator context and Model and thinking.
+One accessory line above the pill holds two glass chips: the context ring with a
+short reading ("New session", "Context 41%", "… · handoff due") and the model's
+last path component with its thinking level. Both open their sheets; the full
+context summary is the chip's VoiceOver label. The tag and hold-to-talk hint
+appears only while the field is focused, or for voice and unavailable states.
 Settings load from the same host. Running-session changes require confirmation,
 a revision-pinned proposal and safe-model capability. Busy/queued turns, pending
 outgoing submissions, closed features and lost ownership disable mutations.
@@ -225,8 +229,14 @@ single final Mobile App Hub build.
 
 ## Feature chat (Phase 3)
 
-Chat hides the tab bar and uses a custom glass back/title/Info/More bar, retaining
-native edge-swipe back. A lazy, bottom-anchored transcript follows only within
+Chat hides the tab bar. Its back, title pill, Info and More controls, the composer
+pill and the plus button are system Liquid Glass (the tab bar's material), floating
+in `safeAreaBar`s with no band behind them; the transcript fades out at each bar
+edge so the dusk continues under the controls. Native edge-swipe back remains.
+The notice band shows only what the Mac shows: execution warnings, blocked work
+(with the blocking event's summary), interrupted recovery and pause, each with its
+icon. Suggested replies are accent outline chips inside the offering bubble, and
+file cards name the producing agent ("From Device QA"). A lazy, bottom-anchored transcript follows only within
 40pt of the end. Complete messages remain scrollable at the text cap. Bubbles
 use 18pt corners, a 5pt terminal tail, shared day/turn grouping and additional
 response disclosures. First Mate has no avatar/speaker line; crew messages retain
@@ -293,6 +303,16 @@ Hosts without `first-mate-archive-v1` keep their active list and update guidance
 
 On iPhone, a feature opens its conversation. Use the feature controls to inspect
 Overview, Agents, Documents or Workflow, then return to the same conversation.
+Info follows the Mac inspector: the navigation bar names the feature with its
+status and machine, the underline tabs and sync footer float over the content,
+and each tab keeps the Mac's structure. Overview reads "The feature at a glance"
+(Goal, usage and current-focus cards, the step's agents as plain rows, the latest
+journal milestones); Agents groups crew rows under step disclosure rows; Documents
+lists "agent · step" rows; Workflow puts Timeline/Graph beside "Feature journal"
+with "Visit n · revision r" steps. Statuses are a glyph and word in the Mac's
+colors (blocked red, your direction green, working yellow). Saved sessions read
+as a transcript: your prompts in bubbles, the agent's Markdown, tool results
+folded. Sheets extend to every edge and close with the system glass button.
 Underline tabs scroll horizontally at narrow widths. A persistent footer shows
 sync state and revision. Mention navigation highlights only the exact assignment
 inside that owner, including its saved-session action. A different feature starts

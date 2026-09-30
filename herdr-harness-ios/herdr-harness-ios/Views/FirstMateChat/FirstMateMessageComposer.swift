@@ -13,7 +13,11 @@ struct FirstMateMessageComposer: View {
     var hasAttachments = false
     var voice: FirstMateMobileVoiceController?
     var beginVoice: ((Bool) -> Void)?
+    /// A transient hint (voice states, quick-tap guidance), shown whenever set.
     var composerHint: String?
+    /// Guidance shown only while the field is focused, so the idle composer
+    /// stays one row like the Mac's.
+    var focusedHint: String?
     @FocusState private var focused: Bool
     private var recording: Bool { voice?.phase == .recording || voice?.phase == .locked }
 
@@ -33,8 +37,8 @@ struct FirstMateMessageComposer: View {
                         }.disabled(!canControl || recording)
                         if let openDocuments { Button("View documents", systemImage: "doc.text", action: openDocuments) }
                     } label: {
-                        Image(systemName: "plus").font(.body.weight(.semibold))
-                            .frame(width: 40, height: 40).background(HerdrTheme.codeFill, in: .circle)
+                        Image(systemName: "plus").font(.system(size: 18, weight: .medium))
+                            .frame(width: 44, height: 44).herdrControlGlass(in: .circle)
                             .frame(width: 44, height: 48).contentShape(.rect)
                     }
                     .accessibilityLabel("Attachments and conversation resources")
@@ -73,8 +77,13 @@ struct FirstMateMessageComposer: View {
                         .composerLayoutMeasurement(id: "composer-send-control")
                     }
                 }
-                .background(HerdrTheme.codeFill, in: .rect(cornerRadius: 24))
-                .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(recording ? HerdrTheme.alert.opacity(0.7) : focused ? HerdrTheme.accent.opacity(0.65) : HerdrTheme.subtleSeparator))
+                .herdrControlGlass(in: .rect(cornerRadius: 24), interactive: false)
+                .overlay {
+                    if recording || focused {
+                        RoundedRectangle(cornerRadius: 24).strokeBorder(recording ? HerdrTheme.alert.opacity(0.7) : HerdrTheme.accent.opacity(0.65))
+                            .allowsHitTesting(false)
+                    }
+                }
             }
             if let voice, recording || voice.phase == .transcribing {
                 HStack {
@@ -83,8 +92,8 @@ struct FirstMateMessageComposer: View {
                     Spacer(minLength: 0)
                     Button("Cancel") { voice.cancel() }.frame(minWidth: 44, minHeight: 44)
                 }.foregroundStyle(HerdrTheme.secondaryText)
-            } else {
-                Text(canControl ? composerHint ?? "Return adds a new line · ⌘ Return sends" : unavailableHint)
+            } else if let hint = canControl ? composerHint ?? (focused ? focusedHint : nil) : unavailableHint {
+                Text(hint)
                     .herdrFont(.caption).foregroundStyle(canControl ? HerdrTheme.tertiaryText : HerdrTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, openDocuments == nil && attachmentActions == nil ? 0 : 52)

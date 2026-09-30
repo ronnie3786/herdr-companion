@@ -5,20 +5,18 @@ struct FirstMateWorkflowView: View {
     let snapshot: FirstMateSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Feature journal").font(.title2).bold().accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("first-mate-workflow")
-                Text("Every step keeps its crew, documents, and decisions together.")
-                    .font(.subheadline)
-                    .foregroundStyle(HerdrTheme.secondaryText)
+        VStack(alignment: .leading, spacing: 16) {
+            FirstMateInspectorHeading(title: "Feature journal",
+                detail: "Every visit retains its agents and evidence. Revisions keep earlier work available.") {
+                Picker("Workflow presentation", selection: $store.graphMode) {
+                    Text("Timeline").tag(false)
+                    Text("Graph").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .accessibilityIdentifier("first-mate-workflow-mode")
             }
-            Picker("Workflow presentation", selection: $store.graphMode) {
-                Text("Timeline").tag(false)
-                Text("Graph").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("first-mate-workflow-mode")
+            .accessibilityIdentifier("first-mate-workflow")
 
             if snapshot.visits.isEmpty {
                 ContentUnavailableView("The journey starts with a plan", systemImage: "point.topleft.down.to.point.bottomright.curvepath", description: Text("Tell your First Mate the outcome you want to work toward."))
@@ -45,7 +43,8 @@ struct FirstMateWorkflowView: View {
                     Text("Activity log · \(snapshot.events.count) \(snapshot.events.count == 1 ? "update" : "updates")")
                         .accessibilityIdentifier("first-mate-activity-log")
                 }
-                .font(.subheadline.weight(.medium))
+                .herdrFont(.subheadline, weight: .medium)
+                .tint(HerdrTheme.iconTint)
                 .padding(.vertical, 8)
             }
         }

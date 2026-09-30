@@ -25,9 +25,7 @@ struct FirstMateConversationsBar: View {
                 }
             } label: {
                 Label("Companion host", systemImage: "desktopcomputer")
-                    .labelStyle(.iconOnly).frame(width: 44, height: 44)
-                    .background { HerdrGlassBackground(level: 0.80, cornerRadius: 22) }
-                    .overlay { Circle().strokeBorder(HerdrTheme.hairline, lineWidth: 1) }
+                    .labelStyle(.iconOnly).herdrGlassCircle(44)
             }
             .disabled(model.machines.isEmpty)
             .accessibilityLabel("Companion host, \(model.firstMateScopeLabel)")
@@ -84,14 +82,14 @@ struct FirstMateConversationsBar: View {
                 .accessibilityIdentifier("first-mate-options")
                 .composerLayoutMeasurement(id: "conversation-more-control")
             }
-            .background { HerdrGlassBackground(level: 0.80, cornerRadius: 22) }
-            .overlay { Capsule().strokeBorder(HerdrTheme.hairline, lineWidth: 1) }
+            .padding(.horizontal, 4)
+            .herdrControlGlass(in: .capsule)
         }
         .font(.system(size: 17, weight: .medium))
-        .foregroundStyle(HerdrTheme.iconTint)
+        .foregroundStyle(HerdrTheme.primaryText)
         .buttonStyle(.herdrPlain)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-chat-bar")
         #if DEBUG

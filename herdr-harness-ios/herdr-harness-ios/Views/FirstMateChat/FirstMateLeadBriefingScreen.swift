@@ -63,11 +63,11 @@ struct FirstMateLeadBriefingScreen: View {
             }
             .padding(16).frame(maxWidth: 720).frame(maxWidth: .infinity)
         }
-        .safeAreaInset(edge: .bottom) {
+        .herdrEdgeFade()
+        .safeAreaBar(edge: .bottom, spacing: 0) {
             FirstMateMessageComposer(text: $goal, placeholder: "Describe a new feature", canControl: model.firstMateCanControlVisibleHosts,
                                      isSending: false, send: beginCreating)
-                .padding(16).frame(maxWidth: 720).frame(maxWidth: .infinity)
-                .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).background(HerdrTheme.base) }
+                .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 8).frame(maxWidth: 720).frame(maxWidth: .infinity)
         }
         .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
         .herdrFirstMateChrome().navigationTitle("My First Mate").navigationBarTitleDisplayMode(.inline)

@@ -10,7 +10,10 @@ First Mate uses dark Mono chrome over a cached dusk background. The same dusk
 and `.xxxLarge` Dynamic Type cap now apply throughout the app, including Agents,
 Attention, Notes, Settings and modal controls. Complete messages remain scrollable.
 Settings → Appearance saves Glass and Haze independently for this phone; passive
-Reduce Motion and Reduce Transparency fallbacks retain those choices.
+Reduce Motion and Reduce Transparency fallbacks retain those choices. First Mate's
+floating controls (list bar, chat bar, composer, sheet close buttons) use the
+system's Liquid Glass over the dusk, with no bar bands; scrolled content fades out
+at each bar edge. Info mirrors the Mac inspector's layout tab for tab.
 
 The conversations list combines exact-owner features from every configured host.
 Feature chat and My First Mate share grouped transcripts, frozen optimistic sends,

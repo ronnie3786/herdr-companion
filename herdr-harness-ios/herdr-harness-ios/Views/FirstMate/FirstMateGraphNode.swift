@@ -11,45 +11,40 @@ struct FirstMateGraphNode: View {
     private var isCurrent: Bool { visit.id == snapshot.feature.currentVisitID }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 4) {
             Button(action: toggle) {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: symbol)
-                        .font(.title2)
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(HerdrTheme.accent)
-                        .padding(.top, 2)
+                        .frame(width: 32, height: 32)
+                        .background(HerdrTheme.accent.opacity(0.12), in: .rect(cornerRadius: 9))
                         .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 8) {
-                        if isCurrent {
-                            Text("CURRENT STEP").font(.footnote.weight(.semibold))
-                                .foregroundStyle(HerdrTheme.accent)
-                        }
-                        FirstMateVisitHeading(visit: visit, isCurrent: isCurrent, displayStatus: snapshot.displayStatus(for: visit))
-                    }
+                    FirstMateVisitHeading(visit: visit, isCurrent: isCurrent, displayStatus: snapshot.displayStatus(for: visit))
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(HerdrTheme.secondaryText)
-                        .padding(.top, 4)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(HerdrTheme.iconTint)
+                        .padding(.top, 5)
                         .accessibilityHidden(true)
                 }
                 .frame(minHeight: 44)
                 .contentShape(.rect)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.herdrPlain)
             .accessibilityLabel("\(visit.title), \(isExpanded ? "hide" : "show") step details")
             .accessibilityValue(isCurrent ? "Current step" : "")
             .accessibilityIdentifier("first-mate-graph-node-\(visit.id)")
-            FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
+            FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit).padding(.leading, 44)
             if isExpanded {
                 Divider()
                 FirstMateStageDetailView(store: store, snapshot: snapshot, visit: visit)
             }
         }
-        .padding(18)
-        .background(isCurrent ? HerdrTheme.accent.opacity(0.07) : HerdrTheme.cardFill, in: .rect(cornerRadius: 20))
+        .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 4)
+        .background(isCurrent ? HerdrTheme.accent.opacity(0.07) : HerdrTheme.cardFill, in: .rect(cornerRadius: HerdrTheme.Radius.card))
         .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(isCurrent ? HerdrTheme.accent.opacity(0.55) : HerdrTheme.outline, lineWidth: 1)
+            RoundedRectangle(cornerRadius: HerdrTheme.Radius.card)
+                .strokeBorder(isCurrent ? HerdrTheme.accent.opacity(0.45) : HerdrTheme.outline, lineWidth: 1)
         }
     }
 

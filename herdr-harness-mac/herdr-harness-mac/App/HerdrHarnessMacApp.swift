@@ -127,7 +127,7 @@ struct HerdrHarnessMacApp: App {
             FirstMateChatWindowRoot(model: model, shell: shell, modelFavorites: modelFavorites)
                 .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell, modelFavorites: modelFavorites))
                 .modifier(FirstMateChatWindowDismissal())
-                .modifier(HerdrMainWindowChromeModifier())
+                .modifier(HerdrMainWindowChromeModifier(revealsDesktop: true))
                 .environment(herdPulse)
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 680, minHeight: 620)

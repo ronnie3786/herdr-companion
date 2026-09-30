@@ -4,9 +4,9 @@ import SwiftUI
 
 /// Legible glass: Herdr's dusk backdrop shows softly through the sidebar
 /// and the pane (base at 80%) and the HUD (78%). The backdrop is one
-/// Herdr-owned image drawn once and stretched, not the desktop: the system's
-/// behind-window materials flatten any wallpaper to gray, and a true desktop
-/// blur needs private window APIs. No live blur runs anywhere.
+/// Herdr-owned image drawn once and stretched. The standalone First Mate
+/// window also lets a little native behind-window material show through;
+/// the other windows retain their painted backdrop.
 ///
 /// Glass is on when the person has it on in Settings → General → Appearance,
 /// Reduce Transparency is off, and the window is dark. First Mate's light
@@ -21,6 +21,16 @@ enum HerdrGlass {
     /// light, and Reduce Transparency branches. Foreground text, icons, and
     /// status colors are untouched, so reading text gains contrast.
     static let backgroundBrightness = 0.80
+
+    /// Keep 88% of the authored purple surface above the native desktop blur.
+    /// This affects backgrounds only, never text or controls.
+    static let desktopSurfaceOpacity = 0.88
+
+    /// With the column's base drawn at `level * desktopSurfaceOpacity`, this
+    /// leaves exactly 12% for the native material and retains the dusk's hue.
+    static func desktopDuskOpacity(level: Double = HerdrTheme.Glass.pane) -> Double {
+        (1 - level) * desktopSurfaceOpacity / (1 - level * desktopSurfaceOpacity)
+    }
 
     static func isActive(enabled: Bool, reduceTransparency: Bool, colorScheme: ColorScheme) -> Bool {
         enabled && !reduceTransparency && colorScheme == .dark
@@ -74,6 +84,8 @@ extension EnvironmentValues {
     @Entry var herdrGlassActive = false
     /// True when the Haze band should show behind the chat (needs glass).
     @Entry var herdrHazeActive = false
+    /// Only the standalone First Mate scene opts into desktop translucency.
+    @Entry var herdrDesktopGlassActive = false
 }
 
 /// A glass surface: `base` at `level` over the dusk backdrop, or an opaque
@@ -92,13 +104,15 @@ struct HerdrGlassBackground: View {
     /// ``HerdrGlass/backgroundBrightness``.
     var brightness: Double = HerdrGlass.backgroundBrightness
     @Environment(\.herdrGlassActive) private var isActive
+    @Environment(\.herdrDesktopGlassActive) private var desktopGlass
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if isActive {
             ZStack {
                 if drawsDusk { HerdrDuskBackdrop(region: duskRegion, brightness: brightness) }
-                HerdrGlass.darkened(base, scheme: colorScheme, brightness: brightness).opacity(level)
+                HerdrGlass.darkened(base, scheme: colorScheme, brightness: brightness)
+                    .opacity(level * (desktopGlass ? HerdrGlass.desktopSurfaceOpacity : 1))
             }
             .clipShape(.rect(cornerRadius: cornerRadius))
         } else {

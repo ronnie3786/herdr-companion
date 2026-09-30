@@ -29,10 +29,14 @@
   never creates a second build or simulator. SimPortal's server identity is
   pinned; a replaced server stops automatic changes until an operator sets
   `[simportal] server_id`.
-- Resource policy: at most `max_running_previews` Herdr simulators run per
-  machine (an idle one is shut down to make room), and a simulator nobody has
-  watched for `idle_shutdown_minutes` is shut down. Only this companion's own
-  previews are ever stopped; other simulators are never touched.
+- Resource policy: at most `max_running_previews` (default 4) Herdr simulators
+  run per machine (opening one more shuts down the least recently watched idle
+  one), and a simulator nobody has watched for `idle_shutdown_minutes`
+  (default 60) is shut down. Only this companion's own previews are ever
+  stopped; other simulators are never touched, and none are ever deleted.
+- A preview whose simulator was deleted in SimPortal (its Machines page)
+  reports phase `stopped` with status `simulator_deleted`; a stop refused for
+  that reason settles quietly instead of recording an error.
 - State lives in a new private `simulator-previews.sqlite3`; `first-mate.sqlite3`
   gets no schema change. SimPortal must run on the machine that compiles the
   builds, with enough free disk for its admission floor (20 GB by default).

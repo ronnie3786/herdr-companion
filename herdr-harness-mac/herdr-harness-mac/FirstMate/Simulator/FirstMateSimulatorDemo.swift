@@ -12,7 +12,7 @@ enum FirstMateSimulatorDemo {
 
     static let status = FirstMateSimulatorStatus(
         configured: true, state: "ready", registrationAvailable: true, previewAvailable: true,
-        defaultDevice: device, policy: .init(idleShutdownMinutes: 20, maxRunningPreviews: 2), runningPreviews: 1)
+        defaultDevice: device, policy: .init(idleShutdownMinutes: 60, maxRunningPreviews: 4), runningPreviews: 1)
 
     /// Two rounds of implementation and one review fix, attached to the
     /// feature's second and third stages when it has them.
@@ -59,7 +59,16 @@ enum FirstMateSimulatorDemo {
                              step: step ?? "checking_stream", steps: steps, error: nil),
             observation: .init(deviceState: "Booted", viewerCount: 1),
             browserLinks: .init(local: nil, tailnet: URL(string: "https://simportal.example.invalid:8531/d/\(udid)")),
-            idle: .init(shutdownAfterMinutes: 20, shutdownAt: nil, watchers: 1))
+            idle: .init(shutdownAfterMinutes: 60, shutdownAt: nil, watchers: 1))
+    }
+
+    /// The same preview after its simulator was deleted on SimPortal's Machines page.
+    static func deletedPreview(featureID: String, buildID: String) -> FirstMateSimulatorPreview {
+        FirstMateSimulatorPreview(
+            id: "fmsp_demo0000000000000000000000000001", featureID: featureID, buildID: buildID,
+            phase: "stopped", status: "simulator_deleted", device: device, stopReason: "idle",
+            udid: "00000000-0000-4000-8000-00000000D3E0",
+            idle: .init(shutdownAfterMinutes: 60, shutdownAt: nil, watchers: 0))
     }
 
     private static func timestamp(minutesAgo: Int) -> String {

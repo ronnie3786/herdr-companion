@@ -20,9 +20,13 @@
   opens that exact simulator's page in SimPortal and asks first, because
   SimPortal's browser viewer does make it the focused simulator.
 - Closing the window doesn't stop anything. **Shut Down** stops the simulator
-  now (its data is kept). Otherwise the companion shuts it down after 20
-  minutes with no viewer, and a hidden window pauses its picture after a
-  minute. At most two Herdr simulators run per machine by default.
+  now (its data is kept). Otherwise the companion shuts it down after an hour
+  with no viewer, and a hidden window pauses its picture after a minute. Up to
+  four Herdr simulators run per machine by default; opening a fifth shuts down
+  the one watched least recently.
+- A simulator deleted on SimPortal's **Machines** page shows as **Simulator
+  deleted** in its window, with its build kept; **Start Again** opens a fresh
+  one.
 - Requires a companion advertising `first-mate-simulator-previews-v1`, with
   SimPortal set up on the machine that compiles the builds (see
   docs/first-mate/simulator-previews.md). Without it, nothing new appears.

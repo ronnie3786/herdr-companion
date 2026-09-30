@@ -18,7 +18,7 @@ enum FirstMateSimulatorFixtures {
          "preview_available":true,"storage":{"free_bytes":90000000000,"min_free_bytes":20000000000,"admission_allowed":true,"observed_at":"2026-09-29T10:00:00Z"},
          "toolchain":{"xcode":"26.2"},"default_device":{"device_type":"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
          "device_type_name":"iPhone 17 Pro","runtime":"com.apple.CoreSimulator.SimRuntime.iOS-26-2","runtime_name":"iOS 26.2"},
-         "policy":{"idle_shutdown_minutes":20,"max_running_previews":2},"running_previews":1,"checked_at":"2026-09-29T10:00:00Z"}
+         "policy":{"idle_shutdown_minutes":60,"max_running_previews":4},"running_previews":1,"checked_at":"2026-09-29T10:00:00Z"}
         """
     }
 
@@ -34,7 +34,7 @@ enum FirstMateSimulatorFixtures {
            {"name":"booting","state":"succeeded"},{"name":"installing","state":"running"}],"error":null,"sequence":4,"updated_at":null,"udid":null},
          "observation":{"device_state":"Booted","viewer_count":1,"helper_ready":true,"last_frame_at":null,"observed_at":null},
          "error":null,"browser_links":{"local":null,"tailnet":"https://simportal.example.invalid:8531/d/ABCDEF01-2345-4789-ABCD-EF0123456789"},
-         "idle":{"shutdown_after_minutes":20,"shutdown_at":null,"watchers":1}}
+         "idle":{"shutdown_after_minutes":60,"shutdown_at":null,"watchers":1}}
         """
     }
 
@@ -70,7 +70,8 @@ struct FirstMateSimulatorModelTests {
             FirstMateSimulatorFixtures.build(id: "22222222-2222-4333-8444-555555555555", status: "registering", launchable: false),
         ]))
         #expect(list.simulator.canWatch)
-        #expect(list.simulator.policy?.idleShutdownMinutes == 20)
+        #expect(list.simulator.policy?.idleShutdownMinutes == 60)
+        #expect(list.simulator.policy?.maxRunningPreviews == 4)
         #expect(list.simulator.defaultDevice?.label == "iPhone 17 Pro · iOS 26.2")
         let first = try #require(list.builds.first)
         #expect(first.launchable)
@@ -105,6 +106,15 @@ struct FirstMateSimulatorModelTests {
         #expect(!FirstMateSimulatorAPI.isIdentifier(""))
         #expect(FirstMateSimulatorStepText.title(for: "creating_simulator") == "Creating the simulator")
         #expect(FirstMateSimulatorStepText.title(for: "new_step") == "New Step")
+    }
+
+    @Test("Idle windows read as people say them")
+    func policyText() {
+        #expect(FirstMateSimulatorPolicyText.duration(minutes: 60) == "an hour")
+        #expect(FirstMateSimulatorPolicyText.duration(minutes: 60, short: true) == "1 hr")
+        #expect(FirstMateSimulatorPolicyText.duration(minutes: 120) == "2 hours")
+        #expect(FirstMateSimulatorPolicyText.duration(minutes: 90) == "90 minutes")
+        #expect(FirstMateSimulatorPolicyText.duration(minutes: 20, short: true) == "20 min")
     }
 
     @Test("Builds merge hub builds with their simulator copies, newest first")
@@ -191,6 +201,19 @@ struct FirstMateSimulatorSessionTests {
         #expect(session.capacity.count == 2)
     }
 
+    @Test("A simulator deleted in SimPortal reads as stopped, and says so")
+    func deletedSimulator() async throws {
+        SimulatorURLProtocol.reset([
+            openPath: (200, "{\"ok\":true,\"preview\":\(FirstMateSimulatorFixtures.preview(phase: "stopped", status: "simulator_deleted", stream: false)),\"reused\":true,\"stopped_to_make_room\":[]}"),
+        ])
+        let session = FirstMateSimulatorSession(target: target, machineName: "Build Mac", api: SimulatorURLProtocol.api(), isDemo: false)
+        await session.startAgain()
+        #expect(session.phase == .stopped)
+        #expect(session.simulatorDeleted)
+        #expect(session.stream == nil)
+        session.close()
+    }
+
     @Test("Without a connection, or in demo mode, nothing is requested")
     func offlineAndDemo() {
         let offline = FirstMateSimulatorSession(target: target, machineName: "Build Mac", api: nil, isDemo: false)
@@ -275,14 +298,17 @@ private final class SimulatorURLProtocol: URLProtocol {
 struct FirstMateSimulatorRenderTests {
     private let target = FirstMateSimulatorWindowTarget(machineID: "demo", featureID: "demo-receipts", buildID: "demo-build-3")
 
-    @Test("Window: live, starting, and shut down")
+    @Test("Window: live, starting, installing, and deleted in SimPortal")
     func window() async throws {
         let live = FirstMateSimulatorSession(target: target, machineName: "Build Mac", api: nil, isDemo: true)
         let starting = FirstMateSimulatorSession(target: target, machineName: "Build Mac", api: nil, isDemo: true)
         starting.presentDemoStarting(at: "creating_simulator")
         let installing = FirstMateSimulatorSession(target: target, machineName: "Build Mac", api: nil, isDemo: true)
         installing.presentDemoStarting(at: "installing")
-        for (name, session) in [("live", live), ("starting", starting), ("installing", installing)] {
+        let deleted = FirstMateSimulatorSession(target: target, machineName: "Build Mac", api: nil, isDemo: true)
+        deleted.presentDemoDeleted()
+        #expect(deleted.simulatorDeleted)
+        for (name, session) in [("live", live), ("starting", starting), ("installing", installing), ("deleted", deleted)] {
             let image = try await HerdrRenderHarness.render("first-mate-simulator-\(name).png", size: CGSize(width: 430, height: 900)) {
                 ZStack {
                     HerdrDuskBackdrop()

@@ -56,8 +56,8 @@ from .simportal import (
 CAPABILITY = "first-mate-simulator-previews-v1"
 SCHEMA_VERSION = 1
 DEFAULT_PROJECT_ID = "herdr"
-DEFAULT_IDLE_MINUTES = 20
-DEFAULT_MAX_RUNNING = 2
+DEFAULT_IDLE_MINUTES = 60
+DEFAULT_MAX_RUNNING = 4
 PREFERRED_DEVICE_TYPES = (
     "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
     "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
@@ -70,6 +70,8 @@ START_STEPS = ("validating", "staging_app", "creating_simulator", "booting", "in
 # is still installing: the window can show it that early.
 STREAMABLE_STATUSES = frozenset({"installing", "launching", "checking_stream", "ready", "stream_released"})
 RUNNING_STATUSES = frozenset({"ready", "stream_released"})
+# Someone deleted (or is deleting) the preview's simulator in SimPortal to free disk. The build stays.
+SIMULATOR_DELETED_STATUSES = frozenset({"delete_queued", "deleting_simulator", "simulator_deleted"})
 # Anything else is still being registered and keeps being observed until it settles.
 BUILD_SETTLED_STATUSES = frozenset({"ready", "failed", "cancelled", "interrupted", "outcome_unknown", "conflict",
                                     "unavailable", "delete_queued", "deleting_build", "deleted"})
@@ -976,6 +978,9 @@ class SimulatorPreviews:
             elif entry["action"] == "start":
                 db.execute("UPDATE sim_previews SET status=?,error_json=?,updated_at=? WHERE id=?",
                            ("failed" if state == "rejected" else "conflict", failure, stamp, entry["preview_id"]))
+            elif entry["action"] in {"stop", "cancel"} and error == "simulator_deleted":
+                db.execute("UPDATE sim_previews SET status='simulator_deleted',error_json=NULL,pending_stop=NULL,"
+                           "updated_at=? WHERE id=?", (stamp, entry["preview_id"]))
             elif entry["action"] in {"stop", "cancel"}:
                 db.execute("UPDATE sim_previews SET error_json=?,pending_stop=NULL,updated_at=? WHERE id=?",
                            (failure, stamp, entry["preview_id"]))
@@ -1237,7 +1242,8 @@ class SimulatorPreviews:
         if mode not in {"stream", "shutdown"}:
             return
         status = row.get("status")
-        if status == "stopped" or (not row.get("udid") and status in {"failed", "cancelled"}):
+        if status == "stopped" or status in SIMULATOR_DELETED_STATUSES or (
+                not row.get("udid") and status in {"failed", "cancelled"}):
             with self._transaction() as db:
                 db.execute("UPDATE sim_previews SET pending_stop=NULL WHERE id=?", (row["id"],))
             return
@@ -1258,6 +1264,8 @@ class SimulatorPreviews:
         if status in {"submitting", "queued"} or (op_kind == "start" and op_status not in TERMINAL_OPERATION_STATUSES
                                                    and status not in {"failed", "conflict"}):
             return "stopping" if row.get("pending_stop") and op_status == "cancel_requested" else "starting"
+        if status in SIMULATOR_DELETED_STATUSES:
+            return "stopped"
         if status in {"stopping", "releasing_stream", "shutting_down"} or (op_kind == "stop" and op_status not in TERMINAL_OPERATION_STATUSES):
             return "stopping"
         if row.get("pending_stop"):

@@ -48,6 +48,11 @@ final class FirstMateSimulatorSession {
     /// True while the window has been hidden long enough that its stream is paused.
     private(set) var isPausedWhileHidden = false
 
+    /// Someone deleted this preview's simulator in SimPortal (or is deleting it) to free disk.
+    var simulatorDeleted: Bool {
+        ["simulator_deleted", "delete_queued", "deleting_simulator"].contains(preview?.status ?? "")
+    }
+
     @ObservationIgnored private let api: FirstMateSimulatorAPI?
     @ObservationIgnored private var openRequestID = UUID().uuidString.lowercased()
     @ObservationIgnored private var stopRequestID: String?
@@ -310,5 +315,13 @@ final class FirstMateSimulatorSession {
         phase = .starting
         demoFrame = FirstMateSimulatorDemo.startSteps.firstIndex(of: step).map { $0 >= 4 } == true
             ? FirstMateSimulatorDemo.screenImage() : nil
+    }
+
+    /// Demo mode: the simulator was deleted on SimPortal's Machines page.
+    func presentDemoDeleted() {
+        guard isDemo else { return }
+        preview = FirstMateSimulatorDemo.deletedPreview(featureID: target.featureID, buildID: target.buildID)
+        phase = .stopped
+        demoFrame = nil
     }
 }

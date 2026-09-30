@@ -112,18 +112,25 @@ data, the build, or anything else.
 
 ### Keeping resources in check
 
-- **Cap.** At most `max_running_previews` (default 2) Herdr previews run on a
-  machine. Opening another shuts down the least recently watched preview that
+- **Cap.** At most `max_running_previews` (default 4) Herdr previews run on a
+  machine. Opening a fifth shuts down the least recently watched preview that
   has no viewer, and says which one. If every preview is being watched, the
   request is refused with `simulator_capacity` and the list of running previews.
 - **Idle shutdown.** A running Herdr preview that nobody has watched for
-  `idle_shutdown_minutes` (default 20; `0` turns this off) is shut down.
+  `idle_shutdown_minutes` (default 60; `0` turns this off) is shut down.
   "Watched" means an open Herdr window or any other SimPortal viewer, as
   SimPortal counts them. Closing the window never stops anything by itself; it
   starts the idle clock. The Mac window pauses its stream after a minute
   hidden, so a forgotten window does not keep a simulator busy.
 - Only previews this companion started are ever stopped. Other simulators on
   the machine, including other SimPortal previews, are never touched.
+- **Disk.** Shutting down keeps a simulator's data, and every new start makes
+  a new simulator, so shut-down simulators add up. The companion never deletes
+  them. SimPortal's **Machines** page (`/machines` on any SimPortal Mac) lists
+  every Mac's simulators, groups the ones unused for 7+ days, and deletes them
+  after you confirm. A preview whose simulator was deleted there shows as
+  stopped ("Simulator deleted") with its build kept; Start Again opens a fresh
+  simulator.
 
 ## Durable requests
 
@@ -185,7 +192,9 @@ statuses are never treated as ready.
 
 **Preview**: `id` (`fmsp_…`), `portal_id`, `build_id`, `phase` (`starting`,
 `running`, `stopping`, `stopped`, `failed`, `cancelled`, `uncertain`,
-`unavailable`, `unknown`), the raw SimPortal `status`, `device` (type and
+`unavailable`, `unknown`), the raw SimPortal `status` (`simulator_deleted`,
+with `delete_queued` and `deleting_simulator` before it, when the simulator was
+deleted in SimPortal; the phase is then `stopped`), `device` (type and
 runtime IDs and names), `udid`, `stream_available`, `operation` (kind, status,
 current step and the ordered `steps` with their states, error), `observation`
 (device state, viewer count, last frame time), `browser_links` (`local`,
@@ -230,8 +239,8 @@ intake_root = "~/.simportal/builds"      # must be one of SimPortal's lifecycle.
 # project_id = "herdr"
 # device_type = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
 # runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
-# idle_shutdown_minutes = 20             # 0 turns idle shutdown off
-# max_running_previews = 2
+# idle_shutdown_minutes = 60             # 0 turns idle shutdown off
+# max_running_previews = 4               # opening a fifth shuts down the least recently watched idle one
 # server_id = "…"                        # only to accept a replaced SimPortal explicitly
 ```
 
@@ -248,7 +257,8 @@ Setup on each build machine:
 
 SimPortal refuses new builds and simulators while its disk has less free space
 than its floor (20 GB by default). Herdr reports that as `storage_low` and never
-lowers the floor.
+lowers the floor. SimPortal's **Machines** page shows each Mac's free space and
+the simulators you could delete to get above it.
 
 ## SimPortal
 
@@ -262,7 +272,6 @@ it does not have yet, and what Herdr does meanwhile:
 | Scoped viewer grants (short-lived, one simulator, no focus change) | The companion relays the stream with its service token and filters input |
 | A browser viewer link that does not claim shared focus | Open in Browser warns that it changes focus |
 | Resuming a stopped preview | Reopening after an idle shutdown creates a new simulator |
-| Retiring a stopped preview's simulator | Shut-down simulators and their data accumulate on disk until removed by hand |
 | Transferring a build to another machine | SimPortal must run on each build machine |
 | Server-side idle shutdown | Enforced by the companion, only while it runs |
 | Installing a newer build into a running preview | Each build gets its own simulator |

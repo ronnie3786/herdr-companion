@@ -172,8 +172,8 @@ skim_min_words = 80 # Shorter replies are shown as they are.
 # project_id = "herdr"
 # device_type = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
 # runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-2" # Omit for the newest compatible installed iOS runtime.
-# idle_shutdown_minutes = 20 # Shut down a Herdr preview nobody has watched this long; 0 turns it off.
-# max_running_previews = 2
+# idle_shutdown_minutes = 60 # Shut down a Herdr preview nobody has watched this long; 0 turns it off.
+# max_running_previews = 4 # Opening one more shuts down the least recently watched idle preview.
 # server_id = "" # Set only to accept a replaced SimPortal server explicitly.
 
 [remote_activity]

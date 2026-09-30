@@ -47,6 +47,7 @@ STEPS = {
     "register_build": ["validating_build", "staging_build"],
     "start": ["validating", "staging_app", "creating_simulator", "booting", "installing", "launching", "checking_stream"],
     "stop": ["releasing_stream", "shutting_down"],
+    "delete_simulator": ["deleting_simulator"],
 }
 TERMINAL = {"succeeded", "failed", "cancelled", "interrupted", "outcome_unknown"}
 
@@ -151,6 +152,18 @@ class FakeSimPortal:
                 portal["status"] = ("stopped" if mode == "shutdown" else "stream_released") if status == "succeeded" else status
                 if mode == "shutdown" and status == "succeeded" and portal["udid"]:
                     self.device_states[portal["udid"]] = "Shutdown"
+
+    def delete_simulator(self, portal_id: str) -> None:
+        """What SimPortal's Machines page does to a shut-down preview's device."""
+
+        with self.lock:
+            portal = self.portals[portal_id]
+            op = self.operation("delete_simulator", request_id=str(uuid.uuid4()), portal_id=portal_id,
+                                build_id=portal["buildId"])
+            op["status"], op["step"] = "succeeded", "deleting_simulator"
+            op["steps"][0]["state"] = "succeeded"
+            portal["operationId"], portal["status"] = op["id"], "simulator_deleted"
+            self.device_states.pop(portal["udid"], None)
 
     def decorate(self, portal: dict) -> dict:
         links = None
@@ -281,6 +294,8 @@ class FakeSimPortal:
                         portal = fake.portals[m.group(1)]
                         if fake.operations[portal["operationId"]]["status"] not in TERMINAL:
                             return self._send(409, {"error": "active", "code": "operation_active"})
+                        if portal["status"] == "simulator_deleted":
+                            return self._send(409, {"error": "deleted", "code": "simulator_deleted"})
                         op = fake.operation("stop", request_id=request_id, portal_id=portal["id"], build_id=portal["buildId"])
                         op["mode"] = body["mode"]
                         if body["mode"] == "stream":
@@ -719,6 +734,50 @@ device_type = "{IPHONE}"
         self.fake.finish(self.fake.portals[preview["portal_id"]]["operationId"])
         self.previews.tick()
         self.assertEqual(self.previews.preview_detail(self.feature["id"], preview["id"])["preview"]["phase"], "stopped")
+
+    def test_default_policy_is_an_hour_and_four_simulators(self):
+        environ = {k: v for k, v in self.environ.items()
+                   if k not in {"HERDR_SIMPORTAL_MAX_RUNNING_PREVIEWS", "HERDR_SIMPORTAL_IDLE_SHUTDOWN_MINUTES"}}
+        previews = SimulatorPreviews(environ, first_mate_store=self.store, clock=lambda: self.clock[0])
+        try:
+            self.assertEqual(previews.status(fresh=True)["policy"],
+                             {"idle_shutdown_minutes": 60, "max_running_previews": 4})
+        finally:
+            previews.stop()
+
+    def test_a_simulator_deleted_in_simportal_reads_as_stopped_and_opens_fresh(self):
+        build = self.register()
+        preview = self.ready_preview(build["build_id"])
+        self.previews.stop_preview(self.feature["id"], preview["id"], request_id="stop-1", mode="shutdown")
+        self.fake.finish(self.fake.portals[preview["portal_id"]]["operationId"])
+        self.previews.tick()
+        self.fake.delete_simulator(preview["portal_id"])
+        self.clock[0] += 6  # the next observation after the companion's short cache
+        detail = self.previews.preview_detail(self.feature["id"], preview["id"])["preview"]
+        self.assertEqual((detail["phase"], detail["status"], detail["error"]), ("stopped", "simulator_deleted", None))
+        self.assertFalse(detail["stream_available"])
+        stops = len([b for b in self.fake.mutations("/api/portals/") if "mode" in b])
+        self.previews.stop_preview(self.feature["id"], preview["id"], request_id="stop-2")
+        self.assertEqual(len([b for b in self.fake.mutations("/api/portals/") if "mode" in b]), stops,
+                         "nothing is left to stop")
+        reopened = self.previews.open_preview(self.feature["id"], build["build_id"], request_id="open-2")
+        self.assertFalse(reopened["reused"])
+        self.assertNotEqual(reopened["preview"]["id"], preview["id"])
+
+    def test_a_stop_refused_because_the_simulator_was_deleted_settles_without_an_error(self):
+        build = self.register()
+        preview = self.ready_preview(build["build_id"])
+        # The stop request races a deletion on the Machines page (SimPortal refuses deleting
+        # a booted device, so this only happens once it was shut down elsewhere).
+        self.fake.device_states[preview["udid"]] = "Shutdown"
+        self.fake.delete_simulator(preview["portal_id"])
+        with self.previews._transaction() as db:
+            db.execute("UPDATE sim_previews SET status='ready' WHERE id=?", (preview["id"],))
+        self.previews._enqueue_stop(self.previews._row("SELECT * FROM sim_previews WHERE id=?", (preview["id"],)),
+                                    mode="shutdown", reason="idle")
+        row = self.previews._row("SELECT * FROM sim_previews WHERE id=?", (preview["id"],))
+        self.assertEqual((row["status"], row["error_json"], row["pending_stop"]), ("simulator_deleted", None, None))
+        self.assertEqual(self.previews._phase(row), "stopped")
 
     def test_catalog_sync_includes_same_scope_builds_and_cleanup(self):
         result = self.register()

@@ -410,6 +410,17 @@ struct FirstMateSimulatorPreviewEnvelope: Decodable, Sendable {
 }
 
 /// SimPortal's start and stop steps, in the words the window shows.
+enum FirstMateSimulatorPolicyText {
+    /// "1 hour", "90 minutes", "2 hours"; short: "1 hr", "90 min".
+    static func duration(minutes: Int, short: Bool = false) -> String {
+        if minutes >= 60, minutes % 60 == 0 {
+            let hours = minutes / 60
+            return short ? "\(hours) hr" : hours == 1 ? "an hour" : "\(hours) hours"
+        }
+        return short ? "\(minutes) min" : minutes == 1 ? "a minute" : "\(minutes) minutes"
+    }
+}
+
 enum FirstMateSimulatorStepText {
     static let startSteps = ["validating", "staging_app", "creating_simulator", "booting", "installing", "launching", "checking_stream"]
 

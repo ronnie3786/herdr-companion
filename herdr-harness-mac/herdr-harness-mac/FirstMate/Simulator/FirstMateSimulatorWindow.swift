@@ -139,7 +139,7 @@ struct FirstMateSimulatorStatusPill: View {
         switch session.phase {
         case .opening, .starting: ("Starting", HerdrTheme.working, true)
         case .stopping: ("Shutting down", HerdrTheme.working, true)
-        case .stopped: ("Shut down", HerdrTheme.tertiaryText, false)
+        case .stopped: (session.simulatorDeleted ? "Deleted" : "Shut down", HerdrTheme.tertiaryText, false)
         case .failed: ("Failed", HerdrTheme.alert, false)
         case .unavailable: ("Unavailable", HerdrTheme.warning, false)
         case .running:
@@ -307,7 +307,9 @@ private struct FirstMateSimulatorScreenOverlay: View {
                 card { stateMessage(symbol: "power", title: "Shutting down…", message: nil) }
             case .stopped:
                 card {
-                    stateMessage(symbol: "power", title: "Simulator shut down", message: stoppedReason) {
+                    stateMessage(symbol: session.simulatorDeleted ? "trash" : "power",
+                                 title: session.simulatorDeleted ? "Simulator deleted" : "Simulator shut down",
+                                 message: stoppedReason) {
                         Button("Start Again") { Task { await session.startAgain() } }
                             .buttonStyle(HerdrButtonStyle(kind: .primary))
                             .disabled(session.isSubmitting || session.build?.launchable == false)
@@ -342,10 +344,13 @@ private struct FirstMateSimulatorScreenOverlay: View {
     private var showsPicture: Bool { session.demoFrame != nil || (session.stream != nil && session.stream?.state == .live) }
 
     private var stoppedReason: String {
+        if session.simulatorDeleted {
+            return "It was deleted in SimPortal to free disk space. The build is saved; starting again opens a fresh simulator."
+        }
         switch session.preview?.stopReason {
         case "idle":
-            let minutes = session.status?.policy?.idleShutdownMinutes ?? 20
-            return "Nobody had watched it for \(minutes) minutes. Its data is kept; starting again opens a fresh simulator."
+            let minutes = session.preview?.idle?.shutdownAfterMinutes ?? session.status?.policy?.idleShutdownMinutes ?? 60
+            return "Nobody had watched it for \(FirstMateSimulatorPolicyText.duration(minutes: minutes)). Its data is kept; starting again opens a fresh simulator."
         case "capacity": return "It was shut down to make room for another simulator."
         default: return "Its data is kept; starting again opens a fresh simulator."
         }
@@ -572,8 +577,8 @@ private struct FirstMateSimulatorControls: View {
             if let at = session.preview?.idle?.shutdownAt, let date = HerdrTimestamp.date(from: at), session.isPausedWhileHidden {
                 return "Shuts down at \(date.formatted(date: .omitted, time: .shortened)) if nobody watches"
             }
-            return "Shuts down after \(minutes) min unwatched"
-        case .stopped: return "Shut down"
+            return "Shuts down after \(FirstMateSimulatorPolicyText.duration(minutes: minutes, short: true)) unwatched"
+        case .stopped: return session.simulatorDeleted ? "Deleted" : "Shut down"
         default: return session.machineName
         }
     }

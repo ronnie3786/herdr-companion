@@ -813,21 +813,25 @@ device_type = "{IPHONE}"
         refused = self.register(spool="refused")
         self.assertEqual(refused["status"], "failed")
         self.assertEqual(list(self.artifacts.rglob("*.app")), [], "a refused registration keeps nothing")
-        # An interrupted registration is never resumed, so its intake copy goes too.
+        # An interrupted registration is never resumed, so its intake copy goes too. This service's
+        # time passes without SimPortal settling anything, so the test decides how it ends.
         app = make_app(self.workspace / "other/Build/Products/Debug-iphonesimulator")
-        with patch.object(SimulatorPreviews, "_observe_build", lambda *args, **kwargs: None):
-            future = self.previews.submit_registration("interrupted", self.context(), {"app_path": str(app)})
-            for _ in range(250):
-                if self.fake.builds and len(self.fake.builds) == 1:
-                    break
-                time.sleep(0.02)
-        [registered] = self.fake.builds.values()
-        self.fake.finish(registered["operationId"], "interrupted",
-                         {"code": "server_interrupted", "message": "Server stopped before completion."})
-        result = future.result(timeout=30)
-        self.previews.release_registration("interrupted")
-        self.assertEqual(result["status"], "interrupted")
-        self.assertEqual(list(self.artifacts.rglob("*.app")), [])
+        quiet = SimulatorPreviews(self.environ, first_mate_store=self.store, clock=lambda: self.clock[0],
+                                  sleep=lambda seconds=1.0: self.clock.__setitem__(0, self.clock[0] + seconds))
+        try:
+            pending = quiet.submit_registration("interrupted", self.context(), {"app_path": str(app)}).result(timeout=30)
+            quiet.release_registration("interrupted")
+            self.assertEqual(pending["status"], "registering")
+            self.assertEqual(len(list(self.artifacts.rglob("*.app"))), 1, "kept while SimPortal works on it")
+            registered = self.fake.builds[pending["build_id"]]
+            self.fake.finish(registered["operationId"], "interrupted",
+                             {"code": "server_interrupted", "message": "Server stopped before completion."})
+            quiet.tick()
+            row = quiet._row("SELECT status FROM sim_builds WHERE build_id=?", (pending["build_id"],))
+            self.assertEqual(row["status"], "interrupted")
+            self.assertEqual(list(self.artifacts.rglob("*.app")), [])
+        finally:
+            quiet.stop()
 
     def test_a_start_refused_after_the_user_pressed_stop_ends_as_failed(self):
         build = self.register()

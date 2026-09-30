@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 from typing import Optional
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from herdr_harness.pi_semantic import (
     PI_SEMANTIC_PROTOCOL,
@@ -180,6 +180,102 @@ class FakeExtensionSocket:
 
 
 class PiSemanticTests(unittest.TestCase):
+    def test_watcher_accepts_coalesced_records_near_the_line_limit(self):
+        manager = PiSemanticManager("/tmp/synthetic-herdr.sock", environ={})
+        self.addCleanup(manager.close)
+        hello = bridge_record("w1:p1", "hello", padding="x" * 1750)
+        event = bridge_record("w1:p1", "event", sequence=1,
+                              event={"type": "message_update", "delta": "y" * 100})
+        records = [(json.dumps(record) + "\n").encode() for record in (hello, event)]
+        self.assertTrue(all(len(record) < 2048 for record in records))
+        stream = b"".join(records)
+        self.assertGreater(len(stream), 2048)
+        connection = Mock()
+        connection.recv.side_effect = [records[0][:-10], records[0][-10:] + records[1], b""]
+        stop = Mock()
+        stop.is_set.return_value = False
+        stop.wait.return_value = True
+        with patch.object(manager, "_connect", return_value=connection), \
+             patch("herdr_harness.pi_semantic.PI_SEMANTIC_MAX_LINE_BYTES", 2048):
+            manager._watch("w1:p1", stop)
+        self.assertEqual(manager.journal.source_position("w1:p1", namespace=manager.namespace),
+                         ("bridge-one", 1))
+
+    def test_watcher_backs_off_when_authenticated_connections_keep_closing(self):
+        manager = PiSemanticManager("/tmp/synthetic-herdr.sock", environ={})
+        self.addCleanup(manager.close)
+        hello = (json.dumps(bridge_record("w1:p1", "hello")) + "\n").encode()
+        connections = []
+        for _ in range(4):
+            connection = Mock()
+            connection.recv.side_effect = [hello, b""]
+            connections.append(connection)
+        stop = Mock()
+        stop.is_set.return_value = False
+        stop.wait.side_effect = [False, False, False, True]
+        with patch.object(manager, "_connect", side_effect=connections), \
+             patch("herdr_harness.pi_semantic.time.monotonic", return_value=10.0), \
+             self.assertLogs("herdr_harness.pi_semantic", level="WARNING") as logs:
+            manager._watch("w1:p1", stop)
+        self.assertEqual(len(logs.output), 1, "repeated failures should not flood logs")
+        self.assertIn("reason=pi_bridge_disconnected", logs.output[0])
+        self.assertNotIn("w1:p1", logs.output[0], "diagnostics use an opaque pane hash")
+        self.assertEqual([round(call.args[0], 3) for call in stop.wait.call_args_list],
+                         [0.25, 0.425, 0.722, 1.228])
+
+    def test_watcher_still_rejects_oversized_complete_and_partial_records(self):
+        for terminated in (True, False):
+            with self.subTest(terminated=terminated):
+                manager = PiSemanticManager("/tmp/synthetic-herdr.sock", environ={})
+                self.addCleanup(manager.close)
+                hello = (json.dumps(bridge_record("w1:p1", "hello")) + "\n").encode()
+                oversized = json.dumps(bridge_record("w1:p1", "event", sequence=1,
+                    event={"type": "message_update", "delta": "x" * 2100})).encode()
+                connection = Mock()
+                connection.recv.side_effect = [hello, oversized + (b"\n" if terminated else b"")]
+                stop = Mock()
+                stop.is_set.return_value = False
+                stop.wait.return_value = True
+                with patch.object(manager, "_connect", return_value=connection), \
+                     patch("herdr_harness.pi_semantic.PI_SEMANTIC_MAX_LINE_BYTES", 2048), \
+                     self.assertLogs("herdr_harness.pi_semantic", level="WARNING") as logs:
+                    manager._watch("w1:p1", stop)
+                self.assertIn("reason=pi_payload_too_large", logs.output[0])
+                self.assertEqual(manager.journal.source_position("w1:p1", namespace=manager.namespace),
+                                 ("bridge-one", 0))
+                connection.close.assert_called_once()
+
+    def test_watcher_logs_io_error_codes_without_private_exception_text(self):
+        manager = PiSemanticManager("/tmp/synthetic-private-path.sock", environ={})
+        self.addCleanup(manager.close)
+        stop = Mock()
+        stop.is_set.return_value = False
+        stop.wait.return_value = True
+        with patch.object(manager, "_connect", side_effect=OSError(13, "synthetic-private-detail")), \
+             self.assertLogs("herdr_harness.pi_semantic", level="WARNING") as logs:
+            manager._watch("synthetic-private-pane", stop)
+        self.assertIn("reason=pi_bridge_io_error errno=13", logs.output[0])
+        self.assertNotIn("synthetic-private", logs.output[0])
+
+    def test_watcher_caps_retry_delay_and_resets_after_a_stable_connection(self):
+        manager = PiSemanticManager("/tmp/synthetic-herdr.sock", environ={})
+        self.addCleanup(manager.close)
+        hello = (json.dumps(bridge_record("w1:p1", "hello")) + "\n").encode()
+        connection = Mock()
+        connection.recv.side_effect = [hello, b""] * 11
+        stop = Mock()
+        stop.is_set.return_value = False
+        stop.wait.side_effect = [False] * 10 + [True]
+        with patch.object(manager, "_connect", return_value=connection), \
+             patch("herdr_harness.pi_semantic.time.monotonic", side_effect=[0.0, 1.0] * 10 + [0.0, 31.0]), \
+             self.assertLogs("herdr_harness.pi_semantic", level="WARNING") as logs:
+            manager._watch("w1:p1", stop)
+        delays = [call.args[0] for call in stop.wait.call_args_list]
+        self.assertEqual(max(delays), 10.0)
+        self.assertEqual(delays[-2:], [10.0, 0.25])
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("suppressed=9", logs.output[1])
+
     def test_socket_path_is_pane_specific_deterministic_and_bounded(self):
         first = pi_semantic_socket_path("/tmp/herdr.sock", "w1:p1")
         second = pi_semantic_socket_path("/tmp/herdr.sock", "w1:p2")

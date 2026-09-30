@@ -105,12 +105,14 @@ struct HerdrMainWindowChromeModifier: ViewModifier {
     @State private var isFullScreen = false
     @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
     @AppStorage(HerdrAppearancePreferences.hazeEnabledKey) private var hazeEnabled = HerdrAppearancePreferences.defaultHazeEnabled
+    @AppStorage(HerdrAppearancePreferences.desktopTransparencyEnabledKey)
+    private var desktopTransparencyEnabled = HerdrAppearancePreferences.defaultDesktopTransparencyEnabled
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         let glass = HerdrGlass.isActive(enabled: glassEnabled, reduceTransparency: reduceTransparency, colorScheme: colorScheme)
-        let desktopGlass = revealsDesktop && glass
+        let desktopGlass = revealsDesktop && desktopTransparencyEnabled && glass
         content
             // The shell draws its own 40pt bars at the top edge; nothing below
             // them should treat the transparent title bar as a safe area.

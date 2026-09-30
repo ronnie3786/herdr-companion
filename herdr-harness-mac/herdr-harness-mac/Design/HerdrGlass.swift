@@ -22,12 +22,12 @@ enum HerdrGlass {
     /// status colors are untouched, so reading text gains contrast.
     static let backgroundBrightness = 0.80
 
-    /// Keep 88% of the authored purple surface above the native desktop blur.
+    /// Keep 65% of the authored purple surface above the native desktop blur.
     /// This affects backgrounds only, never text or controls.
-    static let desktopSurfaceOpacity = 0.88
+    static let desktopSurfaceOpacity = 0.65
 
     /// With the column's base drawn at `level * desktopSurfaceOpacity`, this
-    /// leaves exactly 12% for the native material and retains the dusk's hue.
+    /// leaves 35% for the native material and retains the dusk's hue.
     static func desktopDuskOpacity(level: Double = HerdrTheme.Glass.pane) -> Double {
         (1 - level) * desktopSurfaceOpacity / (1 - level * desktopSurfaceOpacity)
     }

@@ -6,6 +6,56 @@ import Testing
 @Suite("First Mate desktop glass", .serialized)
 @MainActor
 struct HerdrDesktopGlassTests {
+    @Test("Desktop transparency changes live and keeps its saved choice across a new view")
+    func savedPreferenceTransitions() async throws {
+        let suiteName = "DesktopGlass.preference.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: HerdrAppearancePreferences.glassEnabledKey)
+        let hosting = NSHostingView(rootView: scene(defaults: defaults, revealsDesktop: true))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 640, height: 480),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.contentView = nil }
+
+        await settle(hosting)
+        #expect(!window.isOpaque, "The approved appearance is enabled by default")
+        #expect(hasDesktopMaterial(hosting))
+
+        // No replacement root: the shared preference must update an open window.
+        defaults.set(false, forKey: HerdrAppearancePreferences.desktopTransparencyEnabledKey)
+        await settle(hosting)
+        #expect(window.isOpaque)
+        #expect(!hasDesktopMaterial(hosting))
+        #expect(defaults.bool(forKey: HerdrAppearancePreferences.glassEnabledKey),
+                "Disabling desktop transparency must preserve the purple Glass preference")
+
+        let reopened = NSHostingView(rootView: scene(defaults: defaults, revealsDesktop: true))
+        window.contentView = reopened
+        await settle(reopened)
+        #expect(window.isOpaque, "The disabled choice must survive a new window view")
+
+        defaults.set(true, forKey: HerdrAppearancePreferences.desktopTransparencyEnabledKey)
+        await settle(reopened)
+        #expect(!window.isOpaque)
+        #expect(hasDesktopMaterial(reopened))
+        #expect(window.backgroundColor == .clear)
+        #expect(window.alphaValue == 1, "Text and controls must remain fully opaque")
+
+        defaults.set(false, forKey: HerdrAppearancePreferences.glassEnabledKey)
+        await settle(reopened)
+        #expect(window.isOpaque)
+        #expect(!hasDesktopMaterial(reopened))
+        #expect(defaults.bool(forKey: HerdrAppearancePreferences.desktopTransparencyEnabledKey),
+                "Glass off temporarily suspends translucency without discarding its choice")
+
+        defaults.set(true, forKey: HerdrAppearancePreferences.glassEnabledKey)
+        await settle(reopened)
+        #expect(!window.isOpaque)
+        #expect(hasDesktopMaterial(reopened))
+    }
+
     @Test("A mounted First Mate window becomes translucent and restores its opaque fallback")
     func windowTransitions() async throws {
         let defaults = try #require(UserDefaults(suiteName: "DesktopGlass.\(UUID().uuidString)"))

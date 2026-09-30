@@ -13,6 +13,8 @@ final class FirstMateMobileChatState {
     private(set) var pinnedMachineID: String?
     private(set) var route: FirstMateMobileNavigation?
     private(set) var routingError: String?
+    private var pendingNavigationIntent: UUID?
+    var isRouting: Bool { pendingNavigationIntent != nil }
     private(set) var leadOpenError: String?
     var path: [FirstMateChatRoute] {
         if let route {
@@ -110,8 +112,21 @@ final class FirstMateMobileChatState {
     @discardableResult
     func beginNavigation() -> UUID {
         navigationToken = UUID()
+        pendingNavigationIntent = nil
         routingError = nil
         return navigationToken
+    }
+
+    /// Reserve before scheduling a URL task so automatic lead selection cannot
+    /// change the selected store while that user's route is being resolved.
+    func beginRouting() -> UUID {
+        let intent = beginNavigation()
+        pendingNavigationIntent = intent
+        return intent
+    }
+
+    func finishRouting(_ intent: UUID) {
+        if pendingNavigationIntent == intent { pendingNavigationIntent = nil }
     }
 
     var currentNavigationIntent: UUID { navigationToken }
@@ -353,9 +368,10 @@ final class FirstMateMobileChatState {
     /// migrates a prompt on failover, and never selects a delayed result over a
     /// newly selected feature or a replaced store.
     func openLead(on machineID: String? = nil, intent suppliedIntent: UUID? = nil, fleet: FirstMateMobileFleetStore,
-                  canControl: (String) -> Bool = { _ in false }) async -> FirstMateFeatureTarget? {
+                  canControl: (String) -> Bool = { _ in false },
+                  whileCurrent: () -> Bool = { true }) async -> FirstMateFeatureTarget? {
         let intent = suppliedIntent ?? beginNavigation()
-        guard !Task.isCancelled, isCurrentNavigation(intent) else { return nil }
+        guard !Task.isCancelled, isCurrentNavigation(intent), whileCurrent() else { return nil }
         selection = .lead
         route = nil
         leadOpenError = nil
@@ -378,7 +394,7 @@ final class FirstMateMobileChatState {
         }
         let operation = UUID(), context = store.operationContext
         func current() -> Bool {
-            !Task.isCancelled && navigationToken == intent && tokens[machineID] == token && selection == .lead
+            !Task.isCancelled && whileCurrent() && navigationToken == intent && tokens[machineID] == token && selection == .lead
                 && fleet.store(forMachineID: machineID) === store && store.operationContext == context
         }
         openingLeads[machineID] = operation
@@ -413,6 +429,8 @@ final class FirstMateMobileChatState {
                   fleet: FirstMateMobileFleetStore, canControl: (String) -> Bool = { _ in false }) async -> Bool {
         let intent = suppliedIntent ?? beginNavigation()
         guard !Task.isCancelled, isCurrentNavigation(intent) else { return false }
+        pendingNavigationIntent = intent
+        defer { finishRouting(intent) }
         routingError = nil
         let resolution = request.resolve(machines: fleet.availableMachineIDs.compactMap { sources[$0]?.machine },
                                          hosts: hosts(fleet: fleet), owner: owner)

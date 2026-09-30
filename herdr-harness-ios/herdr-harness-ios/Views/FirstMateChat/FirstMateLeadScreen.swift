@@ -28,7 +28,8 @@ struct FirstMateLeadScreen: View {
         return .init(machineID: id, lifecycle: id.flatMap { fleet.store(forMachineID: $0)?.lifecycle },
             visible: topmost && model.selectedTab == .firstMate && scenePhase == .active
                 && !model.isSidebarPresented && !model.isCarModePresented && !model.isShowingError
-                && model.agentRequest == nil && !fleet.isCreating,
+                && model.agentRequest == nil && !fleet.isCreating
+                && fleet.chat.selection == .lead && !fleet.chat.isRouting && fleet.chat.route == nil,
             pin: fleet.chat.pinnedMachineID, retry: retry)
     }
     private var target: FirstMateFeatureTarget? {
@@ -37,6 +38,10 @@ struct FirstMateLeadScreen: View {
         return selected
     }
     var body: some View {
+        // The scheduled operation belongs to this render's key and existing
+        // user intent. Automatic choice/visibility updates never mint authority.
+        let captured = request
+        let intent = fleet.chat.currentNavigationIntent
         Group {
             if request.machineID == nil {
                 FirstMateLeadBriefingScreen(model: model, fleet: fleet, goal: $goal, openFeature: openFeature, create: create)
@@ -64,13 +69,13 @@ struct FirstMateLeadScreen: View {
                 .accessibilityIdentifier("first-mate-lead-opening")
             }
         }
-        .task(id: request) {
-            let captured = request
-            guard captured.visible, let machineID = captured.machineID else { return }
+        .task(id: captured) {
+            guard !Task.isCancelled, captured == request, captured.visible,
+                  fleet.chat.isCurrentNavigation(intent), let machineID = captured.machineID else { return }
             loading = true; error = nil
-            let intent = model.beginAppNavigation()
             let opened = await fleet.chat.openLead(on: machineID, intent: intent, fleet: fleet,
-                canControl: { model.firstMateCanControl(machineID: $0) })
+                canControl: { model.firstMateCanControl(machineID: $0) },
+                whileCurrent: { request == captured && !fleet.chat.isRouting && fleet.chat.route == nil })
             guard !Task.isCancelled, request == captured, fleet.chat.isCurrentNavigation(intent) else { return }
             loading = false
             if opened == nil { error = fleet.chat.leadOpenError ?? "First Mate could not be opened on its owning machine." }

@@ -22,6 +22,29 @@ struct FirstMateReadHostTests {
         #expect(fixture.unreadCount == 0)
     }
 
+    @Test("Short transcripts stay within scroll bounds and retain their held read across identical refreshes", arguments: [false, true])
+    func stableShortTranscript(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
+        await fixture.client.setHeldReads(true)
+        fixture.mount()
+        defer { fixture.unmount() }
+        try await fixture.wait { await fixture.client.readIDs == ["A"] }
+        for _ in 0..<3 {
+            await fixture.fleet.refreshChatIndex()
+            await fixture.fleet.refreshSelected(fixture.target)
+            await fixture.settle()
+            let scroll = try #require(fixture.transcriptScrollView)
+            #expect(scroll.contentSize.height < scroll.bounds.height)
+            #expect(scroll.contentOffset.y >= -scroll.adjustedContentInset.top - 0.001)
+            #expect(await fixture.client.readIDs == ["A"])
+            #expect(await fixture.client.cancellations == 0)
+            #expect(fixture.unreadCount == 0)
+        }
+        await fixture.client.finishRead()
+        await fixture.settle()
+        #expect(fixture.unreadCount == 0)
+    }
+
     @Test("A fleet summary ahead of a held and then failed selected fetch stays unread", arguments: [false, true])
     func summaryAhead(lead: Bool) async throws {
         let fixture = try await ReadHostFixture(unread: false, lead: lead)
@@ -258,11 +281,14 @@ private final class ReadHostFixture {
     var window: UIWindow?
     weak var previousWindow: UIWindow?
     var transcriptScrollView: UIScrollView? {
-        func find(_ view: UIView) -> UIScrollView? {
-            if let scroll = view as? UIScrollView, scroll.contentSize.height > scroll.bounds.height { return scroll }
-            return view.subviews.lazy.compactMap(find).first
+        func find(_ view: UIView) -> [UIScrollView] {
+            let own = (view as? UIScrollView).map { [$0] } ?? []
+            return own + view.subviews.flatMap(find)
         }
-        return window.flatMap(find)
+        // The fixed 402×874 host has one large transcript viewport. Reject an
+        // ambiguous hierarchy instead of selecting a composer or first match.
+        let candidates = window.map(find)?.filter { $0.bounds.height > 200 } ?? []
+        return candidates.count == 1 ? candidates[0] : nil
     }
     var fleet: FirstMateMobileFleetStore { model.firstMateFleet }
     var unreadCount: Int {

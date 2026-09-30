@@ -106,6 +106,11 @@ struct FirstMateChatWindowRoot: View {
                 .herdrHairline(.trailing)
 
                 chatColumn(layout: layout, width: width)
+                    // Geometry already determines the remaining width. Giving
+                    // the column that exact proposal avoids probing the whole
+                    // transcript and composer at zero and infinite widths on
+                    // every edit while the HStack negotiates flexible children.
+                    .frame(width: max(0, width - layout.sidebarWidth))
             }
             // Above both surfaces so the full six-point strip remains
             // draggable even where chat would otherwise win hit testing.

@@ -136,6 +136,7 @@ struct FirstMateWorkspaceView: View {
         .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.regular))
         .tint(palette.accent)
         .task(id: FirstMateWorkspaceObservationID(store: store)) { await observe() }
+        .task(id: store.lifecycle) { await observeList() }
         .onChange(of: gitTargetIdentity, initial: true) { _, target in
             guard let target else { return }
             if let selectedGitTargetIdentity, selectedGitTargetIdentity != target {
@@ -257,8 +258,17 @@ struct FirstMateWorkspaceView: View {
 
     private func observe() async {
         repeat {
-            await store.refresh()
+            await store.refreshConversation()
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
-        } while !Task.isCancelled && !store.isDemo && !store.unsupported
+        } while !Task.isCancelled && !store.isDemo
+    }
+
+    /// The main workspace still owns its feature list. Refreshing it must not
+    /// block a selection's conversation, or repeat on every selection change.
+    private func observeList() async {
+        repeat {
+            await store.refresh(includeConversation: false)
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+        } while !Task.isCancelled && !store.isDemo
     }
 }

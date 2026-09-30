@@ -30,6 +30,11 @@ struct FirstMatePromptComposer: View {
     var body: some View {
         productionView
             .equatable()
+            // The editor already caps its visible lines and scrolls longer
+            // drafts. Keep the surrounding controls at their intrinsic height
+            // instead of repeatedly negotiating compressed/expanded toolbar
+            // layouts with the transcript's flexible vertical stack.
+            .fixedSize(horizontal: false, vertical: true)
             .id(destination.id)
             .task(id: destination.id) {
                 if focusOnAppear { appearFocus &+= 1 }

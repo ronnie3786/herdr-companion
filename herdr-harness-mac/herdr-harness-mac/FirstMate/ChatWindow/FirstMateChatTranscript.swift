@@ -14,6 +14,7 @@ struct FirstMateChatTranscript: View {
     @Environment(\.controlActiveState) private var controlActiveState
     @State private var followsLatest = true
     @State private var transcriptClock = FirstMateTranscriptClock()
+    @State private var fileCards = FirstMateTranscriptFileCards()
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
     /// Only the clamped, whole-point bubble width is state, so resize frames
     /// that do not change it do not rebuild the transcript.
@@ -34,7 +35,8 @@ struct FirstMateChatTranscript: View {
         let messages = messages
         let rows = FirstMateTranscriptLayout.rows(for: messages, typing: isTyping,
             pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: transcriptClock.now, calendar: .current)
-        let cards = FirstMateTranscriptLayout.fileCards(messages: messages, documents: snapshot.documents)
+        let cardInput = FirstMateTranscriptFileCards.Input(messages: messages, documents: snapshot.documents)
+        let cards = fileCards.cards
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -95,6 +97,7 @@ struct FirstMateChatTranscript: View {
             }
         }
         .modifier(FirstMateTranscriptClockLifecycle(clock: transcriptClock))
+        .task(id: cardInput) { await fileCards.update(cardInput) }
         .onAppear(perform: markRead)
         .onChange(of: FirstMateTranscriptLayout.ReadKey(
             followsLatest: followsLatest,

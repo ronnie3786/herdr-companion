@@ -175,6 +175,26 @@ struct FirstMateChatConversationTests {
         #expect(FirstMateTranscriptLayout.containsWholeWords("PR #214 summary", in: "See the PR #214 summary."))
     }
 
+    @Test("File-card word boundaries retain Unicode, literal, repeated-match and overlapping-title behavior")
+    func fileCardBoundaries() {
+        for (phrase, text, expected) in [
+            ("Plan", "Planning Plan", true), ("Plan", "_Plan Plan2", false),
+            ("  Plan\n", "Read Plan.", true), (" ", " ", false),
+            ("Café", "(Café)", true), ("Café", "Caféteria", false),
+            ("検索", "検索 and 全検索", true), ("検索", "全検索", false),
+            ("🧾 Plan", "x🧾 Plan", true), ("Ship 🚀", "Ship 🚀now", true),
+            ("Plan", "plan", false), ("é", "e\u{301}", false),
+        ] {
+            #expect(FirstMateTranscriptLayout.containsWholeWords(phrase, in: text) == expected)
+        }
+        let documents = ["Plan", "Plan summary"].enumerated().map { index, title in
+            FirstMateDocument(id: "doc-\(index)", featureID: "feature", title: title,
+                mediaType: "text/plain", contentHash: "synthetic", createdAt: "2030-01-01T00:00:00Z")
+        }
+        let messages = [Self.message("reply", text: "Read Plan summary.")]
+        #expect(FirstMateTranscriptLayout.fileCards(messages: messages, documents: documents) == ["reply": documents])
+    }
+
     // MARK: Suggested replies
 
     @Test("Suggested replies come from the newest reply's skim, only when the chat needs you")
@@ -349,6 +369,25 @@ struct FirstMateChatConversationTests {
     func mentionRunsNoop() {
         let source = PiMarkdownText.render("Nothing to tag **here**.")
         #expect(FirstMateMentionLinker.link(source, catalog: Self.catalog) == source)
+    }
+
+    @Test("Mention caching follows content, attributes, catalog destinations and status")
+    func mentionCacheIdentity() {
+        let source = AttributedString("Device QA")
+        var catalog = Self.catalog
+        let first = FirstMateMentionLinker.link(source, catalog: catalog)
+        #expect(FirstMateMentionLinker.link(source, catalog: catalog) == first)
+        #expect(FirstMateMentionLinker.link(AttributedString("Device XX"), catalog: catalog) == AttributedString("Device XX"))
+        var code = source
+        code.inlinePresentationIntent = .code
+        #expect(FirstMateMentionLinker.link(code, catalog: catalog) == code)
+        catalog.entries[1].status = .done
+        #expect(FirstMateMentionLinker.link(source, catalog: catalog) != first)
+        catalog.entries[1].target = .agent(featureID: "fmf_2", assignmentID: "as_2")
+        let moved = FirstMateMentionLinker.link(source, catalog: catalog)
+        #expect(moved.runs.compactMap(\.link).contains(FirstMateMention.url(for: catalog.entries[1].target)))
+        catalog.entries[1].name = "Renamed agent"
+        #expect(FirstMateMentionLinker.link(source, catalog: catalog) == source)
     }
 
     @Test("The catalog lists features by title and label, and the open feature's crew")

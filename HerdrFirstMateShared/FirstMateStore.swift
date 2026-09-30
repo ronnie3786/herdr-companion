@@ -48,6 +48,11 @@ final class FirstMateStore {
 
     private(set) var features: [FirstMateFeature] = []
     private(set) var snapshots: [String: FirstMateSnapshot] = [:]
+    /// Ordering fences must advance even when an identical verdict does not
+    /// notify views. Otherwise a delayed green could overwrite a newer failure.
+    @ObservationIgnored private var latestVerifications: [String: FirstMateVerification] = [:]
+    @ObservationIgnored private var capabilitiesCheckedAt: Date?
+    @ObservationIgnored private var conversationRefreshID = UUID()
     var selectedFeatureID: String?
     var inspector = FirstMateInspector.overview
     /// The Documents inspector's Documents/Links sub-tab. Shared so the
@@ -248,6 +253,9 @@ final class FirstMateStore {
         composerDrafts.discardAll()
         #endif
         runtimeHealth = nil
+        latestVerifications = [:]
+        capabilitiesCheckedAt = nil
+        conversationRefreshID = UUID()
         demoUsesWallClock = demo && demoFeatures != nil
         if demo {
             demoStep = 0
@@ -316,11 +324,27 @@ final class FirstMateStore {
            (existing.feature.modelSettingsRevision ?? 0) > (value.feature.modelSettingsRevision ?? 0) { return }
         if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
            existing.latestEventSequence > value.latestEventSequence { return }
-        if let health = value.runtimeHealth, health != runtimeHealth { runtimeHealth = health }
+        var value = value
+        if let existing = snapshots[value.feature.id]?.feature ?? features.first(where: { $0.id == value.feature.id }) {
+            value.feature.verification = Self.retainedVerification(
+                incoming: value.feature.verification,
+                includesField: value.feature.includesVerification,
+                cached: latestVerifications[value.feature.id] ?? existing.verification,
+                incomingIsStale: Self.isStrictlyOlderTimestamp(value.feature.updatedAt, than: existing.updatedAt),
+                authoritative: value.hasDetails
+            )
+            value.feature.includesVerification = value.feature.includesVerification || existing.includesVerification
+        }
+        latestVerifications[value.feature.id] = value.feature.verification
+        if let health = value.runtimeHealth, !FirstMatePollPresentation.sameHealth(health, runtimeHealth) { runtimeHealth = health }
         // An identical poll changes nothing on screen. Dictionary and array
         // element writes notify observers even when the value is unchanged.
-        if value.hasDetails, snapshots[value.feature.id] == value,
-           features.contains(where: { $0.id == value.feature.id && $0 == value.feature }) { return }
+        if value.hasDetails, let existing = snapshots[value.feature.id],
+           FirstMatePollPresentation.sameSnapshot(existing, value),
+           value.feature.isLead || features.contains(where: { $0.id == value.feature.id && FirstMatePollPresentation.sameFeature($0, value.feature) }) {
+            reconcileOutgoingMessages(for: value.feature.id)
+            return
+        }
         if !value.hasDetails, var existing = snapshots[value.feature.id] {
             // Mutations acknowledge the feature; their omitted arrays and usage are not deletions.
             // A delayed mutation may have the same feature/settings revisions as a
@@ -333,14 +357,6 @@ final class FirstMateStore {
                 than: existing.feature.updatedAt
             )
             if feature.usage == nil { feature.usage = existing.feature.usage }
-            feature.verification = Self.retainedVerification(
-                incoming: feature.verification,
-                includesField: feature.includesVerification,
-                cached: existing.feature.verification,
-                incomingIsStale: hasStaleIdentityMetadata,
-                authoritative: false
-            )
-            feature.includesVerification = feature.includesVerification || existing.feature.includesVerification
             if hasStaleIdentityMetadata {
                 feature.updatedAt = existing.feature.updatedAt
                 feature.nativeSessionID = existing.feature.nativeSessionID
@@ -362,39 +378,26 @@ final class FirstMateStore {
             }
             existing.feature = feature
             if value.includesLinks { existing.links = value.links }
-            snapshots[value.feature.id] = existing
+            if !FirstMatePollPresentation.sameSnapshot(snapshots[value.feature.id]!, existing) {
+                snapshots[value.feature.id] = existing
+            }
         } else {
             var incoming = value
-            if let existing = snapshots[incoming.feature.id] {
-                // A delayed full snapshot can carry an older assessment than
-                // the one already cached. Keep the newer verdict so a stale
-                // verified state cannot be resurrected.
-                incoming.feature.verification = Self.retainedVerification(
-                    incoming: incoming.feature.verification,
-                    includesField: incoming.feature.includesVerification,
-                    cached: existing.feature.verification,
-                    incomingIsStale: Self.isStrictlyOlderTimestamp(
-                        incoming.feature.updatedAt,
-                        than: existing.feature.updatedAt
-                    ),
-                    authoritative: true
-                )
-                incoming.feature.includesVerification = incoming.feature.includesVerification
-                    || existing.feature.includesVerification
-            }
             if !incoming.includesLinks, let existing = snapshots[incoming.feature.id] {
                 // A server without the additive links field is not evidence
                 // that previously cached links were removed.
                 incoming.links = existing.links
             }
-            snapshots[incoming.feature.id] = incoming
+            if snapshots[incoming.feature.id].map({ !FirstMatePollPresentation.sameSnapshot($0, incoming) }) ?? true {
+                snapshots[incoming.feature.id] = incoming
+            }
         }
         let acceptedFeature = snapshots[value.feature.id]?.feature ?? value.feature
         if acceptedFeature.isLead {
             // The lead is a conversation above the features, never one of them.
             if leadFeatureID != acceptedFeature.id { leadFeatureID = acceptedFeature.id }
         } else if let index = features.firstIndex(where: { $0.id == value.feature.id }) {
-            features[index] = acceptedFeature
+            if !FirstMatePollPresentation.sameFeature(features[index], acceptedFeature) { features[index] = acceptedFeature }
         } else { features.append(acceptedFeature) }
         lastUpdated = .now
         // Observation is presentation state, not part of the snapshot: a poll
@@ -404,6 +407,7 @@ final class FirstMateStore {
     }
 
     private func apply(_ capabilities: FirstMateCapabilities) {
+        capabilitiesCheckedAt = .now
         archiveSupported = capabilities.ok && capabilities.supportsArchive
         attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
         contextSupported = capabilities.ok && capabilities.supportsContext
@@ -431,21 +435,23 @@ final class FirstMateStore {
             error = "Connect to a companion server to talk to First Mate."
             return false
         }
-        let capturedGeneration = generation
+        let context = operationContext
+        func isCurrent() -> Bool { !Task.isCancelled && context == operationContext }
         do {
             if !hasLoaded, let capabilities = try? await client.fetchFirstMateCapabilities() {
                 // A store that only shows the lead (the HUD's) never runs a
                 // full refresh, so the composer learns what it supports here.
-                guard capturedGeneration == generation else { return false }
+                guard isCurrent() else { return false }
                 apply(capabilities)
                 hasLoaded = true
             }
+            guard isCurrent() else { return false }
             let response = try await client.ensureFirstMateLead(requestID: UUID().uuidString)
-            guard capturedGeneration == generation else { return false }
+            guard isCurrent() else { return false }
             guard response.ok, let lead = response.lead, lead.feature.isLead else { throw APIError.invalidResponse }
             leadSupported = true
             let snapshot = try await client.fetchFirstMateFeature(lead.feature.id, journalEventsOnly: journalEventSnapshotsSupported)
-            guard capturedGeneration == generation else { return false }
+            guard isCurrent() else { return false }
             guard snapshot.ok, snapshot.feature.id == lead.feature.id else { throw APIError.invalidResponse }
             receive(snapshot)
             if selectedFeatureID != lead.feature.id { select(lead.feature.id) }
@@ -454,7 +460,7 @@ final class FirstMateStore {
         } catch is CancellationError {
             return false
         } catch {
-            guard capturedGeneration == generation else { return false }
+            guard isCurrent() else { return false }
             record(error)
             return false
         }
@@ -481,7 +487,7 @@ final class FirstMateStore {
         }
     }
 
-    func refresh() async {
+    func refresh(includeConversation: Bool = true) async {
         guard !isRefreshing else { return }
         if isDemo {
             features = snapshots.values.map(\.feature)
@@ -514,9 +520,10 @@ final class FirstMateStore {
             let list = try await client.fetchFirstMateFeatures(scope: showArchived ? .all : .active)
             guard capturedGeneration == generation else { return }
             guard list.ok else { throw APIError.invalidResponse }
-            runtimeHealth = list.runtimeHealth
-            features = list.features.map { feature in
-                guard let cached = snapshots[feature.id]?.feature else { return feature }
+            if !FirstMatePollPresentation.sameHealth(runtimeHealth, list.runtimeHealth) { runtimeHealth = list.runtimeHealth }
+            let refreshedFeatures = list.features.map { feature in
+                guard var cached = snapshots[feature.id]?.feature ?? features.first(where: { $0.id == feature.id }) else { return feature }
+                cached.verification = latestVerifications[feature.id] ?? cached.verification
                 if cached.revision > feature.revision || cached.updatedAt > feature.updatedAt {
                     var retained = cached
                     if let usage = feature.usage { retained.usage = usage }
@@ -534,8 +541,10 @@ final class FirstMateStore {
                 refreshed.includesVerification = refreshed.includesVerification || cached.includesVerification
                 return refreshed
             }
+            for feature in refreshedFeatures { latestVerifications[feature.id] = feature.verification }
+            if !FirstMatePollPresentation.sameFeatures(features, refreshedFeatures) { features = refreshedFeatures }
             reconcileSelection()
-            if let id = selectedFeatureID {
+            if includeConversation, let id = selectedFeatureID {
                 // Pi telemetry is most of a long-running feature's events and no
                 // First Mate screen shows it.
                 let value = try await client.fetchFirstMateFeature(id, journalEventsOnly: journalEventSnapshotsSupported)
@@ -550,6 +559,47 @@ final class FirstMateStore {
         } catch is CancellationError { return }
         catch {
             guard capturedGeneration == generation else { return }
+            hasLoaded = true
+            record(error)
+        }
+    }
+
+    /// The chat window already has the fleet's list. Read its selected
+    /// conversation directly, with a periodically renewed capability probe.
+    /// A superseded read may finish, but cannot publish into a new selection,
+    /// connection, or a newer request, even if its transport ignores cancel.
+    func refreshConversation() async {
+        guard !isDemo, let client, let featureID = selectedFeatureID else { return }
+        let context = operationContext
+        let requestID = UUID()
+        conversationRefreshID = requestID
+        func isCurrent() -> Bool {
+            !Task.isCancelled && context == operationContext && conversationRefreshID == requestID
+        }
+        do {
+            if capabilitiesCheckedAt.map({ Date.now.timeIntervalSince($0) >= 60 }) ?? true {
+                do {
+                    let capabilities = try await client.fetchFirstMateCapabilities()
+                    guard isCurrent() else { return }
+                    apply(capabilities)
+                } catch {
+                    guard isCurrent() else { return }
+                    // An outage is not evidence that a known capability was
+                    // removed. An unknown companion still gets the legacy GET.
+                }
+            }
+            guard isCurrent() else { return }
+            let value = try await client.fetchFirstMateFeature(featureID, journalEventsOnly: journalEventSnapshotsSupported)
+            guard isCurrent() else { return }
+            guard value.ok, value.feature.id == featureID else { throw APIError.invalidResponse }
+            receive(value)
+            hasLoaded = true
+            unsupported = false
+            error = nil
+            if lastUpdated == nil { lastUpdated = .now }
+        } catch is CancellationError { return }
+        catch {
+            guard isCurrent() else { return }
             hasLoaded = true
             record(error)
         }

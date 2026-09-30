@@ -54,12 +54,18 @@ final class HerdrFirstMateComposerUITests: XCTestCase {
         XCTAssertTrue(tag.waitForExistence(timeout: 5)); tag.tap()
         XCTAssertTrue((input.value as? String ?? "").contains("@Quiet notifications "))
         app.buttons["first-mate-send"].tap()
+        // Return to the conversation so the keyboard does not cover the older
+        // response. This also verifies feedback remains available after navigation.
+        app.buttons["first-mate-chat-back"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
         // Collapse accessories so the retained reply and its context menu stay visible.
         let collapse = app.buttons["Collapse composer accessories"]
         if collapse.exists { collapse.tap() }
         let reply = app.descendants(matching: .any)["first-mate-message-demo-receipts-message-3"]
         for _ in 0..<12 where !reply.isHittable { app.swipeDown() }
         XCTAssertTrue(reply.exists && reply.isHittable)
+        XCTAssertLessThan(reply.frame.maxY, app.buttons["first-mate-composer-plus"].frame.minY)
         reply.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.95)).press(forDuration: 1.0)
         try capture("phase5-feedback-menu", app)
         XCTAssertTrue(app.buttons["Give feedback"].waitForExistence(timeout: 5), app.debugDescription); app.buttons["Give feedback"].tap()

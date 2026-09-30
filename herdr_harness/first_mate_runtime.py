@@ -3097,8 +3097,6 @@ class FirstMateRuntime:
         feature_id = job["feature_id"]
         feature = self.store.get_feature(feature_id)
         claim = job["claim"]
-        if action == "fm_delegate":
-            validate_assignment_payload(params)
         if job.get("requires_recovery_ack") and not job.get("recovery_acknowledged") and action not in {"fm_status", "fm_read_document", "fm_read_session", "fm_acknowledge_recovery", "fm_request_human"}:
             raise FirstMateError("Inspect the retained checkpoint and acknowledge recovery before continuing")
         if action == "fm_status":
@@ -3182,6 +3180,7 @@ class FirstMateRuntime:
                 ancestor = self.store.get_assignment(ancestor["metadata"]["parent_assignment_id"])
             if depth >= 4:
                 raise FirstMateError("Nested delegation is limited to four levels; ask First Mate to reorganize this work")
+            validate_assignment_payload(params)
             profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
             parameters = {**params, "model_profile": profile,
                           "source_assignment_id": params.get("source_assignment_id") or parent["id"]}
@@ -3234,6 +3233,7 @@ class FirstMateRuntime:
                         actions = [{"tool": "fm_revise", "requires_human_direction": True}]
                     raise FirstMateError("No active stage. Begin the recorded follow-up stage, or use human direction to begin/revise a stage before delegating.",
                                          code="no_active_stage", next_permitted_actions=actions)
+                validate_assignment_payload(params)
                 profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
                 parameters = {**params, "model_profile": profile}
                 metadata = {**self._workspace(feature, parameters, request_id),

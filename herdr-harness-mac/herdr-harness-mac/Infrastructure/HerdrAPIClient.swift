@@ -184,6 +184,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
     private let session: URLSession
     private let cleanupApplyPollInterval: Duration
     private let cleanupApplyConsecutiveFailureLimit: Int
+    private var firstMateSummarySupported = false
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
@@ -208,7 +209,9 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
     }
 
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
-        try await request(path: "/api/v1/first-mate/capabilities")
+        let value: FirstMateCapabilities = try await request(path: "/api/v1/first-mate/capabilities")
+        firstMateSummarySupported = value.ok && value.capabilities.contains("first-mate-verification-summary-v1")
+        return value
     }
 
     func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot {
@@ -216,11 +219,35 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
     }
 
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
-        try await request(path: "/api/v1/first-mate/features")
+        try await fetchFirstMateFeatureList(scope: nil)
     }
 
     func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList {
-        try await request(path: "/api/v1/first-mate/features", query: [URLQueryItem(name: "view", value: scope.rawValue)])
+        try await fetchFirstMateFeatureList(scope: scope.rawValue)
+    }
+
+    private func fetchFirstMateFeatureList(scope: String?) async throws -> FirstMateFeatureList {
+        var query = scope.map { [URLQueryItem(name: "view", value: $0)] } ?? []
+        if firstMateSummarySupported { query.append(URLQueryItem(name: "summary", value: "1")) }
+        do {
+            return try await request(path: "/api/v1/first-mate/features", query: query)
+        } catch APIError.server(let code, _) where firstMateSummarySupported && [400, 404, 501].contains(code) {
+            firstMateSummarySupported = false
+            return try await request(path: "/api/v1/first-mate/features", query: query.filter { $0.name != "summary" })
+        }
+    }
+
+    func fetchFirstMatePresentation(_ id: String, view: FirstMateReadView, before: String?, ifVersion: String?) async throws -> FirstMatePresentationResponse {
+        var query = [URLQueryItem(name: "view", value: view.rawValue)]
+        if view == .chat { query.append(URLQueryItem(name: "messages", value: "60")) }
+        if let before { query.append(URLQueryItem(name: "before", value: before)) }
+        if let ifVersion { query.append(URLQueryItem(name: "if_version", value: ifVersion)) }
+        do {
+            return try await request(path: firstMatePath("features", id: id) + "/presentation", query: query)
+        } catch APIError.server(let code, _) where code == 404 || code == 501 {
+            // A companion can be rolled back while the capability TTL is live.
+            return .init(snapshot: try await fetchFirstMateFeature(id, journalEventsOnly: true))
+        }
     }
 
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {

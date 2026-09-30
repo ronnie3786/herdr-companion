@@ -189,6 +189,24 @@ struct FirstMateChatWindowLayoutTests {
                 "The persisted preference returns when the window widens")
     }
 
+    @Test("Root width updates use whole positive points")
+    func quantizedRootWidth() {
+        #expect(FirstMateChatWindowLayout.quantizedWidth(699.49) == 699)
+        #expect(FirstMateChatWindowLayout.quantizedWidth(699.5) == 700)
+        #expect(FirstMateChatWindowLayout.quantizedWidth(-1) == 0)
+        #expect(FirstMateChatWindowLayout.quantizedWidth(.infinity) == 0)
+    }
+
+    @Test("Bubble measurements clear together when the subview set changes")
+    func bubbleMeasurementInvalidation() {
+        var cache = FirstMateBubbleStack.Cache()
+        cache.intrinsic = .init(width: 320, sizes: [CGSize(width: 200, height: 40)])
+        cache.fitted = .init(width: 200, sizes: [CGSize(width: 200, height: 56)])
+        cache.invalidate()
+        #expect(cache.intrinsic == nil)
+        #expect(cache.fitted == nil)
+    }
+
     @Test("A mention opens on the current chat's machine first, then any machine that lists it")
     func mentionMachine() {
         let alpha = conversation("shared", machine: "alpha")

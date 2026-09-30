@@ -11,6 +11,7 @@ struct FirstMateChatView: View {
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.firstMateMarkRead) private var markRead
     @State private var followsLatest = true
+    @State private var earlierAnchor: String?
     @State private var transcriptClock = FirstMateTranscriptClock()
     @State private var feedbackEditor: FirstMateFeedbackEditorTarget?
     /// Skim or Full reply per message, kept while this chat is open.
@@ -172,6 +173,19 @@ struct FirstMateChatView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if store.earlierMessageCursors[snapshot.feature.id] != nil {
+                        Button(store.loadingEarlierMessages.contains(snapshot.feature.id) ? "Loading earlier messages…" : "Load earlier messages") {
+                            earlierAnchor = entries.first?.id
+                            followsLatest = false
+                            Task { await store.loadEarlierMessages() }
+                        }
+                        .disabled(store.loadingEarlierMessages.contains(snapshot.feature.id))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .accessibilityIdentifier("first-mate-load-earlier-messages")
+                    }
+                    if let error = store.earlierMessagesErrors[snapshot.feature.id] {
+                        Text(error).font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+                    }
                     ForEach(entries) { entry in
                         messageRow(entry.message, eligibleQuoteIDs: eligibleQuoteIDs, pendingDecisionID: pendingDecisionID)
                         if !entry.additionalReplies.isEmpty {
@@ -213,7 +227,17 @@ struct FirstMateChatView: View {
                 .frame(maxWidth: HerdrTheme.transcriptWidth)
                 .frame(maxWidth: .infinity)
             }
-            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(followsLatest ? .bottom : .top, for: .sizeChanges)
+            .defaultScrollAnchor(.top, for: .alignment)
+            .onChange(of: entries.first?.id) { _, _ in
+                guard let anchor = earlierAnchor else { return }
+                // A newly loaded checkpoint may group the former first reply
+                // under Additional responses. Anchor its surviving container.
+                let target = entries.first { $0.id == anchor || $0.additionalReplies.contains { $0.id == anchor } }?.id
+                if let target { withAnimation(nil) { proxy.scrollTo(target, anchor: .top) } }
+                earlierAnchor = nil
+            }
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 40
             } action: { _, nearBottom in

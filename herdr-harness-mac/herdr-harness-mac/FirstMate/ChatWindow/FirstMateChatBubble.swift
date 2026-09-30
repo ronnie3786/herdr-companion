@@ -255,31 +255,74 @@ struct FirstMateBubbleStack: Layout {
     var spacing: CGFloat = 2
     var fillsProposedWidth = false
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    struct Cache {
+        struct Measurement {
+            let width: CGFloat?
+            let sizes: [CGSize]
+        }
+
+        var intrinsic: Measurement?
+        var fitted: Measurement?
+
+        mutating func invalidate() {
+            intrinsic = nil
+            fitted = nil
+        }
+    }
+
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+
+    /// SwiftUI calls this when content, layout values, or the subview set
+    /// changes. Measurements are reusable only while those inputs are stable.
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.invalidate()
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let child = ProposedViewSize(width: proposal.width, height: nil)
-        let sizes = subviews.map {
-            $0.sizeThatFits($0[FirstMateBubbleFullWidthKey.self] ? .unspecified : child)
+        let sizes: [CGSize]
+        if let measured = cache.intrinsic,
+           measured.width == proposal.width,
+           measured.sizes.count == subviews.count {
+            sizes = measured.sizes
+        } else {
+            sizes = subviews.map {
+                $0.sizeThatFits($0[FirstMateBubbleFullWidthKey.self] ? .unspecified : child)
+            }
+            cache.intrinsic = .init(width: proposal.width, sizes: sizes)
         }
         let width = sizes.map(\.width).max() ?? 0
         let fittedWidth = fillsProposedWidth ? (proposal.width ?? width) : min(width, proposal.width ?? width)
         // Re-measure at the actual bubble width, so wrapped footer metadata has
         // the same height during measurement and placement.
-        let fitted = subviews.map { $0.sizeThatFits(.init(width: fittedWidth, height: nil)) }
+        let fitted = fittedSizes(width: fittedWidth, subviews: subviews, cache: &cache)
         let height = fitted.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, sizes.count - 1))
         return CGSize(width: fittedWidth, height: height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         var y = bounds.minY
-        let child = ProposedViewSize(width: bounds.width, height: nil)
+        let sizes = fittedSizes(width: bounds.width, subviews: subviews, cache: &cache)
         for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(child)
+            let size = sizes[index]
             let fillsWidth = subview[FirstMateBubbleFullWidthKey.self]
             let isLast = index == subviews.count - 1 && subviews.count > 1 && !fillsWidth
             let x = isLast ? bounds.maxX - size.width : bounds.minX
             subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: isLast ? size.width : bounds.width, height: size.height))
             y += size.height + spacing
         }
+    }
+
+    private func fittedSizes(width: CGFloat, subviews: Subviews, cache: inout Cache) -> [CGSize] {
+        if let measured = cache.fitted,
+           measured.width == width,
+           measured.sizes.count == subviews.count {
+            return measured.sizes
+        }
+        let child = ProposedViewSize(width: width, height: nil)
+        let sizes = subviews.map { $0.sizeThatFits(child) }
+        cache.fitted = .init(width: width, sizes: sizes)
+        return sizes
     }
 }
 

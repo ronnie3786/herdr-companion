@@ -33,6 +33,16 @@ final class SyntheticChatFleetClient: FirstMateClient, @unchecked Sendable {
     private var _beforeSend: (@Sendable () async throws -> Void)?
     private var _beforeEnsure: (@Sendable () async throws -> Void)?
     private var _beforeFeatureList: (@Sendable () async throws -> Void)?
+    typealias PresentationHandler = @Sendable (String, FirstMateReadView, String?, String?) async throws -> FirstMatePresentationResponse
+    private var _presentation: PresentationHandler?
+    var presentation: PresentationHandler? {
+        get { lock.withLock { _presentation } }
+        set { lock.withLock { _presentation = newValue } }
+    }
+    func fetchFirstMatePresentation(_ id: String, view: FirstMateReadView, before: String?, ifVersion: String?) async throws -> FirstMatePresentationResponse {
+        if let handler = presentation { return try await handler(id, view, before, ifVersion) }
+        return .init(snapshot: try await fetchFirstMateFeature(id))
+    }
     private var _beforeFeature: (@Sendable (String) async throws -> Void)?
 
     var beforeFeatureList: (@Sendable () async throws -> Void)? {

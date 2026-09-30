@@ -100,7 +100,7 @@ struct FirstMatePromptComposer: View {
             feature: featureWithCurrentSessionSelection,
             context: store.operationContext,
             canControl: canControl,
-            hasQueuedWork: snapshot.messages.contains { $0.status == "queued" }
+            hasQueuedWork: snapshot.hasQueuedWork == true || snapshot.messages.contains { $0.status == "queued" }
         )
         return ComposerAccessory(key: ComposerAccessoryKey(value: key)) { [store, modelFavorites] in
             FirstMateComposerModelControls(

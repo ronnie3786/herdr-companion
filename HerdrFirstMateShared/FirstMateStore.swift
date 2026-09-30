@@ -53,6 +53,17 @@ final class FirstMateStore {
     @ObservationIgnored private var latestVerifications: [String: FirstMateVerification] = [:]
     @ObservationIgnored private var capabilitiesCheckedAt: Date?
     @ObservationIgnored private var conversationRefreshID = UUID()
+    private(set) var readViewsSupported = false
+    private(set) var inspectorRefreshRevision = 0
+    private(set) var inspectorSnapshots: [String: FirstMateSnapshot] = [:]
+    private(set) var inspectorErrors: [String: String] = [:]
+    private(set) var earlierMessageCursors: [String: String] = [:]
+    private(set) var loadingEarlierMessages: Set<String> = []
+    private(set) var earlierMessagesErrors: [String: String] = [:]
+    @ObservationIgnored private var chatVersions: [String: String] = [:]
+    @ObservationIgnored private var chatRequests: [String: UUID] = [:]
+    @ObservationIgnored private var inspectorVersions: [String: String] = [:]
+    @ObservationIgnored private var inspectorRequests: [String: UUID] = [:]
     var selectedFeatureID: String?
     var inspector = FirstMateInspector.overview
     /// The Documents inspector's Documents/Links sub-tab. Shared so the
@@ -256,6 +267,10 @@ final class FirstMateStore {
         latestVerifications = [:]
         capabilitiesCheckedAt = nil
         conversationRefreshID = UUID()
+        readViewsSupported = false
+        inspectorSnapshots = [:]; inspectorErrors = [:]; inspectorVersions = [:]; inspectorRequests = [:]
+        chatVersions = [:]; chatRequests = [:]
+        earlierMessageCursors = [:]; loadingEarlierMessages = []; earlierMessagesErrors = [:]
         demoUsesWallClock = demo && demoFeatures != nil
         if demo {
             demoStep = 0
@@ -317,13 +332,23 @@ final class FirstMateStore {
         }
     }
 
-    func receive(_ value: FirstMateSnapshot) {
+    func receive(_ value: FirstMateSnapshot, isPresentationRead: Bool = false) {
         guard value.ok else { return }
         if let existing = snapshots[value.feature.id],
            existing.feature.revision > value.feature.revision ||
            (existing.feature.modelSettingsRevision ?? 0) > (value.feature.modelSettingsRevision ?? 0) { return }
         if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
            existing.latestEventSequence > value.latestEventSequence { return }
+        if !isPresentationRead {
+            for view in [FirstMateReadView.overview, .details] {
+                inspectorVersions[inspectorKey(featureID: value.feature.id, view: view)] = nil
+            }
+            inspectorRefreshRevision &+= 1
+        }
+        // Mutation receipts invalidate an outstanding conditional read. Its
+        // older response must not replace freshly accepted local work.
+        chatVersions[value.feature.id] = nil
+        chatRequests[value.feature.id] = nil
         var value = value
         if let existing = snapshots[value.feature.id]?.feature ?? features.first(where: { $0.id == value.feature.id }) {
             value.feature.verification = Self.retainedVerification(
@@ -408,6 +433,9 @@ final class FirstMateStore {
 
     private func apply(_ capabilities: FirstMateCapabilities) {
         capabilitiesCheckedAt = .now
+        #if os(macOS)
+        readViewsSupported = capabilities.ok && capabilities.supportsReadViews
+        #endif
         archiveSupported = capabilities.ok && capabilities.supportsArchive
         attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
         contextSupported = capabilities.ok && capabilities.supportsContext
@@ -450,10 +478,8 @@ final class FirstMateStore {
             guard isCurrent() else { return false }
             guard response.ok, let lead = response.lead, lead.feature.isLead else { throw APIError.invalidResponse }
             leadSupported = true
-            let snapshot = try await client.fetchFirstMateFeature(lead.feature.id, journalEventsOnly: journalEventSnapshotsSupported)
-            guard isCurrent() else { return false }
-            guard snapshot.ok, snapshot.feature.id == lead.feature.id else { throw APIError.invalidResponse }
-            receive(snapshot)
+            try await readConversation(lead.feature.id, isCurrent: isCurrent)
+            guard isCurrent(), snapshots[lead.feature.id] != nil else { return false }
             if selectedFeatureID != lead.feature.id { select(lead.feature.id) }
             error = nil
             return true
@@ -475,9 +501,8 @@ final class FirstMateStore {
         guard !isDemo, let client, let id = leadFeatureID, !isRefreshing else { return }
         let capturedGeneration = generation
         do {
-            let value = try await client.fetchFirstMateFeature(id, journalEventsOnly: journalEventSnapshotsSupported)
-            guard capturedGeneration == generation, value.ok, value.feature.id == id else { return }
-            receive(value)
+            try await readConversation(id) { !Task.isCancelled && capturedGeneration == generation }
+            guard capturedGeneration == generation else { return }
             error = nil
         } catch is CancellationError {
             return
@@ -547,10 +572,8 @@ final class FirstMateStore {
             if includeConversation, let id = selectedFeatureID {
                 // Pi telemetry is most of a long-running feature's events and no
                 // First Mate screen shows it.
-                let value = try await client.fetchFirstMateFeature(id, journalEventsOnly: journalEventSnapshotsSupported)
+                try await readConversation(id) { !Task.isCancelled && capturedGeneration == generation }
                 guard capturedGeneration == generation else { return }
-                guard value.ok, value.feature.id == id else { throw APIError.invalidResponse }
-                receive(value)
             }
             hasLoaded = true
             unsupported = false
@@ -589,10 +612,8 @@ final class FirstMateStore {
                 }
             }
             guard isCurrent() else { return }
-            let value = try await client.fetchFirstMateFeature(featureID, journalEventsOnly: journalEventSnapshotsSupported)
+            try await readConversation(featureID, isCurrent: isCurrent)
             guard isCurrent() else { return }
-            guard value.ok, value.feature.id == featureID else { throw APIError.invalidResponse }
-            receive(value)
             hasLoaded = true
             unsupported = false
             error = nil
@@ -602,6 +623,130 @@ final class FirstMateStore {
             guard isCurrent() else { return }
             hasLoaded = true
             record(error)
+        }
+    }
+
+    private func readConversation(_ id: String, isCurrent: () -> Bool) async throws {
+        guard let client else { return }
+        let request = UUID()
+        chatRequests[id] = request
+        let version = snapshots[id] == nil ? nil : chatVersions[id]
+        let response: FirstMatePresentationResponse
+        if readViewsSupported {
+            response = try await client.fetchFirstMatePresentation(id, view: .chat, before: nil, ifVersion: version)
+        } else {
+            response = .init(snapshot: try await client.fetchFirstMateFeature(id, journalEventsOnly: journalEventSnapshotsSupported))
+        }
+        guard isCurrent(), chatRequests[id] == request else { return }
+        guard response.ok else { throw APIError.invalidResponse }
+        if response.unchanged {
+            guard let version, version == response.version, snapshots[id] != nil else { throw APIError.invalidResponse }
+            if let health = response.runtimeHealth, !FirstMatePollPresentation.sameHealth(health, runtimeHealth) { runtimeHealth = health }
+            return
+        }
+        guard var value = response.snapshot, value.feature.id == id else { throw APIError.invalidResponse }
+        if let existing = snapshots[id] {
+            guard existing.feature.revision <= value.feature.revision,
+                  (existing.feature.modelSettingsRevision ?? 0) <= (value.feature.modelSettingsRevision ?? 0),
+                  existing.latestEventSequence <= value.latestEventSequence else { return }
+        }
+        var cursor = response.nextBefore
+        if response.version != nil, let existing = snapshots[id], let first = value.messages.first {
+            // Keep pages the person already opened when the new tail overlaps
+            // them. A gap resets pagination so history never silently skips rows.
+            let incomingIDs = Set(value.messages.map(\.id))
+            if existing.messages.contains(where: { incomingIDs.contains($0.id) }) {
+                let older = existing.messages.filter {
+                    !incomingIDs.contains($0.id) && ($0.createdAt < first.createdAt || ($0.createdAt == first.createdAt && $0.id < first.id))
+                }
+                if !older.isEmpty {
+                    value.messages = older + value.messages
+                    cursor = earlierMessageCursors[id]
+                }
+            }
+        }
+        receive(value, isPresentationRead: true)
+        chatVersions[id] = response.version
+        if earlierMessageCursors[id] != cursor { earlierMessageCursors[id] = cursor }
+    }
+
+    var inspectorReadView: FirstMateReadView { inspector == .overview ? .overview : .details }
+    func inspectorKey(featureID: String, view: FirstMateReadView) -> String { "\(featureID)|\(view.rawValue)" }
+    func inspectorSnapshot(featureID: String, view: FirstMateReadView) -> FirstMateSnapshot? {
+        isDemo ? snapshots[featureID] : inspectorSnapshots[inspectorKey(featureID: featureID, view: view)]
+    }
+
+    /// This read never writes the chat snapshot. Overview can arrive before
+    /// the transcript, and the heavier tabs load only when selected.
+    func refreshInspector(featureID: String, view: FirstMateReadView) async {
+        guard !isDemo, let client, view != .chat else { return }
+        let context = operationContext
+        let key = inspectorKey(featureID: featureID, view: view)
+        let request = UUID()
+        inspectorRequests[key] = request
+        func isCurrent() -> Bool { !Task.isCancelled && context == operationContext && inspectorRequests[key] == request }
+        do {
+            if capabilitiesCheckedAt == nil {
+                do {
+                    let capabilities = try await client.fetchFirstMateCapabilities()
+                    guard isCurrent() else { return }
+                    apply(capabilities)
+                } catch {
+                    guard isCurrent() else { return }
+                    // Unknown/older companions still get an independent legacy read.
+                }
+            }
+            let response: FirstMatePresentationResponse
+            if readViewsSupported {
+                response = try await client.fetchFirstMatePresentation(featureID, view: view, before: nil, ifVersion: inspectorVersions[key])
+            } else {
+                response = .init(snapshot: try await client.fetchFirstMateFeature(featureID, journalEventsOnly: journalEventSnapshotsSupported))
+            }
+            guard isCurrent() else { return }
+            guard response.ok else { throw APIError.invalidResponse }
+            if response.unchanged {
+                guard inspectorSnapshots[key] != nil, let version = response.version, version == inspectorVersions[key] else { throw APIError.invalidResponse }
+            } else {
+                guard let value = response.snapshot, value.feature.id == featureID else { throw APIError.invalidResponse }
+                if let cached = inspectorSnapshots[key], cached.feature.revision > value.feature.revision || cached.latestEventSequence > value.latestEventSequence { return }
+                if inspectorSnapshots[key].map({ !FirstMatePollPresentation.sameSnapshot($0, value) }) ?? true {
+                    inspectorSnapshots[key] = value
+                }
+                inspectorVersions[key] = response.version
+            }
+            if inspectorErrors[key] != nil { inspectorErrors[key] = nil }
+        } catch is CancellationError { return }
+        catch {
+            guard isCurrent() else { return }
+            inspectorErrors[key] = error.localizedDescription
+        }
+    }
+
+    func loadEarlierMessages() async {
+        guard let id = selectedFeatureID, let cursor = earlierMessageCursors[id],
+              !loadingEarlierMessages.contains(id), let client else { return }
+        let context = operationContext
+        let expectedCursor = cursor
+        loadingEarlierMessages.insert(id)
+        defer { if isCurrentLifecycle(context) { loadingEarlierMessages.remove(id) } }
+        do {
+            let response = try await client.fetchFirstMatePresentation(id, view: .chat, before: cursor, ifVersion: nil)
+            guard !Task.isCancelled, context == operationContext, earlierMessageCursors[id] == expectedCursor else { return }
+            guard response.ok, !response.unchanged, let page = response.snapshot, page.feature.id == id,
+                  var current = snapshots[id] else { throw APIError.invalidResponse }
+            // A page contributes history only. Its feature/verification cannot
+            // replace newer state delivered by a simultaneous latest-page read.
+            let ids = Set(current.messages.map(\.id))
+            current.messages = (page.messages.filter { !ids.contains($0.id) } + current.messages).sorted {
+                $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt
+            }
+            if !FirstMatePollPresentation.sameSnapshot(snapshots[id]!, current) { snapshots[id] = current }
+            earlierMessageCursors[id] = response.nextBefore
+            earlierMessagesErrors[id] = nil
+        } catch is CancellationError { return }
+        catch {
+            guard context == operationContext else { return }
+            earlierMessagesErrors[id] = error.localizedDescription
         }
     }
 
@@ -877,9 +1022,8 @@ final class FirstMateStore {
     func refreshFeature(_ context: OperationContext) async {
         guard !isDemo, isCurrentLifecycle(context), let featureID = context.featureID, let client else { return }
         do {
-            let value = try await client.fetchFirstMateFeature(featureID, journalEventsOnly: journalEventSnapshotsSupported)
-            guard isCurrentLifecycle(context), value.ok, value.feature.id == featureID else { return }
-            receive(value)
+            try await readConversation(featureID) { !Task.isCancelled && self.isCurrentLifecycle(context) }
+            guard isCurrentLifecycle(context) else { return }
             error = nil
         } catch is CancellationError {
             return
@@ -1228,7 +1372,9 @@ final class FirstMateStore {
         if let expectedContext, expectedContext != operationContext { return false }
         let context = expectedContext ?? operationContext
         guard let featureID = context.featureID, !isSavingLink,
-              let link = snapshots[featureID]?.link(linkID),
+              let link = (inspectorSnapshot(featureID: featureID, view: .details)
+                  ?? inspectorSnapshot(featureID: featureID, view: .overview)
+                  ?? snapshots[featureID])?.link(linkID),
               link.featureID == featureID else { return false }
         if isDemo {
             applyDemoVisibility(linkID, hidden: hidden, featureID: featureID)
@@ -1804,8 +1950,11 @@ final class FirstMateStore {
         resourceText = ""
         sessionMessages = nil
         resourceError = nil
-        resourceUsage = resource.usage(in: snapshot)
-        resourceModelSelection = resource.modelSelection(in: snapshot)
+        let resourceSnapshot = selectedFeatureID.flatMap {
+            inspectorSnapshot(featureID: $0, view: .details) ?? inspectorSnapshot(featureID: $0, view: .overview)
+        } ?? snapshot
+        resourceUsage = resource.usage(in: resourceSnapshot)
+        resourceModelSelection = resource.modelSelection(in: resourceSnapshot)
         resetSessionPagination()
         resourceLoading = true
         defer { if token == resourceGeneration { resourceLoading = false } }

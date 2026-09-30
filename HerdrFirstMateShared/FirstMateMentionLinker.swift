@@ -106,16 +106,26 @@ enum FirstMateMentionLinker {
         var entry: FirstMateMentionCatalog.Entry
     }
 
-    static func link(_ source: AttributedString, catalog: FirstMateMentionCatalog) -> AttributedString {
-        FirstMateMentionCache.shared.link(source, catalog: catalog)
+    static func link(
+        _ source: AttributedString,
+        catalog: FirstMateMentionCatalog,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) -> AttributedString {
+        FirstMateMentionCache.shared.link(source, catalog: catalog, isCancelled: isCancelled)
     }
 
-    fileprivate static func uncachedLink(_ source: AttributedString, catalog: FirstMateMentionCatalog) -> AttributedString {
+    fileprivate static func uncachedLink(
+        _ source: AttributedString,
+        catalog: FirstMateMentionCatalog,
+        isCancelled: @Sendable () -> Bool
+    ) -> AttributedString {
+        guard !isCancelled() else { return source }
         let spans = spans(in: source, catalog: catalog)
-        guard !spans.isEmpty else { return source }
+        guard !spans.isEmpty, !isCancelled() else { return source }
         var result = source
         let plain = String(source.characters)
         for span in spans.sorted(by: { $0.range.location > $1.range.location }) {
+            guard !isCancelled() else { return source }
             guard let stringRange = Range(span.range, in: plain),
                   let start = AttributedString.Index(stringRange.lowerBound, within: result),
                   let end = AttributedString.Index(stringRange.upperBound, within: result) else { continue }
@@ -209,10 +219,20 @@ private final class FirstMateMentionCache: @unchecked Sendable {
         cache.totalCostLimit = 8 * 1024 * 1024
     }
 
-    func link(_ source: AttributedString, catalog: FirstMateMentionCatalog) -> AttributedString {
+    func link(
+        _ source: AttributedString,
+        catalog: FirstMateMentionCatalog,
+        isCancelled: @Sendable () -> Bool
+    ) -> AttributedString {
+        guard !isCancelled() else { return source }
         let key = Key(source: source, catalog: catalog)
         if let hit = cache.object(forKey: key) { return hit.value }
-        let result = FirstMateMentionLinker.uncachedLink(source, catalog: catalog)
+        let result = FirstMateMentionLinker.uncachedLink(
+            source,
+            catalog: catalog,
+            isCancelled: isCancelled
+        )
+        guard !isCancelled() else { return source }
         cache.setObject(Entry(result), forKey: key, cost: max(1, source.characters.count * 8 + catalog.entries.count * 128))
         return result
     }

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PiMarkdownText: View {
     let source: String
+    @State private var mentionLinks = FirstMateMentionLinks()
     @Environment(\.saveChatQuote) private var saveQuote
     @Environment(\.paneResponseLinkCatalog) private var paneLinks
     @Environment(\.detectsPaneResponseLinks) private var detectsPaneLinks
@@ -86,20 +87,27 @@ struct PiMarkdownText: View {
         } else {
             linked = styled
         }
-        // Opt-in: only the First Mate chat window sets a mention catalog.
-        if let mentionCatalog {
-            linked = FirstMateMentionLinker.link(linked, catalog: mentionCatalog)
+        // Opt-in: only the First Mate chat window sets a mention catalog. The
+        // complete styled input is the async work identity; until it finishes,
+        // this exact current text is shown without mention destinations.
+        let mentionInput = mentionCatalog.map {
+            FirstMateMentionLinks.Input(source: linked, catalog: $0)
         }
+        let displayed = mentionInput.map { mentionLinks.text(for: $0) } ?? linked
         return Group {
             if saveQuote != nil {
-                ChatSelectableText(text: linked, font: font, lineSpacing: nil)
+                ChatSelectableText(text: displayed, font: font, lineSpacing: nil)
             } else {
-                Text(linked)
+                Text(displayed)
                     .font(font)
                     .foregroundStyle(palette.text)
                     .tint(palette.accent)
                     .textSelection(.enabled)
             }
+        }
+        .task(id: mentionInput) {
+            guard let mentionInput else { return }
+            await mentionLinks.update(mentionInput)
         }
     }
 

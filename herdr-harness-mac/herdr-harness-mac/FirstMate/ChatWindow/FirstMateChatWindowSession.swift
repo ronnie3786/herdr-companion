@@ -440,6 +440,15 @@ final class FirstMateChatWindowSession {
     }
 
     /// Wakes the refresh loop at once (a selection change or an open request).
+    private(set) var pollingInterval: Duration = .seconds(2)
+
+    func setActivity(isKey: Bool, isBackground: Bool) {
+        let interval: Duration = .seconds(isBackground ? 30 : isKey ? 2 : 10)
+        guard interval != pollingInterval else { return }
+        pollingInterval = interval
+        wakeRefresh()
+    }
+
     func wakeRefresh() {
         refreshWake?.yield(())
     }
@@ -482,7 +491,7 @@ final class FirstMateChatWindowSession {
                 while !Task.isCancelled, generation == selectionGeneration {
                     guard let store = selectedStore else {
                         lease.release()
-                        do { try await Task.sleep(for: Self.refreshInterval) } catch { return }
+                        do { try await Task.sleep(for: pollingInterval) } catch { return }
                         continue
                     }
                     lease.update(store: store, available: true)
@@ -493,7 +502,7 @@ final class FirstMateChatWindowSession {
                     } else {
                         await store.refreshConversation()
                     }
-                    do { try await Task.sleep(for: Self.refreshInterval) } catch { return }
+                    do { try await Task.sleep(for: pollingInterval) } catch { return }
                 }
             }
         }

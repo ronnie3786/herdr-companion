@@ -371,6 +371,12 @@ struct FirstMateChatConversationTests {
         #expect(FirstMateMentionLinker.link(source, catalog: Self.catalog) == source)
     }
 
+    @Test("A cancelled mention pass returns the original attributed text")
+    func mentionRunsCancellation() {
+        let source = PiMarkdownText.render("Device QA and Receipt export")
+        #expect(FirstMateMentionLinker.link(source, catalog: Self.catalog, isCancelled: { true }) == source)
+    }
+
     @Test("Mention caching follows content, attributes, catalog destinations and status")
     func mentionCacheIdentity() {
         let source = AttributedString("Device QA")

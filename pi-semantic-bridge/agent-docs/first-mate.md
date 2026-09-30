@@ -13,6 +13,24 @@ implementation, review, testing, and synthesis belong in tracked assignments.
 `read_only` is an instruction not to mutate the shared workspace, not an OS
 sandbox or reduced tool set.
 
+One feature normally keeps one worktree and branch through implementation,
+review, builds and feedback. `fm_delegate` with `workspace_mode: isolated`
+continues that workspace by default; `read_only` inspects it once it exists.
+An exact `source_assignment_id` selects a retained workspace to continue or
+review. Only independent parallel implementation or an experiment needs
+`workspace_strategy: fork` and a concrete `fork_reason`. Commit the source before
+forking. A new stage, assignment, build, retry or context handoff does not need a
+new checkout. Preserve inherited dirty files and commit finished changes on the
+ongoing feature branch, never reset it to the queued baseline.
+
+Workers on the same workspace serialize behind its writer; read-only workers
+can run together. A parent yields with `fm_wait_for_children` before children
+reuse its workspace, then resumes its saved session. Recover interruptions with
+`fm_recover`, retry reported failures with `fm_retry`, and never replace an
+uncertain worker to escape those checks. If a fix changes reviewed code, use
+`fm_retry` to refresh the affected revision-pinned review, including a completed
+review, before completing the stage. Old review attempts remain retained.
+
 Managed roles receive typed `fm_*` tools scoped to their validated feature/job:
 
 | Role | Typed workflow tools |

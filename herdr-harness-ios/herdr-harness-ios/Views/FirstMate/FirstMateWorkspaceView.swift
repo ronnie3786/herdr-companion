@@ -56,7 +56,7 @@ struct FirstMateWorkspaceView: View {
                 case .chat(let target), .info(let target, _):
                     if fleet.selectedTarget != target { _ = fleet.open(target) }
                 case .lead:
-                    if fleet.selectedTarget != nil { fleet.selectTarget(nil); fleet.chat.select(.lead) }
+                    if fleet.chat.selection != .lead { fleet.selectTarget(nil); fleet.chat.select(.lead) }
                 case nil: fleet.selectTarget(nil)
                 }
             }
@@ -77,8 +77,11 @@ struct FirstMateWorkspaceView: View {
             openInfo: { target in openFeature(target); showInfo(target, inspector: .overview, assignmentID: nil) }, openLead: openBriefing)
     }
     private var briefing: some View {
-        FirstMateLeadBriefingScreen(model: model, fleet: fleet, goal: $briefingGoal, openFeature: openFeature,
-            create: { goal in creationGoal = goal; model.beginAppNavigation(); fleet.beginCreating() })
+        FirstMateLeadScreen(model: model, fleet: fleet, goal: $briefingGoal,
+            topmost: regular ? path.isEmpty : path.last == .lead, openFeature: openFeature,
+            openInfo: { showInfo($0, inspector: .overview, assignmentID: nil) },
+            create: { goal in creationGoal = goal; model.beginAppNavigation(); fleet.beginCreating() },
+            back: regular && path.isEmpty ? { showsBriefing = false; fleet.selectTarget(nil) } : nil)
     }
     @ViewBuilder private func destination(_ route: FirstMateChatRoute) -> some View {
         switch route {
@@ -86,7 +89,7 @@ struct FirstMateWorkspaceView: View {
         case .chat(let target): chat(target, topmost: path.last == route)
         case .info(let target, let assignmentID):
             if let store = fleet.store(for: target) {
-                FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target, assignmentID: assignmentID)
+                FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target, assignmentID: assignmentID, openFeature: openFeature)
             }
         }
     }
@@ -104,7 +107,7 @@ struct FirstMateWorkspaceView: View {
         if previous != target { fleet.store(for: target)?.inspector = .overview }
         showsBriefing = false
         if regular { path = [] }
-        else if path.last == .lead { path.append(.chat(target)) }
+        else if path.contains(.lead) { path.append(.chat(target)) }
         else { path = [.chat(target)] }
     }
     private func showInfo(_ target: FirstMateFeatureTarget, inspector: FirstMateInspector, assignmentID: String?) {

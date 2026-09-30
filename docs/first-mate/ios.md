@@ -30,9 +30,10 @@ inventories travel with the source. Those inventories describe the original
 baseline, not a promise that later phases are already implemented. No Mac view,
 shared First Mate behavior, or server contract changes in Phase 0. Phase 1 now
 provides the shared/mobile data layer below. Phase 2 adds the conversations UI;
-Phase 3 adds feature chat, composer v1, pushed Info and briefing readouts. Real
-lead chat (Phase 4), attachment/voice/model/rating controls (Phase 5), and Info/iPad
-polish plus app-wide dusk (Phase 6) remain planned.
+Phase 3 adds feature chat, composer v1, pushed Info and briefing readouts. Phase 4
+adds real lead chat, machine choice, stand-in/recovery, frozen context and lead
+Overview. Attachment/voice/model/rating controls (Phase 5), and Info/iPad polish
+plus app-wide dusk (Phase 6) remain planned.
 Each phase retains automated verification/review/landing gates,
 without a first-push approval or per-phase device-test pause. One final signed iOS
 build is delivered after Phase 6; Phase 7, Mac releases, server deployment and
@@ -98,8 +99,8 @@ retained without changing two-value status catches. This adds transport/data
 support, not the Phase 5 attachment/voice/model UI, and needs no server deployment.
 
 Demo mode adds chat-window features/lead on the first synthetic host while
-retaining legacy fixture identifiers through the list/detail transition; the second host retains its scenario
-and host-only release-checklist feature. No demo client starts agents or networks.
+retaining legacy fixture identifiers through the list/detail transition; the second host retains its scenario,
+host-only release-checklist feature and its own independent lead history. No demo client starts agents or networks.
 Focused coverage includes `FirstMateMobileHTTPContractTests`,
 `FirstMateMobileChatStateTests`, `FirstMateMobileDeepLinkTests`,
 `FirstMateMobileRouteLifecycleTests`, existing mobile suites and moved shared
@@ -129,12 +130,55 @@ remove needs-you dots/pins, and affect the **same global phone badge**. Failed
 sends and newer activity/replies retire the local bridge; native feature status
 and completed rows are preserved. No store or live blur is created per row.
 
-Tap **My First Mate** for a summary explicitly labeled “Built from your features.
-Not a message from an agent.” This is a client-built briefing, not the Phase 4
-real lead chat. Its Summary uses feature capsules; tap for a compact 300pt readout
-and Open chat. The goal composer opens the existing create sheet with the goal
-prefilled and an explicit destination; cancel/failure keeps the briefing draft.
-Tap a feature for the Phase 3 chat; the title/Info control pushes its inspector.
+Tap **My First Mate** for a real lead conversation on a capable companion. When
+none advertises lead capability, the fallback is explicitly labeled “Built from
+your features. Not a message from an agent.” Its Summary uses feature capsules;
+tap for a compact 300pt readout and Open chat. The fallback goal composer opens
+the existing create sheet with an explicit destination; cancel/failure keeps its
+draft. Tap a feature for its chat; the title/Info control pushes its inspector.
+
+## My First Mate (Phase 4)
+
+The global lead destination follows shared machine choice with no local-Mac
+preference: valid capable pin, existing conversation, busiest, then roster ties.
+Choose **Automatic** or a capable saved host in its face/title menu. The exact
+owner and aggregate needs-you/moving/done counts remain visible together. Two
+failed LIST polls (capped at three) select a reachable stand-in; one failure,
+lead-summary errors and send errors do not. All-down retains the preferred host;
+recovery returns to it. The warning names both preferred and answering machines.
+
+An existing lead is fetched without requiring mutation authority; absent leads
+are ensured only with that host's control permission. Rendering/polling never
+POSTs /lead. A failed snapshot after ensure can retry GET without ensuring again.
+Loading, read-only and failure/retry states stay explicit. A capable host failing
+to open its lead does not imply every host needs the older briefing fallback.
+
+The same transcript/composer retains machine+feature drafts and histories. A
+switch never migrates uploads, reservations or prompts, and never automatically
+replays delivery. Shared lead context excludes the owning origin and normalized
+reachable peers, includes last-known offline nonarchived features, and retains
+the companion's existing bounded-context normalization policy. It is frozen,
+including nil, at synchronous reservation; retry keeps the original context,
+request ID and payload. No phone call to /lead/remote is introduced. Explicit
+captured-owner feature/assignment routes do not become global-choice redirects.
+
+Lead reads use the same mounted visibility/content/layout/source gates and
+cancellable retry deadlines as features. A latest USER summary is not a read key:
+the matching snapshot supplies the covered assistant; an unloaded newer user or
+assistant keeps the lead unread. The lead orb never contributes to feature dots,
+even with search/scope changes. Lead Info is Overview only: GOAL, Needs you,
+Moving, Done, native status/machine/now and sync state, with exact-owner capsule
+readouts and Open chat. Feature-only archive/pause/cancel controls are absent.
+
+Synthetic tests cover nil/read-only/unsupported lead, ensure and snapshot races,
+pins/removal/ties, failed-poll thresholds, context provenance and frozen retries.
+`FirstMateReadHostTests` mounts both feature and latest-user lead variants.
+`FirstMateLeadRenderTests` renders chat/Overview/offline/briefing at320/402 and
+capped accessibility3; `HerdrFirstMateLeadUITests` walks actual owner+draft switch,
+Info/readout/back, stand-in/recovery and old-host creation. Debug demo flags
+`-HerdrFirstMateLeadScenarios` and `-HerdrFirstMateOlderHosts` are synthetic only.
+Final two-companion peer acceptance remains part of the single Phase 6 build,
+not an intermediate release or live companion permission.
 
 ## Feature chat (Phase 3)
 

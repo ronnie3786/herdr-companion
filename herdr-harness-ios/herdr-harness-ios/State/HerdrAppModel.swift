@@ -1695,9 +1695,10 @@ final class HerdrAppModel: HudChatTransport {
     @discardableResult
     func openFirstMate(_ request: FirstMateMobileOpenRequest, sources: [FirstMateMobileFleetSource]) -> Task<Void, Never> {
         let generation = connectionGeneration
-        let intent = firstMateFleet.chat.beginNavigation()
+        let intent = firstMateFleet.chat.beginRouting()
         toastMessage = nil
         return Task {
+            defer { firstMateFleet.chat.finishRouting(intent) }
             guard generation == connectionGeneration, !Task.isCancelled,
                   firstMateFleet.chat.isCurrentNavigation(intent) else { return }
             if firstMateFleet.hosts.isEmpty {

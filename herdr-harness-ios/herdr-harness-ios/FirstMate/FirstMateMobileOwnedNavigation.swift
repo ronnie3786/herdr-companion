@@ -11,13 +11,15 @@ enum FirstMateMobileOwnedNavigation {
         guard fleet.store(for: owner) === store, fleet.selectedTarget == owner,
               store.selectedFeatureID == owner.featureID else { return nil }
         let context = store.operationContext
-        let intent = fleet.chat.beginNavigation()
+        let intent = fleet.chat.beginRouting()
         model.toastMessage = nil
         guard let request = FirstMateMobileOpenRequest(url: url) else {
+            fleet.chat.finishRouting(intent)
             model.toastMessage = "This First Mate link is invalid."
             return nil
         }
         return Task {
+            defer { fleet.chat.finishRouting(intent) }
             guard !Task.isCancelled, fleet.store(for: owner) === store, store.lifecycle == context.lifecycleIdentity,
                   fleet.chat.isCurrentNavigation(intent) else { return }
             let opened = await fleet.chat.navigate(request, owner: owner, intent: intent, fleet: fleet,

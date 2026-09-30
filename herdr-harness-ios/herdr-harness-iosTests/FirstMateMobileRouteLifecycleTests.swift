@@ -101,13 +101,13 @@ struct FirstMateMobileRouteLifecycleTests {
         let fleet = FirstMateMobileFleetStore(defaults: UserDefaults(suiteName: "LeadRotation.\(UUID())")!)
         let snapshot = FirstMateDemo.chatWindowLead(), gate = ChatTestGate()
         let client = SyntheticChatFleetClient(capabilities: .success(["first-mate-v1", "first-mate-fleet-v1", "first-mate-lead-v1"]))
-        client.lead = .init(feature: snapshot.feature, unread: false, workingOnReply: false, latestMessage: nil)
         client.snapshots = [snapshot.feature.id: snapshot]
         client.beforeEnsure = { await gate.wait() }
         let machine = ChatFixtures.machine("alpha")
         fleet.activate(sources: [.init(machine: machine,
             configuration: ServerConfiguration(urlString: machine.urlString, token: "old"), client: client)], connectionGeneration: 1)
         await fleet.refreshChatIndex()
+        client.lead = .init(feature: snapshot.feature, unread: false, workingOnReply: false, latestMessage: nil)
         let oldStore = try #require(fleet.store(forMachineID: "alpha"))
         let opening = Task { await fleet.chat.openLead(fleet: fleet, canControl: { _ in true }) }
         defer { Task { await gate.open() } }

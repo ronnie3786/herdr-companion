@@ -12,6 +12,7 @@ struct FirstMateInfoScreen: View {
     @Bindable var store: FirstMateStore
     let target: FirstMateFeatureTarget
     var assignmentID: String? = nil
+    var openFeature: (FirstMateFeatureTarget) -> Void = { _ in }
     @State private var lease = FirstMateWorkspaceControlLease()
     @State private var appeared = false
     private var controls: Bool {
@@ -21,13 +22,17 @@ struct FirstMateInfoScreen: View {
     var body: some View {
         Group {
             if let snapshot = store.snapshots[target.featureID] {
-                FirstMateInspectorView(store: store, snapshot: snapshot)
-                    .environment(\.firstMateHighlightedAssignment, assignmentID.flatMap { id in
-                        snapshot.assignments.contains { $0.id == id && $0.featureID == target.featureID } ? id : nil
-                    })
+                if snapshot.feature.isLead {
+                    FirstMateLeadOverview(fleet: fleet, snapshot: snapshot, openFeature: openFeature)
+                } else {
+                    FirstMateInspectorView(store: store, snapshot: snapshot)
+                        .environment(\.firstMateHighlightedAssignment, assignmentID.flatMap { id in
+                            snapshot.assignments.contains { $0.id == id && $0.featureID == target.featureID } ? id : nil
+                        })
+                }
             } else { ProgressView("Opening feature info…") }
         }
-        .herdrFirstMateChrome().navigationTitle("Feature info").navigationBarTitleDisplayMode(.inline)
+        .herdrFirstMateChrome().navigationTitle(store.snapshots[target.featureID]?.feature.isLead == true ? "My First Mate" : "Feature info").navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar).toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarVisibility(.hidden, for: .tabBar)
         .onAppear { appeared = true; lease.update(store: store, available: controls) }

@@ -10,6 +10,7 @@ struct FirstMateChatScreen: View {
     let openInfo: (FirstMateInspector, String?) -> Void
     var readTrackingEnabled = false
     var back: (() -> Void)? = nil
+    var followsLeadChoice = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var appeared = false
@@ -25,9 +26,9 @@ struct FirstMateChatScreen: View {
     @State private var choicePulse = 0
     private var snapshot: FirstMateSnapshot? { store.snapshots[target.featureID] }
     private var conversation: FirstMateConversation? {
-        fleet.conversations.first { $0.machineID == target.machineID && $0.featureID == target.featureID }
-            ?? fleet.chat.knownPresentation(for: target)
+        fleet.chat.conversation(for: target, fleet: fleet)
     }
+    private var isLead: Bool { snapshot?.feature.isLead == true }
     private var currentOwner: Bool { fleet.store(for: target) === store && fleet.selectedTarget == target && store.selectedFeatureID == target.featureID }
     private var controls: Bool { currentOwner && model.firstMateCanControl(machineID: target.machineID) && snapshot != nil }
     private var closed: Bool { FirstMateMobileTranscriptPolicy.isClosed(snapshot) }
@@ -54,7 +55,7 @@ struct FirstMateChatScreen: View {
         // must use the exact value that supplied this render's task identity.
         let attempt = readAttempt
         VStack(spacing: 0) {
-            bar
+            if isLead { leadBar } else { bar }
             if let snapshot {
                 FirstMateChatTranscript(store: store, snapshot: snapshot, conversation: conversation,
                     catalog: FirstMateMobileTranscriptPolicy.mentionCatalog(conversations: fleet.conversations, snapshot: snapshot, owner: target),
@@ -154,6 +155,46 @@ struct FirstMateChatScreen: View {
         .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
     }
 
+    private var leadBar: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Button { if let back { back() } else { dismiss() } } label: { circle("chevron.left") }
+                    .accessibilityLabel("Back to conversations").accessibilityIdentifier("first-mate-chat-back")
+                    .composerLayoutMeasurement(id: "chat-back-control")
+                if followsLeadChoice {
+                    FirstMateLeadMachineMenu(model: model, fleet: fleet)
+                } else {
+                    HStack { FirstMateFaceOrb(size: 24); Text("My First Mate").herdrFont(.body, weight: .semibold) }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                Button { openInfo(.overview, nil) } label: { circle("info.circle") }
+                    .accessibilityLabel("First Mate overview").accessibilityIdentifier("first-mate-chat-inspector-toggle")
+                    .composerLayoutMeasurement(id: "chat-info-control")
+                Menu {
+                    Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refreshLead() } }
+                    #if DEBUG
+                    if fleet.isDemo, ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateLeadScenarios") {
+                        Button("Fail preferred LIST poll") { fleet.failDemoLeadPoll() }
+                        Button("Recover preferred machine") { fleet.recoverDemoLead() }
+                    }
+                    #endif
+                } label: { circle("ellipsis") }
+                .accessibilityLabel("First Mate options").accessibilityIdentifier("first-mate-lead-options")
+                .composerLayoutMeasurement(id: "chat-more-control")
+            }
+            Text("\(model.machineName(target.machineID)) · \(FirstMateLeadBriefing.headerSubtitle(conversations: fleet.conversations))")
+                .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("first-mate-lead-owner")
+            if followsLeadChoice, fleet.leadChoice.isFallback, let preferred = fleet.leadChoice.preferred {
+                Text("\(model.machineName(preferred)) is offline. \(model.machineName(target.machineID)) is standing in.")
+                    .herdrFont(.caption).foregroundStyle(HerdrTheme.warning).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("first-mate-lead-offline")
+            }
+        }
+        .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, 8).padding(.vertical, 5)
+        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+    }
+
     private func circle(_ symbol: String) -> some View {
         Image(systemName: symbol).font(.body.weight(.medium)).frame(width: 40, height: 40)
             .background(HerdrTheme.codeFill, in: .circle).frame(width: 44, height: 44).contentShape(.rect)
@@ -182,8 +223,9 @@ struct FirstMateChatScreen: View {
                         .frame(maxWidth: .infinity, alignment: .leading).background(HerdrTheme.warning.opacity(0.08))
                         .accessibilityIdentifier("first-mate-checkpoint-status")
                 }
-                FirstMateMessageComposer(text: $store.draft, placeholder: "Message \(conversation?.name ?? "First Mate")",
-                    canControl: controls, isSending: busy, send: { _ = send() }, openDocuments: { openInfo(.documents, nil) })
+                FirstMateMessageComposer(text: $store.draft, placeholder: isLead ? "Ask First Mate about any feature…" : "Message \(conversation?.name ?? "First Mate")",
+                    canControl: controls, isSending: busy, send: { _ = send() }, openDocuments: isLead ? nil : { openInfo(.documents, nil) },
+                    unavailableHint: isLead ? "Read-only host. Your draft stays here." : "Reconnect to send. Your draft stays here.")
             }
         }
         .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
@@ -192,6 +234,7 @@ struct FirstMateChatScreen: View {
     }
 
     private var notice: String? {
+        if isLead { return store.error == nil ? nil : "The owning companion is unavailable. Showing its saved conversation." }
         if let warning = store.runtimeHealth?.warning { return warning }
         if store.error != nil { return "Live execution status is unavailable. Showing the last saved workflow." }
         switch snapshot?.feature.status {

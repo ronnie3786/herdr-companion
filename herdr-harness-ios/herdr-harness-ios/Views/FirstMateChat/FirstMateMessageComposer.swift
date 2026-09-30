@@ -8,6 +8,7 @@ struct FirstMateMessageComposer: View {
     let send: () -> Void
     var openDocuments: (() -> Void)? = nil
     var initiallyFocused = false
+    var unavailableHint = "Reconnect to send. Your draft stays here."
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -49,7 +50,7 @@ struct FirstMateMessageComposer: View {
                 .background(HerdrTheme.codeFill, in: .rect(cornerRadius: 24))
                 .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(focused ? HerdrTheme.accent.opacity(0.65) : HerdrTheme.subtleSeparator))
             }
-            Text(canControl ? "Return adds a new line · ⌘ Return sends" : "Reconnect to send. Your draft stays here.")
+            Text(canControl ? "Return adds a new line · ⌘ Return sends" : unavailableHint)
                 .herdrFont(.caption).foregroundStyle(canControl ? HerdrTheme.tertiaryText : HerdrTheme.warning)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, openDocuments == nil ? 0 : 52)

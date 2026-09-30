@@ -51,7 +51,9 @@ struct FirstMateChatBubbleRow: View {
             .overlay(shape.strokeBorder(HerdrTheme.accent.opacity(0.26), lineWidth: 1))
             .contextMenu { copyButton }
             .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
-            .accessibilityElement(children: .combine)
+            // Keep time/status reachable individually, including full timestamp
+            // details, while retaining the existing spoken message/voice label.
+            .accessibilityElement(children: .contain)
             .accessibilityLabel(display.accessibilityLabel(isQueued: message.status == "queued")
                 + (message.status == "sending" ? ", Sending" : message.status == "failed" ? ", Not sent" : message.status == "unconfirmed" ? ", Delivery unconfirmed" : ""))
         }
@@ -96,6 +98,7 @@ struct FirstMateChatBubbleRow: View {
                     detectsPaneLinks: false
                 )
             }
+            .firstMateFooterPart(message.id, "content")
             if !fileCards.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(fileCards) { card in
@@ -104,16 +107,21 @@ struct FirstMateChatBubbleRow: View {
                 }
                 .padding(.top, 8)
                 .padding(.bottom, 3)
+                .firstMateFooterPart(message.id, "documents")
             }
             if FirstMateFeedbackEligibility.isEligible(message) {
+                SkimPendingLabel(skim: message.skim)
                 responseActions
                     .padding(.top, 4)
+                    .layoutValue(key: FirstMateBubbleFullWidthKey.self, value: true)
+            } else {
+                meta(isVoice: false)
             }
-            meta(isVoice: false)
         }
         .padding(.top, 8)
         .padding(.horizontal, 13)
         .padding(.bottom, 6)
+        .firstMateFooterPart(message.id, "bubble")
         .background(shape.fill(HerdrTheme.inkFill(0.06)))
         .overlay(shape.strokeBorder(HerdrTheme.hairline, lineWidth: 1))
         .contextMenu { copyButton }
@@ -173,9 +181,8 @@ struct FirstMateChatBubbleRow: View {
                 Text("Sent by voice")
                     .foregroundStyle(HerdrTheme.accent)
             }
-            if let date = HerdrTimestamp.date(from: message.createdAt) {
-                Text(FirstMateChatTime.clock(for: date, calendar: .current))
-                    .monospacedDigit()
+            if let timestamp {
+                FirstMateTimestampLabel(timestamp: timestamp, messageID: message.id)
             }
         }
         .herdrFont(size: HerdrTheme.TextSize.micro)
@@ -187,21 +194,24 @@ struct FirstMateChatBubbleRow: View {
     /// Completed assistant responses keep their actions inside the bubble.
     /// Feedback controls remain gated by the presentation; Copy does not need
     /// companion support and remains available when rating is unavailable.
-    @ViewBuilder private var responseActions: some View {
-        if let feedback {
-            FirstMateResponseFeedbackFooter(
-                messageID: message.id,
-                presentation: feedback,
-                copyText: message.text,
-                onRateUp: { feedbackActions.rate(.up) },
-                onEditFeedback: feedbackActions.edit,
-                onRemoveRating: feedbackActions.remove,
-                onRetry: feedbackActions.retry,
-                onResolveConflict: feedbackActions.resolveConflict
-            )
-        } else {
-            PiCopyButton(text: message.text, label: "Copy response", accessibilityIdentifier: "first-mate-copy-\(message.id)")
-        }
+    private var responseActions: some View {
+        FirstMateMessageFooter(
+            messageID: message.id, feedback: feedback, copyText: message.text, timestamp: timestamp,
+            onRateUp: { feedbackActions.rate(.up) },
+            onEditFeedback: feedbackActions.edit,
+            onRemoveRating: feedbackActions.remove,
+            onRetry: feedbackActions.retry,
+            onResolveConflict: feedbackActions.resolveConflict
+        )
+    }
+
+    @Environment(\.firstMateTranscriptNow) private var transcriptNow
+    @Environment(\.firstMateTimestampContext) private var timestampContext
+
+    private var timestamp: FirstMateMessageTimestamp? {
+        (timestampContext ?? FirstMateTimestampContext()).timestamp(
+            message.createdAt, surface: .standalone, now: transcriptNow ?? .now
+        )
     }
 
     private var copyButton: some View {
@@ -239,18 +249,24 @@ struct FirstMateChatBubbleRow: View {
     }()
 }
 
-/// A bubble's stack: every child leads except the last (the meta row), which
-/// trails. Unlike a `VStack` with a flexible frame it hugs its widest child,
-/// so a short message keeps a short bubble.
+/// A bubble hugs its widest intrinsic child. Legacy last-child metadata trails;
+/// a marked footer spans the measured content width, without inflating short replies.
 struct FirstMateBubbleStack: Layout {
     var spacing: CGFloat = 2
+    var fillsProposedWidth = false
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let child = ProposedViewSize(width: proposal.width, height: nil)
-        let sizes = subviews.map { $0.sizeThatFits(child) }
+        let sizes = subviews.map {
+            $0.sizeThatFits($0[FirstMateBubbleFullWidthKey.self] ? .unspecified : child)
+        }
         let width = sizes.map(\.width).max() ?? 0
-        let height = sizes.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, sizes.count - 1))
-        return CGSize(width: min(width, proposal.width ?? width), height: height)
+        let fittedWidth = fillsProposedWidth ? (proposal.width ?? width) : min(width, proposal.width ?? width)
+        // Re-measure at the actual bubble width, so wrapped footer metadata has
+        // the same height during measurement and placement.
+        let fitted = subviews.map { $0.sizeThatFits(.init(width: fittedWidth, height: nil)) }
+        let height = fitted.map(\.height).reduce(0, +) + spacing * CGFloat(max(0, sizes.count - 1))
+        return CGSize(width: fittedWidth, height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -258,7 +274,8 @@ struct FirstMateBubbleStack: Layout {
         let child = ProposedViewSize(width: bounds.width, height: nil)
         for (index, subview) in subviews.enumerated() {
             let size = subview.sizeThatFits(child)
-            let isLast = index == subviews.count - 1 && subviews.count > 1
+            let fillsWidth = subview[FirstMateBubbleFullWidthKey.self]
+            let isLast = index == subviews.count - 1 && subviews.count > 1 && !fillsWidth
             let x = isLast ? bounds.maxX - size.width : bounds.minX
             subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: isLast ? size.width : bounds.width, height: size.height))
             y += size.height + spacing

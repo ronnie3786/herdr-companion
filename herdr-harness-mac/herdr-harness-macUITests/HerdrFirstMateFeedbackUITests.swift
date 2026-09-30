@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// Synthetic end-to-end coverage for Mac First Mate response feedback. Every
@@ -231,6 +232,79 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
         app.control(identifier: "first-mate-feedback-cancel").click()
     }
 
+    @MainActor
+    func testFinalActionTimestampRowsInBothSyntheticChatSurfaces() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState", "-herdr.mac.firstMate.chatWindow", "YES"]
+        app.launch()
+        defer { app.terminate() }
+        let chats = app.buttons["dashboard-recent-chats"]
+        XCTAssertTrue(chats.waitForExistence(timeout: 10))
+        chats.click()
+        app.buttons["open-first-mate"].click()
+
+        let timestamp = app.control(identifier: "first-mate-timestamp-\(Self.firstMessage)")
+        let up = app.control(identifier: "first-mate-feedback-up-\(Self.firstMessage)")
+        let down = app.control(identifier: "first-mate-feedback-down-\(Self.firstMessage)")
+        let copy = app.control(identifier: "first-mate-copy-\(Self.firstMessage)")
+        XCTAssertTrue(timestamp.waitForExistence(timeout: 10))
+        XCTAssertTrue(timestamp.label.hasPrefix("Sent "), "Accessibility must expose the complete timestamp, not just the visible clock")
+        XCTAssertFalse(app.control(identifier: "first-mate-timestamp-\(Self.userMessage)").exists,
+                       "Main-chat user messages must remain timestamp-free")
+        assertAligned(up: up, copy: copy, timestamp: timestamp)
+        copy.click()
+        XCTAssertTrue(waitForLabel("Copied", of: copy))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), Self.completedResponse)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "first-mate-timestamp-\(Self.firstMessage)").count, 1)
+        up.click()
+        XCTAssertTrue(waitForLabel("Helpful response, selected", of: up))
+        let status = app.control(identifier: "first-mate-feedback-status-\(Self.firstMessage)")
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(status.frame.maxY, up.frame.minY + 1)
+        down.click()
+        XCTAssertTrue(app.control(identifier: "first-mate-feedback-editor").waitForExistence(timeout: 5))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(app.control(identifier: "first-mate-feedback-editor").waitForNonExistence(timeout: 5),
+                      "The pinned editor must remain keyboard dismissible")
+        saveScreenshot("issue-126-main-final-row", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("issue-126-main-final-row", app: app)
+
+        app.typeKey("f", modifierFlags: [.command, .shift])
+        let standalone = app.control(identifier: "first-mate-chat-window")
+        XCTAssertTrue(standalone.waitForExistence(timeout: 10))
+        let conversation = standalone.descendants(matching: .any)
+            .matching(identifier: "first-mate-chat-row-demo-session-continuity").firstMatch
+        XCTAssertTrue(conversation.waitForExistence(timeout: 10))
+        conversation.click()
+        func control(_ id: String) -> XCUIElement {
+            standalone.descendants(matching: .any).matching(identifier: id).firstMatch
+        }
+        let windowUp = control("first-mate-feedback-up-\(Self.firstMessage)")
+        let windowCopy = control("first-mate-copy-\(Self.firstMessage)")
+        let windowTime = control("first-mate-timestamp-\(Self.firstMessage)")
+        XCTAssertTrue(windowTime.waitForExistence(timeout: 10))
+        assertAligned(up: windowUp, copy: windowCopy, timestamp: windowTime)
+        XCTAssertTrue(control("first-mate-timestamp-\(Self.userMessage)").exists,
+                      "Standalone user messages retain their timestamps")
+        XCTAssertFalse(control("first-mate-feedback-up-\(Self.userMessage)").exists)
+        windowCopy.click()
+        XCTAssertTrue(waitForLabel("Copied", of: windowCopy))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), Self.completedResponse)
+        XCTAssertEqual(standalone.descendants(matching: .any).matching(identifier: "first-mate-timestamp-\(Self.firstMessage)").count, 1)
+        saveScreenshot("issue-126-standalone-final-row", app: app, directory: screenshotDirectory)
+        saveAccessibilitySnapshot("issue-126-standalone-final-row", app: app)
+    }
+
+    @MainActor
+    private func assertAligned(up: XCUIElement, copy: XCUIElement, timestamp: XCUIElement) {
+        XCTAssertTrue(up.exists)
+        XCTAssertTrue(copy.exists)
+        XCTAssertLessThanOrEqual(abs(up.frame.midY - timestamp.frame.midY), 2)
+        XCTAssertLessThanOrEqual(abs(copy.frame.midY - timestamp.frame.midY), 2)
+        XCTAssertLessThanOrEqual(copy.frame.maxX, timestamp.frame.minX)
+        XCTAssertTrue(up.isEnabled || up.label.contains("selected"))
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -304,6 +378,7 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
     private static let secondMessage = "demo-search-welcome"
     private static let userMessage = "demo-user-0"
     private static let responseFragment = "I traced the session boundary"
+    private static let completedResponse = "I traced the session boundary with a planner and an architect. The proposal and ownership map are attached to Planning.\n\nThe next step is to implement durable links and exact-session lookup. Review the plan, then tell me how you want to proceed."
     private static let customReason = "Needs more evidence"
     private static let cancelledReason = "Cancelled reason"
     private static let defaultReasons = [

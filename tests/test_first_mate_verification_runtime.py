@@ -11,6 +11,7 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from herdr_harness.first_mate_runtime import FirstMateRuntime
@@ -29,6 +30,36 @@ def gate(name: str, outcome: str = "passed", package: str = "pkg/app", **counts)
 
 
 class VerificationRuntimeTests(unittest.TestCase):
+    def test_verification_and_worker_policy_reads_do_not_materialize_telemetry(self):
+        assignment = self.stage_and_assignment()
+        self.record_inventory(SUITES, revision=self.base)
+        self.record_run("synthetic-verification", SUITES, revision=self.base)
+        self.store.append_event(self.feature["id"], "pi.synthetic", "Synthetic telemetry", {"text": "unneeded"})
+        original = self.store.snapshot
+
+        def journal_only(feature_id, events="all"):
+            self.assertEqual(events, "journal", "A policy/verification read must not fetch the full conversation")
+            return original(feature_id, events=events)
+
+        with patch.object(self.store, "snapshot", side_effect=journal_only) as snapshots:
+            self.assertEqual(self.runtime.list_features()[0]["verification"]["status"], "verified")
+            self.assertEqual(self.runtime.board(self.feature["id"])["feature"]["verification"]["status"], "verified")
+            self.assertEqual(snapshots.call_count, 0)
+            result = self.runtime.snapshot(self.feature["id"], events="journal")
+            self.assertEqual(snapshots.call_count, 1)
+        self.assertEqual(result["feature"]["verification"]["status"], "verified")
+        self.assertEqual(result["assignments"][0]["id"], assignment["id"])
+        self.assertIn("model_selection", result["assignments"][0])
+        self.assertFalse(any(event["type"].startswith("pi.") for event in result["events"]))
+
+    def test_targeted_stage_lookup_keeps_feature_ownership_and_missing_visit_behavior(self):
+        assignment = self.stage_and_assignment()
+        feature_id, visit_id = self.feature["id"], assignment["visit_id"]
+        self.assertEqual(self.store.visit_stage_key(feature_id, visit_id), "implementation")
+        self.assertIsNone(self.store.visit_stage_key("foreign-feature", visit_id))
+        self.assertIsNone(self.store.visit_stage_key(feature_id, "missing-visit"))
+        self.assertIsNone(self.runtime._stage_key({"id": feature_id, "current_visit_id": None}))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

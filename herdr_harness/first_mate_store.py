@@ -1982,6 +1982,13 @@ class FirstMateStore:
         with self._lock:
             return self._one("fm_assignments", assignment_id)
 
+    def visit_stage_key(self, feature_id: str, visit_id: str) -> str | None:
+        """Resolve a policy's stage without materializing its conversation or events."""
+        with self._lock:
+            row = self._db.execute("SELECT stage_key FROM fm_visits WHERE feature_id=? AND id=?",
+                                   (feature_id, visit_id)).fetchone()
+            return row[0] if row else None
+
     def list_assignments(self, statuses: list[str] | tuple[str, ...] | None = None, feature_id: str | None = None) -> list[dict]:
         with self._lock:
             clauses, args = [], []

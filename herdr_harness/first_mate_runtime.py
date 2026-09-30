@@ -761,8 +761,7 @@ class FirstMateRuntime:
         visit_id = feature.get("current_visit_id")
         if not visit_id:
             return None
-        return next((visit.get("stage_key") for visit in self.store.snapshot(feature["id"])["visits"]
-                     if visit.get("id") == visit_id), None)
+        return self.store.visit_stage_key(feature["id"], visit_id)
 
     def _policy(self, feature: Mapping[str, Any], *, kind: str,
                 claim: Mapping[str, Any]):
@@ -1703,8 +1702,7 @@ class FirstMateRuntime:
         Every value is observed from the owned workspace at assessment time,
         never taken from a report.
         """
-        snapshot = self.store.snapshot(feature["id"])
-        assignments = snapshot["assignments"]
+        assignments = self.store.list_assignments(feature_id=feature["id"])
         by_id = {assignment["id"]: assignment for assignment in assignments}
 
         def _metadata(assignment: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1869,7 +1867,7 @@ class FirstMateRuntime:
             return None
         current_visit = feature.get("current_visit_id")
         referenced: list[str] = []
-        for assignment in self.store.snapshot(feature["id"])["assignments"]:
+        for assignment in self.store.list_assignments(feature_id=feature["id"]):
             if assignment.get("visit_id") != current_visit:
                 continue
             for run_id in assignment.get("verification_run_ids", []):

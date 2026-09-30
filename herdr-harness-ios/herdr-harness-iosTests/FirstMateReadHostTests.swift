@@ -6,25 +6,25 @@ import UIKit
 @Suite("Mounted phone read scheduling", .serialized)
 @MainActor
 struct FirstMateReadHostTests {
-    @Test("Optimistic clearing does not cancel a mounted chat's pending read transport")
-    func optimisticTransport() async throws {
-        let fixture = try await ReadHostFixture()
+    @Test("Optimistic clearing does not cancel a mounted chat's pending read transport", arguments: [false, true])
+    func optimisticTransport(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
         await fixture.client.setHeldReads(true)
         fixture.mount()
         defer { fixture.unmount() }
         try await fixture.wait { await fixture.client.readIDs.count == 1 }
         await fixture.settle()
         #expect(await fixture.client.cancellations == 0)
-        #expect(fixture.fleet.badgeCount == 0)
+        #expect(fixture.unreadCount == 0)
         await fixture.client.finishRead()
         await fixture.settle()
         #expect(await fixture.client.readIDs == ["A"])
-        #expect(fixture.fleet.badgeCount == 0)
+        #expect(fixture.unreadCount == 0)
     }
 
-    @Test("A fleet summary ahead of a held and then failed selected fetch stays unread")
-    func summaryAhead() async throws {
-        let fixture = try await ReadHostFixture(unread: false)
+    @Test("A fleet summary ahead of a held and then failed selected fetch stays unread", arguments: [false, true])
+    func summaryAhead(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(unread: false, lead: lead)
         fixture.mount()
         defer { fixture.unmount() }
         await fixture.settle()
@@ -34,13 +34,13 @@ struct FirstMateReadHostTests {
         await fixture.fleet.refreshChatIndex()
         await fixture.settle()
         #expect(await fixture.client.readIDs.isEmpty)
-        #expect(fixture.fleet.badgeCount == 1)
+        #expect(fixture.unreadCount == 1)
         await fixture.client.finishFetch(fail: true)
         await fetching.value
         await fixture.settle()
-        #expect(fixture.store.snapshots[fixture.target.featureID]?.messages.map(\.id) == ["A"])
+        #expect(fixture.store.snapshots[fixture.target.featureID]?.messages.map(\.id) == (lead ? ["A", "U0"] : ["A"]))
         #expect(await fixture.client.readIDs.isEmpty)
-        #expect(fixture.fleet.badgeCount == 1)
+        #expect(fixture.unreadCount == 1)
         // Returning a matching snapshot is insufficient while Info is on top.
         fixture.presentation.topmost = false
         await fixture.client.advanceSummaryToB()
@@ -52,13 +52,13 @@ struct FirstMateReadHostTests {
         #expect(await fixture.client.readIDs.isEmpty)
         fixture.presentation.topmost = true
         try await fixture.wait { await fixture.client.readIDs == ["B"] }
-        #expect(fixture.fleet.badgeCount == 0)
+        #expect(fixture.unreadCount == 0)
     }
 
-    @Test("Real coverage, scene, tab, disappearance and source loss cancel a mounted transport")
-    func genuineVisibilityLoss() async throws {
+    @Test("Real coverage, scene, tab, disappearance and source loss cancel a mounted transport", arguments: [false, true])
+    func genuineVisibilityLoss(lead: Bool) async throws {
         for transition in 0..<6 {
-            let fixture = try await ReadHostFixture()
+            let fixture = try await ReadHostFixture(lead: lead)
             await fixture.client.setHeldReads(true)
             fixture.mount()
             defer { fixture.unmount() }
@@ -76,14 +76,14 @@ struct FirstMateReadHostTests {
             try await fixture.wait { await fixture.client.cancellations == 1 }
             await fixture.settle()
             #expect(await fixture.client.readIDs == ["A"])
-            if transition < 5 { #expect(fixture.fleet.badgeCount == 1) }
+            if transition < 5 { #expect(fixture.unreadCount == 1) }
             fixture.unmount()
         }
     }
 
-    @Test("Offscreen render hosts cannot read until tracking is explicitly enabled")
-    func offscreenTracking() async throws {
-        let fixture = try await ReadHostFixture()
+    @Test("Offscreen render hosts cannot read until tracking is explicitly enabled", arguments: [false, true])
+    func offscreenTracking(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
         fixture.presentation.tracking = false
         fixture.mount()
         defer { fixture.unmount() }
@@ -93,9 +93,9 @@ struct FirstMateReadHostTests {
         try await fixture.wait { await fixture.client.readIDs == ["A"] }
     }
 
-    @Test("A failed marker retries at its deadline despite identical healthy polls")
-    func scheduledRetry() async throws {
-        let fixture = try await ReadHostFixture()
+    @Test("A failed marker retries at its deadline despite identical healthy polls", arguments: [false, true])
+    func scheduledRetry(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
         let clock = ReadHostClock()
         fixture.fleet.chat.clock = { clock.now }
         fixture.fleet.chat.readSleep = { try await clock.sleep($0) }
@@ -104,7 +104,7 @@ struct FirstMateReadHostTests {
         defer { fixture.unmount() }
         try await fixture.wait { clock.waiterCount == 1 }
         #expect(await fixture.client.readIDs == ["A"])
-        #expect(fixture.fleet.badgeCount == 1)
+        #expect(fixture.unreadCount == 1)
         let lastSeen = fixture.fleet.hosts.first?.lastUpdated
         clock.advance(7)
         await fixture.fleet.refreshChatIndex()
@@ -116,13 +116,13 @@ struct FirstMateReadHostTests {
         try await fixture.wait { await fixture.client.readIDs.count == 2 }
         await fixture.settle()
         #expect(await fixture.client.readIDs == ["A", "A"])
-        #expect(fixture.fleet.badgeCount == 0)
+        #expect(fixture.unreadCount == 0)
         #expect(clock.waiterCount == 0)
     }
 
-    @Test("An equal-height new reply waits for its own transcript layout")
-    func equalHeightReplacement() async throws {
-        let fixture = try await ReadHostFixture()
+    @Test("An equal-height new reply waits for its own transcript layout", arguments: [false, true])
+    func equalHeightReplacement(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
         fixture.mount()
         defer { fixture.unmount() }
         try await fixture.wait { await fixture.client.readIDs == ["A"] }
@@ -130,15 +130,15 @@ struct FirstMateReadHostTests {
         await fixture.fleet.refreshChatIndex()
         await fixture.settle()
         #expect(await fixture.client.readIDs == ["A"])
-        #expect(fixture.fleet.badgeCount == 1)
+        #expect(fixture.unreadCount == 1)
         await fixture.fleet.refreshSelected(fixture.target)
         try await fixture.wait { await fixture.client.readIDs == ["A", "B"] }
-        #expect(fixture.fleet.badgeCount == 0)
+        #expect(fixture.unreadCount == 0)
     }
 
-    @Test("A collapsed additional response is not displayed read authority")
-    func collapsedResponse() async throws {
-        let fixture = try await ReadHostFixture()
+    @Test("A collapsed additional response is not displayed read authority", arguments: [false, true])
+    func collapsedResponse(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
         await fixture.client.prepareAdditionalResponse()
         await fixture.fleet.refreshChatIndex()
         await fixture.fleet.refreshSelected(fixture.target)
@@ -146,12 +146,12 @@ struct FirstMateReadHostTests {
         defer { fixture.unmount() }
         await fixture.settle()
         #expect(await fixture.client.readIDs.isEmpty)
-        #expect(fixture.fleet.badgeCount == 1)
+        #expect(fixture.unreadCount == 1)
     }
 
-    @Test("A real scroll away prevents reads until a new bottom observation")
-    func scrollAway() async throws {
-        let fixture = try await ReadHostFixture()
+    @Test("A real scroll away prevents reads until a new bottom observation", arguments: [false, true])
+    func scrollAway(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
         await fixture.client.makeLongReply()
         await fixture.fleet.refreshSelected(fixture.target)
         fixture.presentation.tracking = false
@@ -168,9 +168,9 @@ struct FirstMateReadHostTests {
         try await fixture.wait { await fixture.client.readIDs == ["A"] }
     }
 
-    @Test("Changing displayed content cancels the old read without masking its newer reply")
-    func contentReplacement() async throws {
-        let fixture = try await ReadHostFixture()
+    @Test("Changing displayed content cancels the old read without masking its newer reply", arguments: [false, true])
+    func contentReplacement(lead: Bool) async throws {
+        let fixture = try await ReadHostFixture(lead: lead)
         await fixture.client.setHeldReads(true)
         fixture.mount()
         defer { fixture.unmount() }
@@ -178,18 +178,18 @@ struct FirstMateReadHostTests {
         await fixture.client.replaceWithB()
         await fixture.fleet.refreshChatIndex()
         try await fixture.wait { await fixture.client.cancellations == 1 }
-        #expect(fixture.fleet.badgeCount == 1)
+        #expect(fixture.unreadCount == 1)
         await fixture.fleet.refreshSelected(fixture.target)
         try await fixture.wait { await fixture.client.readIDs == ["A", "B"] }
         await fixture.client.finishRead()
         await fixture.settle()
-        #expect(fixture.fleet.badgeCount == 0)
+        #expect(fixture.unreadCount == 0)
     }
 
-    @Test("Retry deadlines are cancelled on coverage or source change")
-    func cancelledDeadline() async throws {
+    @Test("Retry deadlines are cancelled on coverage or source change", arguments: [false, true])
+    func cancelledDeadline(lead: Bool) async throws {
         for replaceSource in [false, true] {
-            let fixture = try await ReadHostFixture()
+            let fixture = try await ReadHostFixture(lead: lead)
             let clock = ReadHostClock()
             fixture.fleet.chat.clock = { clock.now }
             fixture.fleet.chat.readSleep = { try await clock.sleep($0) }
@@ -265,12 +265,19 @@ private final class ReadHostFixture {
         return window.flatMap(find)
     }
     var fleet: FirstMateMobileFleetStore { model.firstMateFleet }
-    init(unread: Bool = true) async throws {
+    var unreadCount: Int {
+        if store.leadSnapshot != nil {
+            #expect(fleet.badgeCount == 0, "A lead reply must never contribute a feature dot")
+            return fleet.chat.leadIsUnread(machineID: target.machineID, fleet: fleet) ? 1 : 0
+        }
+        return fleet.badgeCount
+    }
+    init(unread: Bool = true, lead: Bool = false) async throws {
         let configuredModel = HerdrAppModel(credentials: TestCredentialStore(), arguments: [],
             userDefaults: UserDefaults(suiteName: "ReadHost.\(UUID())")!, bootstrapMachines: [])
         model = configuredModel
         configuredModel.selectedTab = .firstMate
-        let scriptedClient = ReadHostClient(unread: unread)
+        let scriptedClient = ReadHostClient(unread: unread, lead: lead)
         client = scriptedClient
         let machine = ChatFixtures.machine("synthetic")
         let fleet = configuredModel.firstMateFleet
@@ -278,8 +285,8 @@ private final class ReadHostFixture {
             configuration: .init(urlString: machine.urlString, token: "synthetic"), client: scriptedClient)], connectionGeneration: 1)
         store = try #require(fleet.store(forMachineID: machine.id))
         await fleet.refreshAll()
-        #expect(fleet.open(target))
-        await fleet.refreshSelected(target)
+        if lead { #expect(await fleet.chat.openLead(fleet: fleet) == target) }
+        else { #expect(fleet.open(target)); await fleet.refreshSelected(target) }
     }
     func mount() {
         previousWindow = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first(where: \.isKeyWindow)
@@ -318,7 +325,7 @@ private final class ReadHostFixture {
 }
 
 private actor ReadHostClient: FirstMateClient {
-    let feature = ChatFixtures.feature("feature", status: "blocked")
+    let feature: FirstMateFeature
     var unread: Bool
     var summaryID = "A"
     var snapshot: FirstMateSnapshot
@@ -330,16 +337,23 @@ private actor ReadHostClient: FirstMateClient {
     private(set) var cancellations = 0
     private(set) var readIDs: [String] = []
     var fetchHeld: Bool { fetchWaiter != nil }
-    init(unread: Bool) {
+    init(unread: Bool, lead: Bool) {
         self.unread = unread
+        var feature = ChatFixtures.feature("feature", status: "blocked")
+        if lead { feature.kind = "lead" }
+        self.feature = feature
         snapshot = FirstMateSnapshot(feature: feature, messages: [Self.message("A")])
+        if lead {
+            var user = Self.message("U0"); user.role = "user"
+            snapshot.messages.append(user); summaryID = "U0"
+        }
     }
     static func message(_ id: String) -> FirstMateMessage {
         .init(id: id, featureID: "feature", role: "assistant", text: "Synthetic reply \(id)", status: "completed", createdAt: "2030-01-01T00:00:00Z")
     }
     func setHeldReads(_ value: Bool) { holdReads = value }
     func failReads(_ count: Int) { readFailures = count }
-    func advanceSummaryToB() { summaryID = "B"; unread = true; holdFetch = true }
+    func advanceSummaryToB() { summaryID = feature.isLead ? "U1" : "B"; unread = true; holdFetch = true }
     func replaceWithB() { summaryID = "B"; unread = true; snapshot.messages = [Self.message("B")] }
     func prepareAdditionalResponse() {
         summaryID = "B"; unread = true
@@ -351,7 +365,11 @@ private actor ReadHostClient: FirstMateClient {
     func finishFetch(fail: Bool) {
         holdFetch = false
         if fail { fetchWaiter?.resume(throwing: APIError.server(status: 503, message: "Synthetic fetch failure")) }
-        else { snapshot.messages.append(Self.message("B")); fetchWaiter?.resume(returning: snapshot) }
+        else {
+            snapshot.messages.append(Self.message("B"))
+            if summaryID == "U1" { var user = Self.message("U1"); user.role = "user"; snapshot.messages.append(user) }
+            fetchWaiter?.resume(returning: snapshot)
+        }
         fetchWaiter = nil
     }
     func finishRead() {
@@ -362,10 +380,16 @@ private actor ReadHostClient: FirstMateClient {
         cancellations += 1
         readWaiters.removeValue(forKey: id)?.1.resume(throwing: CancellationError())
     }
-    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities { .init(ok: true, capabilities: ["first-mate-v1", "first-mate-fleet-v1"]) }
-    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList { .init(ok: true, features: [feature]) }
+    func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
+        .init(ok: true, capabilities: ["first-mate-v1", "first-mate-fleet-v1"] + (feature.isLead ? ["first-mate-lead-v1"] : []))
+    }
+    func fetchFirstMateFeatures() async throws -> FirstMateFeatureList { .init(ok: true, features: feature.isLead ? [] : [feature]) }
     func fetchFirstMateFleet() async throws -> FirstMateFleetResponse {
-        .init(features: [ChatFixtures.entry(feature.id, hud: .blocked, unread: unread, latestFirstMate: summaryID)])
+        .init(features: feature.isLead ? [] : [ChatFixtures.entry(feature.id, hud: .blocked, unread: unread, latestFirstMate: summaryID)])
+    }
+    func fetchFirstMateLead() async throws -> FirstMateLeadResponse {
+        .init(ok: true, lead: .init(feature: feature, unread: unread, workingOnReply: false,
+            latestMessage: .init(id: summaryID, role: summaryID.hasPrefix("U") ? "user" : "assistant", text: "Synthetic lead", createdAt: nil)))
     }
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot {
         if holdFetch { return try await withCheckedThrowingContinuation { fetchWaiter = $0 } }

@@ -13,6 +13,7 @@ final class FirstMateMobileChatState {
     private(set) var pinnedMachineID: String?
     private(set) var route: FirstMateMobileNavigation?
     private(set) var routingError: String?
+    private(set) var leadOpenError: String?
     var path: [FirstMateChatRoute] {
         if let route {
             return [.chat(route.target)] + (route.inspector == nil ? [] : [.info(route.target, assignmentID: route.assignmentID)])
@@ -89,8 +90,7 @@ final class FirstMateMobileChatState {
             let id = source.machine.id
             fleet.store(forMachineID: id)?.leadContextProvider = { [weak self, weak fleet] in
                 guard let self, let fleet else { return nil }
-                return FirstMateLeadMachine.context(hosts: self.hosts(fleet: fleet),
-                    machines: fleet.availableMachineIDs.compactMap { self.sources[$0]?.machine }, excluding: id)
+                return self.leadContext(machineID: id, fleet: fleet)
             }
         }
     }
@@ -144,6 +144,9 @@ final class FirstMateMobileChatState {
                 // Keep legacy demo rows during the Phase 1 list transition.
                 host.features = store.features
                 host.supportsLead = store.leadSupported
+                #if DEBUG
+                if mobile.machineID == "demo1" { host.failedPolls = fleet.demoLeadFailedPolls }
+                #endif
                 if let lead = store.leadSnapshot {
                     let newest = lead.messages.last(where: \.isConversation)
                     host.lead = .init(feature: lead.feature, unread: newest?.role == "assistant", workingOnReply: false,
@@ -192,6 +195,45 @@ final class FirstMateMobileChatState {
             )
             return FirstMateReplyProgress.presenting(row, workingOnReply: row.isWorkingOnReply || pending)
         }
+    }
+
+    /// Lead summaries can end in a USER row. Only a caught-up snapshot may
+    /// supply its assistant read-through key; a newer unloaded summary stays unread.
+    func conversation(for target: FirstMateFeatureTarget, fleet: FirstMateMobileFleetStore) -> FirstMateConversation? {
+        guard let host = hosts(fleet: fleet).first(where: { $0.machineID == target.machineID }),
+              let lead = host.lead, lead.feature.id == target.featureID else {
+            return conversations(fleet: fleet).first { $0.machineID == target.machineID && $0.featureID == target.featureID }
+                ?? knownPresentation(for: target)
+        }
+        let store = fleet.store(for: target)
+        let snapshot = store?.snapshots[target.featureID]
+        let messages = snapshot?.messages.filter { $0.isConversation && !FirstMateOutgoingMessage.isLocalID($0.id) } ?? []
+        let assistant = messages.last { $0.role == "assistant" }
+        let readID: String?
+        if let latest = lead.latestMessage {
+            if messages.contains(where: { $0.id == latest.id }) { readID = assistant?.id }
+            else { readID = latest.role == "assistant" ? latest.id : nil }
+        } else { readID = assistant?.id }
+        let pending = FirstMateReplyProgress.isLocalReplyPending(outgoing: store?.outgoingMessages(for: target.featureID) ?? [],
+            snapshot: snapshot, hostFeatureUpdatedAt: lead.feature.updatedAt, fleetLatestFirstMateMessageID: readID)
+        return .init(id: .init(machineID: target.machineID, featureID: target.featureID), machineID: target.machineID,
+            machineName: host.machineName, featureID: target.featureID, title: "My First Mate", label: "My First Mate", emoji: "✦",
+            hudStatus: .idle, featureStatus: lead.feature.status, stepIndex: nil, stepFraction: nil, now: nil,
+            previewText: lead.latestMessage?.text ?? "", previewIsFromUser: lead.latestMessage?.role == "user",
+            isWorkingOnReply: lead.workingOnReply || pending, activityAt: nil, latestFirstMateMessageID: readID,
+            isUnread: leadIsUnread(machineID: target.machineID, fleet: fleet), isArchived: false)
+    }
+
+    func leadContext(machineID: String, fleet: FirstMateMobileFleetStore) -> FirstMateLeadContext? {
+        let machines = fleet.availableMachineIDs.compactMap { sources[$0]?.machine }
+        let origin = sources[machineID].flatMap { HerdrMachine.normalizedOrigin($0.machine.urlString) }
+        // A second saved alias of this same authenticated origin is not a remote
+        // feature source. Peer reachability and the context payload remain shared.
+        let hosts = hosts(fleet: fleet).filter { host in
+            host.machineID == machineID || origin == nil ||
+                sources[host.machineID].flatMap { HerdrMachine.normalizedOrigin($0.machine.urlString) } != origin
+        }
+        return FirstMateLeadMachine.context(hosts: hosts, machines: machines, excluding: machineID)
     }
 
     func leadChoice(fleet: FirstMateMobileFleetStore) -> FirstMateLeadMachine.Choice {
@@ -263,7 +305,7 @@ final class FirstMateMobileChatState {
         }
         guard !Task.isCancelled, fleet.store(for: target) === store, store.operationContext == context,
               fleet.selectedTarget == target,
-              let row = conversations(fleet: fleet).first(where: { $0.machineID == target.machineID && $0.featureID == target.featureID }),
+              let row = conversation(for: target, fleet: fleet),
               row.isUnread, row.latestFirstMateMessageID == messageID else { return }
         await markRead(target, through: messageID, fleet: fleet)
     }
@@ -316,6 +358,7 @@ final class FirstMateMobileChatState {
         guard !Task.isCancelled, isCurrentNavigation(intent) else { return nil }
         selection = .lead
         route = nil
+        leadOpenError = nil
         guard let machineID = machineID ?? leadChoice(fleet: fleet).current,
               let source = sources[machineID], let token = tokens[machineID],
               hosts(fleet: fleet).contains(where: { $0.machineID == machineID && $0.supportsLead }),
@@ -324,26 +367,46 @@ final class FirstMateMobileChatState {
             let target = FirstMateFeatureTarget(machineID: machineID, featureID: snapshot.feature.id)
             return fleet.open(target, navigationIntent: intent) ? target : nil
         }
-        guard canControl(machineID), openingLeads[machineID] == nil, let client = source.client else { return nil }
+        let knownLead = hosts(fleet: fleet).first { $0.machineID == machineID }?.lead
+        guard knownLead != nil || canControl(machineID) else {
+            leadOpenError = "This host is read-only. Its First Mate has not been created yet."
+            return nil
+        }
+        guard openingLeads[machineID] == nil, let client = source.client else {
+            leadOpenError = "First Mate is still opening on this machine. Try again shortly."
+            return nil
+        }
         let operation = UUID(), context = store.operationContext
+        func current() -> Bool {
+            !Task.isCancelled && navigationToken == intent && tokens[machineID] == token && selection == .lead
+                && fleet.store(forMachineID: machineID) === store && store.operationContext == context
+        }
         openingLeads[machineID] = operation
         defer { if openingLeads[machineID] == operation { openingLeads[machineID] = nil } }
         do {
-            let response = try await client.ensureFirstMateLead(requestID: operation.uuidString)
-            guard !Task.isCancelled, canControl(machineID), navigationToken == intent,
-                  tokens[machineID] == token, selection == .lead,
-                  fleet.store(forMachineID: machineID) === store, store.operationContext == context,
-                  response.ok, let lead = response.lead, lead.feature.isLead else { return nil }
+            let lead: FirstMateLeadSummary
+            if let knownLead { lead = knownLead }
+            else {
+                let response = try await client.ensureFirstMateLead(requestID: operation.uuidString)
+                guard current(), canControl(machineID) else { return nil }
+                guard response.ok, let value = response.lead, value.feature.isLead else { throw APIError.invalidResponse }
+                lead = value
+                // Remember a successful ensure even if the following GET fails;
+                // explicit retry fetches it instead of POSTing /lead again.
+                index.noteLead(lead, machineID: machineID)
+            }
+            guard current(), lead.feature.isLead else { return nil }
             let snapshot = try await client.fetchFirstMateFeature(lead.feature.id, journalEventsOnly: store.journalEventSnapshotsSupported)
-            guard !Task.isCancelled, canControl(machineID), navigationToken == intent,
-                  tokens[machineID] == token, selection == .lead,
-                  fleet.store(forMachineID: machineID) === store, store.operationContext == context,
-                  snapshot.ok, snapshot.feature.id == lead.feature.id, snapshot.feature.isLead else { return nil }
+            guard current() else { return nil }
+            guard snapshot.ok, snapshot.feature.id == lead.feature.id, snapshot.feature.isLead else { throw APIError.invalidResponse }
             store.receive(snapshot)
             index.noteLead(lead, machineID: machineID)
             let target = FirstMateFeatureTarget(machineID: machineID, featureID: lead.feature.id)
             return fleet.open(target, navigationIntent: intent) ? target : nil
-        } catch { return nil }
+        } catch {
+            if current() { leadOpenError = "First Mate could not be opened on \(fleet.hosts.first { $0.machineID == machineID }?.machineName ?? "its owning machine"). Try again." }
+            return nil
+        }
     }
 
     func navigate(_ request: FirstMateMobileOpenRequest, owner: FirstMateFeatureTarget? = nil, intent suppliedIntent: UUID? = nil,
@@ -363,6 +426,10 @@ final class FirstMateMobileChatState {
             guard let target else {
                 // Older companions keep the lead selection ready for the
                 // briefing screen added by the conversation UI phases.
+                guard leadOpenError == nil, leadChoice(fleet: fleet).current == nil else {
+                    routingError = leadOpenError ?? "First Mate could not be opened on its owning machine."
+                    return false
+                }
                 return selection == .lead
             }
             route = .init(target: target, assignmentID: nil, inspector: request.inspector, graph: request.graph)

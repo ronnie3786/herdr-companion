@@ -10,8 +10,17 @@ import Foundation
 /// without touching the shared Mac demo.
 enum FirstMateMobileDemo {
     static func initialSnapshots(forMachineID machineID: String) -> [FirstMateSnapshot]? {
+        if machineID == "demo2" {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateOlderHosts") { return FirstMateDemo.features(step: 0) }
+            #endif
+            return FirstMateDemo.features(step: 0) + [FirstMateDemo.chatWindowLead()]
+        }
         guard machineID == "demo1" else { return nil }
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateOlderHosts") {
+            return FirstMateDemo.features(step: 0) + FirstMateDemo.chatWindowFeatures()
+        }
         if ProcessInfo.processInfo.arguments.contains("-HerdrFirstMateAdditionalResponse") { return [additionalResponseSnapshot()] }
         if FirstMateTranscriptPerformanceProbe.enabled { return [transcriptPerformanceSnapshot()] }
         if FirstMateListPerformanceProbe.enabled { return performanceSnapshots() + [FirstMateDemo.chatWindowLead()] }

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Explicit client-built fallback. Real lead messages arrive in Phase 4.
+/// Explicit client-built fallback for hosts without lead capability; never an agent message.
 struct FirstMateLeadBriefingScreen: View {
     @Bindable var model: HerdrAppModel
     @Bindable var fleet: FirstMateMobileFleetStore

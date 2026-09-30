@@ -126,13 +126,13 @@ struct FirstMateMobileChatStateTests {
         await fleet.refreshChatIndex()
         fleet.chat.pin("beta")
         #expect(fleet.leadChoice.current == "beta")
-        #expect(await fleet.chat.openLead(fleet: fleet) == nil)
+        #expect(await fleet.chat.openLead(fleet: fleet)?.machineID == "beta", "An existing lead is readable without mutation authority")
         #expect(alpha.ensureCalls == 0 && beta.ensureCalls == 0)
         let opened = await fleet.chat.openLead(fleet: fleet, canControl: { $0 == "beta" })
         #expect(opened?.machineID == "beta")
-        #expect(alpha.ensureCalls == 0 && beta.ensureCalls == 1)
+        #expect(alpha.ensureCalls == 0 && beta.ensureCalls == 0)
         _ = await fleet.chat.openLead(fleet: fleet, canControl: { _ in true })
-        #expect(beta.ensureCalls == 1, "An already opened store does not ensure again")
+        #expect(beta.ensureCalls == 0, "An existing lead is fetched, never unnecessarily ensured")
         #expect(alpha.sent.isEmpty && beta.sent.isEmpty)
         beta.features = .failure(.server(status: 503, message: "Offline"))
         await fleet.refreshChatIndex()
@@ -150,8 +150,10 @@ struct FirstMateMobileChatStateTests {
         let fleet = fleet(), client = leadClient(), gate = ChatTestGate()
         client.beforeEnsure = { await gate.wait() }
         client.features = .success([ChatFixtures.feature("feature")])
+        let ensuredLead = client.lead; client.lead = nil
         fleet.activate(sources: [source("alpha", client)], connectionGeneration: 1)
         await fleet.refreshChatIndex()
+        client.lead = ensuredLead
         let opening = Task { await fleet.chat.openLead(fleet: fleet, canControl: { _ in true }) }
         defer { Task { await gate.open() } }
         try await wait { await gate.arrived }

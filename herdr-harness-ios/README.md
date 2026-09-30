@@ -27,15 +27,17 @@ links, fenced read/lead state and concrete authenticated client gaps. Phase 2 ad
 the compact bar, lead + six needs-you pins with overflow, two-line recency rows,
 and shared reply-progress projection for rows and the global badge. Phase 3 adds
 bottom-following chat, exact-owner mentions/resources, frozen optimistic sends,
-explicit retry, topmost-only phone read hooks and native swipe-back. Phases 4–6
-(real lead, composer parity and Info/iPad/app-wide theme polish) remain planned, with per-phase automated verification and one final signed
+explicit retry, topmost-only phone read hooks and native swipe-back. Phase 4 adds
+real My First Mate chat, owned machine selection/stand-in/recovery, frozen lead
+context, assistant-aware reads and Overview-only Info. Phases 5–6 (composer parity
+and Info/iPad/app-wide theme polish) remain planned, with per-phase automated verification and one final signed
 iOS build after Phase 6
 rather than intermediate phone-test pauses. No first-push approval gate remains.
 No server update, Mac release or Phase 7 work is included. Lead metadata never
 replaces saved connection identity; unknown/ambiguous link origins do not fall
 back to another machine. First Mate POSTs retain the 86,400-second mutation
 budget, with 90-second uploads, 120-second voice and 15-second reads. These are
-transport/data foundations, not completion of the later composer or lead UI.
+transport/data foundations, not completion of the later composer UI.
 
 
 The **First Mates** tab opens on **All Machines**, with needs-you features in a
@@ -59,18 +61,25 @@ feature ID. One offline or older companion shows its own notice without hiding a
 healthy host's features. iPhone pushes Info from chat; documents and sessions still
 open as sheets from Info. iPad keeps a feature sidebar and pushed detail navigation;
 the three-column inspector is Phase 6. First Mates is dark-only, with capped `.xxxLarge`
-scaling and full readable messages. My First Mate currently opens an explicitly
-client-built briefing with capsule readouts and a goal composer that opens creation
-without discarding its draft on cancel/failure; the real lead conversation remains
-Phase 4. Composer v1 uses a 1–7-line text pill and explicit send; its plus menu opens
-documents. Attachment, voice, model, mention-picker and rating controls remain Phase 5. Swipe/context
+scaling and full readable messages. My First Mate opens the real lead on a capable
+host, with Automatic/pinned selection and a named stand-in after two failed LIST
+polls. Recovery returns to the preferred host; drafts, history and pending sends
+stay with their original owners. Lead Info shows your features at a glance, not
+feature-only workflow/action controls. When no host advertises lead capability,
+an explicitly client-built briefing retains capsule readouts and a creation goal
+without discarding its draft on cancel/failure. A capable lead failure shows a
+retry/read-only state rather than pretending it is an older host. Composer v1
+uses a 1–7-line text pill and explicit send; feature chats' plus menu opens documents. Attachment, voice, model, mention-picker and rating controls remain Phase 5. Swipe/context
 archive actions capture the exact owner and roll back optimistic removal on error.
 
 The matching companion server with `first-mate-v1` is required. Work continues on
 that host when the phone app closes. The scope preference is versioned; a missing
 or legacy-only value opens on All Machines without changing the older machine
 preference. Launch with `-HerdrFirstMateDemo` to explore two synthetic hosts,
-shared planning, seven reviewers, checkpoints, and session handoffs. See
+shared planning, seven reviewers, checkpoints, session handoffs and both owned
+lead histories. Debug-only `-HerdrFirstMateLeadScenarios` adds synthetic failed
+LIST/recovery controls to the lead menu; `-HerdrFirstMateOlderHosts` exercises the
+briefing fallback. Neither launches agents or uses a companion. See
 [mobile behavior and verification](../docs/first-mate/ios.md).
 
 ## Native mobile interface

@@ -81,7 +81,7 @@ final class HerdrFirstMateChatUITests: XCTestCase {
     }
 
     func testBriefingReadoutAndCreationDraftSurvivesCancel() throws {
-        let app = launch(extra: ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"])
+        let app = launch(extra: ["-HerdrFirstMateOlderHosts", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"])
         defer { app.terminate() }
         app.buttons["first-mate-chat-pinned-lead"].tap()
         let capsule = app.buttons["first-mate-briefing-feature-demo1-demo-receipts"]

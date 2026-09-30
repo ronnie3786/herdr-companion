@@ -102,6 +102,14 @@ final class FirstMateMobileFleetStore {
     /// Global feature dots, independent of host scope, search and lead unread.
     var badgeCount: Int { conversations.count(where: \.showsDot) }
     var leadChoice: FirstMateLeadMachine.Choice { chat.leadChoice(fleet: self) }
+    #if DEBUG
+    private(set) var demoLeadFailedPolls = 0
+    func failDemoLeadPoll() {
+        guard isDemo else { return }
+        demoLeadFailedPolls = min(demoLeadFailedPolls + 1, FirstMateFleetIndex.failedPollsCap)
+    }
+    func recoverDemoLead() { guard isDemo else { return }; demoLeadFailedPolls = 0 }
+    #endif
 
     /// The list fields mirrored out of one host store after a refresh.
     private struct HostRefreshSnapshot: Sendable {

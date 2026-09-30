@@ -83,6 +83,9 @@ struct HerdrSidebarView: View {
         .sheet(isPresented: $isPresentingMachines) {
             NavigationStack {
                 MachinesView(model: model)
+                    .navigationDestination(for: SettingsRoute.self) { route in
+                        SettingsRouteDestination(model: model, route: route)
+                    }
             }
         }
         .alert("Rename workspace", isPresented: isRenamingWorkspace) {

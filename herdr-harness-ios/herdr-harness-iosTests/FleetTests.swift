@@ -98,6 +98,30 @@ struct FleetTests {
         #expect(store.machines.map(\.displayName) == ["Work Mac", "Local", "Development"])
     }
 
+    @Test("Building the store for app state reads no credentials until its first refresh")
+    func credentialsLoadOnFirstRefreshOnly() async {
+        // Settings rebuilt its Fleet destination on every redraw, and each
+        // build read every token on the main thread, freezing Settings on a
+        // device with several machines. Building must stay free.
+        let reads = FleetCredentialReadCounter()
+        let original = FleetStore.credentialReader
+        FleetStore.credentialReader = { account in reads.record(account); return "" }
+        defer { FleetStore.credentialReader = original }
+        let machines = [
+            HerdrMachine(id: "machine-a", name: "Machine A", urlString: "http://machine-a:9092"),
+            HerdrMachine(id: "machine-b", name: "Machine B", urlString: "http://machine-b:9092"),
+        ]
+        let model = HerdrAppModel(credentials: TestCredentialStore(), arguments: [],
+            userDefaults: UserDefaults(suiteName: "FleetCredentials.\(UUID())")!, bootstrapMachines: machines)
+        let store = FleetStore(model: model)
+        #expect(reads.accounts.isEmpty)
+        await store.refresh()
+        #expect(reads.accounts.sorted() == ["api-token.machine-a", "api-token.machine-b"])
+        await store.refresh()
+        #expect(reads.accounts.count == 2, "Clients are built once, not on every refresh")
+        #expect(store.machineErrors["machine-a"] == "No connection configured for this machine.")
+    }
+
     @Test("Fleet on iOS exposes no mutating surface")
     func readOnlySurface() {
         // A compile-time guard: if someone re-adds syncFleet/performFleetAction
@@ -414,4 +438,11 @@ private final class FleetStoreURLRouter: @unchecked Sendable {
         defer { lock.unlock() }
         outcomes = [:]
     }
+}
+
+private final class FleetCredentialReadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+    var accounts: [String] { lock.withLock { values } }
+    func record(_ account: String) { lock.withLock { values.append(account) } }
 }

@@ -21,6 +21,9 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .scrollContentBackground(.hidden)
             .background(HerdrBackground())
+            .navigationDestination(for: SettingsRoute.self) { route in
+                SettingsRouteDestination(model: model, route: route)
+            }
         }
     }
 
@@ -47,34 +50,29 @@ struct SettingsView: View {
 
     private var machinesSection: some View {
         Section {
+            // Value links: a destination is built only when it is pushed. The
+            // editor and Fleet read Keychain credentials, which must never run
+            // on every Settings redraw (that froze Settings on device).
             ForEach(model.machines) { machine in
-                NavigationLink {
-                    MachineEditorView(model: model, machine: machine)
-                } label: {
+                NavigationLink(value: SettingsRoute.editMachine(machine.id)) {
                     MachineListRow(machine: machine, state: model.connectionState(forMachine: machine.id))
                 }
                 .accessibilityIdentifier("settings-machine-row-\(machine.id)")
             }
 
-            NavigationLink {
-                MachineEditorView(model: model, machine: nil)
-            } label: {
+            NavigationLink(value: SettingsRoute.addMachine) {
                 Label("add machine", systemImage: "plus")
             }
             .accessibilityIdentifier("settings-add-machine")
 
-            NavigationLink {
-                MachinesView(model: model)
-            } label: {
+            NavigationLink(value: SettingsRoute.manageMachines) {
                 Label("Manage machines", systemImage: "server.rack")
             }
             .accessibilityIdentifier("settings-manage-machines")
 
             // Fleet is a read-only report about the machines configured above,
             // so it belongs in the same bucket rather than in a fourth tab.
-            NavigationLink {
-                FleetInventoryView(model: model)
-            } label: {
+            NavigationLink(value: SettingsRoute.fleetInventory) {
                 Label("Fleet inventory", systemImage: "point.3.connected.trianglepath.dotted")
             }
             .accessibilityIdentifier("settings-fleet-inventory")
@@ -219,6 +217,33 @@ struct SettingsView: View {
                         .foregroundStyle(HerdrTheme.secondaryText)
                 }
             }
+        }
+    }
+}
+
+/// Settings pushes by value so each destination is created only when opened.
+enum SettingsRoute: Hashable {
+    case editMachine(HerdrMachine.ID)
+    case addMachine
+    case manageMachines
+    case fleetInventory
+}
+
+struct SettingsRouteDestination: View {
+    @Bindable var model: HerdrAppModel
+    let route: SettingsRoute
+
+    var body: some View {
+        switch route {
+        case .editMachine(let id):
+            if let machine = model.machines.first(where: { $0.id == id }) {
+                MachineEditorView(model: model, machine: machine)
+            } else {
+                ContentUnavailableView("Machine removed", systemImage: "server.rack")
+            }
+        case .addMachine: MachineEditorView(model: model, machine: nil)
+        case .manageMachines: MachinesView(model: model)
+        case .fleetInventory: FleetInventoryView(model: model)
         }
     }
 }

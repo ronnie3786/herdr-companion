@@ -108,6 +108,8 @@ struct HerdrMicroLabel: View {
                 .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold, relativeTo: .caption2)
                 .tracking(0.6)
                 .foregroundStyle(color)
+                // VoiceOver reads the words, not an all-caps string it may spell.
+                .accessibilityLabel(text)
             if let count { HerdrCountBadge(count: count, style: .quiet) }
         }
         .accessibilityElement(children: .combine)

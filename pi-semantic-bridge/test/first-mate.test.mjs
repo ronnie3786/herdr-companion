@@ -506,6 +506,39 @@ test("link saving spools exact scoped identity and parameters", async () => {
   } finally { f.cleanup(); }
 });
 
+test("simulator checkpoints appear only on SimPortal machines and spool exact parameters", async () => {
+  for (const role of ["coordinator", "worker"]) {
+    const off = fixture(role);
+    try {
+      assert.ok(!off.tools.has("fm_register_simulator_build"));
+      assert.equal(off.handlers.get("tool_call")({toolName:"fm_register_simulator_build"}).block, true);
+    } finally { off.cleanup(); }
+    const on = fixture(role, {simulator_previews:true});
+    try {
+      assert.ok(on.tools.has("fm_register_simulator_build"));
+      assert.match(on.tools.get("fm_register_simulator_build").description, /not verification evidence/);
+      assert.equal(on.handlers.get("tool_call")({toolName:"fm_register_simulator_build"}), undefined);
+    } finally { on.cleanup(); }
+  }
+  for (const [role, overrides] of [["advisor", {simulator_previews:true}], ["coordinator", {simulator_previews:true, lead:true}]]) {
+    const f = fixture(role, overrides);
+    try { assert.ok(!f.tools.has("fm_register_simulator_build")); } finally { f.cleanup(); }
+  }
+  const f = fixture("worker", {simulator_previews:true, workspace_mode:"isolated"});
+  try {
+    const id = spoolRequestId("synthetic-job", "register-build");
+    writeFileSync(join(f.root,"responses",id+".json"),JSON.stringify({ok:true,result:{build_id:"11111111-2222-4333-8444-555555555555",status:"ready"}}));
+    const result = await f.tools.get("fm_register_simulator_build").execute("register-build", {
+      app_path:"/synthetic/Build/Products/Debug-iphonesimulator/Synthetic.app", label:"Round 1", hub_build_id:"hub-7",
+    }, undefined, undefined, f.ctx);
+    assert.equal(result.details.status, "ready");
+    const request = JSON.parse(readFileSync(join(f.root,"requests",id+".json"),"utf8"));
+    assert.equal(request.action, "fm_register_simulator_build");
+    assert.equal(request.native_session_id, "native-synthetic");
+    assert.deepEqual(request.params, {app_path:"/synthetic/Build/Products/Debug-iphonesimulator/Synthetic.app", label:"Round 1", hub_build_id:"hub-7"});
+  } finally { f.cleanup(); }
+});
+
 test("successor and recovery fences also gate link saving", () => {
   const handoff = fixture("worker", {handoff_id:"handoff-synthetic", workspace_mode:"isolated"});
   try {

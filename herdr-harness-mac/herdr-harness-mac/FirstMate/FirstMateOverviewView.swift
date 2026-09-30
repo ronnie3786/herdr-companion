@@ -6,6 +6,7 @@ struct FirstMateOverviewView: View {
     @Environment(\.colorScheme) private var scheme
     @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
     @State private var builds = MobileAppHubFeed()
+    @Environment(\.firstMateSimulator) private var simulator
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
@@ -22,7 +23,8 @@ struct FirstMateOverviewView: View {
                 featureID: snapshot.feature.id,
                 assignments: snapshot.assignments.map { ($0.id, $0.title) },
                 feed: builds,
-                query: buildsQuery
+                query: buildsQuery,
+                simulator: simulator
             )
             Text("The feature at a glance")
                 .herdrFont(size: 15, weight: .semibold)
@@ -105,5 +107,6 @@ struct FirstMateOverviewView: View {
             .padding(.top, 2)
         }
         .mobileAppHubRefresh(builds, query: buildsQuery, enabled: !store.isDemo)
+        .firstMateSimulatorRefresh(simulator, demoVisitIDs: snapshot.visits.map(\.id))
     }
 }

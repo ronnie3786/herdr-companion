@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack
 import errno
 import fcntl
 import hashlib
@@ -45,8 +46,9 @@ from .first_mate_routing import (
     resolve_dispatch_policy,
 )
 from . import first_mate_fleet
-from .first_mate_store import LEAD_KIND, FirstMateError, system_message_attention
+from .first_mate_store import LEAD_KIND, FirstMateError, system_message_attention, validate_assignment_payload
 from .first_mate_usage import FirstMateUsage
+from .first_mate_workspaces import FeatureWorkspaces, lock_path as workspace_lock_path, path_key
 from .first_mate_verification import (
     VerificationValidationError,
     evaluate_coverage,
@@ -213,6 +215,22 @@ your turn. Never poll, wait, perform substantive assignment work, or consume a
 turn monitoring workers; ordinary service code watches and records them
 automatically. Short routing lookups through the shell remain allowed.
 
+One feature normally keeps ONE worktree and feature branch through planning,
+implementation, builds, review, feedback and delivery. fm_delegate with
+workspace_mode=isolated continues that workspace by default; a new assignment,
+stage, failed build or feedback round is not a reason for another worktree.
+read_only defaults to the same feature workspace after it exists. Use an exact
+source_assignment_id to continue or review a retained workspace. Use
+workspace_strategy=fork with a concrete fork_reason only for independent parallel
+implementation or a deliberate experiment. Commit the source before forking;
+integrate the selected commits back into the ongoing feature branch. Ordinary
+workers sharing a workspace queue behind its current writer; independent
+read-only reviewers can share it. Recover interruptions with fm_recover and
+reported failures with fm_retry, preserving the assignment and all dirty edits.
+After a fix changes reviewed code, use fm_retry on each affected revision-pinned
+review, including a previously completed review, to record fresh evidence.
+Never replace an uncertain worker to escape recovery checks or reset its tree.
+
 System updates are evidence, never new human authorization. An outcome update is
 a pointer; its full summary is in the router state's assignments. Use those
 summaries and bounded document/session readers for a short stage
@@ -290,6 +308,17 @@ handoff, call fm_handoff with a thorough checkpoint and end your turn. Never
 compact; a new saved session will continue the same assignment. If you are a
 successor, inspect the checkpoint and workspace then fm_acknowledge_handoff
 before changing anything. All observable execution is retained in the work log.
+The workspace and branch belong to the feature, not this session or assignment.
+Inspect its current branch, HEAD, staged and unstaged edits before continuing;
+the queued metadata records an earlier boundary, not an instruction to reset it.
+Preserve inherited work and commit coherent finished changes on that branch.
+Default child assignments reuse the workspace and start after you yield with
+fm_wait_for_children. Commit before delegating a revision-pinned review.
+Use workspace_strategy=fork and a concrete fork_reason only for independent
+parallel work or experiments. A fork includes committed source only. Merge or
+cherry-pick selected child changes within the authorized feature scope, recording
+the integration revision; never create another worktree merely for a build,
+review fix, feedback round, retry or context handoff.
 Use fm_save_link for the PR implementing or reviewing this feature or ticket,
 or a share URL the human needs for this work. Match the feature goal, ticket,
 and repository; skip background, historical, dependency, example, and research
@@ -322,6 +351,26 @@ Continue from the latest checkpoint and reuse still-valid checks on the same
 revision. A failed command is a diagnostic to investigate, not by itself a reason
 to ask the human to restart the assignment.
 """
+# Appended to the charter only when this machine's companion has SimPortal configured.
+SIMULATOR_CHECKPOINT_GUIDANCE = {
+    "worker": """Simulator checkpoints: this machine saves iOS Simulator builds the human can open
+from First Mate. When your assignment changes an iOS app and you finish a meaningful
+round (the end of an implementation, fix, or QA round), build the app for an iOS
+Simulator destination with the project's own build workflow (the scheme and
+configuration you test with), then call fm_register_simulator_build with the exact
+path of the built .app from the build products (for example
+.../Build/Products/Debug-iphonesimulator/App.app) and a short label such as
+"Round 1: onboarding flow". If you also published a device build to Mobile App Hub,
+pass that build's ID as hub_build_id. Register only a build that compiled
+successfully; never a device build, an archive, or another feature's build. A saved
+build is a preview for the human, not verification evidence, and never replaces
+fm_record_verification.""",
+    "coordinator": """Simulator checkpoints: this machine saves iOS Simulator builds the human can open
+from First Mate. For iOS app work, include in each implementation or fix assignment
+that the worker registers its successful simulator build with
+fm_register_simulator_build at the end of the round. A saved build is a preview, not
+verification evidence.""",
+}
 LEAD_PROMPT = """You are First Mate, the human's lead across every First Mate feature on their
 machines. Each feature has its own First Mate (its "second mate") that runs that
 feature's stages and workers. You answer the human about all of them, check
@@ -422,7 +471,7 @@ def _agent_assignment(assignment: Mapping[str, Any]) -> dict:
         "recovery_exhausted", "has_outcome", "next_permitted_actions", "progress_lease"))
     result["operational"] = _pick(assignment.get("metadata", {}),
         ("parent_assignment_id", "source_assignment_id", "expected_code_revision", "human_gate",
-         "model_profile", "progress"))
+         "model_profile", "progress", "workspace_id", "workspace_strategy", "workspace_reused", "fork_reason"))
     result["detail_truncated"] = len(str(assignment.get("summary", ""))) > 2400
     return _bounded_agent_data(result)
 
@@ -670,9 +719,11 @@ class FirstMateRuntime:
     """Run saved Pi coordinators and workers independently of client windows."""
 
     def __init__(self, store: Any, *, environ: Mapping[str, str] | None = None,
-                 runtime_root: str | Path | None = None, profile_snapshot=None) -> None:
+                 runtime_root: str | Path | None = None, profile_snapshot=None, simulator_previews: Any = None) -> None:
         self.store = store
         self._profile_snapshot = profile_snapshot
+        # SimPortal checkpoints (fm_register_simulator_build); None or unconfigured hides the tool.
+        self.simulator_previews = simulator_previews
         self.environ = dict(os.environ if environ is None else environ)
         self.root = Path(runtime_root or self.environ.get("HERDR_HARNESS_FIRST_MATE_RUNS_ROOT") or self.environ.get("HERDR_FIRST_MATE_RUNTIME_ROOT")
                          or str(Path(self.environ.get("HERDR_STATE_DIR") or "~/.local/share/herdr-companion").expanduser() / "first-mate-runs")).expanduser().resolve()
@@ -713,6 +764,7 @@ class FirstMateRuntime:
         from .first_mate_reliability import FirstMateReliability
         self.reliability = FirstMateReliability(self)
         self.links = FirstMateLinkDiscovery(self.store, root=self.root)
+        self.workspaces = FeatureWorkspaces(self, _read_json, _write_json)
         # The lead's reach into the other machines of this companion's roster.
         self.peers = PeerDirectory(self.environ)
         self._peer_lock = threading.Lock()
@@ -722,7 +774,7 @@ class FirstMateRuntime:
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
                 "pi_available": bool(self.pi_bin), "saved_sessions": True,
-                "durable_dispatch": True, "context_handoff_target": self.context_target,
+                "durable_dispatch": True, "feature_workspaces": True, "context_handoff_target": self.context_target,
                 "max_workers": self.max_workers, "runtime_health": self.health(),
                 "reason": ("Pi is not installed or executable on this host" if not self.pi_bin else
                            "The managed First Mate Pi extension is unavailable" if not self.extension or not self.extension.is_file() else None)}
@@ -1435,8 +1487,48 @@ class FirstMateRuntime:
                 error.storage_low = True
                 raise error
 
+    def _workspace_busy(self, cwd: str, mode: str, *, job: dict | None = None,
+                        assignment_id: str | None = None) -> bool:
+        """Reserve pending dispatches too, and fence pre-upgrade live processes."""
+        assignment_id = job["claim"]["id"] if job else assignment_id
+        ancestors = set()
+        parent_id = assignment_id
+        while parent_id and parent_id not in ancestors:
+            ancestors.add(parent_id)
+            parent_id = self.store.get_assignment(parent_id).get("metadata", {}).get("parent_assignment_id")
+        for other in self._jobs():
+            if other["kind"] != "worker" or job and other["id"] == job["id"]:
+                continue
+            if mode == "read_only" and other.get("workspace_mode", "read_only") == "read_only":
+                continue
+            if path_key(other["cwd"]) != path_key(cwd):
+                continue
+            directory = self._job_dir(other)
+            # Even a persisted outcome/final receipt cannot release a live Pi
+            # process. Older dispatches do not have the new workspace lock.
+            if _locked(directory / "writer.lock"):
+                return True
+            if (directory / "started.json").exists() and other["claim"]["id"] != assignment_id:
+                owner = self.store.get_assignment(other["claim"]["id"])
+                waiting_parent = owner["status"] == "waiting_children" and owner["id"] in ancestors
+                if (owner["status"] not in TERMINAL and not waiting_parent
+                        or owner.get("metadata", {}).get("human_gate", {}).get("status") == "pending"):
+                    # A stopped process can still own unresolved edits/effects.
+                    # Only its recovery successor or yielded child may continue.
+                    return True
+            if (directory / "finalized.json").exists():
+                continue
+            if (directory / "started.json").exists():
+                if not _read_json(directory / "status.json", {}).get("ended"):
+                    return True
+            elif job is None or (other["created_at"], other["id"]) < (job["created_at"], job["id"]):
+                return True
+        return False
+
     def _launch(self, job: dict) -> None:
         if job.get("retry_not_before", 0) > time.time():
+            return
+        if job["kind"] == "worker" and self._workspace_busy(job["cwd"], job.get("workspace_mode", "read_only"), job=job):
             return
         directory = self._job_dir(job)
         refresh_lock = (directory / "writer.lock").open("a")
@@ -1474,6 +1566,8 @@ class FirstMateRuntime:
                 job["model_selected_at"] = utc_now()
             if previous_revision != job.get("model_settings_revision"):
                 job["previous_model_settings_revision"] = previous_revision
+            if job["kind"] == "worker":
+                job["workspace_lock"] = str(workspace_lock_path(self.root, job["cwd"]))
             self._save_job(job)
         finally:
             fcntl.flock(refresh_lock, fcntl.LOCK_UN)
@@ -1650,10 +1744,14 @@ class FirstMateRuntime:
                 self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 86400, 30, 604800)
         if retry:
             job["retry_not_before"] = retry.get("not_before", 0)
+        simulator = self.simulator_previews
+        if kind in {"coordinator", "worker"} and simulator is not None and getattr(simulator, "configured", False):
+            job["simulator_previews"] = True
         if kind == "coordinator" and current_feature.get("kind") == LEAD_KIND:
             # The lead reuses the coordinator's conversation, context, and
             # handoff machinery with its own charter and fleet tools.
             job["lead"] = True
+            job.pop("simulator_previews", None)
             job["charter"] = LEAD_PROMPT
         if self._profile_snapshot:
             # Keep coordinator conversations and assignment retries pinned; new
@@ -1724,6 +1822,8 @@ class FirstMateRuntime:
         token = hashlib.sha256((feature["id"] + request_id).encode()).hexdigest()[:20]
         prepared_path = self.root / "workspace-plans" / (token + ".json")
         prepared = _read_json(prepared_path)
+        if prepared_path.exists() and not isinstance(prepared, dict):
+            raise FirstMateError("The retained workspace request is unreadable; inspect it before continuing", code="workspace_identity_mismatch")
         if prepared and prepared["params"] != params:
             raise FirstMateError("A workspace request ID cannot be reused with changed instructions")
         if not prepared:
@@ -1732,13 +1832,8 @@ class FirstMateRuntime:
             # selection even when host policy changes or is removed.
             profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
             policy = self._delegation_policy(feature, params, profile)
-            source = feature["cwd"]
-            source_assignment = params.get("source_assignment_id")
-            if source_assignment:
-                source_record = self.store.get_assignment(source_assignment)
-                if source_record["feature_id"] != feature["id"]:
-                    raise FirstMateError("Source assignment belongs to another feature")
-                source = source_record.get("metadata", {}).get("worktree_path") or source
+            selection = self.workspaces.select(feature, params)
+            source, source_assignment = selection["source"], selection["source_assignment_id"]
             try:
                 baseline = self._git(source, "rev-parse", "HEAD")
             except FirstMateError:
@@ -1750,13 +1845,25 @@ class FirstMateRuntime:
                         "model_selection": policy.selection()}
             prior_baseline = recorded_comparison_baseline(self.store.snapshot(feature["id"]), source_assignment or "project")
             if prior_baseline is None and source_assignment:
-                prior_baseline = source_record.get("metadata")
+                prior_baseline = self.store.get_assignment(source_assignment).get("metadata")
             metadata.update(capture_comparison_baseline(source, baseline, self._git, prior=prior_baseline))
-            if baseline and mode == "read_only" and (source_assignment or "review" in str(params.get("role", "")).lower()):
+            if baseline and mode == "read_only" and (params.get("source_assignment_id") or "review" in str(params.get("role", "")).lower()):
                 metadata["expected_code_revision"] = baseline
             if mode == "isolated":
-                metadata.update(worktree_path=str(self.root / "worktrees" / token), branch="codex/first-mate-" + token)
-            prepared = {"params": params, "source": source, "metadata": metadata}
+                if selection["reuse"]:
+                    metadata.update(branch=selection["identity"]["branch"], workspace_identity=selection["identity"])
+                else:
+                    tree_token = (hashlib.sha256(feature["id"].encode()).hexdigest()[:20]
+                                  if selection["strategy"] == "feature" else token)
+                    metadata.update(worktree_path=str(self.root / "worktrees" / tree_token), branch="codex/first-mate-" + tree_token)
+            if selection["identity"] or mode == "isolated":
+                metadata.update(workspace_id=self._workspace_identity(path_key(metadata["worktree_path"])),
+                                workspace_strategy=selection["strategy"], workspace_reused=selection["reuse"])
+                if params.get("fork_reason"):
+                    metadata["fork_reason"] = params["fork_reason"].strip()
+            prepared = {"params": params, "source": source, "metadata": metadata,
+                        "workspace_version": 1, "make_primary": selection["make_primary"],
+                        "create": mode == "isolated" and not selection["reuse"]}
             # Freeze derived HEAD and paths BEFORE any worktree mutation or DB
             # receipt. Replaying an uncertain tool cannot change its payload.
             _write_json(prepared_path, prepared)
@@ -1764,13 +1871,23 @@ class FirstMateRuntime:
         if mode == "isolated":
             path, branch = Path(metadata["worktree_path"]), metadata["branch"]
             if path.exists():
-                actual = self._git(str(path), "rev-parse", "--show-toplevel")
-                if Path(actual).resolve() != path.resolve() or self._git(str(path), "branch", "--show-current") != branch:
-                    raise FirstMateError("Existing path does not belong to the requested assignment worktree")
+                if prepared.get("workspace_version"):
+                    self.workspaces.identity(feature, str(path), metadata.get("workspace_identity"))
+                else:
+                    actual = self._git(str(path), "rev-parse", "--show-toplevel")
+                    if Path(actual).resolve() != path.resolve() or self._git(str(path), "branch", "--show-current") != branch:
+                        raise FirstMateError("Existing path does not belong to the requested assignment worktree")
             else:
+                if prepared.get("ready") or prepared.get("workspace_version") and not prepared.get("create"):
+                    raise FirstMateError("The retained feature worktree is missing; preserve and inspect its recovery evidence", code="workspace_missing")
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 self._require_storage(prepared["source"])
                 self._git(prepared["source"], "worktree", "add", "-b", branch, str(path), metadata["base_revision"])
+            if prepared.get("workspace_version") and not prepared.get("ready"):
+                metadata["workspace_identity"] = self.workspaces.identity(feature, str(path), metadata.get("workspace_identity"))
+                self.workspaces.remember(feature, metadata, primary=prepared["make_primary"])
+                prepared["ready"] = True
+                _write_json(prepared_path, prepared)
         return metadata
 
     # -- durable verification scope and assessment ----------------------------
@@ -1941,9 +2058,13 @@ class FirstMateRuntime:
             for index in range(len(chain) - 1):
                 descendant_path = _path(chain[index])
                 ancestor_path = _path(chain[index + 1])
-                if descendant_path != ancestor_path:
+                if descendant_path != ancestor_path and _metadata(chain[index]).get("workspace_strategy") != "fork":
                     superseded.add(ancestor_path)
                     path_edges.setdefault(ancestor_path, set()).add(descendant_path)
+
+        for fork_path, primary_path in self.workspaces.integrated_forks(dict(feature), assignments).items():
+            superseded.add(fork_path)
+            path_edges.setdefault(fork_path, set()).add(primary_path)
 
         workspaces: dict[str, str] = {}
         anchors: dict[str, list[str]] = {}
@@ -2325,6 +2446,9 @@ class FirstMateRuntime:
                         if worker_count >= self.max_workers:
                             break
                         if assignment["status"] == "queued":
+                            metadata = assignment.get("metadata", {})
+                            if self._workspace_busy(metadata.get("worktree_path") or feature["cwd"], metadata.get("workspace_mode", "read_only"), assignment_id=assignment["id"]):
+                                continue
                             try:
                                 self._policy(feature, kind="worker", claim=assignment)
                             except ArchitectConfigurationError as exc:
@@ -2752,7 +2876,7 @@ class FirstMateRuntime:
                 f"Assignment: {claim['title']}\nRole: {claim['role']}\n\n{claim['prompt']}\n\n"
                 "Queued workspace metadata (immutable dispatch-request history; nested model_selection actual fields are not live observed startup evidence): "
                 + json.dumps(claim.get("metadata", {})) + "\n"
-                "For an isolated implementation, commit finished changes on the private assignment branch to establish an exact revision for review. Never merge or push without explicit authorization. "
+                "Continue the current feature branch and preserve inherited edits; do not reset to the queued base_revision. For an isolated implementation, commit finished changes to establish an exact revision for review. Never merge to a shared target branch or push without explicit authorization. "
                 "Return textual deliverables using fm_outcome and an evidence-based verdict. Do not advance another workflow stage.")
 
     def _bind(self, job: dict, native_id: str, session_file: str) -> None:
@@ -2850,6 +2974,80 @@ class FirstMateRuntime:
                 _write_json(response, {"ok": False, "error": str(exc)[:1000],
                     "code": getattr(exc, "code", "tool_failed"),
                     "next_permitted_actions": getattr(exc, "next_permitted_actions", [])})
+
+    def _register_simulator_build(self, job: dict, params: dict, request_id: str) -> dict:
+        """Save a compiled iOS Simulator app as this feature's checkpoint (SimPortal).
+
+        Fenced exactly like link saves: only the live coordinator owner or the
+        running worker of the current visit may register, and the feature,
+        visit, assignment, and native session come from the validated dispatch,
+        never from the caller. The copy and SimPortal handoff run off the
+        runtime loop; the spool request stays pending (DeferredOperation) until
+        the build settles, and a restart resumes the same durable registration.
+        """
+        from .simulator_previews import SimulatorPreviewError
+
+        simulator = self.simulator_previews
+        if simulator is None or not getattr(simulator, "configured", False):
+            raise FirstMateError("Simulator checkpoints are not configured on this machine",
+                                 code="simulator_unconfigured", status=400)
+        if not isinstance(params, dict):
+            raise FirstMateError("Simulator build parameters must be an object", code="invalid_request", status=400)
+        # Each reconcile pass asks again while SimPortal works; the fence and
+        # context were checked when this registration was submitted.
+        future = simulator.registration(request_id)
+        if future is None:
+            future = self._submit_simulator_build(simulator, job, params, request_id)
+        if not future.done():
+            raise DeferredOperation("Waiting for SimPortal to save the simulator build")
+        simulator.release_registration(request_id)
+        try:
+            return future.result()
+        except SimulatorPreviewError as exc:
+            raise FirstMateError(str(exc), code=exc.code, status=exc.status) from None
+
+    def _submit_simulator_build(self, simulator: Any, job: dict, params: dict, request_id: str):
+        from .simulator_previews import CheckpointContext, SimulatorPreviewError
+
+        feature_id = job["feature_id"]
+        feature = self.store.get_feature(feature_id)
+        claim = job.get("claim") or {}
+        assignment = None
+        extra_roots: list[str] = []
+        if job["kind"] == "coordinator" and not job.get("lead"):
+            if feature.get("coordinator_owner") != job.get("owner"):
+                raise FirstMateError("Coordinator ownership changed", code="stale_owner")
+            extra_roots.append(str(self.root / "worktrees"))
+        elif job["kind"] == "worker":
+            claim_id = claim.get("id")
+            if not isinstance(claim_id, str) or not claim_id:
+                raise FirstMateError("Simulator build registration is outside this execution's active assignment scope")
+            assignment = self.store.get_assignment(claim_id)
+            if (assignment["feature_id"] != feature_id
+                    or assignment.get("generation") != claim.get("generation")
+                    or assignment.get("native_session_id") != job.get("native_session_id")
+                    or assignment.get("status") != "running"
+                    or feature.get("status") != "running"
+                    or not self.store.assignment_is_in_current_visit(assignment["id"])):
+                raise FirstMateError("Simulator build registration is outside this execution's active assignment scope",
+                                     code="stale_owner")
+        else:
+            raise ValueError("Tool is outside this execution's role and assignment scope")
+        visit_id = (assignment or {}).get("visit_id") or feature.get("current_visit_id")
+        visit_title = None
+        if visit_id:
+            visit_title = next((visit.get("title") for visit in self.store.snapshot(feature_id)["visits"]
+                                if visit.get("id") == visit_id), None)
+        context = CheckpointContext(
+            feature_id=feature_id, feature_title=str(feature.get("title") or ""),
+            visit_id=visit_id, visit_title=visit_title,
+            assignment_id=(assignment or {}).get("id"), assignment_title=(assignment or {}).get("title"),
+            native_session_id=job.get("native_session_id"), workspace=str(job.get("cwd") or feature.get("cwd") or ""),
+            role=job["kind"], extra_roots=tuple(extra_roots))
+        try:
+            return simulator.submit_registration(request_id, context, params, on_done=self.wake)
+        except SimulatorPreviewError as exc:
+            raise FirstMateError(str(exc), code=exc.code, status=exc.status) from None
 
     def _save_link(self, job: dict, params: dict) -> dict:
         """Agent-facing link registration fenced to the exact live execution.
@@ -2965,6 +3163,8 @@ class FirstMateRuntime:
             return session
         if action == "fm_save_link":
             return self._save_link(job, params)
+        if action == "fm_register_simulator_build":
+            return self._register_simulator_build(job, params, request_id)
         if action == "fm_delegate" and job["kind"] == "worker":
             parent = self.store.get_assignment(claim["id"])
             if parent["generation"] != claim["generation"] or parent["native_session_id"] != job["native_session_id"] or parent["status"] != "running":
@@ -2980,6 +3180,7 @@ class FirstMateRuntime:
                 ancestor = self.store.get_assignment(ancestor["metadata"]["parent_assignment_id"])
             if depth >= 4:
                 raise FirstMateError("Nested delegation is limited to four levels; ask First Mate to reorganize this work")
+            validate_assignment_payload(params)
             profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
             parameters = {**params, "model_profile": profile,
                           "source_assignment_id": params.get("source_assignment_id") or parent["id"]}
@@ -3032,6 +3233,7 @@ class FirstMateRuntime:
                         actions = [{"tool": "fm_revise", "requires_human_direction": True}]
                     raise FirstMateError("No active stage. Begin the recorded follow-up stage, or use human direction to begin/revise a stage before delegating.",
                                          code="no_active_stage", next_permitted_actions=actions)
+                validate_assignment_payload(params)
                 profile = delegation_profile(params.get("model_profile"), stage_key=self._stage_key(feature))
                 parameters = {**params, "model_profile": profile}
                 metadata = {**self._workspace(feature, parameters, request_id),
@@ -3894,6 +4096,8 @@ def _pi_command(job: dict) -> list[str]:
                "advisor": ADVISOR_PROMPT}[job["kind"]]
     if job["kind"] == "coordinator" and job.get("lead"):
         charter = LEAD_PROMPT
+    elif job.get("simulator_previews") and job["kind"] in SIMULATOR_CHECKPOINT_GUIDANCE:
+        charter = charter + "\n" + SIMULATOR_CHECKPOINT_GUIDANCE[job["kind"]]
     snapshot = job.get("agent_profile_snapshot")
     if isinstance(snapshot, dict) and snapshot.get("prompt"):
         from .agent_profiles import write_prompt_snapshot
@@ -3924,8 +4128,13 @@ def _pi_command(job: dict) -> list[str]:
 
 def run_detached(directory: Path) -> int:
     """One dispatch's process owner. Never started twice for the same job."""
+    with ExitStack() as locks:
+        return _run_detached(directory, locks)
+
+
+def _run_detached(directory: Path, locks: ExitStack) -> int:
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock = (directory / "writer.lock").open("a")
+    lock = locks.enter_context((directory / "writer.lock").open("a"))
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -3944,9 +4153,21 @@ def run_detached(directory: Path) -> int:
         return 0
     if not job:
         return 2
+    workspace_lock = None
+    if job["kind"] == "worker":
+        path = Path(job.get("workspace_lock") or workspace_lock_path(directory.parent.parent, job["cwd"]))
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        workspace_lock = locks.enter_context(path.open("a"))
+        mode = fcntl.LOCK_SH if job.get("workspace_mode", "read_only") == "read_only" else fcntl.LOCK_EX
+        try:
+            fcntl.flock(workspace_lock, mode | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # No start receipt or failed attempt. Reconciliation can launch this
+            # same durable dispatch after the workspace's current owner ends.
+            return 0
     # A second lock protects the exact Pi conversation, including across turns
     # and accidental duplicate service instances with different runtime locks.
-    session_lock = Path(job["session_file"] + ".lock").open("a")
+    session_lock = locks.enter_context(Path(job["session_file"] + ".lock").open("a"))
     try:
         fcntl.flock(session_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -3977,10 +4198,29 @@ def run_detached(directory: Path) -> int:
     stdin_lock = threading.Lock()
     budget = _ExecutionBudget(job, time.monotonic())
     try:
+        if job["kind"] == "worker":
+            metadata = job.get("claim", {}).get("metadata", {})
+            expected = metadata.get("workspace_identity")
+            def git(*args):
+                result = subprocess.run(["git", "-C", job["cwd"], *args], capture_output=True, text=True, timeout=30)
+                if result.returncode:
+                    raise RuntimeError("The retained workspace is unavailable; inspect it before continuing")
+                return result.stdout.strip()
+            try:
+                if expected and (path_key(git("rev-parse", "--show-toplevel")) != path_key(job["cwd"])
+                                 or path_key(git("rev-parse", "--absolute-git-dir")) != expected["git_dir"]
+                                 or not git("branch", "--show-current")):
+                    raise RuntimeError("The retained workspace identity changed; inspect it before continuing")
+                if metadata.get("expected_code_revision") and git("rev-parse", "HEAD") != metadata["expected_code_revision"]:
+                    raise RuntimeError("The review source changed while queued. Repeat the review against the current revision.")
+            except Exception:
+                status["startup_validation_failed"] = True
+                raise
         stderr = (directory / "pi-stderr.log").open("ab")
+        descriptors = (lock.fileno(), session_lock.fileno()) + ((workspace_lock.fileno(),) if workspace_lock else ())
         process = subprocess.Popen(command, cwd=job["cwd"], env=os.environ,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
-                                   text=True, bufsize=1, start_new_session=True, pass_fds=(lock.fileno(), session_lock.fileno()))
+                                   text=True, bufsize=1, start_new_session=True, pass_fds=descriptors)
         status["pi_pid"] = process.pid
         _write_json(directory / "status.json", status)
         def send(value: dict) -> None:
@@ -4139,8 +4379,6 @@ def run_detached(directory: Path) -> int:
     finally:
         status.update(ended=True, ended_at=utc_now())
         _write_json(directory / "status.json", status)
-        session_lock.close()
-        lock.close()
     return 0 if not status.get("error") else 1
 
 

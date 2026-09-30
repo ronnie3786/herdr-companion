@@ -13,6 +13,24 @@ implementation, review, testing, and synthesis belong in tracked assignments.
 `read_only` is an instruction not to mutate the shared workspace, not an OS
 sandbox or reduced tool set.
 
+One feature normally keeps one worktree and branch through implementation,
+review, builds and feedback. `fm_delegate` with `workspace_mode: isolated`
+continues that workspace by default; `read_only` inspects it once it exists.
+An exact `source_assignment_id` selects a retained workspace to continue or
+review. Only independent parallel implementation or an experiment needs
+`workspace_strategy: fork` and a concrete `fork_reason`. Commit the source before
+forking. A new stage, assignment, build, retry or context handoff does not need a
+new checkout. Preserve inherited dirty files and commit finished changes on the
+ongoing feature branch, never reset it to the queued baseline.
+
+Workers on the same workspace serialize behind its writer; read-only workers
+can run together. A parent yields with `fm_wait_for_children` before children
+reuse its workspace, then resumes its saved session. Recover interruptions with
+`fm_recover`, retry reported failures with `fm_retry`, and never replace an
+uncertain worker to escape those checks. If a fix changes reviewed code, use
+`fm_retry` to refresh the affected revision-pinned review, including a completed
+review, before completing the stage. Old review attempts remain retained.
+
 Managed roles receive typed `fm_*` tools scoped to their validated feature/job:
 
 | Role | Typed workflow tools |
@@ -20,6 +38,9 @@ Managed roles receive typed `fm_*` tools scoped to their validated feature/job:
 | Coordinator | `fm_status`, `fm_delegate`, `fm_begin_stage`, `fm_recover`, `fm_resolve_gate`, `fm_steer`, `fm_retry`, `fm_complete_stage`, `fm_notify_human`, `fm_revise`, `fm_finish_feature`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
 | Worker | `fm_status`, `fm_delegate`, `fm_retry`, `fm_wait_for_children`, `fm_outcome`, `fm_record_verification`, `fm_handoff`, `fm_acknowledge_handoff`, `fm_progress`, `fm_acknowledge_recovery`, `fm_request_human`, `fm_read_document`, `fm_read_session`, `fm_save_link` |
 | Advisor | `fm_status`, `fm_advice`, `fm_recovery_brief`, `fm_read_document`, `fm_read_session` |
+
+On a machine whose companion has SimPortal configured, coordinators and workers
+also get `fm_register_simulator_build` (see "Simulator checkpoints" below).
 
 The coordinator is the feature's lead developer; the human reads only a short
 conversation. On a human turn, the final message is the reply. On a background
@@ -50,6 +71,20 @@ automatically from managed session evidence, accepted outcomes, and their
 documents, so no special final reply is required. Advisors and ordinary Pi
 sessions cannot save, hide, or restore links through the First Mate tools. A
 hidden link stays hidden through re-discovery; only the human restores it.
+
+## Simulator checkpoints
+
+When the tool is present, save a successfully compiled iOS Simulator build at
+the end of each meaningful round of iOS app work with
+`fm_register_simulator_build`: build with the project's own workflow for an iOS
+Simulator destination, then pass the exact `.app` path from the build products
+(`app_path`), an optional short `label`, and, when you also published a device
+build to Mobile App Hub, its `hub_build_id`. The companion derives the feature,
+stage, assignment, and session itself; never register a device build, an
+archive, or another feature's build. The call returns once SimPortal has saved
+or refused the build. The human opens saved builds in a simulator from First
+Mate. A saved build is a preview, not verification evidence: it never replaces
+`fm_record_verification` and never advances a stage.
 
 Use `fm_progress` at meaningful milestones with evidence and the next action.
 Before a legitimate long build/wait, request a bounded lease; unchanged reports

@@ -61,6 +61,15 @@ def _text(value: Any, name: str, maximum: int = 200000, optional: bool = False) 
     return value
 
 
+def validate_assignment_payload(body: Mapping[str, Any]) -> tuple[str, str, str]:
+    title, role = _text(body.get("title"), "title", 300), _text(body.get("role"), "role", 100)
+    prompt = _text(body.get("prompt"), "prompt")
+    _text(body.get("model", ""), "model", 300, optional=True)
+    if not isinstance(body.get("metadata", {}), dict):
+        raise FirstMateError("Invalid metadata", code="invalid_request", status=400)
+    return title, role, prompt
+
+
 ARCHIVE_REASONS = {"completed", "test/synthetic", "duplicate", "no longer relevant", "superseded", "other"}
 
 # A feature row is a feature unless it is the machine's one lead First Mate
@@ -2060,11 +2069,7 @@ class FirstMateStore:
 
     def create_assignment(self, visit_id: str, payload: Mapping[str, Any]) -> dict:
         body = dict(payload)
-        title, role = _text(body.get("title"), "title", 300), _text(body.get("role"), "role", 100)
-        prompt = _text(body.get("prompt"), "prompt")
-        _text(body.get("model", ""), "model", 300, optional=True)
-        if not isinstance(body.get("metadata", {}), dict):
-            raise FirstMateError("Invalid metadata", code="invalid_request", status=400)
+        title, role, prompt = validate_assignment_payload(body)
         request_id = body.get("request_id")
         with self._transaction():
             cached = self._receipt(f"assignment:{visit_id}", request_id, body)
@@ -2909,15 +2914,23 @@ class FirstMateStore:
             self._assignment_revision(feature, assignment)
             if not verified_stopped:
                 raise FirstMateError("Verify the prior worker stopped before retrying", code="writer_not_stopped")
-            if assignment["status"] not in {"blocked", "failed"} or feature["status"] != "running":
-                raise FirstMateError("Assignment is not available for an internal retry")
             previous_metadata = assignment["metadata"]
+            merged = {**previous_metadata, **(metadata or {})}
+            refresh_review = (assignment["status"] == "completed"
+                              and previous_metadata.get("workspace_mode") == "read_only"
+                              and bool(previous_metadata.get("expected_code_revision"))
+                              and bool(merged.get("expected_code_revision"))
+                              and merged["expected_code_revision"] != previous_metadata["expected_code_revision"]
+                              and merged.get("worktree_path") == previous_metadata.get("worktree_path"))
+            if (assignment["status"] not in {"blocked", "failed"} and not refresh_review) or feature["status"] != "running":
+                raise FirstMateError("Assignment is not available for an internal retry")
             if previous_metadata.get("human_gate", {}).get("status") == "pending":
                 raise FirstMateError("The internal checkpoint requires human direction", code="human_direction_required")
             if metadata is not None and metadata.get("parent_assignment_id", previous_metadata.get("parent_assignment_id")) != previous_metadata.get("parent_assignment_id"):
                 raise FirstMateError("Parent assignment identity cannot change", code="assignment_scope_mismatch")
-            merged = {**previous_metadata, **(metadata or {})}
-            repair_count = int(previous_metadata.get("repair_count", 0)) + 1
+            repair_count = int(previous_metadata.get("repair_count", 0)) + (0 if refresh_review else 1)
+            if refresh_review:
+                merged["review_refresh_count"] = int(previous_metadata.get("review_refresh_count", 0)) + 1
             requested_limit = previous_metadata.get("max_repair_attempts", 2)
             if isinstance(requested_limit, bool) or not isinstance(requested_limit, int) or requested_limit < 0:
                 raise FirstMateError("Invalid repair limit", code="invalid_request", status=400)
@@ -2930,7 +2943,8 @@ class FirstMateStore:
             if status == "blocked":
                 self._db.execute("UPDATE fm_features SET status='blocked' WHERE id=?", (feature["id"],))
                 self._message(feature["id"], "system", "Internal repair limit reached. Awaiting human direction.", metadata={"assignment_id": assignment_id, "repair_count": repair_count, "attention": "human"})
-            self._event(feature["id"], "assignment.retry_queued" if status == "queued" else "assignment.repair_exhausted", "Internal repair queued" if status == "queued" else "Internal repair limit reached", {"assignment_id": assignment_id, "repair_count": repair_count, "previous_verdict": assignment["verdict"], "metadata": merged})
+            summary = "Review queued for the changed revision" if refresh_review else "Internal repair queued"
+            self._event(feature["id"], "assignment.retry_queued" if status == "queued" else "assignment.repair_exhausted", summary if status == "queued" else "Internal repair limit reached", {"assignment_id": assignment_id, "repair_count": repair_count, "previous_verdict": assignment["verdict"], "metadata": merged})
             return self._save_receipt(f"retry:{assignment_id}", request_id, payload, self._one("fm_assignments", assignment_id))
 
     def block_dispatch_configuration(self, assignment_id: str, generation: int, reason: str,

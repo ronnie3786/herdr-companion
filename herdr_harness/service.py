@@ -215,6 +215,7 @@ class HerdrService:
         self._first_mate_store = first_mate_store
         self._first_mate_runtime = first_mate_runtime
         self._first_mate_notifications = None
+        self._simulator_previews = None
         self._skims = None
         self._pr_review_store = pr_review_store
         self._pr_review_runtime = pr_review_runtime
@@ -537,6 +538,7 @@ class HerdrService:
                 self.skims.attach_agent_runs(self._agent_runs)
             self.first_mate.start()
             self.first_mate_notifications.start()
+            self.simulator_previews.start()
             self.skims.start()
         if self._pr_review_execution_enabled:
             self.pr_review.start()
@@ -548,6 +550,8 @@ class HerdrService:
             self._skims.stop()
         if self._first_mate_notifications is not None:
             self._first_mate_notifications.stop()
+        if self._simulator_previews is not None:
+            self._simulator_previews.stop()
         if self._first_mate_runtime is not None:
             self._first_mate_runtime.stop()
         if self._pr_review_runtime is not None:
@@ -648,7 +652,8 @@ class HerdrService:
                     self._first_mate_transient_root = tempfile.TemporaryDirectory(prefix="herdr-first-mate-")
                     runtime_root = self._first_mate_transient_root.name
                 self._first_mate_runtime = FirstMateRuntime(self.first_mate_store, environ=self.environ, runtime_root=runtime_root,
-                                                           profile_snapshot=self.agent_profiles.snapshot)
+                                                           profile_snapshot=self.agent_profiles.snapshot,
+                                                           simulator_previews=self.simulator_previews)
             return self._first_mate_runtime
 
     def first_mate_changed(self, feature_id: str) -> None:
@@ -684,6 +689,16 @@ class HerdrService:
         if self._pr_review_execution_enabled:
             self.pr_review.wake()
         self.broker.publish("pr_review.updated", {"review_id": review_id, "generatedAt": utc_now()})
+
+    @property
+    def simulator_previews(self):
+        """SimPortal checkpoints and previews (docs/first-mate/simulator-previews.md); inert until configured."""
+        from .simulator_previews import SimulatorPreviews
+        with self._lock:
+            if self._simulator_previews is None:
+                self._simulator_previews = SimulatorPreviews(
+                    self.environ, first_mate_store=self.first_mate_store, notify=self.first_mate_changed)
+            return self._simulator_previews
 
     @property
     def first_mate_notifications(self):

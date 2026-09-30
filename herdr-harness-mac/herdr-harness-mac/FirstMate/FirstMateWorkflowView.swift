@@ -5,6 +5,7 @@ struct FirstMateWorkflowView: View {
     let snapshot: FirstMateSnapshot
     var openCommit: ((FirstMateGitCommitSelection) -> Void)? = nil
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.firstMateSimulator) private var simulator
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -61,6 +62,7 @@ struct FirstMateWorkflowView: View {
                 ContentUnavailableView("The journey starts with a plan", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
             }
         }
+        .firstMateSimulatorRefresh(simulator, demoVisitIDs: snapshot.visits.map(\.id))
     }
 }
 

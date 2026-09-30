@@ -1,5 +1,49 @@
 # Next companion update, unreleased
 
+## First Mate simulator checkpoints (SimPortal)
+
+- Adds `first-mate-simulator-previews-v1`, advertised by `GET /api/v1` and
+  `GET /api/v1/first-mate/capabilities`. It connects First Mate to SimPortal,
+  a separate local service that saves compiled iOS Simulator builds and
+  streams simulators. The feature is inert until the private configuration has
+  a `[simportal]` section (`url`, `token_file`, `intake_root`; optional
+  `project_id`, `device_type`, `runtime`, `idle_shutdown_minutes` (default 60),
+  `max_running_previews` (default 4), and `server_id`).
+- Managed coordinators and workers on a configured machine get
+  `fm_register_simulator_build`. The companion derives the feature, stage,
+  assignment, and session itself (like `fm_save_link`), validates that the path
+  is an iOS Simulator `.app` in the workspace, DerivedData, or a temporary build
+  folder, copies it into SimPortal's approved intake folder, and registers it.
+  Workers are asked to save one at the end of each round of iOS app work.
+  Registration adds `simulator.build_ready`/`simulator.build_failed` journal
+  events. A saved build is never verification evidence.
+- New routes: `GET /first-mate/simulator`, `GET
+  /first-mate/features/{id}/simulator-builds`, `POST
+  …/simulator-builds/{build_id}/preview` (reuse a running simulator or start
+  one), `GET` and `POST …/stop` on `…/simulator-previews/{preview_id}`, and a
+  WebSocket relay at `…/simulator-previews/{preview_id}/stream` scoped to that
+  preview's exact simulator. The relay attaches with `focus: false` and drops
+  `focus` and `boot` messages, so it never changes SimPortal's shared focus.
+- Every SimPortal mutation is persisted with its request ID and exact body
+  before it is sent and replayed unchanged after a lost response, so a retry
+  never creates a second build or simulator. SimPortal's server identity is
+  pinned; a replaced server stops automatic changes until an operator sets
+  `[simportal] server_id`.
+- Resource policy: at most `max_running_previews` (default 4) Herdr simulators
+  run per machine (opening one more shuts down the least recently watched idle
+  one), and a simulator nobody has watched for `idle_shutdown_minutes`
+  (default 60) is shut down. Only this companion's own previews are ever
+  stopped; other simulators are never touched, and none are ever deleted.
+- A preview whose simulator was deleted in SimPortal (its Machines page)
+  reports phase `stopped` with status `simulator_deleted`; a stop refused for
+  that reason settles quietly instead of recording an error.
+- State lives in a new private `simulator-previews.sqlite3`; `first-mate.sqlite3`
+  gets no schema change. SimPortal must run on the machine that compiles the
+  builds, with enough free disk for its admission floor (20 GB by default).
+  See docs/first-mate/simulator-previews.md.
+- Install and restart the companion package separately from the Mac app. The
+  Mac updater does not install or restart companion server packages.
+
 ## First Mate fleet summary and read markers
 
 - Adds `first-mate-fleet-v1` as an additive authenticated API capability,

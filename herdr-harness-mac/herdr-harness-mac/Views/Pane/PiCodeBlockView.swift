@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// MonoCode's code block: a 36pt header (language label, copy icon), a hairline,
-/// then 12/20 monospaced code beside a fixed line-number gutter, all in an
+/// then 14/20 monospaced code beside a fixed line-number gutter, all in an
 /// ink 6% box with a 10% outline and 10pt corners.
 struct PiCodeBlockView: View {
     let language: String?
@@ -19,8 +19,8 @@ struct PiCodeBlockView: View {
     @Environment(\.piCodeBlockStyle) private var style
     @Environment(\.colorScheme) private var scheme
 
-    private static let codeSize: CGFloat = 12
-    private static let numberSize: CGFloat = 10
+    private static let codeSize: CGFloat = 14
+    private static let numberSize: CGFloat = 12
     private static let lineHeight: CGFloat = 20
 
     var body: some View {
@@ -129,7 +129,7 @@ struct PiCodeBlockView: View {
             .multilineTextAlignment(.trailing)
             .lineSpacing(numberLineSpacing)
             .frame(width: 24 * fontScale.rawValue, alignment: .trailing)
-            // Baseline-align the smaller numbers with their 12pt code lines.
+            // Baseline-align the smaller numbers with their 14pt code lines.
             .padding(.top, 2 * fontScale.rawValue)
             .accessibilityHidden(true)
     }

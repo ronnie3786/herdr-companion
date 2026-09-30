@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import os
 
-/// Mono × Herdr typography for rendered chat output: MonoCode's 14/24 prose at
+/// Mono × Herdr typography for rendered chat output: MonoCode's 15/24 prose at
 /// ink 78%, 18/26 headings, and inline code as an ink chip. Activity and code
 /// stay distinct through size and tone, never through low-contrast dimming.
 enum HerdrProse {
@@ -25,10 +25,10 @@ enum HerdrProse {
         /// Base point size at 100% font scale (before `HerdrFontScale`).
         var baseSize: CGFloat {
             switch self {
-            case .body, .quote, .listItem, .userBubble: 14
+            case .body, .quote, .listItem, .userBubble: 15
             case .heading1, .heading2: 18
-            case .heading3, .heading4, .heading5, .heading6: 14
-            case .tableHeader, .tableCell: 12
+            case .heading3, .heading4, .heading5, .heading6: 15
+            case .tableHeader, .tableCell: 14
             }
         }
 

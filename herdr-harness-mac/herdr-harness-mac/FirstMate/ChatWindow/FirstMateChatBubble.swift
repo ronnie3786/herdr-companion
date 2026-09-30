@@ -33,8 +33,8 @@ struct FirstMateChatBubbleRow: View {
             Spacer(minLength: 0)
             FirstMateBubbleStack(spacing: 4) {
                 if !display.body.isEmpty {
-                    PiMarkdownText(display.body, font: .system(size: 13.5 * fontScale.rawValue))
-                        .lineSpacing(3.5 * fontScale.rawValue)
+                    PiMarkdownText(display.body, font: HerdrProse.font(.userBubble, scale: fontScale))
+                        .lineSpacing(HerdrProse.lineSpacing(.userBubble, scale: fontScale))
                         .environment(\.chatProsePalette, Self.userPalette)
                         .transformEnvironment(\.firstMateMentionCatalog) { $0 = $0?.withoutPlainNames }
                         .fixedSize(horizontal: false, vertical: true)
@@ -90,7 +90,7 @@ struct FirstMateChatBubbleRow: View {
             // A long reply shows its skim; the full reply is one click away and
             // stays what Copy and feedback act on. The text is passed exactly
             // as sent: skim offsets point into it.
-            SkimmableReply(messageID: message.id, reply: message.text, skim: message.skim, style: .bubble) {
+            SkimmableReply(messageID: message.id, reply: message.text, skim: message.skim) {
                 PiMarkdownMessageView(
                     source: message.text,
                     isStreaming: false,

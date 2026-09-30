@@ -476,7 +476,11 @@ checkpoint retains the reference-oriented current workflow state, all human
 directives with source IDs, and the latest 30 user/assistant messages. The recent
 window preserves the meaning of terse answers such as “yes” beside the
 coordinator question they answer. The old native session remains retained in
-full. Very long feature histories may ultimately need an incremental
+full. Handoff messages carry only their IDs, roles, text, and timestamps; repeated
+verification metadata stays in the message store. Existing checkpoints receive
+the same projection when loaded, so an older oversized checkpoint does not make
+the fresh session exceed its model's context limit immediately.
+Very long feature histories may ultimately need an incremental
 decision-summary service to avoid reinjecting an ever-growing list of human
 directives; this implementation favors retaining instructions over silently
 dropping older constraints.

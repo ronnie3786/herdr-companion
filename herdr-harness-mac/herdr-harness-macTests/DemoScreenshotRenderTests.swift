@@ -909,6 +909,9 @@ enum HerdrRenderHarness {
         _ name: String,
         size: CGSize,
         settlePasses: Int = 10,
+        /// Runs against the live window after it settles (resizing it, for
+        /// example); the window settles again before the capture.
+        interact: (@MainActor (NSWindow) async throws -> Void)? = nil,
         @ViewBuilder content: () -> some View
     ) async throws -> RenderResult {
         try await renderGate.acquire()
@@ -945,11 +948,18 @@ enum HerdrRenderHarness {
             window.contentView = nil
         }
 
-        for _ in 0..<settlePasses {
-            hosting.layoutSubtreeIfNeeded()
-            window.displayIfNeeded()
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(25))
+        func settle() async {
+            for _ in 0..<settlePasses {
+                hosting.layoutSubtreeIfNeeded()
+                window.displayIfNeeded()
+                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+        }
+        await settle()
+        if let interact {
+            try await interact(window)
+            await settle()
         }
         guard let frameView = hosting.superview else { throw RenderError.bitmapUnavailable(name) }
         frameView.layoutSubtreeIfNeeded()

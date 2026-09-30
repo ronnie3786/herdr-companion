@@ -8,8 +8,9 @@ commit with a successful push run, so a release can be prepared right away.
 
 The pull request must be open, not a draft, from this repository, targeting the
 default branch, already contain the default branch (update it first if not),
-and have a successful latest push run of Verify for its head commit. GitHub
-marks the pull request merged once its head is on the default branch.
+and have a successful latest push run of Verify and a successful "Mac tests
+(local)" status (scripts/local-verify.py) for its head commit. GitHub marks the
+pull request merged once its head is on the default branch.
 
 Usage: land-pr.py <number> [--delete-branch]
 """
@@ -24,6 +25,7 @@ from typing import Callable
 
 REPOSITORY = "ronnie3786/herdr-companion"
 WORKFLOW = "Verify"
+LOCAL_CONTEXT = "Mac tests (local)"  # posted by scripts/local-verify.py
 
 
 class LandError(RuntimeError):
@@ -59,6 +61,9 @@ def land(number: int, *, delete_branch: bool = False, run: Callable[[list[str]],
                            "--event", "push", "--json", "headSha,status,conclusion,url", "--limit", "20"]))
     if not runs or runs[0]["headSha"] != head or runs[0]["status"] != "completed" or runs[0]["conclusion"] != "success":
         raise LandError("The latest push run of Verify for the pull request head must have passed")
+    statuses = json.loads(run(["gh", "api", f"repos/{REPOSITORY}/commits/{head}/status"])).get("statuses") or []
+    if not any(item.get("context") == LOCAL_CONTEXT and item.get("state") == "success" for item in statuses):
+        raise LandError(f"The Mac tests must have passed for the pull request head: run scripts/local-verify.py {head[:12]}")
     # A plain push only fast-forwards; the remote rejects anything else.
     run(["git", "push", "--quiet", "origin", f"{head}:refs/heads/{default}"])
     state = ""

@@ -38,6 +38,7 @@ TOOL_HASHES = {
 }
 SPARKLE_NS = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
 LOCK_REF = "tags/macos-release-publish-lock"
+LOCAL_CONTEXT = "Mac tests (local)"  # posted by scripts/local-verify.py
 SLEEP = time.sleep
 
 class ReleaseError(ValueError):
@@ -227,29 +228,47 @@ def latest_verify_run(source):
     return runs[0] if runs and runs[0].get("headSha") == source else None
 
 
+def local_mac_status(source):
+    """The "Mac tests (local)" status scripts/local-verify.py posted for this
+    exact revision: success, failure, error, pending, or none. Verify no longer
+    runs the Mac and iOS suites; this status carries them."""
+    for status in (api(f"commits/{source}/status") or {}).get("statuses") or []:
+        if status.get("context") == LOCAL_CONTEXT:
+            return status.get("state") or "none"
+    return "none"
+
+
 def require_green_ci(source):
     run = latest_verify_run(source)
     if not run or run.get("status") != "completed" or run.get("conclusion") != "success":
         raise ReleaseError("The latest Verify run for this exact source revision must have passed")
+    if local_mac_status(source) != "success":
+        raise ReleaseError("The Mac tests must have passed for this exact source revision: run scripts/local-verify.py")
 
 
 def require_ci_not_failed(source):
-    """Preparation may overlap Verify: it builds and signs locally and publishes
-    nothing, and publication still requires the latest run to have passed. A
-    revision Verify has not seen, or whose latest run failed, is not prepared."""
+    """Preparation may overlap Verify and the local Mac tests: it builds and signs
+    locally and publishes nothing, and publication still requires both to have
+    passed. A revision Verify has not seen, or where either failed, is not prepared."""
     run = latest_verify_run(source)
     if not run:
         raise ReleaseError("Push this exact source revision and let Verify start before preparing")
     if run.get("status") == "completed" and run.get("conclusion") != "success":
         raise ReleaseError("The latest Verify run for this exact source revision failed")
+    if local_mac_status(source) in ("failure", "error"):
+        raise ReleaseError("The Mac tests failed for this exact source revision")
 
 
 def wait_for_ci(source, minutes, *, sleep=time.sleep, clock=time.monotonic):
-    """Wait up to `minutes` for the latest Verify run to finish; the caller then requires success."""
+    """Wait up to `minutes` for the latest Verify run and the local Mac tests to
+    finish, or for either to fail; the caller then requires success."""
     deadline = clock() + minutes * 60
     while clock() < deadline:
         run = latest_verify_run(source)
-        if run and run.get("status") == "completed":
+        if run and run.get("status") == "completed" and run.get("conclusion") != "success":
+            return
+        local = local_mac_status(source)
+        if local in ("failure", "error") or (run and run.get("status") == "completed" and local == "success"):
             return
         sleep(30)
 
@@ -717,7 +736,7 @@ def main(argv=None):
         else:
             sub.add_argument("manifest", type=Path)
             sub.add_argument("--wait-for-ci", type=int, default=0, metavar="MINUTES",
-                             help="Wait up to MINUTES for the latest Verify run to finish; it must still pass")
+                             help="Wait up to MINUTES for Verify and the local Mac tests to finish; both must still pass")
             sub.add_argument("--restore-missing-feed", action="store_true",
                              help="After inspection, restore a missing feed only from an exactly matching published version")
     args = parser.parse_args(argv)

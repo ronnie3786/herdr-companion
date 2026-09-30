@@ -132,7 +132,9 @@ struct HerdrHarnessMacApp: App {
                 .modifier(HerdrMainWindowChromeModifier(revealsDesktop: true))
                 .environment(herdPulse)
                 .environment(\.herdrFontScale, fontScale.scale)
-                .frame(minWidth: 680, minHeight: 620)
+                // The root sets the minimum width: a rail beside the
+                // narrowest chat, plus the inspector while it is open.
+                .frame(minHeight: 620)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)

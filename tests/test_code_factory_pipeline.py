@@ -27,7 +27,7 @@ from herdr_harness.code_factory.errors import CodeFactoryError
 from herdr_harness.code_factory.git import GitRepository
 from herdr_harness.code_factory.github import GitHubClient
 from herdr_harness.code_factory.pi import PiResult
-from herdr_harness.code_factory.pipeline import CodeFactory, load_release_script
+from herdr_harness.code_factory.pipeline import CodeFactory, LocalVerifyRun, load_release_script
 from herdr_harness.code_factory.settings import CodeFactorySettings
 from herdr_harness.code_factory.store import CodeFactoryStore
 
@@ -517,6 +517,20 @@ class FakeReleaseRunner:
         return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True, "published": manifest["tag"]}), stderr="")
 
 
+class FakeLocalVerifier:
+    """scripts/local-verify.py as the pipeline sees it: one run per commit, finished at once."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, Path]] = []
+        self.results: list[dict[str, Any] | None] = []
+        self.default: dict[str, Any] | None = {"ok": True, "state": "success"}
+
+    def __call__(self, sha: str, worktree: Path):
+        self.calls.append((sha, Path(worktree)))
+        result = self.results.pop(0) if self.results else self.default
+        return SimpleNamespace(poll=lambda: result)
+
+
 class FakeMessageRunner:
     def __init__(self):
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -560,6 +574,7 @@ class PipelineTestCase(unittest.TestCase):
         self.checks = FakeCheckRunner()
         self.releases = FakeReleaseRunner(self.env)
         self.messages = FakeMessageRunner()
+        self.local = FakeLocalVerifier()
         self.side_clones: list[Path] = []
         self.store: CodeFactoryStore | None = None
         self.factory = self.make_factory()
@@ -595,7 +610,7 @@ class PipelineTestCase(unittest.TestCase):
         return CodeFactory(
             self.settings, self.store, github=self.github, git=self.repo, pi=self.pi, clock=self.clock,
             sleep=self.clock.sleep, release_runner=self.releases, log=self.logs.append, check_runner=self.checks,
-            message_runner=self.messages,
+            message_runner=self.messages, local_verifier=self.local,
         )
 
     def sessions(self, number: int | None) -> list[str]:
@@ -1952,6 +1967,65 @@ class DiscoveryTests(PipelineTestCase):
         self.assertEqual(caught.exception.code, "not_found")
 
 
+class LocalMacTestsTests(PipelineTestCase):
+    """Verify no longer runs the Mac suites: scripts/local-verify.py must pass too."""
+
+    def test_a_local_mac_failure_fails_verify_and_reaches_the_reviser(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        failed = {"ok": False, "state": "failure", "excerpt": '✘ Test "HUD opens without a crash" failed'}
+        self.local.results = [failed, failed]
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(issue["ciFailures"], 2)
+        head, worktree = self.local.calls[0]
+        self.assertEqual(worktree, self.settings.worktree_root / "issue-12")
+        self.assertEqual(len(head), 40)
+        reviser = [call for call in self.pi.calls if "HUD opens without a crash" in call["prompt"]]
+        self.assertTrue(reviser, "the reviser sees the local failure")
+        self.assertIn("Mac tests (local) failed", reviser[0]["prompt"])
+        self.assertGreaterEqual(len(self.local.calls), 3, "each Verify attempt runs the local tests again")
+
+    def test_verify_waits_for_local_mac_tests_still_running(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        answers = iter([None, None, {"ok": True, "state": "success"}])
+        runs = []
+
+        def verifier(sha, worktree):
+            runs.append(sha)
+            state = {"result": None}
+
+            def poll():
+                if state["result"] is None:
+                    state["result"] = next(answers, {"ok": True, "state": "success"})
+                return state["result"]
+            return SimpleNamespace(poll=poll)
+        self.factory._local_verifier = verifier
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(issue["ciFailures"], 0)
+        self.assertIn(30, self.clock.sleeps, "Verify polled again while the local tests ran")
+
+    def test_the_script_summary_is_the_last_json_line_and_anything_else_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "run.log"
+            cases = [
+                ('Mac unit tests: passed\n{"ok": true, "sha": "abc", "state": "success"}\n', 0, True),
+                ('{"ok": false, "state": "failure", "excerpt": "boom"}\n', 1, False),
+                ('{"ok": true}\n', 1, False),
+                ("Traceback (most recent call last):\nOSError\n", 1, False),
+            ]
+            for text, code, ok in cases:
+                output.write_text(text)
+                process = subprocess.Popen([sys.executable, "-c", f"raise SystemExit({code})"])
+                process.wait()
+                with self.subTest(text=text):
+                    result = LocalVerifyRun(process, output).poll()
+                    self.assertEqual(result["ok"], ok)
+            self.assertIn("OSError", result["excerpt"])
+
+
 class ReleaseBatchTests(PipelineTestCase):
     def seed_release_issues(self):
         for number, title, kind in ((21, "Crash on launch", "bug"), (22, "Add export", "feature")):
@@ -1980,7 +2054,9 @@ class ReleaseBatchTests(PipelineTestCase):
             self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
             self.assertIn("Release failed: Verify failure on main commit", self.events(number)[-1])
         self.assertEqual(len(self.repo.list_worktrees()), 1, "the release worktree is removed on failure too")
-        self.assertEqual(self.releases.calls, [])
+        self.assertEqual([argv[2] for argv, _ in self.releases.calls], ["prepare"],
+                         "preparation overlaps Verify, but nothing is published after it failed")
+        self.assertEqual(release["outputDir"], str(self.settings.release_output_root / "0.21.0-beta.1"))
         author = self.pi.calls[-1]
         self.assertIn("--part minor --channel preview", author["prompt"].replace("'", ""))
         self.assertIn("- #22 Add export (feature)", author["prompt"])
@@ -2017,6 +2093,29 @@ class ReleaseBatchTests(PipelineTestCase):
         self.assertEqual(self.remote_subjects()[0], "Initial", "nothing was pushed")
         self.assertEqual(self.store.get_issue(21)["stage"], "release")
         self.assertEqual(len(self.repo.list_worktrees()), 1)
+
+    def test_preparation_overlaps_verify_and_publication_waits_for_it(self):
+        self.seed_release_issues()
+        self.github.verify_script = ["pending", "pending", "success"]
+        seen = []
+        runner = self.factory._release_runner
+
+        def recording(argv, **kwargs):
+            seen.append((argv[2], sum(1 for call in self.github.calls if call[0] == "verify_status")))
+            return runner(argv, **kwargs)
+        self.factory._release_runner = recording
+        result = self.factory.run_release_batch()
+        self.assertTrue(result["ok"])
+        self.assertEqual(seen, [("prepare", 1), ("publish", 3)],
+                         "prepare starts once Verify has a run; publish only after it passed")
+        source = self.store.get_release("macos-v0.21.0-beta.1")["sourceSha"]
+        self.assertEqual([sha for sha, _ in self.local.calls], [source], "one local run covers the release commit")
+
+    def test_nothing_is_prepared_for_a_release_commit_that_already_failed(self):
+        self.seed_release_issues()
+        self.github.verify_script = ["failure", "failure"]
+        self.assertFalse(self.factory.run_release_batch()["ok"])
+        self.assertEqual(self.releases.calls, [])
 
     def test_release_script_failure_then_resume(self):
         self.seed_release_issues()

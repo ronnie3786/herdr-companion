@@ -162,6 +162,7 @@ final class FirstMateHudController {
     @ObservationIgnored private var panel: HerdrHudPanel?
     @ObservationIgnored private var faceCenter: CGPoint?
     @ObservationIgnored private var isDraggingPanel = false
+    @ObservationIgnored private var isProgrammaticMove = false
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
     @ObservationIgnored private var mouseMonitors: [Any] = []
     @ObservationIgnored private var lastGazeUpdate = Date.distantPast
@@ -333,6 +334,9 @@ final class FirstMateHudController {
         panel.onCancel = { [weak self] in self?.handleEscape() }
         panel.contentView = NSHostingView(rootView: FirstMateHudRootView(controller: self))
         self.panel = panel
+        observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.panelDidMove() }
+        })
         return panel
     }
 
@@ -464,6 +468,10 @@ final class FirstMateHudController {
         relayout()
     }
 
+    /// An unordered panel for deterministic placement-notification tests,
+    /// without starting polling or pointer tracking.
+    func makePanelForTesting() -> HerdrHudPanel { panel ?? makePanel() }
+
     /// Renders the talking states without a microphone.
     func setVoicePhaseForRendering(_ phase: VoicePhase) {
         voicePhase = phase
@@ -507,7 +515,7 @@ final class FirstMateHudController {
         if card == .tucked {
             size.height = min(76 + CGFloat(tuckedItems.count) * 36, 560)
         }
-        return .init(size: size, anchorY: anchor)
+        return .init(size: size, anchorY: anchor, hugsFace: card == .latestLine)
     }
 
     /// A feature's row or orb center, below the face center.
@@ -558,8 +566,29 @@ final class FirstMateHudController {
         if let panel, panel.frame != next.panelFrame {
             // Not displayed now: the content and the frame change in the same
             // pass, so the face never draws in its old spot.
+            isProgrammaticMove = true
             panel.setFrame(next.panelFrame, display: false)
+            isProgrammaticMove = false
         }
+    }
+
+    /// AppKit may report the window's final move after performDrag returns.
+    private func panelDidMove() {
+        guard !isProgrammaticMove, let panel else { return }
+        adoptPanelFrame(panel.frame)
+    }
+
+    /// Keeps the face in screen coordinates while the panel changes around it.
+    func adoptPanelFrame(_ frame: CGRect) {
+        let point = FirstMateHudGeometry.face(panelFrame: frame, faceInPanel: layout.faceCenter)
+        if isDraggingPanel {
+            faceCenter = point
+            return
+        }
+        let face = FirstMateHudGeometry.clampFace(point, visibleFrame: visibleFrame(containing: point))
+        faceCenter = face
+        saveFace(face)
+        relayout()
     }
 
     // MARK: Face gestures
@@ -610,12 +639,11 @@ final class FirstMateHudController {
     func faceDragEnded() {
         isDraggingPanel = false
         guard let panel else { return }
-        let frame = panel.frame
-        let dropped = CGPoint(x: frame.minX + layout.faceCenter.x, y: frame.maxY - layout.faceCenter.y)
-        let face = FirstMateHudGeometry.clampFace(dropped, visibleFrame: visibleFrame(containing: dropped))
-        faceCenter = face
-        saveFace(face)
-        relayout()
+        adoptPanelFrame(panel.frame)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel = self.panel, panel.frame != self.layout.panelFrame else { return }
+            self.adoptPanelFrame(panel.frame)
+        }
     }
 
     // MARK: Voice

@@ -1,5 +1,10 @@
 # Next macOS update — unreleased
 
+## First Mate HUD placement
+
+- First Mate's latest message opens right beside the face, above the collapsed feature-orb row when there is room. Near the screen's top, it opens past the row to keep the orbs clear.
+- Drag the face anywhere on screen—left, right, middle, up or down—and the HUD stays where you drop it, only adjusting to keep the face whole on screen. Lower drops no longer jump back up when a final window move arrives late. This is a Mac-only fix; no companion update is needed.
+
 ## First Mate simulator checkpoints
 
 - A First Mate's **Builds** section now also lists **simulator checkpoints**:

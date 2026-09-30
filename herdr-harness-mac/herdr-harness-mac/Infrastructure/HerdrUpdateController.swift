@@ -31,10 +31,10 @@ struct HerdrUpdateConfiguration: Equatable {
 final class HerdrUpdateController: NSObject, SPUUpdaterDelegate, SPUStandardUserDriverDelegate {
     typealias BackgroundCheckRunner = @MainActor () -> Void
 
-    /// Herdr keeps its own ten-minute cadence because Sparkle clamps its
+    /// Herdr keeps its own two-minute cadence because Sparkle clamps its
     /// scheduled timer to a one-hour minimum. An explicit background check is
     /// not subject to that clamp, and it never presents update UI by itself.
-    static let backgroundCheckInterval: TimeInterval = 600
+    static let backgroundCheckInterval: TimeInterval = 120
     static let firstBackgroundCheckDelay: TimeInterval = 120
 
     /// Newest version a check has offered. Kept after the banner is dismissed so

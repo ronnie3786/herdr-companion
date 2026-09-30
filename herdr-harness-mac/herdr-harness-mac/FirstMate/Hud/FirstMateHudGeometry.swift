@@ -7,8 +7,9 @@ import Foundation
 /// The face never moves when something opens or closes: the panel grows and
 /// shrinks around it. The expanded list hangs below the face on the side with
 /// room (trailing by default); cards (the hover readout, a message, the chat,
-/// the editor, First Mate's latest line) open beside the HUD, preferring the
-/// side the list is not on, and slide up to stay on screen.
+/// the editor) open beside the HUD, preferring the side the list is not on,
+/// and slide up to stay on screen. First Mate's latest line can sit beside
+/// the face, above the collapsed orb row when there is room.
 ///
 /// Inputs and ``Output/panelFrame`` are in AppKit screen coordinates (y up);
 /// everything inside the panel is in SwiftUI coordinates (y down).
@@ -63,6 +64,9 @@ enum FirstMateHudGeometry {
         /// Where the card's top wants to be, in points below the face center
         /// (negative is above). It slides to stay on screen.
         var anchorY: CGFloat
+        /// Sits beside the face instead of past a wide collapsed orb row,
+        /// rising above the row when the visible frame has room.
+        var hugsFace: Bool = false
     }
 
     struct Input: Equatable, Sendable {
@@ -94,6 +98,12 @@ enum FirstMateHudGeometry {
             x: min(max(point.x, visibleFrame.minX + inset), visibleFrame.maxX - inset),
             y: min(max(point.y, visibleFrame.minY + inset), visibleFrame.maxY - inset)
         )
+    }
+
+    /// Reads the face's screen position from a panel frame and its y-down
+    /// position inside the panel.
+    static func face(panelFrame: CGRect, faceInPanel: CGPoint) -> CGPoint {
+        CGPoint(x: panelFrame.minX + faceInPanel.x, y: panelFrame.maxY - faceInPanel.y)
     }
 
     /// The default place: near the top-right corner, far enough in that the
@@ -155,10 +165,27 @@ enum FirstMateHudGeometry {
         var cardSide = listSide.opposite
         var cardRect: CGRect?
         if let card = input.card {
+            // Slide up (then down) to stay on the visible frame.
+            let anchoredTop = max(min(faceY + card.anchorY, visible.height - margin - card.size.height), margin)
+            var top = anchoredTop
+            var hugsFace = false
+            if case .collapsed(let count) = input.column, card.hugsFace {
+                hugsFace = true
+                if count > 0, collapsedHalfWidth(orbCount: count) > faceRadius {
+                    let rowClearance = orbRowDrop - orbSize / 2 - cardGap / 2
+                    top = max(min(top, faceY + rowClearance - card.size.height), margin)
+                    // Near the screen's top, clear the row horizontally instead.
+                    if top + card.size.height > faceY + rowClearance {
+                        hugsFace = false
+                        top = anchoredTop
+                    }
+                }
+            }
             func start(on side: Side) -> CGFloat {
                 switch input.column {
                 case .collapsed(let count):
-                    return (side == .trailing ? collapsedHalfWidth(orbCount: count) + badgeReach : collapsedHalfWidth(orbCount: count)) + cardGap
+                    let half = hugsFace ? faceRadius : collapsedHalfWidth(orbCount: count)
+                    return half + (side == .trailing ? badgeReach : 0) + cardGap
                 case .expanded:
                     return (side == listSide ? listReach : faceRadius + (side == .trailing ? badgeReach : 0)) + cardGap
                 }
@@ -177,10 +204,6 @@ enum FirstMateHudGeometry {
                 cardSide = trailingRoom >= leadingRoom ? .trailing : .leading
             }
             let x = cardSide == .trailing ? start(on: .trailing) : -start(on: .leading) - card.size.width
-            // Slide up (then down) to stay on the visible frame.
-            var top = faceY + card.anchorY
-            top = min(top, visible.height - margin - card.size.height)
-            top = max(top, margin)
             cardRect = CGRect(x: x, y: top - faceY, width: card.size.width, height: card.size.height)
         }
 

@@ -103,7 +103,7 @@ struct HerdrUpdateControllerTests {
         ))
     }
 
-    @Test("Background checks follow the ten-minute cadence and stop when automatic checks are off")
+    @Test("Background checks follow the two-minute cadence and stop when automatic checks are off")
     func backgroundCheckCadence() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -116,7 +116,7 @@ struct HerdrUpdateControllerTests {
         #expect(checks == 1)
         #expect(controller.lastBackgroundCheckAt == first)
         #expect(controller.nextBackgroundCheckAt == first.addingTimeInterval(HerdrUpdateController.backgroundCheckInterval))
-        #expect(HerdrUpdateController.backgroundCheckInterval == 600)
+        #expect(HerdrUpdateController.backgroundCheckInterval == 120)
 
         controller.automaticallyChecksForUpdates = false
         controller.performBackgroundCheckForTesting(now: first.addingTimeInterval(60))

@@ -565,6 +565,52 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertIn(('assistant', 'The release is ready. Should I publish it?'), recent)
         self.assertIn(('user', 'Yes, go ahead.'), recent)
 
+    def test_checkpoint_keeps_conversation_and_instructions_without_verification_archives(self):
+        feature = self.feature()
+        snapshot = self.store.snapshot(feature['id'])
+        question = 'The review is complete. Should I publish it?'
+        instruction = 'Yes, but preserve the existing release settings. ' * 100
+        snapshot['messages'] = [
+            {'id': f'assistant-{index}', 'role': 'assistant', 'text': question,
+             'created_at': '2026-01-01T00:00:00Z', 'visibility': 'conversation',
+             'metadata': {'verification': {'evidence': 'synthetic archive ' * 12000}}}
+            for index in range(35)] + [
+            {'id': 'approval', 'role': 'user', 'text': instruction,
+             'created_at': '2026-01-01T00:01:00Z'},
+            {'id': 'private-journal', 'role': 'assistant', 'text': 'Internal activity',
+             'visibility': 'journal', 'created_at': '2026-01-01T00:02:00Z'}]
+        with patch.object(self.runtime, '_coordinator_projection', return_value={'revision': 1}):
+            checkpoint = self.runtime._coordinator_checkpoint({'native_session_id': 'synthetic'}, snapshot)
+        self.assertLess(len(json.dumps(checkpoint)), 15000)
+        self.assertEqual(len(checkpoint['recent_conversation']), 30)
+        self.assertEqual(checkpoint['recent_conversation'][-2]['text'], question)
+        self.assertEqual(checkpoint['recent_conversation'][-1]['text'], instruction)
+        self.assertEqual(checkpoint['human_directives'][0]['text'], instruction)
+        self.assertNotIn('Internal activity', json.dumps(checkpoint))
+        self.assertIn('verification', snapshot['messages'][0]['metadata'])
+
+    def test_fresh_coordinator_projects_legacy_checkpoint_before_sending_prompt(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        checkpoint = {'predecessor_session_id': 'synthetic-predecessor',
+                      'router_state': {'revision': 1},
+                      'human_directives': [{'id': 'direction', 'text': 'Keep the work unfinished.'}],
+                      'recent_conversation': [
+                          {'id': 'question', 'role': 'assistant', 'text': 'Should I continue?',
+                           'metadata': {'verification': {'evidence': 'archive ' * 500000}}},
+                          {'id': 'answer', 'role': 'user', 'text': 'Yes.'}]}
+        path = self.runtime.root / 'checkpoints' / (feature['id'] + '.json')
+        _write_json(path, checkpoint)
+        before = path.read_bytes()
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Current direction', claim=claim)
+        self.assertLess(len(job['prompt']), 1500)
+        self.assertIn('Should I continue?', job['prompt'])
+        self.assertIn('Yes.', job['prompt'])
+        self.assertIn('Keep the work unfinished.', job['prompt'])
+        self.assertIn('synthetic-predecessor', job['prompt'])
+        self.assertNotIn('verification', job['prompt'])
+        self.assertEqual(path.read_bytes(), before)
+
     def test_real_process_plans_reports_and_parks_at_human_gate(self):
         feature = self.feature()
         self.until(lambda: self.store.get_feature(feature['id'])['status']=='awaiting_direction')

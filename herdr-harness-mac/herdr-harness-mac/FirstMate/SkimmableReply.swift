@@ -249,16 +249,13 @@ struct SkimmableReply<FullReply: View>: View {
 }
 
 enum SkimReplyStyle {
-    /// `bubble` is the First Mate chat window's bubble text: 13.5 pt at the
-    /// bubble's 1.6 line height.
-    case chat, column, hud, bubble
+    case chat, column, hud
 
     var sentenceSize: CGFloat {
         switch self {
         case .chat: 15
         case .column: 13
         case .hud: 14
-        case .bubble: 13.5
         }
     }
 
@@ -267,7 +264,6 @@ enum SkimReplyStyle {
         case .chat: 24
         case .column: 20
         case .hud: 22
-        case .bubble: 21.6
         }
     }
 

@@ -13,6 +13,7 @@ enum HerdrWindowID {
     static let firstMateGit = "herdr-first-mate-git"
     static let prReview = "herdr-pr-review"
     static let firstMateChat = "herdr-first-mate-chat"
+    static let firstMateSimulator = "herdr-first-mate-simulator"
 }
 
 enum HerdrExternalEvent {
@@ -182,6 +183,36 @@ struct HerdrHarnessMacApp: App {
         }
         .defaultSize(width: 1120, height: 760)
         .windowResizability(.contentMinSize)
+
+        // One window per saved simulator build, opened from a First Mate's Builds
+        // section or Workflow. Closing it never stops the simulator (the
+        // companion's idle policy does), and it is never restored at launch,
+        // so relaunching Herdr never starts a simulator by itself.
+        WindowGroup("Simulator", id: HerdrWindowID.firstMateSimulator, for: FirstMateSimulatorWindowTarget.self) { $target in
+            if let target {
+                FirstMateSimulatorWindowRoot(model: model, target: target)
+                    .modifier(HerdrMainWindowChromeModifier())
+                    .environment(\.herdrFontScale, fontScale.scale)
+                    .frame(minWidth: 340, minHeight: 560)
+                    .foregroundStyle(HerdrTheme.text)
+                    .preferredColorScheme(.dark)
+                    .tint(HerdrTheme.accent)
+            } else {
+                ContentUnavailableView(
+                    "Simulator unavailable",
+                    systemImage: "iphone.gen3",
+                    description: Text("Open a simulator build from a First Mate's Builds section or Workflow.")
+                )
+                .frame(minWidth: 340, minHeight: 560)
+                .background(HerdrTheme.windowBackground)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
+            }
+        }
+        .defaultSize(width: 430, height: 900)
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentMinSize)
+        .restorationBehavior(.disabled)
 
         // One window per machine/review pair. The value is the window identity
         // macOS uses to focus an existing window instead of opening a second

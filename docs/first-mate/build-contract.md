@@ -513,6 +513,20 @@ board version. Older clients ignore the new routes and fields; newer clients
 must accept a server without the capability. The companion package ships
 separately from the Mac app.
 
+## Simulator checkpoints and previews
+
+Capability `first-mate-simulator-previews-v1` adds SimPortal-backed simulator
+checkpoints: the `fm_register_simulator_build` coordinator/worker tool (only on
+machines with `[simportal]` configured), `GET /simulator`, `GET
+/features/{id}/simulator-builds`, `POST
+/features/{id}/simulator-builds/{build_id}/preview`, `GET` and `POST …/stop` on
+`/features/{id}/simulator-previews/{preview_id}`, and a WebSocket stream relay
+at `…/simulator-previews/{preview_id}/stream`. State lives in the companion's
+private `simulator-previews.sqlite3`, never in `fm_features`; registration adds
+`simulator.build_ready` or `simulator.build_failed` journal events. A ready
+preview is not verification. Contract, idle and capacity policy, and the
+SimPortal boundary: [simulator previews](simulator-previews.md).
+
 ## Implementation layers
 
 - `first_mate_store.py`: SQLite transactions, deduplication, event ledger, assignments, attempts, message queue, handoffs and human gates.

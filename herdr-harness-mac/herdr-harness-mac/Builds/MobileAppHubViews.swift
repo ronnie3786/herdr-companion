@@ -177,14 +177,16 @@ struct DashboardBuildRow: View {
 
 // MARK: - First Mate Overview
 
-/// Builds this First Mate's agents published. Agents tag builds with their
-/// First Mate automatically when they publish from a First Mate session.
-/// The Overview owns `feed` and keeps it current.
+/// Builds this First Mate's agents published: Mobile App Hub builds to install
+/// on a phone, and simulator checkpoints to open in a simulator on the
+/// feature's machine. Agents tag both with their First Mate automatically.
+/// The Overview owns `feed` (the hub) and keeps it and `simulator` current.
 struct FirstMateBuildsSection: View {
     let featureID: String
     let assignments: [(id: String, title: String)]
     let feed: MobileAppHubFeed
     let query: MobileAppHubFeed.Query?
+    var simulator: FirstMateSimulatorContext? = nil
     @Environment(\.colorScheme) private var scheme
     @Environment(\.openURL) private var openURL
     @State private var showsAll = false
@@ -192,15 +194,15 @@ struct FirstMateBuildsSection: View {
     static let collapsedCount = 4
 
     var body: some View {
-        if let query, !feed.builds.isEmpty {
-            card(query)
+        let entries = FirstMateBuildEntry.merge(hub: query == nil ? [] : feed.builds, simulator: simulator?.feed.builds ?? [])
+        if !entries.isEmpty {
+            card(entries)
         }
     }
 
-    private func card(_ query: MobileAppHubFeed.Query) -> some View {
+    private func card(_ entries: [FirstMateBuildEntry]) -> some View {
         let palette = FirstMatePalette(scheme: scheme)
-        let builds = feed.builds
-        let shown = showsAll ? builds : Array(builds.prefix(Self.collapsedCount))
+        let shown = showsAll ? entries : Array(entries.prefix(Self.collapsedCount))
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "iphone")
@@ -213,7 +215,7 @@ struct FirstMateBuildsSection: View {
                     .foregroundStyle(palette.tertiaryText)
                     .accessibilityLabel("Builds")
                     .accessibilityAddTraits(.isHeader)
-                Text("\(builds.count)")
+                Text("\(entries.count)")
                     .herdrFont(size: 9, weight: .semibold)
                     .monospacedDigit()
                     .foregroundStyle(palette.secondaryText)
@@ -222,28 +224,48 @@ struct FirstMateBuildsSection: View {
                     .background(palette.selectedFill, in: .capsule)
                     .accessibilityIdentifier("first-mate-builds-count")
                 Spacer()
-                if feed.error != nil {
+                if let error = feed.error ?? simulator?.feed.error {
                     Image(systemName: "exclamationmark.triangle")
                         .foregroundStyle(palette.iconTint)
-                        .help(feed.error ?? "")
+                        .help(error)
                         .accessibilityLabel("Couldn't refresh builds")
                 }
-                Button("Open Mobile App Hub") { openURL(MobileAppHubPresentation.seeAllURL(builds, hubURL: query.hubURL)) }
-                    .buttonStyle(.herdrPlain)
-                    .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
-                    .foregroundStyle(palette.accent)
-                    .frame(minHeight: HerdrTheme.minHitTarget)
-                    .contentShape(.rect)
+                if let query, !feed.builds.isEmpty {
+                    Button("Open Mobile App Hub") { openURL(MobileAppHubPresentation.seeAllURL(feed.builds, hubURL: query.hubURL)) }
+                        .buttonStyle(.herdrPlain)
+                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
+                        .foregroundStyle(palette.accent)
+                        .frame(minHeight: HerdrTheme.minHitTarget)
+                        .contentShape(.rect)
+                }
             }
-            ForEach(shown) { build in
-                FirstMateBuildRow(
-                    build: build,
-                    madeBy: MobileAppHubPresentation.assignmentTitles(for: build, featureID: featureID, assignments: assignments),
-                    palette: palette
-                ) { openURL(build.urls.page) }
+            if let status = simulator?.feed.status, status.configured, !status.canWatch, let reason = status.reason {
+                Text(reason)
+                    .herdrFont(size: HerdrTheme.TextSize.caption)
+                    .foregroundStyle(palette.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("first-mate-simulator-status-note")
             }
-            if builds.count > Self.collapsedCount {
-                Button(showsAll ? "Show fewer" : "Show \(builds.count - Self.collapsedCount) more") { showsAll.toggle() }
+            ForEach(shown) { entry in
+                switch entry {
+                case .hub(let build, let copy):
+                    FirstMateBuildRow(
+                        build: build,
+                        madeBy: MobileAppHubPresentation.assignmentTitles(for: build, featureID: featureID, assignments: assignments),
+                        palette: palette,
+                        simulator: copy.flatMap { copy in simulator.map { (build: copy, context: $0) } }
+                    ) { openURL(build.urls.page) }
+                case .simulator(let build):
+                    if let simulator {
+                        FirstMateSimulatorBuildRow(
+                            build: build, context: simulator,
+                            madeBy: assignments.first { $0.id == build.assignmentID }?.title,
+                            palette: palette)
+                    }
+                }
+            }
+            if entries.count > Self.collapsedCount {
+                Button(showsAll ? "Show fewer" : "Show \(entries.count - Self.collapsedCount) more") { showsAll.toggle() }
                     .buttonStyle(.herdrPlain)
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(palette.accent)
@@ -266,6 +288,8 @@ private struct FirstMateBuildRow: View {
     let build: MobileAppHubBuild
     let madeBy: [String]
     let palette: FirstMatePalette
+    /// The simulator copy an agent saved with this build, when there is one.
+    var simulator: (build: FirstMateSimulatorBuild, context: FirstMateSimulatorContext)? = nil
     let open: () -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var isHovered = false
@@ -278,6 +302,17 @@ private struct FirstMateBuildRow: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            hubButton
+            if let simulator {
+                FirstMateSimulatorOpenButton(build: simulator.build, context: simulator.context)
+                    .padding(.leading, 46)
+                    .padding(.bottom, 4)
+            }
+        }
+    }
+
+    private var hubButton: some View {
         Button(action: open) {
             HStack(alignment: .top, spacing: 10) {
                 MobileAppHubIcon(url: build.urls.icon, name: build.app.name, size: 30, tint: palette.accent)

@@ -100,6 +100,14 @@ ENVIRONMENT_FIELDS = {
         "skim_hud_chats": "HERDR_FIRST_MATE_SKIM_HUD_CHATS",
         "skim_backfill_hours": "HERDR_FIRST_MATE_SKIM_BACKFILL_HOURS",
     },
+    "simportal": {
+        "url": "HERDR_SIMPORTAL_URL", "token": "HERDR_SIMPORTAL_TOKEN",
+        "intake_root": "HERDR_SIMPORTAL_INTAKE_ROOT", "project_id": "HERDR_SIMPORTAL_PROJECT_ID",
+        "device_type": "HERDR_SIMPORTAL_DEVICE_TYPE", "runtime": "HERDR_SIMPORTAL_RUNTIME",
+        "idle_shutdown_minutes": "HERDR_SIMPORTAL_IDLE_SHUTDOWN_MINUTES",
+        "max_running_previews": "HERDR_SIMPORTAL_MAX_RUNNING_PREVIEWS",
+        "store_path": "HERDR_SIMPORTAL_STORE_PATH", "server_id": "HERDR_SIMPORTAL_SERVER_ID",
+    },
     "pr_review": {
         "workspace_label": "HERDR_PR_REVIEW_WORKSPACE_LABEL", "workspace_root": "HERDR_PR_REVIEW_WORKSPACE_ROOT",
         "checkout_root": "HERDR_PR_REVIEW_CHECKOUT_ROOT", "store_path": "HERDR_HARNESS_PR_REVIEW_STORE_PATH",
@@ -326,7 +334,7 @@ def load_configuration(
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
             raise ConfigurationError("Herdr configuration could not be read as valid TOML") from None
-        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "pr_review", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
+        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "simportal", "pr_review", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
         if set(data) - allowed_sections:
             raise ConfigurationError("Unrecognized top-level configuration section; use the Herdr cluster configuration sample")
         if data.get("version", 1) != 1:

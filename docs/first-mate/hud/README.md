@@ -18,7 +18,8 @@ It is on by default, but it only appears once a connected companion answers with
 - **Face.** An 86 pt First Mate face that blinks and looks toward the pointer. Its count badge is the number of features that need you, in the color of the most urgent one.
   - Click it to open the chat with the [lead First Mate](../lead.md).
   - Press and hold it for 0.42 s to talk; let go to send your words to the lead.
-  - Drag it to move the whole HUD.
+  - Drag it to move the whole HUD anywhere on screen—left, right, middle, up or down. It stays exactly where you drop it, only adjusting to keep the face whole on screen.
+  - First Mate's latest line opens right beside the face, above the collapsed orb row. Near the top of the screen, it opens past the row instead so it never covers the orbs.
 - **Collapsed row.** At most six orbs. With more features, the five most urgent show and the sixth becomes "+N", even when more than five need you; "+N" carries their unread dot and lists them on hover, and the face's badge still counts every one.
 - **Expanded list.** The list hangs from a lit line:
   - features that need you come first, ordered blocked, your turn, then ready;
@@ -66,5 +67,5 @@ The HUD reads the process-wide First Mate fleet index, which uses `first-mate-fl
   - `FirstMateHudController.swift`: the panel, state and actions.
   - the views.
   - `FirstMateHudDemo.swift`: the synthetic demo fleet.
-- **Tests:** `herdr-harness-macTests/FirstMateHudTests.swift` (rules and geometry), `FirstMateHudRenderTests.swift` (offscreen renders), and `FirstMateHudDeliveryTests.swift` (connection refusal before opening a lead, uncertain sends, exact-request retry, duplicate suppression, cancellation, connection changes, feature replies, fleet fallback, and recovery-card rendering).
+- **Tests:** `herdr-harness-macTests/FirstMateHudTests.swift` (rules and geometry), `FirstMateHudPlacementGeometryTests.swift` (face-hugging cards, top-edge fallback, and panel-to-face conversion), `FirstMateHudControllerPlacementTests.swift` (free drag placement, late moves, and programmatic-move guards), `FirstMateHudRenderTests.swift` (offscreen renders), and `FirstMateHudDeliveryTests.swift` (connection refusal before opening a lead, uncertain sends, exact-request retry, duplicate suppression, cancellation, connection changes, feature replies, fleet fallback, and recovery-card rendering).
 - **Demo:** launch with `-HerdrDemoMode -HerdrFirstMateHudDemoCount 6|10|14`.

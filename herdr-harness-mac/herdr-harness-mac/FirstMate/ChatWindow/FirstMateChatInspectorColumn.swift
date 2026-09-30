@@ -32,8 +32,8 @@ struct FirstMateChatInspectorColumn: View {
         case .lead:
             FirstMateLeadOverviewView(session: session)
         case .feature(let identity):
-            if let store = session.selectedStore, let snapshot = session.selectedSnapshot {
-                FirstMateChatFeatureInspector(store: store, snapshot: snapshot, openCommit: { selection in
+            if let store = session.selectedStore {
+                FirstMateChatFeatureInspector(store: store, snapshot: session.selectedSnapshot, openCommit: { selection in
                     openWindow(id: HerdrWindowID.firstMateGit, value: FirstMateGitWindowTarget(
                         machineID: identity.machineID, featureID: identity.featureID,
                         workspaceID: selection.workspaceID, commitSHA: selection.commitSHA
@@ -50,7 +50,7 @@ struct FirstMateChatInspectorColumn: View {
 /// gives it, so document and session opens work here too.
 private struct FirstMateChatFeatureInspector: View {
     @Bindable var store: FirstMateStore
-    let snapshot: FirstMateSnapshot
+    let snapshot: FirstMateSnapshot?
     var openCommit: ((FirstMateGitCommitSelection) -> Void)?
     @Environment(\.colorScheme) private var scheme
 

@@ -646,18 +646,19 @@ struct FirstMateChatWindowSessionTests {
         let run = Task { await session.run() }
         defer { run.cancel() }
         session.select(.feature(FirstMateFleetFeatureID(machineID: "alpha", featureID: "f1")))
-        try await ChatFixtures.waitUntil("first chat refreshed", timeout: .seconds(1)) { client.featureListCalls > 0 }
+        try await ChatFixtures.waitUntil("first chat refreshed", timeout: .seconds(1)) { client.featureCalls > 0 }
         try await Task.sleep(for: .milliseconds(50))
-        let firstPass = client.featureListCalls
+        let firstPass = client.featureCalls
         session.select(.feature(FirstMateFleetFeatureID(machineID: "alpha", featureID: "f2")))
         try await ChatFixtures.waitUntil("second chat refreshed before the 2 s interval", timeout: .seconds(1)) {
-            client.featureListCalls > firstPass
+            client.featureCalls > firstPass
         }
         session.select(.lead)
         try await Task.sleep(for: .milliseconds(50))
-        let calls = client.featureListCalls
+        let calls = client.featureCalls
         try await Task.sleep(for: .milliseconds(100))
-        #expect(client.featureListCalls == calls, "My First Mate refreshes nothing")
+        #expect(client.featureCalls == calls, "My First Mate refreshes nothing")
+        #expect(client.featureListCalls == 0, "The window uses the fleet's list")
         run.cancel()
         await run.value
     }

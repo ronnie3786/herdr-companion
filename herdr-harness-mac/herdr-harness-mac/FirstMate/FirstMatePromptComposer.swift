@@ -30,6 +30,11 @@ struct FirstMatePromptComposer: View {
     var body: some View {
         productionView
             .equatable()
+            // The editor already caps its visible lines and scrolls longer
+            // drafts. Keep the surrounding controls at their intrinsic height
+            // instead of repeatedly negotiating compressed/expanded toolbar
+            // layouts with the transcript's flexible vertical stack.
+            .fixedSize(horizontal: false, vertical: true)
             .id(destination.id)
             .task(id: destination.id) {
                 if focusOnAppear { appearFocus &+= 1 }
@@ -95,7 +100,7 @@ struct FirstMatePromptComposer: View {
             feature: featureWithCurrentSessionSelection,
             context: store.operationContext,
             canControl: canControl,
-            hasQueuedWork: snapshot.messages.contains { $0.status == "queued" }
+            hasQueuedWork: snapshot.hasQueuedWork == true || snapshot.messages.contains { $0.status == "queued" }
         )
         return ComposerAccessory(key: ComposerAccessoryKey(value: key)) { [store, modelFavorites] in
             FirstMateComposerModelControls(

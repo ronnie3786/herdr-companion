@@ -161,8 +161,27 @@ struct FirstMateHTTPTests {
         let requests = FirstMateURLProtocol.recorder.requests()
         #expect(requests[0].url?.path == "/api/v1/first-mate/capabilities")
         #expect(requests[1].url?.path == "/api/v1/first-mate/features")
+        #if os(macOS)
+        #expect(requests[1].url?.query == "view=all&summary=1")
+        #else
         #expect(requests[1].url?.query == "view=all")
+        #endif
     }
+
+    #if os(macOS)
+    @Test("Presentation requests encode a scoped view, page and version")
+    func presentationQueries() async throws {
+        let (client, session) = try makeClient()
+        defer { session.invalidateAndCancel() }
+        _ = try await client.fetchFirstMatePresentation("feature:123", view: .chat, before: "message:456", ifVersion: "version:789")
+        let request = try #require(FirstMateURLProtocol.recorder.requests().last)
+        #expect(request.url?.path == "/api/v1/first-mate/features/feature:123/presentation")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer first-mate-test-token")
+        let url = try #require(request.url)
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        #expect(query == [URLQueryItem(name: "view", value: "chat"), URLQueryItem(name: "messages", value: "60"), URLQueryItem(name: "before", value: "message:456"), URLQueryItem(name: "if_version", value: "version:789")])
+    }
+    #endif
 
     @Test("Resource identifiers cannot escape their endpoint collection", arguments: ["", ".", "..", "../notes", "a/b", "a?limit=1", "a#fragment", "%2F", String(repeating: "x", count: 257)])
     func invalidResourceID(_ id: String) async throws {
@@ -333,7 +352,7 @@ private final class FirstMateURLProtocol: URLProtocol {
             } else if url.path.hasSuffix("/hud") {
                 data = Data(#"{"ok":true,"feature":{"feature_id":"feature:123","title":"Sample","label":"Receipts","emoji":"🧾","emoji_source":"user","status":"ready","hud_status":"idle"}}"#.utf8)
             } else if url.path == "/api/v1/first-mate/capabilities" {
-                data = Data(#"{"ok":true,"capabilities":["first-mate-v1","first-mate-archive-v1","first-mate-links-v1"]}"#.utf8)
+                data = Data(#"{"ok":true,"capabilities":["first-mate-v1","first-mate-verification-summary-v1","first-mate-archive-v1","first-mate-links-v1"]}"#.utf8)
             } else if url.path.contains("/links") {
                 let snapshot = FirstMateDemo.features(step: 0)[0]
                 var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any] ?? [:]

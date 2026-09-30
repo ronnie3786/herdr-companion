@@ -42,8 +42,8 @@ enum FirstMateCrewStyle {
 /// crew. Plain-name matching (exact, whole words, longest first, never in code
 /// or links) is on for First Mate's replies and off for your own bubbles, where
 /// only the mentions you picked become runs.
-struct FirstMateMentionCatalog: Equatable, Sendable {
-    struct Entry: Equatable, Sendable {
+struct FirstMateMentionCatalog: Hashable, Sendable {
+    struct Entry: Hashable, Sendable {
         var name: String
         var emoji: String
         var status: FirstMateHudStatus
@@ -106,12 +106,26 @@ enum FirstMateMentionLinker {
         var entry: FirstMateMentionCatalog.Entry
     }
 
-    static func link(_ source: AttributedString, catalog: FirstMateMentionCatalog) -> AttributedString {
+    static func link(
+        _ source: AttributedString,
+        catalog: FirstMateMentionCatalog,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) -> AttributedString {
+        FirstMateMentionCache.shared.link(source, catalog: catalog, isCancelled: isCancelled)
+    }
+
+    fileprivate static func uncachedLink(
+        _ source: AttributedString,
+        catalog: FirstMateMentionCatalog,
+        isCancelled: @Sendable () -> Bool
+    ) -> AttributedString {
+        guard !isCancelled() else { return source }
         let spans = spans(in: source, catalog: catalog)
-        guard !spans.isEmpty else { return source }
+        guard !spans.isEmpty, !isCancelled() else { return source }
         var result = source
         let plain = String(source.characters)
         for span in spans.sorted(by: { $0.range.location > $1.range.location }) {
+            guard !isCancelled() else { return source }
             guard let stringRange = Range(span.range, in: plain),
                   let start = AttributedString.Index(stringRange.lowerBound, within: result),
                   let end = AttributedString.Index(stringRange.upperBound, within: result) else { continue }
@@ -163,5 +177,63 @@ enum FirstMateMentionLinker {
         run.foregroundColor = HerdrTheme.primaryText
         run.backgroundColor = tint.opacity(0.22)
         run.underlineStyle = nil
+    }
+}
+
+/// Full attributed content and the full catalog are the identity: edits of
+/// equal length, formatting changes, renames, status tints and destination
+/// changes all invalidate. The bounded cache is shared by Markdown blocks.
+private final class FirstMateMentionCache: @unchecked Sendable {
+    static let shared = FirstMateMentionCache()
+
+    private final class Key: NSObject {
+        let source: AttributedString
+        let catalog: FirstMateMentionCatalog
+        private let keyHash: Int
+
+        init(source: AttributedString, catalog: FirstMateMentionCatalog) {
+            self.source = source
+            self.catalog = catalog
+            var hasher = Hasher()
+            hasher.combine(source)
+            hasher.combine(catalog)
+            keyHash = hasher.finalize()
+        }
+
+        override var hash: Int { keyHash }
+        override func isEqual(_ object: Any?) -> Bool {
+            guard let other = object as? Key else { return false }
+            return source == other.source && catalog == other.catalog
+        }
+    }
+
+    private final class Entry {
+        let value: AttributedString
+        init(_ value: AttributedString) { self.value = value }
+    }
+
+    private let cache = NSCache<Key, Entry>()
+
+    private init() {
+        cache.countLimit = 512
+        cache.totalCostLimit = 8 * 1024 * 1024
+    }
+
+    func link(
+        _ source: AttributedString,
+        catalog: FirstMateMentionCatalog,
+        isCancelled: @Sendable () -> Bool
+    ) -> AttributedString {
+        guard !isCancelled() else { return source }
+        let key = Key(source: source, catalog: catalog)
+        if let hit = cache.object(forKey: key) { return hit.value }
+        let result = FirstMateMentionLinker.uncachedLink(
+            source,
+            catalog: catalog,
+            isCancelled: isCancelled
+        )
+        guard !isCancelled() else { return source }
+        cache.setObject(Entry(result), forKey: key, cost: max(1, source.characters.count * 8 + catalog.entries.count * 128))
+        return result
     }
 }

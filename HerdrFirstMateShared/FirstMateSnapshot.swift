@@ -25,6 +25,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     /// that can omit telemetry from `events` report it so ordering checks never
     /// mistake a journal-only snapshot for an older one.
     var eventCursor: Int? = nil
+    var hasQueuedWork: Bool? = nil
 
     /// The newest event sequence this snapshot reflects.
     var latestEventSequence: Int { eventCursor ?? events.map(\.sequence).max() ?? 0 }
@@ -50,6 +51,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         case sessionsTruncated = "sessions_truncated"
         case runtimeHealth = "runtime_health"
         case eventCursor = "event_cursor"
+        case hasQueuedWork = "has_queued_work"
     }
 
     init(from decoder: Decoder) throws {
@@ -70,6 +72,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         includesLinks = c.contains(.links)
         runtimeHealth = try c.decodeIfPresent(FirstMateRuntimeHealth.self, forKey: .runtimeHealth)
         eventCursor = try c.decodeIfPresent(Int.self, forKey: .eventCursor)
+        hasQueuedWork = try c.decodeIfPresent(Bool.self, forKey: .hasQueuedWork)
     }
 
     var recoveryNeedsDirection: Bool {

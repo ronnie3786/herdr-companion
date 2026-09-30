@@ -33,6 +33,14 @@ struct FirstMateOverviewView: View {
             FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
                 .padding(12)
                 .herdrCard()
+            if snapshot.feature.verification != nil {
+                FirstMateVerificationSummaryView(
+                    verification: snapshot.feature.verification,
+                    isLastReported: store.inspectorErrors[store.inspectorKey(featureID: snapshot.feature.id, view: .overview)] != nil
+                )
+                .padding(12)
+                .herdrCard()
+            }
             if let visit = snapshot.currentVisit {
                 VStack(alignment: .leading, spacing: 0) {
                     HerdrMicroLabel(text: "Current focus")

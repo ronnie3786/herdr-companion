@@ -53,6 +53,13 @@ struct FirstMateChatWindowLayout: Equatable {
         guard preference == nil, width > 0 else { return preference }
         return inspectorVisible(width: width, preference: nil)
     }
+
+    /// Whole points suppress redundant root updates from fractional resize
+    /// noise without delaying any width that can affect the column layout.
+    static func quantizedWidth(_ width: CGFloat) -> CGFloat {
+        guard width.isFinite, width > 0 else { return 0 }
+        return width.rounded()
+    }
 }
 
 /// The First Mate chat window: conversation list, chat, and inspector.
@@ -68,7 +75,11 @@ struct FirstMateChatWindowRoot: View {
     private var storedSidebarWidth = FirstMateChatPreferences.defaultSidebarWidth
     @State private var liveSidebarWidth: CGFloat?
     @State private var sidebarDragStartWidth: CGFloat?
+    @State private var availableWidth = FirstMateChatWindowLayout.minimumSidebarWidth
+        + FirstMateChatWindowLayout.minimumChatWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.scenePhase) private var scenePhase
 
     init(model: HerdrAppModel, shell: HerdrShellState, modelFavorites: ModelFavoritesStore) {
         self.init(session: FirstMateChatWindowSession(model: model, shell: shell), modelFavorites: modelFavorites)
@@ -86,49 +97,22 @@ struct FirstMateChatWindowRoot: View {
     static let overlayFill = Color(.sRGB, red: 23 / 255, green: 22 / 255, blue: 29 / 255, opacity: 0.97)
 
     var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let preferredSidebarWidth = liveSidebarWidth ?? CGFloat(storedSidebarWidth)
-            let layout = FirstMateChatWindowLayout.resolve(
-                width: width,
-                preferredSidebarWidth: preferredSidebarWidth,
-                inspectorPreference: session.inspectorPreference
-            )
-            HStack(spacing: 0) {
-                FirstMateChatSidebar(
-                    session: session,
-                    isRail: layout.sidebar == .rail,
-                    searchFocusRequest: searchFocusRequest,
-                    onNewFeature: startNewFeature
-                )
-                .frame(width: layout.sidebarWidth)
-                .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground) }
-                .herdrHairline(.trailing)
+        let width = availableWidth
+        let preferredSidebarWidth = liveSidebarWidth ?? CGFloat(storedSidebarWidth)
+        let layout = FirstMateChatWindowLayout.resolve(
+            width: width,
+            preferredSidebarWidth: preferredSidebarWidth,
+            inspectorPreference: session.inspectorPreference
+        )
+        let content = windowLayout(width: width, layout: layout)
+            .environment(\.openURL, OpenURLAction { url in openMention(url) })
+        let presented = presentationSheets(content)
+        let routed = routingObservers(presented)
+        activityObservers(routed)
+    }
 
-                chatColumn(layout: layout, width: width)
-            }
-            // Above both surfaces so the full six-point strip remains
-            // draggable even where chat would otherwise win hit testing.
-            .overlay(alignment: .leading) {
-                sidebarResizeHandle(availableWidth: width, displayedWidth: layout.sidebarWidth)
-                    .offset(x: layout.sidebarWidth - 3)
-            }
-            .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: layout.inspector)
-            .background { shortcuts(width: width) }
-            .onKeyPress(.escape) {
-                guard layout.inspector == .overlay else { return .ignored }
-                session.inspectorPreference = false
-                return .handled
-            }
-            .onChange(of: width, initial: true) { _, width in
-                session.inspectorPreference = FirstMateChatWindowLayout.settledInspectorPreference(
-                    width: width,
-                    preference: session.inspectorPreference
-                )
-            }
-        }
-        .environment(\.openURL, OpenURLAction { url in openMention(url) })
-        .sheet(isPresented: createSheetBinding, onDismiss: finishCreate) {
+    private func presentationSheets<Content: View>(_ content: Content) -> some View {
+        content.sheet(isPresented: createSheetBinding, onDismiss: finishCreate) {
             if let store = session.createStore {
                 FirstMateCreateSheet(store: store, initialGoal: session.createGoal)
             }
@@ -143,6 +127,10 @@ struct FirstMateChatWindowRoot: View {
                 await session.archive(target, reason: reason)
             }
         }
+    }
+
+    private func routingObservers<Content: View>(_ content: Content) -> some View {
+        content
         .onChange(of: session.createStore.map(ObjectIdentifier.init), initial: true) { _, store in
             createOrigin = store == nil ? nil : session.createOrigin
         }
@@ -157,8 +145,59 @@ struct FirstMateChatWindowRoot: View {
         .onChange(of: session.selectionIsUnresolvable) { _, unresolvable in
             if unresolvable { session.select(.lead) }
         }
+    }
+
+    private func activityObservers<Content: View>(_ content: Content) -> some View {
+        content
+        .onChange(of: controlActiveState, initial: true) { _, activeState in
+            session.setActivity(isKey: activeState == .key, isBackground: scenePhase == .background)
+        }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            session.setActivity(isKey: controlActiveState == .key, isBackground: phase == .background)
+        }
         .task { await session.run() }
         .accessibilityIdentifier("first-mate-chat-window")
+    }
+
+    private func windowLayout(width: CGFloat, layout: FirstMateChatWindowLayout) -> some View {
+        HStack(spacing: 0) {
+            FirstMateChatSidebar(
+                session: session,
+                isRail: layout.sidebar == .rail,
+                searchFocusRequest: searchFocusRequest,
+                onNewFeature: startNewFeature
+            )
+            .frame(width: layout.sidebarWidth)
+            .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground) }
+            .herdrHairline(.trailing)
+
+            chatColumn(layout: layout, width: width)
+                .frame(width: max(0, width - layout.sidebarWidth))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        // Above both surfaces so the full six-point strip remains draggable
+        // even where chat would otherwise win hit testing.
+        .overlay(alignment: .leading) {
+            sidebarResizeHandle(availableWidth: width, displayedWidth: layout.sidebarWidth)
+                .offset(x: layout.sidebarWidth - 3)
+        }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.24), value: layout.inspector)
+        .background { shortcuts(width: width) }
+        .onKeyPress(.escape) {
+            guard layout.inspector == .overlay else { return .ignored }
+            session.inspectorPreference = false
+            return .handled
+        }
+        .onGeometryChange(for: CGFloat.self) {
+            FirstMateChatWindowLayout.quantizedWidth($0.size.width)
+        } action: { width in
+            guard width > 0 else { return }
+            availableWidth = width
+            session.inspectorPreference = FirstMateChatWindowLayout.settledInspectorPreference(
+                width: width,
+                preference: session.inspectorPreference
+            )
+        }
     }
 
     // MARK: Columns

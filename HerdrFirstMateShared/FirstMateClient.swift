@@ -6,6 +6,7 @@ protocol FirstMateClient: Sendable {
     func setFirstMateModel(featureID: String, settings: FirstMateModelSettings) async throws -> FirstMateSnapshot
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList
     func fetchFirstMateFeatures(scope: FirstMateFeatureScope) async throws -> FirstMateFeatureList
+    func fetchFirstMatePresentation(_ id: String, view: FirstMateReadView, before: String?, ifVersion: String?) async throws -> FirstMatePresentationResponse
     func fetchFirstMateFeature(_ id: String) async throws -> FirstMateSnapshot
     /// Omits Pi telemetry events when `journalEventsOnly` and the companion
     /// advertises `first-mate-journal-events-v1`.
@@ -143,6 +144,7 @@ struct FirstMateFeatureList: Decodable, Sendable {
 struct FirstMateCapabilities: Decodable, Sendable {
     var ok: Bool
     var capabilities: [String]
+    var supportsReadViews: Bool { capabilities.contains("first-mate-read-views-v1") }
     var supportsArchive: Bool { capabilities.contains("first-mate-archive-v1") }
     var supportsAttachments: Bool { capabilities.contains("first-mate-attachments-v1") }
     var supportsContext: Bool { capabilities.contains("first-mate-context-v1") }
@@ -243,7 +245,44 @@ struct FirstMateModelSettings: Encodable, Equatable, Sendable {
     }
 }
 
+enum FirstMateReadView: String, Sendable { case chat, overview, details }
+
+/// A version is scoped to one feature, view, and page. An unchanged response
+/// contains no snapshot, avoiding repeated transfer, decoding, and publication.
+struct FirstMatePresentationResponse: Decodable, Sendable {
+    var ok: Bool
+    var version: String?
+    var unchanged: Bool
+    var snapshot: FirstMateSnapshot?
+    var nextBefore: String?
+    var runtimeHealth: FirstMateRuntimeHealth?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, version, unchanged
+        case nextBefore = "next_before", runtimeHealth = "runtime_health"
+    }
+
+    init(snapshot: FirstMateSnapshot) {
+        ok = snapshot.ok; version = nil; unchanged = false
+        self.snapshot = snapshot; nextBefore = nil; runtimeHealth = snapshot.runtimeHealth
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try c.decode(Bool.self, forKey: .ok)
+        version = try c.decodeIfPresent(String.self, forKey: .version)
+        unchanged = try c.decodeIfPresent(Bool.self, forKey: .unchanged) ?? false
+        nextBefore = try c.decodeIfPresent(String.self, forKey: .nextBefore)
+        runtimeHealth = try c.decodeIfPresent(FirstMateRuntimeHealth.self, forKey: .runtimeHealth)
+        snapshot = unchanged ? nil : try FirstMateSnapshot(from: decoder)
+    }
+}
+
 extension FirstMateClient {
+    func fetchFirstMatePresentation(_ id: String, view: FirstMateReadView, before: String?, ifVersion: String?) async throws -> FirstMatePresentationResponse {
+        .init(snapshot: try await fetchFirstMateFeature(id, journalEventsOnly: true))
+    }
+
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
         .init(ok: true, capabilities: [])
     }

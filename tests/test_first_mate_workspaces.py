@@ -364,6 +364,7 @@ class FeatureWorkspaceTests(TestCase):
         _write_json(directory / 'started.json', {'pid': 1})
         _write_json(directory / 'status.json', {'ended': True, 'error': 'Synthetic interrupted write'})
         self.assertTrue(self.runtime._workspace_busy(job['cwd'], 'isolated', assignment_id=second['id']))
+
         self.store.mark_dispatch_unknown(first['id'], job['claim']['generation'], 'Inspect source and effects', 'unknown')
         _write_json(directory / 'finalized.json', {'at': 'synthetic'})
         self.assertTrue(self.runtime._workspace_busy(job['cwd'], 'isolated', assignment_id=second['id']))
@@ -371,3 +372,10 @@ class FeatureWorkspaceTests(TestCase):
                                       'recover', verified_stopped=True)
         self.assertFalse(self.runtime._workspace_busy(job['cwd'], 'isolated', assignment_id=first['id']))
         self.assertTrue(self.runtime._workspace_busy(job['cwd'], 'isolated', assignment_id=second['id']))
+
+    def test_reconstructed_pending_dispatches_do_not_deadlock_each_other(self):
+        self.begin()
+        first, second = self.delegate('first'), self.delegate('second')
+        jobs = sorted((self.job(first), self.job(second)), key=lambda j: (j['created_at'], j['id']))
+        self.assertFalse(self.runtime._workspace_busy(jobs[0]['cwd'], 'isolated', job=jobs[0]))
+        self.assertTrue(self.runtime._workspace_busy(jobs[1]['cwd'], 'isolated', job=jobs[1]))

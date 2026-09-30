@@ -90,7 +90,12 @@ struct FirstMateMobileTranscriptTests {
         let model = await demo()
         let row = try #require(model.firstMateFleet.conversations.first { $0.isUnread && $0.latestFirstMateMessageID != nil })
         let active = FirstMateMobileTranscriptPolicy.Visibility(appeared: true, activeScene: true, firstMateTab: true, topmost: true)
-        #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: row, visibility: active) == row.latestFirstMateMessageID)
+        let messages = [FirstMateMessage(id: try #require(row.latestFirstMateMessageID), featureID: row.featureID,
+            role: "assistant", text: "Displayed reply", status: "completed", createdAt: "2030-01-01T00:00:00Z")]
+        let store = try #require(model.firstMateFleet.store(forMachineID: row.machineID))
+        let layout = FirstMateMobileTranscriptPolicy.ReadLayout(storeID: ObjectIdentifier(store), lifecycle: store.lifecycle,
+            messages: messages, displayedServerIDs: Set(messages.map(\.id)), followsLatest: true)
+        #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: row, visibility: active, messages: messages, layout: layout) == row.latestFirstMateMessageID)
         for field in 0..<6 {
             var visibility = active
             switch field {
@@ -101,13 +106,30 @@ struct FirstMateMobileTranscriptTests {
             case 4: visibility.covered = true // Create/archive/excerpt/resource sheet
             default: visibility.followsLatest = false
             }
-            #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: row, visibility: visibility) == nil)
+            #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: row, visibility: visibility, messages: messages, layout: layout) == nil)
         }
-        #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: nil, visibility: active) == nil)
+        #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: nil, visibility: active, messages: messages, layout: layout) == nil)
+        #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: row, visibility: active, messages: messages, layout: nil) == nil)
+        var changed = messages; changed[0].text = "New layout, same server ID"
+        #expect(FirstMateMobileTranscriptPolicy.readMessage(conversation: row, visibility: active, messages: changed, layout: layout) == nil)
         #expect(FirstMateMobileTranscriptPolicy.nearBottom(offset: 560, viewport: 400, content: 1_000, bottomInset: 0))
         #expect(!FirstMateMobileTranscriptPolicy.nearBottom(offset: 559, viewport: 400, content: 1_000, bottomInset: 0))
         #expect(!FirstMateMobileTranscriptPolicy.nearBottom(offset: 560, viewport: 400, content: 1_000, bottomInset: 30))
     }
+    @Test("Only rendered canonical or expanded additional server replies grant read authority")
+    func readProjection() {
+        let feature = "feature"
+        let main = FirstMateMessage(id: "A", featureID: feature, role: "assistant", text: "Checkpoint", status: "completed",
+            createdAt: "2030-01-01T00:00:00Z", metadata: .init(turnID: "turn", checkpoint: true))
+        var additional = main; additional.id = "B"; additional.metadata = .init(inReplyTo: "turn")
+        var local = main; local.id = "local-outgoing-synthetic"; local.metadata = nil
+        var user = main; user.id = "U"; user.role = "user"; user.metadata = nil
+        var foreign = main; foreign.id = "F"; foreign.featureID = "foreign"; foreign.metadata = nil
+        let rows = FirstMateTranscriptLayout.rows(for: [main, additional, local, user, foreign], now: .now, calendar: .current)
+        #expect(FirstMateMobileTranscriptPolicy.displayedServerIDs(rows: rows, expanded: [], featureID: feature) == ["A"])
+        #expect(FirstMateMobileTranscriptPolicy.displayedServerIDs(rows: rows, expanded: ["A"], featureID: feature) == ["A", "B"])
+    }
+
     @Test("A newly closed snapshot cannot show stale fleet needs-you actions or a Blocked header")
     func closedSnapshotOverridesStalePresentation() async throws {
         let model = await demo(), fleet = model.firstMateFleet
@@ -245,6 +267,32 @@ struct FirstMateMobileTranscriptTests {
         #expect(FirstMateMobileTranscriptPolicy.linkCards(messages: [message], snapshot: snapshot).isEmpty)
         snapshot.links = [link]; snapshot.links[0].url = "javascript:alert(1)"
         #expect(FirstMateMobileTranscriptPolicy.linkCards(messages: [message], snapshot: snapshot).isEmpty)
+    }
+
+    @Test("PR provenance outranks earlier quoted URLs and ambiguous fallbacks never pick a row")
+    func pullRequestProvenancePriority() {
+        let feature = ChatFixtures.feature("owned")
+        let url = "https://github.com/example/synthetic/pull/1"
+        let link = FirstMateLink(id: "saved-pr", featureID: feature.id, url: url, kind: "pull_request", title: "Saved change",
+            source: "coordinator", provenance: .init(messageID: "M2"), createdAt: feature.updatedAt, updatedAt: feature.updatedAt)
+        var snapshot = FirstMateSnapshot(feature: feature)
+        let first = FirstMateMessage(id: "M1", featureID: feature.id, role: "assistant", text: "[Earlier quote](\(url))",
+            status: "completed", createdAt: feature.updatedAt, metadata: .init(turnID: "turn", checkpoint: true))
+        let second = FirstMateMessage(id: "M2", featureID: feature.id, role: "assistant", text: "Actual origin",
+            status: "completed", createdAt: feature.updatedAt, metadata: .init(inReplyTo: "turn"))
+        snapshot.links = [link]
+        let cards = FirstMateMobileTranscriptPolicy.linkCards(messages: [first, second], snapshot: snapshot)
+        #expect(cards[first.id] == nil)
+        #expect(cards[second.id] == [link])
+        let rows = FirstMateTranscriptLayout.rows(for: [first, second], now: .now, calendar: .current)
+        #expect(rows.first?.additionalReplies.map(\.id) == [second.id])
+        snapshot.links[0].provenance.messageID = nil
+        var quote = second; quote.text = first.text
+        #expect(FirstMateMobileTranscriptPolicy.linkCards(messages: [first, quote], snapshot: snapshot).isEmpty)
+        #expect(FirstMateMobileTranscriptPolicy.linkCards(messages: [first, second], snapshot: snapshot)[first.id]?.first?.destination == link.destination)
+        snapshot.links[0].provenance.messageID = second.id
+        var foreign = second; foreign.featureID = "foreign"
+        #expect(FirstMateMobileTranscriptPolicy.linkCards(messages: [first, foreign], snapshot: snapshot).isEmpty)
     }
 
     @Test("Document cards use authoritative owner and unique title, never hidden handoffs or duplicate identity")

@@ -7,6 +7,8 @@ struct FirstMateChatTranscript: View {
     let catalog: FirstMateMentionCatalog
     let canControl: Bool
     @Binding var followsLatest: Bool
+    @Binding var readLayout: FirstMateMobileTranscriptPolicy.ReadLayout?
+    @Binding var expandedReplies: Set<String>
     let openInfo: (FirstMateInspector) -> Void
     let sendReply: (String) -> Bool
     let presentationChanged: (String, Bool) -> Void
@@ -33,6 +35,9 @@ struct FirstMateChatTranscript: View {
         let typing = !FirstMateMobileTranscriptPolicy.isClosed(snapshot) && typing
         let rows = FirstMateTranscriptLayout.rows(for: messages, typing: typing,
             pendingDecisionMessageID: snapshot.pendingDecisionMessageID, now: .now, calendar: .current)
+        let expandedIDs = expandedReplies
+        let displayedIDs = FirstMateMobileTranscriptPolicy.displayedServerIDs(rows: rows,
+            expanded: expandedIDs, featureID: snapshot.feature.id)
         let files = FirstMateMobileTranscriptPolicy.fileCards(messages: messages, snapshot: snapshot)
         let links = FirstMateMobileTranscriptPolicy.linkCards(messages: messages, snapshot: snapshot)
         let replies = FirstMateMobileTranscriptPolicy.replies(messages: messages, snapshot: snapshot,
@@ -67,7 +72,7 @@ struct FirstMateChatTranscript: View {
                                 .padding(.top, row.isFirstInGroup ? 8 : 0)
                                 .id(row.id)
                             if !row.additionalReplies.isEmpty {
-                                DisclosureGroup("Additional response from this turn") {
+                                DisclosureGroup("Additional response from this turn", isExpanded: additionalRepliesExpanded(row.id)) {
                                     ForEach(row.additionalReplies) { message in
                                         FirstMateChatBubble(row: .init(message: message, speaker: FirstMateTranscriptLayout.speaker(for: message),
                                             isFirstInGroup: true, isLastInGroup: true), snapshot: snapshot, maximumWidth: width,
@@ -109,10 +114,12 @@ struct FirstMateChatTranscript: View {
                     proxy.scrollTo("first-mate-chat-end", anchor: .bottom)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    FirstMateMobileTranscriptPolicy.nearBottom(offset: geometry.contentOffset.y,
-                        viewport: geometry.containerSize.height, content: geometry.contentSize.height, bottomInset: geometry.contentInsets.bottom)
-                } action: { _, latest in followsLatest = latest }
+                .onScrollGeometryChange(for: FirstMateMobileTranscriptPolicy.ReadLayout.self) { geometry in
+                    observeLayout(geometry, messages: messages, displayedIDs: displayedIDs, expandedIDs: expandedIDs)
+                } action: { _, layout in
+                    followsLatest = layout.followsLatest
+                    readLayout = layout
+                }
                 .onChange(of: messages) { _, _ in
                     if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
                 }
@@ -132,7 +139,7 @@ struct FirstMateChatTranscript: View {
                     }.presentationCompactAdaptation(.popover)
                 }
                 .onChange(of: readout != nil) { _, shown in presentationChanged("readout", shown) }
-                .onDisappear { presentationChanged("readout", false) }
+                .onDisappear { readLayout = nil; presentationChanged("readout", false) }
                 #if DEBUG
                 .overlay(alignment: .topTrailing) {
                     if FirstMateTranscriptPerformanceProbe.enabled {
@@ -144,6 +151,22 @@ struct FirstMateChatTranscript: View {
                 #endif
             }
         }
+    }
+
+    private func additionalRepliesExpanded(_ id: String) -> Binding<Bool> {
+        Binding(get: { expandedReplies.contains(id) }, set: { expanded in
+            if expanded { expandedReplies.insert(id) } else { expandedReplies.remove(id) }
+            readLayout = nil
+        })
+    }
+
+    private func observeLayout(_ geometry: ScrollGeometry, messages: [FirstMateMessage], displayedIDs: Set<String>, expandedIDs: Set<String>) -> FirstMateMobileTranscriptPolicy.ReadLayout {
+        // containerSize already excludes the composer's safe-area inset.
+        // Content/projection changes require a new observation even at equal height.
+        .init(storeID: ObjectIdentifier(store), lifecycle: store.lifecycle, messages: messages,
+              displayedServerIDs: displayedIDs, expandedReplies: expandedIDs,
+              followsLatest: FirstMateMobileTranscriptPolicy.nearBottom(offset: geometry.contentOffset.y,
+                viewport: geometry.containerSize.height, content: geometry.contentSize.height, bottomInset: 0))
     }
 
     @ViewBuilder

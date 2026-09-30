@@ -29,10 +29,13 @@ final class FirstMateMobileChatState {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var navigationToken = UUID()
     @ObservationIgnored private var openingLeads: [String: UUID] = [:]
-    @ObservationIgnored private var failedReads: [FirstMateFleetFeatureID: FailedRead] = [:]
+    private var failedReads: [FirstMateFleetFeatureID: FailedRead] = [:]
     @ObservationIgnored private var conversationCache: (hosts: [FirstMateFleetHost], read: FirstMateReadState, rows: [FirstMateConversation])?
     @ObservationIgnored private var rowPresentations: [FirstMateFleetFeatureID: FirstMateConversation] = [:]
     @ObservationIgnored var clock: () -> Date = Date.init
+    @ObservationIgnored var readSleep: @MainActor (TimeInterval) async throws -> Void = { interval in
+        try await Task.sleep(for: .seconds(interval))
+    }
     static let pinnedKey = "herdr.ios.firstMate.lead.pinned"
 
     private struct LeadReadObservation {
@@ -241,11 +244,35 @@ final class FirstMateMobileChatState {
         if leadReadObservations[id]?.messageID == messageID { leadReadObservations[id] = nil }
     }
 
+    func readRetryAt(_ target: FirstMateFeatureTarget, through messageID: String) -> Date? {
+        let failure = failedReads[.init(machineID: target.machineID, featureID: target.featureID)]
+        return failure?.messageID == messageID ? failure?.retryAt : nil
+    }
+
+    /// The mounted view owns this structured task. Its identity excludes the
+    /// optimistic unread bit, but includes visibility, layout, source and retry
+    /// deadline. Healthy unchanged polls need not republish shared last-seen.
+    func trackRead(_ target: FirstMateFeatureTarget, through messageID: String,
+                   store: FirstMateStore, fleet: FirstMateMobileFleetStore) async {
+        let context = store.operationContext
+        if let deadline = readRetryAt(target, through: messageID) {
+            let delay = deadline.timeIntervalSince(clock())
+            if delay > 0 {
+                do { try await readSleep(delay) } catch { return }
+            }
+        }
+        guard !Task.isCancelled, fleet.store(for: target) === store, store.operationContext == context,
+              fleet.selectedTarget == target,
+              let row = conversations(fleet: fleet).first(where: { $0.machineID == target.machineID && $0.featureID == target.featureID }),
+              row.isUnread, row.latestFirstMateMessageID == messageID else { return }
+        await markRead(target, through: messageID, fleet: fleet)
+    }
+
     /// Optimistic feature and lead markers share phone-owned rollback/backoff.
     /// New replies do not match an old override; stale failures cannot erase a
     /// replacement connection's read or apply backoff to it.
     func markRead(_ target: FirstMateFeatureTarget, through messageID: String, fleet: FirstMateMobileFleetStore) async {
-        guard !FirstMateOutgoingMessage.isLocalID(messageID), !messageID.isEmpty,
+        guard !Task.isCancelled, !FirstMateOutgoingMessage.isLocalID(messageID), !messageID.isEmpty,
               let token = tokens[target.machineID], let source = sources[target.machineID],
               let host = hosts(fleet: fleet).first(where: { $0.machineID == target.machineID }), host.supportsFleet else { return }
         let isLead = host.lead?.feature.id == target.featureID
@@ -261,6 +288,7 @@ final class FirstMateMobileChatState {
         do {
             guard let client = source.client else { throw APIError.invalidResponse }
             let response = try await client.markFirstMateRead(featureID: target.featureID, throughMessageID: messageID)
+            try Task.checkCancellation()
             guard tokens[target.machineID] == token else { return }
             guard response.featureID == target.featureID,
                   let acknowledged = response.readThroughMessageID, !FirstMateOutgoingMessage.isLocalID(acknowledged) else {

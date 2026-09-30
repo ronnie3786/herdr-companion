@@ -14,6 +14,8 @@ struct FirstMateChatScreen: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var appeared = false
     @State private var followsLatest = false
+    @State private var readLayout: FirstMateMobileTranscriptPolicy.ReadLayout?
+    @State private var expandedReplies: Set<String> = []
     @State private var excerpts: Set<String> = []
     @State private var confirmsCancellation = false
     @State private var archiveRequest: FirstMateMobileArchiveRequest?
@@ -37,7 +39,15 @@ struct FirstMateChatScreen: View {
                 || model.agentRequest != nil || model.isCarModePresented || model.isShowingError || model.isSidebarPresented,
               followsLatest: followsLatest)
     }
-    private var readID: String? { FirstMateMobileTranscriptPolicy.readMessage(conversation: conversation, visibility: visibility) }
+    private var readAttempt: FirstMateMobileTranscriptPolicy.ReadAttempt? {
+        guard let snapshot, let readLayout, readLayout.storeID == ObjectIdentifier(store), readLayout.lifecycle == store.lifecycle,
+              readLayout.expandedReplies == expandedReplies else { return nil }
+        let messages = FirstMateTranscriptLayout.orderedMessages(store: store, snapshot: snapshot)
+        let optimistic = fleet.chat.readState.overrides[.init(machineID: target.machineID, featureID: target.featureID)]
+        guard let id = FirstMateMobileTranscriptPolicy.readMessage(conversation: conversation, visibility: visibility,
+            messages: messages, layout: readLayout, optimisticMessageID: optimistic) else { return nil }
+        return .init(messageID: id, layout: readLayout, retryAt: fleet.chat.readRetryAt(target, through: id))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,7 +55,7 @@ struct FirstMateChatScreen: View {
             if let snapshot {
                 FirstMateChatTranscript(store: store, snapshot: snapshot, conversation: conversation,
                     catalog: FirstMateMobileTranscriptPolicy.mentionCatalog(conversations: fleet.conversations, snapshot: snapshot, owner: target),
-                    canControl: controls && !busy && !closed, followsLatest: $followsLatest,
+                    canControl: controls && !busy && !closed, followsLatest: $followsLatest, readLayout: $readLayout, expandedReplies: $expandedReplies,
                     openInfo: { openInfo($0, nil) }, sendReply: { send(reply: $0) },
                     presentationChanged: { id, shown in if shown { excerpts.insert(id) } else { excerpts.remove(id) } },
                     fleet: fleet, ownerMachineID: target.machineID,
@@ -72,10 +82,9 @@ struct FirstMateChatScreen: View {
         .onChange(of: controls) { _, _ in updateLease() }
         .onChange(of: topmost) { _, _ in updateLease() }
         .onChange(of: store.lifecycle) { _, _ in updateLease() }
-        .task(id: FirstMateMobileTranscriptPolicy.ReadAttempt(messageID: readID,
-            poll: readID == nil ? nil : fleet.hosts.first(where: { $0.machineID == target.machineID })?.lastUpdated)) {
-            guard let readID, visibility.permitsRead, !Task.isCancelled else { return }
-            await fleet.chat.markRead(target, through: readID, fleet: fleet)
+        .task(id: readAttempt) {
+            guard let readAttempt, visibility.permitsRead, !Task.isCancelled else { return }
+            await fleet.chat.trackRead(target, through: readAttempt.messageID, store: store, fleet: fleet)
         }
         .sensoryFeedback(.impact(weight: .light), trigger: sendPulse)
         .sensoryFeedback(HerdrHaptic.completed.feedback, trigger: choicePulse)

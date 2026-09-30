@@ -150,7 +150,10 @@ Only server skim reply blocks become inline actions, on the newest eligible
 needs-you reply and never while working. Choosing one records a local caption
 and reserves a send without consuming a separately composed draft. File cards
 come from uniquely associated, visible documents on the exact snapshot; saved PR
-cards require authoritative link/message association. File cards open Info →
+cards first honor eligible exact message provenance, including additional responses.
+Only links without message provenance may fall back to one unique exact Markdown
+URL; earlier quotes, repeated URLs, titles and foreign features cannot relocate a
+saved card. File cards open Info →
 Documents. Mention runs are cached by content and catalog, bounded, with only
 captured-owner names; ambiguous names are not guessed. Feature links open their
 chat, agent links validate ownership before opening Agents, and long-press offers
@@ -166,9 +169,14 @@ Retry/Copy; retry keeps the original owner, lifecycle, payload, request ID and
 frozen context, including nil. Polls never resend or migrate the submission.
 
 Phone-owned read hooks require an appeared, active, topmost First Mates chat at
-the end with a server read key. Info, offscreen render hosts, sheets, root covers,
-other tabs and background scenes do not acknowledge reads. Local clear and
-rollback/backoff/new-reply fencing remain in the mobile chat state. Chat and Info
+the end with a server read key represented by the current transcript and its fresh
+layout observation. A newer fleet summary alone cannot acknowledge an unfetched
+reply, and collapsed additional responses confer no read authority. Info, offscreen
+render hosts, sheets, root covers, other tabs and background scenes do not acknowledge
+reads. Optimistic clearing does not cancel its own transport. Failure deadlines
+schedule visibility/source-fenced retries at 8–180 seconds even when healthy polls
+publish no changes; shared last-seen semantics are unchanged. Mounted native-host
+tests use cancellation-aware held clients and a virtual retry clock. Chat and Info
 use exact-store control leases; stale disappearance cannot revoke a newer grant.
 The old detail/chat/message/composer and inspector-sheet host are removed; Info
 continues hosting existing workflow/document/session views until Phase 6 polish.

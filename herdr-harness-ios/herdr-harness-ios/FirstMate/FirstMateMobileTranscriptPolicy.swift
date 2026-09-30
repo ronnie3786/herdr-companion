@@ -2,11 +2,20 @@ import Foundation
 
 /// Phone presentation gates, independent of rendering and offscreen test hosts.
 enum FirstMateMobileTranscriptPolicy {
-    /// Poll completion allows an eligible failed marker to retry, while the
-    /// phone-owned store enforces its existing 8–180 second backoff.
+    /// Published by the transcript's layout observation, not its parent body.
+    /// Message content and disclosure projection fence old bottom geometry.
+    struct ReadLayout: Equatable {
+        var storeID: ObjectIdentifier
+        var lifecycle: FirstMateStore.LifecycleIdentity
+        var messages: [FirstMateMessage]
+        var displayedServerIDs: Set<String>
+        var expandedReplies: Set<String> = []
+        var followsLatest: Bool
+    }
     struct ReadAttempt: Equatable {
-        var messageID: String?
-        var poll: Date?
+        var messageID: String
+        var layout: ReadLayout
+        var retryAt: Date?
     }
     struct Visibility: Equatable {
         var appeared = false
@@ -32,11 +41,26 @@ enum FirstMateMobileTranscriptPolicy {
         FirstMateTranscriptLayout.suggestedReplies(messages: messages, needsYou: needsYou && !isClosed(snapshot), isTyping: isTyping)
     }
 
-    static func readMessage(conversation: FirstMateConversation?, visibility: Visibility) -> String? {
-        guard visibility.permitsRead, conversation?.isUnread == true,
+    static func readMessage(conversation: FirstMateConversation?, visibility: Visibility,
+                            messages: [FirstMateMessage], layout: ReadLayout?, optimisticMessageID: String? = nil) -> String? {
+        guard visibility.permitsRead, let layout, layout.followsLatest, layout.messages == messages,
               let id = conversation?.latestFirstMateMessageID, !id.isEmpty,
-              !FirstMateOutgoingMessage.isLocalID(id) else { return nil }
+              !FirstMateOutgoingMessage.isLocalID(id), layout.displayedServerIDs.contains(id),
+              conversation?.isUnread == true || optimisticMessageID == id else { return nil }
+        // Optimism keeps an existing task alive; trackRead still checks unread
+        // before starting transport. It is eligibility, not cancellation identity.
         return id
+    }
+
+    static func displayedServerIDs(rows: [FirstMateTranscriptLayout.Row], expanded: Set<String>, featureID: String) -> Set<String> {
+        var displayed: [FirstMateMessage] = []
+        for row in rows {
+            displayed.append(row.message)
+            if expanded.contains(row.id) { displayed.append(contentsOf: row.additionalReplies) }
+        }
+        return Set(displayed.filter {
+            $0.featureID == featureID && $0.isConversation && $0.role == "assistant" && !FirstMateOutgoingMessage.isLocalID($0.id)
+        }.map(\.id))
     }
 
     static func mentionCatalog(conversations: [FirstMateConversation], snapshot: FirstMateSnapshot, owner: FirstMateFeatureTarget) -> FirstMateMentionCatalog {
@@ -67,10 +91,20 @@ enum FirstMateMobileTranscriptPolicy {
     static func linkCards(messages: [FirstMateMessage], snapshot: FirstMateSnapshot) -> [String: [FirstMateLink]] {
         var result: [String: [FirstMateLink]] = [:]
         for link in snapshot.links where link.featureID == snapshot.feature.id && link.isPullRequest && !link.isHidden && link.destination != nil {
-            if let message = messages.first(where: {
-                $0.featureID == snapshot.feature.id && ($0.id == link.provenance.messageID ||
-                    ((try? AttributedString(markdown: $0.text))?.runs.contains { $0.link?.absoluteString == link.url } == true))
-            }) { result[message.id, default: []].append(link) }
+            let owned = messages.filter { $0.featureID == snapshot.feature.id && $0.isConversation && !FirstMateOutgoingMessage.isLocalID($0.id) }
+            let candidates: [FirstMateMessage]
+            if let provenance = link.provenance.messageID {
+                // Explicit provenance is authoritative, even when its message is
+                // not loaded/eligible. Never relocate that card to a quoted URL.
+                candidates = owned.filter { $0.id == provenance }
+            } else {
+                // Legacy links without provenance may use ONE exact Markdown
+                // destination. Repeated URLs, titles and ordering are not identity.
+                candidates = owned.filter {
+                    (try? AttributedString(markdown: $0.text))?.runs.contains { $0.link?.absoluteString == link.url } == true
+                }
+            }
+            if candidates.count == 1, let message = candidates.first { result[message.id, default: []].append(link) }
         }
         return result
     }

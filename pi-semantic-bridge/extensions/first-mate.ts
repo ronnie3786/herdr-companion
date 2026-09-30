@@ -190,6 +190,9 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
       "fm_recovery_brief",
     ]);
+    // Only machines whose companion has SimPortal configured expose simulator checkpoints.
+    const simulatorCheckpoints = !lead && job.simulator_previews === true && (role === "coordinator" || role === "worker");
+    if (simulatorCheckpoints) roleTools.add("fm_register_simulator_build");
     const effects = new Set<string>();
     const retainEffect = (value: unknown) => {
       const path = join(root, "effects.jsonl");
@@ -266,6 +269,15 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         title: Type.Optional(text("Short human-readable label; omit to derive one from the URL")),
         kind: Type.Optional(Type.Union([Type.Literal("pull_request"), Type.Literal("link")], { description: "Explicit classification for a pull request outside github.com; recognizable github.com PR URLs are classified automatically" })),
       }));
+      if (simulatorCheckpoints) {
+        register("fm_register_simulator_build", "Save a successfully compiled iOS Simulator .app as a checkpoint the human can open in a simulator from First Mate. Build with the project's own workflow for an iOS Simulator destination first; give the exact .app path from the build products. The companion records this feature, stage, assignment, and session itself. A saved build is a preview for the human, not verification evidence. Returns when SimPortal has saved or refused it.", Type.Object({
+          app_path: text("Absolute path of the built iOS Simulator .app directory (for example .../Build/Products/Debug-iphonesimulator/App.app)"),
+          label: Type.Optional(Type.String({ minLength: 1, maxLength: 160, description: "Short checkpoint label the human scans, such as \"Round 1: onboarding flow\"" })),
+          configuration: Type.Optional(Type.String({ minLength: 1, maxLength: 64, description: "Build configuration, such as Debug; omit to read it from the build products folder" })),
+          scheme: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Scheme or target that produced the app" })),
+          hub_build_id: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Mobile App Hub build ID of the matching device build, when you published one" })),
+        }));
+      }
       register("fm_delegate", "Queue an independent saved Pi worker in the current authorized stage. This returns immediately. Delegate long work; never wait or poll.", Type.Object({
         title: text("Assignment title"), role: text("Specialist role"),
         prompt: text("Complete assignment including scope, required deliverables, acceptance criteria and explicit human gates"),

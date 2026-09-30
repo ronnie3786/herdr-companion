@@ -16,6 +16,10 @@ from typing import Callable, TypeVar
 T = TypeVar("T")
 
 
+class AssessmentReadBusy(Exception):
+    """A display read must not queue behind an existing assessment."""
+
+
 class AssessmentReadCache:
     def __init__(self, *, ttl: float = 10.0, capacity: int = 64, clock=time.monotonic):
         self.ttl, self.capacity, self.clock = ttl, capacity, clock
@@ -23,7 +27,8 @@ class AssessmentReadCache:
         self._entries = OrderedDict()
         self._flights: dict[str, Future] = {}
 
-    def get(self, feature_id: str, identity: Callable[[], str], compute: Callable[[], T]) -> T:
+    def get(self, feature_id: str, identity: Callable[[], str], compute: Callable[[], T],
+            *, wait: bool = True) -> T:
         # The whole probe/evaluation is one flight per feature. Waiters recheck
         # the inputs afterwards; a write during the flight cannot reuse it.
         while True:
@@ -32,6 +37,8 @@ class AssessmentReadCache:
                 if flight is None:
                     flight = self._flights[feature_id] = Future()
                     break
+                if not wait:
+                    raise AssessmentReadBusy("Another display verification is in progress")
             # A failed probe or computation is shared by concurrent readers,
             # but is never retained for a later request.
             flight.result()

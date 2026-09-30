@@ -94,6 +94,15 @@ class FirstMateReadViewTests(unittest.TestCase):
         self.assertEqual((error.exception.code, error.exception.status), ("read_changed", 409))
         self.assertEqual(versions.call_count, 3)
 
+    def test_racing_chat_reads_share_one_verification_budget(self):
+        with patch.object(self.store, "read_version", return_value="concurrently-changed"), \
+             patch.object(self.runtime, "_live_verification", return_value={}) as verification:
+            with self.assertRaises(FirstMateError):
+                self.runtime.read_view(self.id)
+        self.assertEqual(verification.call_count, 3)
+        deadlines = [call.kwargs["deadline"] for call in verification.call_args_list]
+        self.assertEqual(len(set(deadlines)), 1)
+
     def test_overview_is_transcript_free_and_details_keep_the_legacy_journal(self):
         self.insert_message("message-1", "user", "2030-01-01T00:00:01Z")
         for index in range(6):

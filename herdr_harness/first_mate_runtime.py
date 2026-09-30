@@ -34,7 +34,7 @@ from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
 from .first_mate_context import FirstMateContext
-from .first_mate_read_cache import AssessmentReadCache
+from .first_mate_read_cache import AssessmentReadBusy, AssessmentReadCache
 from .first_mate_read_models import feature_summary, stable_verification
 from .first_mate_git_history import capture_baselines, capture_commits, capture_comparison_baseline, recorded_comparison_baseline
 from .first_mate_link_discovery import FirstMateLinkDiscovery
@@ -63,6 +63,13 @@ _PI_SESSION_ID = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 CHECKPOINT_SUMMARY_LIMIT = 1200
 CHECKPOINT_RECOMMENDATION_LIMIT = 400
 NOTICE_LIMIT = 600
+# Leave room for accounting, JSON and transport inside native read deadlines.
+# Authoritative workflow gates do not use this presentation budget.
+VERIFICATION_READ_SECONDS = 3.0
+
+
+class _VerificationReadUnavailable(Exception):
+    """Stop a display assessment without weakening a workflow gate."""
 
 
 class _ExecutionBudget:
@@ -344,6 +351,26 @@ Continue from the latest checkpoint and reuse still-valid checks on the same
 revision. A failed command is a diagnostic to investigate, not by itself a reason
 to ask the human to restart the assignment.
 """
+# Appended to the charter only when this machine's companion has SimPortal configured.
+SIMULATOR_CHECKPOINT_GUIDANCE = {
+    "worker": """Simulator checkpoints: this machine saves iOS Simulator builds the human can open
+from First Mate. When your assignment changes an iOS app and you finish a meaningful
+round (the end of an implementation, fix, or QA round), build the app for an iOS
+Simulator destination with the project's own build workflow (the scheme and
+configuration you test with), then call fm_register_simulator_build with the exact
+path of the built .app from the build products (for example
+.../Build/Products/Debug-iphonesimulator/App.app) and a short label such as
+"Round 1: onboarding flow". If you also published a device build to Mobile App Hub,
+pass that build's ID as hub_build_id. Register only a build that compiled
+successfully; never a device build, an archive, or another feature's build. A saved
+build is a preview for the human, not verification evidence, and never replaces
+fm_record_verification.""",
+    "coordinator": """Simulator checkpoints: this machine saves iOS Simulator builds the human can open
+from First Mate. For iOS app work, include in each implementation or fix assignment
+that the worker registers its successful simulator build with
+fm_register_simulator_build at the end of the round. A saved build is a preview, not
+verification evidence.""",
+}
 LEAD_PROMPT = """You are First Mate, the human's lead across every First Mate feature on their
 machines. Each feature has its own First Mate (its "second mate") that runs that
 feature's stages and workers. You answer the human about all of them, check
@@ -692,9 +719,11 @@ class FirstMateRuntime:
     """Run saved Pi coordinators and workers independently of client windows."""
 
     def __init__(self, store: Any, *, environ: Mapping[str, str] | None = None,
-                 runtime_root: str | Path | None = None, profile_snapshot=None) -> None:
+                 runtime_root: str | Path | None = None, profile_snapshot=None, simulator_previews: Any = None) -> None:
         self.store = store
         self._profile_snapshot = profile_snapshot
+        # SimPortal checkpoints (fm_register_simulator_build); None or unconfigured hides the tool.
+        self.simulator_previews = simulator_previews
         self.environ = dict(os.environ if environ is None else environ)
         self.root = Path(runtime_root or self.environ.get("HERDR_HARNESS_FIRST_MATE_RUNS_ROOT") or self.environ.get("HERDR_FIRST_MATE_RUNTIME_ROOT")
                          or str(Path(self.environ.get("HERDR_STATE_DIR") or "~/.local/share/herdr-companion").expanduser() / "first-mate-runs")).expanduser().resolve()
@@ -729,6 +758,7 @@ class FirstMateRuntime:
         self._catalog_cache = None
         self._catalog_at = 0.0
         self._assessment_reads = AssessmentReadCache()
+        self._verification_read_context = threading.local()
         self.usage = FirstMateUsage(self.root / "sessions")
         self.context = FirstMateContext(self.jobs_root, self.context_target)
         from .first_mate_reliability import FirstMateReliability
@@ -924,6 +954,7 @@ class FirstMateRuntime:
         )
 
     def list_features(self, view: str = "active") -> list[dict]:
+        verification_deadline = time.monotonic() + VERIFICATION_READ_SECONDS
         features = self.store.list_features(view)
         if not features:
             return []
@@ -934,7 +965,7 @@ class FirstMateRuntime:
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
             selection = self._policy(feature, kind="coordinator", claim={}).selection()
             result.append({**feature, "usage": account["usage"], "model_selection": selection,
-                           "verification": self._live_verification(feature),
+                           "verification": self._live_verification(feature, deadline=verification_deadline),
                            "coordinator_context": self.context.project(feature, jobs)})
         return result
 
@@ -947,19 +978,42 @@ class FirstMateRuntime:
                 "verification": self._live_verification(feature),
                 "coordinator_context": self.context.project(feature, jobs)}
 
-    def _live_verification(self, feature: Mapping[str, Any]) -> dict:
-        """Reuse coverage only while freshly observed evidence and Git inputs match.
+    def _live_verification(self, feature: Mapping[str, Any], *, deadline: float | None = None) -> dict:
+        """Bound display work and reuse only freshly validated coverage.
 
         TTL bounds retention; it is never a substitute for checking workspace
         HEAD/status. Mutating gate decisions use verification_assessment directly.
         """
+        if deadline is None:
+            deadline = time.monotonic() + VERIFICATION_READ_SECONDS
+        previous_deadline = getattr(self._verification_read_context, "deadline", None)
+
+        def bounded(read):
+            self._check_verification_read_deadline()
+            value = read()
+            self._check_verification_read_deadline()
+            return value
+
         try:
+            self._verification_read_context.deadline = deadline
+            self._check_verification_read_deadline()
             return self._assessment_reads.get(
-                feature["id"], lambda: self._verification_read_identity(feature["id"]),
-                lambda: self._compute_live_verification(self.store.get_feature(feature["id"])))
-        except (FirstMateError, OSError, sqlite3.Error, subprocess.TimeoutExpired, VerificationValidationError) as exc:
+                feature["id"],
+                lambda: bounded(lambda: self._verification_read_identity(feature["id"])),
+                lambda: bounded(lambda: self._compute_live_verification(self.store.get_feature(feature["id"]))),
+                wait=False)
+        except (FirstMateError, OSError, sqlite3.Error, subprocess.TimeoutExpired, VerificationValidationError,
+                AssessmentReadBusy, _VerificationReadUnavailable) as exc:
             return self._historical_unavailable(feature, feature.get("verification"),
                 "The current coverage inputs could not be checked: " + str(exc)[:300])
+        finally:
+            self._verification_read_context.deadline = previous_deadline
+
+    def _check_verification_read_deadline(self) -> None:
+        deadline = getattr(self._verification_read_context, "deadline", None)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _VerificationReadUnavailable(
+                "Current verification exceeded the display time budget; workflow gates still run full verification.")
 
     def _verification_read_identity(self, feature_id: str) -> str:
         feature = self.store.get_feature(feature_id)
@@ -1163,6 +1217,7 @@ class FirstMateRuntime:
 
     def read_view(self, feature_id: str, *, view: str = "chat", messages: int = 60,
                   before: str | None = None, if_version: str | None = None) -> dict:
+        verification_deadline = time.monotonic() + VERIFICATION_READ_SECONDS
         if view not in {"chat", "overview", "details"}:
             raise FirstMateError("Invalid read view", code="invalid_request", status=400)
         if before is not None and view != "chat":
@@ -1194,7 +1249,7 @@ class FirstMateRuntime:
                     **raw_feature,
                     "usage": account["usage"],
                     "model_selection": selection,
-                    "verification": self._live_verification(raw_feature),
+                    "verification": self._live_verification(raw_feature, deadline=verification_deadline),
                     "coordinator_context": self.context.project(raw_feature, jobs),
                 }
                 presented = feature_summary(enriched) if view == "chat" else enriched
@@ -1689,10 +1744,14 @@ class FirstMateRuntime:
                 self.environ, "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS", 86400, 30, 604800)
         if retry:
             job["retry_not_before"] = retry.get("not_before", 0)
+        simulator = self.simulator_previews
+        if kind in {"coordinator", "worker"} and simulator is not None and getattr(simulator, "configured", False):
+            job["simulator_previews"] = True
         if kind == "coordinator" and current_feature.get("kind") == LEAD_KIND:
             # The lead reuses the coordinator's conversation, context, and
             # handoff machinery with its own charter and fleet tools.
             job["lead"] = True
+            job.pop("simulator_previews", None)
             job["charter"] = LEAD_PROMPT
         if self._profile_snapshot:
             # Keep coordinator conversations and assignment retries pinned; new
@@ -1732,7 +1791,26 @@ class FirstMateRuntime:
         return job
 
     def _git(self, cwd: str, *args: str) -> str:
-        result = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=30)
+        deadline = getattr(self._verification_read_context, "deadline", None)
+        timeout = 30.0
+        options = {}
+        if deadline is not None:
+            self._check_verification_read_deadline()
+            timeout = min(timeout, deadline - time.monotonic())
+            if timeout <= 0:
+                self._check_verification_read_deadline()
+            # Display probes must not contend with agents updating Git indexes.
+            options["env"] = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+        try:
+            result = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
+                                    timeout=timeout, **options)
+        except subprocess.TimeoutExpired:
+            if deadline is not None:
+                # Scope's per-workspace error recovery must not keep scanning
+                # after the shared budget expires.
+                raise _VerificationReadUnavailable(
+                    "Current verification exceeded the display time budget; workflow gates still run full verification.") from None
+            raise
         if result.returncode:
             raise FirstMateError("Git workspace operation failed: " + result.stderr.strip()[:500])
         return result.stdout.strip()
@@ -2897,6 +2975,80 @@ class FirstMateRuntime:
                     "code": getattr(exc, "code", "tool_failed"),
                     "next_permitted_actions": getattr(exc, "next_permitted_actions", [])})
 
+    def _register_simulator_build(self, job: dict, params: dict, request_id: str) -> dict:
+        """Save a compiled iOS Simulator app as this feature's checkpoint (SimPortal).
+
+        Fenced exactly like link saves: only the live coordinator owner or the
+        running worker of the current visit may register, and the feature,
+        visit, assignment, and native session come from the validated dispatch,
+        never from the caller. The copy and SimPortal handoff run off the
+        runtime loop; the spool request stays pending (DeferredOperation) until
+        the build settles, and a restart resumes the same durable registration.
+        """
+        from .simulator_previews import SimulatorPreviewError
+
+        simulator = self.simulator_previews
+        if simulator is None or not getattr(simulator, "configured", False):
+            raise FirstMateError("Simulator checkpoints are not configured on this machine",
+                                 code="simulator_unconfigured", status=400)
+        if not isinstance(params, dict):
+            raise FirstMateError("Simulator build parameters must be an object", code="invalid_request", status=400)
+        # Each reconcile pass asks again while SimPortal works; the fence and
+        # context were checked when this registration was submitted.
+        future = simulator.registration(request_id)
+        if future is None:
+            future = self._submit_simulator_build(simulator, job, params, request_id)
+        if not future.done():
+            raise DeferredOperation("Waiting for SimPortal to save the simulator build")
+        simulator.release_registration(request_id)
+        try:
+            return future.result()
+        except SimulatorPreviewError as exc:
+            raise FirstMateError(str(exc), code=exc.code, status=exc.status) from None
+
+    def _submit_simulator_build(self, simulator: Any, job: dict, params: dict, request_id: str):
+        from .simulator_previews import CheckpointContext, SimulatorPreviewError
+
+        feature_id = job["feature_id"]
+        feature = self.store.get_feature(feature_id)
+        claim = job.get("claim") or {}
+        assignment = None
+        extra_roots: list[str] = []
+        if job["kind"] == "coordinator" and not job.get("lead"):
+            if feature.get("coordinator_owner") != job.get("owner"):
+                raise FirstMateError("Coordinator ownership changed", code="stale_owner")
+            extra_roots.append(str(self.root / "worktrees"))
+        elif job["kind"] == "worker":
+            claim_id = claim.get("id")
+            if not isinstance(claim_id, str) or not claim_id:
+                raise FirstMateError("Simulator build registration is outside this execution's active assignment scope")
+            assignment = self.store.get_assignment(claim_id)
+            if (assignment["feature_id"] != feature_id
+                    or assignment.get("generation") != claim.get("generation")
+                    or assignment.get("native_session_id") != job.get("native_session_id")
+                    or assignment.get("status") != "running"
+                    or feature.get("status") != "running"
+                    or not self.store.assignment_is_in_current_visit(assignment["id"])):
+                raise FirstMateError("Simulator build registration is outside this execution's active assignment scope",
+                                     code="stale_owner")
+        else:
+            raise ValueError("Tool is outside this execution's role and assignment scope")
+        visit_id = (assignment or {}).get("visit_id") or feature.get("current_visit_id")
+        visit_title = None
+        if visit_id:
+            visit_title = next((visit.get("title") for visit in self.store.snapshot(feature_id)["visits"]
+                                if visit.get("id") == visit_id), None)
+        context = CheckpointContext(
+            feature_id=feature_id, feature_title=str(feature.get("title") or ""),
+            visit_id=visit_id, visit_title=visit_title,
+            assignment_id=(assignment or {}).get("id"), assignment_title=(assignment or {}).get("title"),
+            native_session_id=job.get("native_session_id"), workspace=str(job.get("cwd") or feature.get("cwd") or ""),
+            role=job["kind"], extra_roots=tuple(extra_roots))
+        try:
+            return simulator.submit_registration(request_id, context, params, on_done=self.wake)
+        except SimulatorPreviewError as exc:
+            raise FirstMateError(str(exc), code=exc.code, status=exc.status) from None
+
     def _save_link(self, job: dict, params: dict) -> dict:
         """Agent-facing link registration fenced to the exact live execution.
 
@@ -3013,6 +3165,8 @@ class FirstMateRuntime:
             return session
         if action == "fm_save_link":
             return self._save_link(job, params)
+        if action == "fm_register_simulator_build":
+            return self._register_simulator_build(job, params, request_id)
         if action == "fm_delegate" and job["kind"] == "worker":
             parent = self.store.get_assignment(claim["id"])
             if parent["generation"] != claim["generation"] or parent["native_session_id"] != job["native_session_id"] or parent["status"] != "running":
@@ -3942,6 +4096,8 @@ def _pi_command(job: dict) -> list[str]:
                "advisor": ADVISOR_PROMPT}[job["kind"]]
     if job["kind"] == "coordinator" and job.get("lead"):
         charter = LEAD_PROMPT
+    elif job.get("simulator_previews") and job["kind"] in SIMULATOR_CHECKPOINT_GUIDANCE:
+        charter = charter + "\n" + SIMULATOR_CHECKPOINT_GUIDANCE[job["kind"]]
     snapshot = job.get("agent_profile_snapshot")
     if isinstance(snapshot, dict) and snapshot.get("prompt"):
         from .agent_profiles import write_prompt_snapshot

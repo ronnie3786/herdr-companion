@@ -39,6 +39,7 @@ struct FirstMateChatInspectorColumn: View {
                         workspaceID: selection.workspaceID, commitSHA: selection.commitSHA
                     ))
                 })
+                .firstMateSimulator(model: session.model, machineID: identity.machineID, featureID: identity.featureID)
             } else {
                 FirstMateInspectorPlaceholder(error: session.selectedStore?.error)
             }

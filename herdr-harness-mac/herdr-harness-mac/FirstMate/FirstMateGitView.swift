@@ -298,7 +298,7 @@ struct FirstMateGitView: View {
 /// `HerdrIconButtonStyle` in First Mate's palette, so the bar's icons keep
 /// their contrast in First Mate light: 26pt glyph box on a 28pt hit area,
 /// icon ink at rest, text ink and a selection wash while hovered.
-private struct FirstMateGitIconButtonStyle: ButtonStyle {
+struct FirstMateGitIconButtonStyle: ButtonStyle {
     let palette: FirstMatePalette
 
     func makeBody(configuration: Configuration) -> some View {

@@ -9,6 +9,7 @@ struct PaneGitWebDocumentTests {
         let sha = String(repeating: "a", count: 40)
         let target = FirstMateGitWindowTarget(machineID: "desktop", featureID: "feature-one", workspaceID: "worker-one", commitSHA: sha)
         let document = PaneGitWebDocument(configuration: configuration, firstMateTarget: target)
+        #expect(document.url.absoluteString == "https://git.example.invalid/herdr-web/#firstMate=feature-one&workspace=worker-one&git_commit=\(sha)&view=git&embed=1")
         var route = URLComponents()
         route.percentEncodedQuery = URLComponents(url: document.url, resolvingAgainstBaseURL: false)?.percentEncodedFragment
         let values = Dictionary(uniqueKeysWithValues: (route.queryItems ?? []).map { ($0.name, $0.value ?? "") })
@@ -17,9 +18,23 @@ struct PaneGitWebDocumentTests {
         #expect(values["git_commit"] == sha)
         let ordinary = FirstMateGitWindowTarget(machineID: "desktop", featureID: "feature-one", workspaceID: "worker-one")
         #expect(target.id != ordinary.id)
-        #expect(document != PaneGitWebDocument(configuration: configuration, firstMateTarget: ordinary))
+        let ordinaryDocument = PaneGitWebDocument(configuration: configuration, firstMateTarget: ordinary)
+        #expect(ordinaryDocument.url.absoluteString == "https://git.example.invalid/herdr-web/#firstMate=feature-one&workspace=worker-one&view=git&embed=1")
+        #expect(document != ordinaryDocument)
         let legacy = Data(#"{"machineID":"desktop","featureID":"feature-one","workspaceID":"project"}"#.utf8)
         #expect(try JSONDecoder().decode(FirstMateGitWindowTarget.self, from: legacy).commitSHA == nil)
+    }
+
+    @Test("Unpinned First Mate routes omit the unresolved workspace")
+    func unpinnedFirstMateRoute() throws {
+        let configuration = try #require(ServerConfiguration(urlString: "https://git.example.invalid", token: "synthetic-token"))
+        let target = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: nil)
+        let document = PaneGitWebDocument(configuration: configuration, firstMateTarget: target)
+        var route = URLComponents()
+        route.percentEncodedQuery = URLComponents(url: document.url, resolvingAgainstBaseURL: false)?.percentEncodedFragment
+        let values = Dictionary(uniqueKeysWithValues: (route.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        #expect(values == ["firstMate": "feature", "view": "git", "embed": "1"])
+        #expect(document.url.absoluteString == "https://git.example.invalid/herdr-web/#firstMate=feature&view=git&embed=1")
     }
 
     @Test("Embedded Git route keeps identifiers in the fragment and secrets out of the URL")

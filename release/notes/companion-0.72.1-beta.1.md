@@ -10,6 +10,14 @@ Second Mate tasks. It needs no native app update.
   session during startup", and each failure used up a recovery attempt until the
   assignment needed a human reset. The advisor now starts without the flag; its
   job record keeps the parent session.
+- Stops two worker tools from filling a whole context window in one call, which
+  forced repeated handoffs until First Mate blocked the task.
+  `fm_record_verification` now returns the same bounded assessment as `fm_status`
+  (20 entries per list, with `*_count` and `*_truncated`); it used to echo every
+  unmapped path and coverage reason, up to 320k tokens after a base merge.
+  `fm_read_session` now trims predecessor reasoning and tool-call arguments to
+  2,000 characters (`thinking_characters` gives the full length); message text
+  paging is unchanged.
 - Adds `first-mate-independent-workers-v1` (first deployed as 0.72.0b1, never
   published). Second Mate can delegate research or authorized PR-description work
   that needs no checkout with `workspace_mode: independent` and an

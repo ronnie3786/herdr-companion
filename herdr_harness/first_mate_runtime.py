@@ -515,6 +515,31 @@ def _agent_verification(assessment: Mapping[str, Any] | None) -> dict:
     return result
 
 
+SESSION_REASONING_LIMIT = 2000
+
+
+def _agent_session_message(message: Mapping[str, Any], offset: int, length: int) -> dict:
+    """Page message text; bound predecessor reasoning and tool arguments.
+
+    Saved reasoning at high effort can run to hundreds of thousands of
+    characters, and one unbounded read could exceed a successor's context target.
+    """
+    text = message["text"]
+    result = {**message, "text": text[offset:offset + length],
+              "text_offset": offset, "text_truncated": len(text) > offset + length,
+              "next_text_offset": offset + length if len(text) > offset + length else None,
+              "total_characters": len(text)}
+    thinking = message.get("thinking")
+    if isinstance(thinking, str) and len(thinking) > SESSION_REASONING_LIMIT:
+        result["thinking"] = thinking[:SESSION_REASONING_LIMIT] + " [truncated; reasoning is not evidence]"
+        result["thinking_characters"] = len(thinking)
+    if message.get("tool_calls"):
+        result["tool_calls"] = [{**call, "arguments": _bounded_agent_data(call.get("arguments", {}),
+                                                                           text_limit=SESSION_REASONING_LIMIT)}
+                                for call in message["tool_calls"]]
+    return result
+
+
 def _agent_assignment(assignment: Mapping[str, Any]) -> dict:
     result = _pick(assignment, ("id", "visit_id", "title", "role", "status", "verdict",
         "generation", "input_revision", "summary", "code_revision", "native_session_id",
@@ -2430,7 +2455,9 @@ class FirstMateRuntime:
                     "revision_matches": bool(observed) and run["tested_revision"] == observed,
                     "gate_set": [suite_label(gate["suite"]) for gate in run["gates"]]},
             "warning": warning,
-            "verification": assessment,
+            # The full assessment can list thousands of changed paths after a
+            # base merge; one echo could exceed a worker's whole context target.
+            "verification": _agent_verification(assessment),
         }
 
     def _verification_run_references(self, feature_id: str, maximum: int = 20) -> list[dict]:
@@ -3277,10 +3304,7 @@ class FirstMateRuntime:
                     self._save_job(job)
             offset = max(0, int(params.get("text_offset", 0))) if requested_index is not None else 0
             length = max(1000, min(80000, int(params.get("text_length", 12000)))) if requested_index is not None else 12000
-            session["messages"] = [{**message, "text": message["text"][offset:offset + length],
-                                    "text_offset": offset, "text_truncated": len(message["text"]) > offset + length,
-                                    "next_text_offset": offset + length if len(message["text"]) > offset + length else None,
-                                    "total_characters": len(message["text"])} for message in session["messages"]]
+            session["messages"] = [_agent_session_message(message, offset, length) for message in session["messages"]]
             return session
         if action == "fm_save_link":
             return self._save_link(job, params)

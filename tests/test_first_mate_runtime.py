@@ -403,7 +403,11 @@ class FirstMateRuntimeTests(unittest.TestCase):
             assignment = self.store.get_assignment(assignment['id'])
             document = self.store._document(assignment, 'Long evidence', suffix * 1300)
             rows = [{'type':'session','id':native}]
-            rows.append({'type':'message','message':{'role':'assistant','content':[{'type':'text','text':suffix * 1300}]}})
+            rows.append({'type':'message','message':{'role':'assistant','content':[
+                {'type':'thinking','thinking':suffix * 50000},
+                {'type':'text','text':suffix * 1300},
+                {'type':'toolCall','id':'call-'+suffix,'name':'write',
+                 'arguments':{'path':'synthetic.txt','content':suffix * 50000}}]}})
             Path(worker['session_file']).write_text(''.join(json.dumps(row)+'\n' for row in rows))
             return human, document, native
 
@@ -420,6 +424,14 @@ class FirstMateRuntimeTests(unittest.TestCase):
             'native_session_id':native, 'message_index':0, 'text_length':1000}, 'read-session')
         self.assertEqual(len(session['messages'][0]['text']), 1000)
         self.assertEqual(session['messages'][0]['next_text_offset'], 1000)
+        # Predecessor reasoning and tool arguments stay bounded in every read.
+        listed = self.runtime._tool(job, 'fm_read_session', {'native_session_id':native}, 'read-session-list')
+        message = listed['messages'][0]
+        self.assertEqual(message['thinking_characters'], 50000)
+        self.assertLess(len(message['thinking']), 2100)
+        self.assertLess(len(message['tool_calls'][0]['arguments']['content']), 2100)
+        self.assertEqual(message['tool_calls'][0]['arguments']['path'], 'synthetic.txt')
+        self.assertLess(len(json.dumps(listed)), 20000)
         with self.assertRaisesRegex(FirstMateError, 'another feature'):
             self.runtime._tool(job, 'fm_read_document', {'document_id':other_document['id']}, 'cross-document')
         with self.assertRaisesRegex(FirstMateError, 'another feature'):

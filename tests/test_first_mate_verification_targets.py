@@ -185,6 +185,24 @@ class VerificationTargetTests(unittest.TestCase):
         self.assertEqual(result["run"]["observed_revision"], self.target_head)
         self.assertEqual(result["run"]["workspace"], self.runtime._workspace_identity(str(clone.resolve())))
 
+    def test_worker_receipt_bounds_the_assessment_after_a_large_base_merge(self):
+        # A develop merge can leave thousands of unmapped paths; echoing all of
+        # them once filled a worker's whole context target.
+        full = self.runtime.verification_assessment
+        def large(feature_id, *args, **kwargs):
+            assessment = full(feature_id, *args, **kwargs)
+            paths = [f"vendor/synthetic/file-{index}.rb" for index in range(3000)]
+            return {**assessment, "unmapped_paths": paths,
+                    "coverage_reasons": [f"Unmapped path {path}" for path in paths]}
+        self.runtime.verification_assessment = large
+        result = self.runtime._record_verification(self.job, self.report(), "large-merge")
+        verification = result["verification"]
+        self.assertEqual(len(verification["unmapped_paths"]), 20)
+        self.assertEqual(verification["unmapped_paths_count"], 3000)
+        self.assertTrue(verification["coverage_reasons_truncated"])
+        self.assertIn("status", verification)
+        self.assertLess(len(json.dumps(result)), 20000)
+
 
 if __name__ == "__main__":
     unittest.main()

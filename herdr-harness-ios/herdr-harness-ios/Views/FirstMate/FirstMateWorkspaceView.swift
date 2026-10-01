@@ -7,7 +7,13 @@ struct FirstMateWorkspaceView: View {
     // One semantic path survives size-class changes. Regular presentation uses
     // its chat and inspector side by side without popping or recreating routes.
     @State private var path: [FirstMateChatRoute] = []
-    @State private var columns: NavigationSplitViewVisibility = .all
+    /// iPad columns: the person's last choices; nil follows the orientation.
+    @State private var inspectorOpen: Bool?
+    @State private var listPreference: FirstMateIPadLayout.ListPreference?
+    @State private var inspectorPinned = false
+    @State private var inspectorDrag: CGFloat = 0
+    @State private var gitTarget: FirstMateGitTarget?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var briefingGoal = ""
     @State private var creationGoal: String?
     private var regular: Bool { horizontalSizeClass == .regular }
@@ -28,36 +34,10 @@ struct FirstMateWorkspaceView: View {
     var body: some View {
         Group {
             if regular {
-                NavigationSplitView(columnVisibility: $columns) {
-                    conversations
-                        .navigationSplitViewColumnWidth(min: 240, ideal: 320, max: 360)
-                        .composerLayoutMeasurement(id: "first-mate-sidebar-column")
-                } content: {
-                    Group {
-                        if showsBriefing { briefing }
-                        else if let target = fleet.selectedTarget { chat(target, topmost: true) }
-                        else { ContentUnavailableView("Choose a conversation", systemImage: "sailboat").herdrEmptyColumn() }
-                    }
-                    .navigationSplitViewColumnWidth(min: 300, ideal: 520, max: .infinity)
-                    .composerLayoutMeasurement(id: "first-mate-chat-column")
-                    .accessibilityIdentifier("first-mate-chat-column")
-                } detail: {
-                    Group {
-                        if let target = fleet.selectedTarget, let store = fleet.store(for: target) {
-                            FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target,
-                                assignmentID: assignmentID(for: target), openFeature: openFeature, embedded: true)
-                                .id(target)
-                        } else {
-                            ContentUnavailableView("Conversation info", systemImage: "info.circle",
-                                description: Text("Select a conversation to see its overview and saved evidence."))
-                                .herdrEmptyColumn()
-                        }
-                    }
-                    .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 420)
-                    .composerLayoutMeasurement(id: "first-mate-info-column")
-                    .accessibilityIdentifier("first-mate-info-column")
+                GeometryReader { geometry in
+                    regularColumns(FirstMateIPadLayout.resolve(size: geometry.size, inspectorOpen: inspectorOpen,
+                                                               list: listPreference, pinned: inspectorPinned))
                 }
-                .navigationSplitViewStyle(.balanced)
                 .toolbarVisibility(.visible, for: .tabBar)
             } else {
                 NavigationStack(path: $path) {
@@ -66,6 +46,7 @@ struct FirstMateWorkspaceView: View {
             }
         }
         .herdrFirstMateChrome()
+        .firstMateGitCover(item: $gitTarget, model: model)
         .sheet(isPresented: $fleet.isCreating, onDismiss: { creationGoal = nil }) {
             FirstMateCreateSheet(model: model, fleet: fleet, onCreated: { target in
                 if let creationGoal, briefingGoal == creationGoal { briefingGoal = "" }
@@ -94,11 +75,6 @@ struct FirstMateWorkspaceView: View {
             case nil:
                 if !regular { fleet.selectTarget(nil) }
             }
-        }
-        .onChange(of: regular) { _, _ in
-            // A presentation change must not mint a navigation intent, select
-            // another owner, reset the Info tab, or consume an in-flight draft.
-            columns = .all
         }
         .onChange(of: fleet.chat.route, initial: true) { _, route in
             guard let route else { return }
@@ -131,6 +107,7 @@ struct FirstMateWorkspaceView: View {
             if let store = fleet.store(for: target) {
                 FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target,
                     assignmentID: assignmentID, openFeature: openFeature)
+                    .environment(\.firstMateInspectorContext, inspectorContext(target))
             }
         }
     }
@@ -139,6 +116,7 @@ struct FirstMateWorkspaceView: View {
             FirstMateChatScreen(model: model, fleet: fleet, store: store, target: target, topmost: topmost,
                 openInfo: { showInfo(target, inspector: $0, assignmentID: $1) }, readTrackingEnabled: true,
                 back: regular ? { clearSelection() } : nil, embedded: regular)
+                .environment(\.firstMateInspectorContext, inspectorContext(target))
                 .id(target)
         }
     }
@@ -159,12 +137,129 @@ struct FirstMateWorkspaceView: View {
     private func showInfo(_ target: FirstMateFeatureTarget, inspector: FirstMateInspector, assignmentID: String?) {
         guard fleet.selectedTarget == target, let store = fleet.store(for: target) else { return }
         model.beginAppNavigation(); store.inspector = inspector
+        if regular { setInspector(open: true) }
         if case .info = path.last { path.removeLast() }
         path.append(.info(target, assignmentID: assignmentID))
     }
     private func openBriefing() {
         fleet.selectTarget(nil); fleet.chat.select(.lead)
         path = [.lead]
+    }
+}
+
+// MARK: - iPad columns
+
+extension FirstMateWorkspaceView {
+    /// The list (or its rail), the chat, and the inspector, docked as a column
+    /// or floating over the chat as a glass sheet.
+    @ViewBuilder fileprivate func regularColumns(_ layout: FirstMateIPadLayout) -> some View {
+        let animation: Animation? = reduceMotion ? nil : .snappy(duration: 0.3)
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 0) {
+                Group {
+                    if layout.showsRail {
+                        FirstMateConversationRail(model: model, fleet: fleet, openFeature: openFeature, openLead: openBriefing)
+                            .transition(.opacity)
+                    } else {
+                        conversations.transition(.opacity)
+                    }
+                }
+                .frame(width: layout.leadingWidth)
+                .clipped()
+                .composerLayoutMeasurement(id: "first-mate-sidebar-column")
+                .accessibilityIdentifier("first-mate-sidebar-column")
+                Group {
+                    if showsBriefing { briefing }
+                    else if let target = fleet.selectedTarget { chat(target, topmost: true) }
+                    else { ContentUnavailableView("Choose a conversation", systemImage: "sailboat").herdrEmptyColumn() }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .environment(\.firstMateRegularChatControls, chatControls(layout))
+                .composerLayoutMeasurement(id: "first-mate-chat-column")
+                .accessibilityIdentifier("first-mate-chat-column")
+                if layout.inspector == .docked {
+                    inspectorPanel(layout)
+                        .frame(width: layout.inspectorWidth)
+                        .herdrHairline(.leading)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            if layout.inspector == .floating {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture { setInspector(open: false) }
+                    .accessibilityLabel("Close the inspector")
+                    .accessibilityAddTraits(.isButton)
+                    .transition(.opacity)
+                inspectorPanel(layout)
+                    .frame(width: layout.inspectorWidth)
+                    .clipShape(.rect(cornerRadius: 28, style: .continuous))
+                    .overlay { RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(HerdrTheme.outline) }
+                    .shadow(color: .black.opacity(0.45), radius: 40, x: -12, y: 20)
+                    .padding(.trailing, 12).padding(.vertical, 10)
+                    .offset(x: inspectorDrag)
+                    .gesture(DragGesture(minimumDistance: 16)
+                        .onChanged { value in
+                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                            inspectorDrag = max(0, value.translation.width)
+                        }
+                        .onEnded { value in
+                            let close = value.translation.width > 90 || value.predictedEndTranslation.width > 220
+                            withAnimation(animation) { inspectorDrag = 0 }
+                            if close { setInspector(open: false) }
+                        })
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .animation(animation, value: layout)
+    }
+
+    @ViewBuilder fileprivate func inspectorPanel(_ layout: FirstMateIPadLayout) -> some View {
+        Group {
+            if let target = fleet.selectedTarget, let store = fleet.store(for: target) {
+                FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target,
+                    assignmentID: assignmentID(for: target), openFeature: openFeature, embedded: true)
+                    .environment(\.firstMateInspectorContext, inspectorContext(target))
+                    .id(target)
+            } else {
+                ContentUnavailableView("Conversation info", systemImage: "info.circle",
+                    description: Text("Select a conversation to see its overview and saved evidence."))
+                    .herdrEmptyColumn()
+                    .overlay(alignment: .topTrailing) { FirstMateInspectorPanelButtons().padding(8) }
+            }
+        }
+        .environment(\.firstMateInspectorPanelControls, FirstMateInspectorPanelControls(
+            isFloating: layout.inspector == .floating, canPin: layout.canPin, isPinned: layout.inspector == .docked && inspectorPinned,
+            togglePin: { inspectorPinned.toggle(); inspectorOpen = true },
+            close: { setInspector(open: false) }))
+        .composerLayoutMeasurement(id: "first-mate-info-column")
+        .accessibilityIdentifier("first-mate-info-column")
+    }
+
+    fileprivate func chatControls(_ layout: FirstMateIPadLayout) -> FirstMateRegularChatControls {
+        FirstMateRegularChatControls(
+            listIsRail: layout.showsRail,
+            toggleList: { listPreference = layout.showsRail ? .full : .rail },
+            inspectorOpen: layout.inspectorOpen,
+            toggleInspector: { setInspector(open: !layout.inspectorOpen) },
+            showInspector: { tab in
+                if let target = fleet.selectedTarget { fleet.store(for: target)?.inspector = tab }
+                setInspector(open: true)
+            })
+    }
+
+    fileprivate func setInspector(open: Bool) {
+        inspectorOpen = open
+        if !open { inspectorPinned = false }
+        inspectorDrag = 0
+    }
+
+    fileprivate func inspectorContext(_ target: FirstMateFeatureTarget) -> FirstMateInspectorContext {
+        let title = fleet.chat.conversation(for: target, fleet: fleet)?.name
+            ?? fleet.store(for: target)?.snapshots[target.featureID]?.feature.title ?? "Feature"
+        return FirstMateInspectorContext(model: model, target: target, featureTitle: title, openGit: { gitTarget = $0 },
+                                         conversation: fleet.chat.conversation(for: target, fleet: fleet),
+                                         machineName: model.machineName(target.machineID))
     }
 }
 

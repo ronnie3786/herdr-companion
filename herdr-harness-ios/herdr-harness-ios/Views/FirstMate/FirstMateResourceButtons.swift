@@ -11,10 +11,12 @@ struct FirstMateResourceButtons: View {
             HStack(spacing: 6) {
                 FirstMateAgentMenu(store: store, snapshot: snapshot, visit: visit)
                 FirstMateDocumentMenu(store: store, snapshot: snapshot, visit: visit)
+                FirstMateSimulatorVisitChip(visitID: visit.id)
             }
             VStack(alignment: .leading, spacing: 0) {
                 FirstMateAgentMenu(store: store, snapshot: snapshot, visit: visit)
                 FirstMateDocumentMenu(store: store, snapshot: snapshot, visit: visit)
+                FirstMateSimulatorVisitChip(visitID: visit.id)
             }
         }
         .buttonStyle(.herdrPlain)

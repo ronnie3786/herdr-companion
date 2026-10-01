@@ -1,11 +1,14 @@
 import SwiftUI
 
-/// The Mac inspector's Overview, sized for touch: "The feature at a glance",
-/// the goal, usage and current focus cards, the step's agents as plain rows,
-/// and the latest journal milestones.
+/// The inspector's Overview, sized for touch: where the feature stands now,
+/// its pull requests and builds, the goal (cut to a few lines until asked),
+/// usage, the current focus with its agents, documents and simulator builds,
+/// the step's agents, and the latest journal milestones.
 struct FirstMateOverviewView: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot
+    @Environment(\.firstMateInspectorContext) private var context
+    @State private var showsFullGoal = false
 
     private var currentAgents: [FirstMateAssignment] {
         snapshot.currentVisit.map { snapshot.agents(for: $0.id) } ?? []
@@ -19,33 +22,21 @@ struct FirstMateOverviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            FirstMateInspectorHeading(title: "The feature at a glance")
-
-            VStack(alignment: .leading, spacing: 6) {
-                HerdrMicroLabel(text: "Goal")
-                Text(snapshot.feature.goal)
-                    .herdrFont(.body).foregroundStyle(HerdrTheme.proseText)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("first-mate-overview")
+            if let conversation = context?.conversation, !snapshot.feature.isLead {
+                FirstMateNowCard(conversation: conversation, machineName: context?.machineName ?? conversation.machineName)
             }
+            if !snapshot.pullRequestLinks.isEmpty {
+                FirstMatePullRequestsCard(links: snapshot.pullRequestLinks)
+            }
+            FirstMateBuildsSection(snapshot: snapshot)
+
+            goal
 
             VStack(alignment: .leading, spacing: 12) {
                 FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .herdrCard()
-
-                if snapshot.feature.verification != nil {
-                    FirstMateVerificationSummaryView(
-                        verification: snapshot.feature.verification,
-                        isLastReported: !store.isDemo && store.error != nil
-                    )
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .herdrCard()
-                }
 
                 if let visit = snapshot.currentVisit {
                     VStack(alignment: .leading, spacing: 0) {
@@ -117,6 +108,33 @@ struct FirstMateOverviewView: View {
                     .buttonStyle(.herdrPlain)
                     .herdrFont(.footnote, weight: .medium).foregroundStyle(HerdrTheme.accent)
                     .frame(minHeight: 44).contentShape(.rect)
+            }
+        }
+    }
+
+    /// The goal as rendered markdown. A long brief is cut to its first lines
+    /// until "Show full brief", so the useful cards below stay in reach.
+    private var goal: some View {
+        let source = snapshot.feature.goal
+        let long = source.count > 320 || source.components(separatedBy: "\n").count > 6
+        return VStack(alignment: .leading, spacing: 6) {
+            HerdrMicroLabel(text: "Goal")
+            FirstMateDocumentContentView(source: source)
+                .frame(maxHeight: long && !showsFullGoal ? 132 : nil, alignment: .top)
+                .clipped()
+                .mask {
+                    if long && !showsFullGoal {
+                        LinearGradient(stops: [.init(color: .black, location: 0.7), .init(color: .clear, location: 1)],
+                                       startPoint: .top, endPoint: .bottom)
+                    } else { Color.black }
+                }
+                .accessibilityIdentifier("first-mate-overview")
+            if long {
+                Button(showsFullGoal ? "Show less" : "Show full brief") { showsFullGoal.toggle() }
+                    .buttonStyle(.herdrPlain)
+                    .herdrFont(.footnote, weight: .medium).foregroundStyle(HerdrTheme.accent)
+                    .frame(minHeight: 44).contentShape(.rect)
+                    .accessibilityIdentifier("first-mate-overview-goal-toggle")
             }
         }
     }

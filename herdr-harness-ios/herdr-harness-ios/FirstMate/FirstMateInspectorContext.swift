@@ -9,6 +9,9 @@ struct FirstMateInspectorContext {
     let target: FirstMateFeatureTarget
     let featureTitle: String
     var openGit: (FirstMateGitTarget) -> Void
+    /// The fleet's row for this feature: its status, step and "now" line.
+    var conversation: FirstMateConversation? = nil
+    var machineName: String = ""
 }
 
 extension EnvironmentValues {

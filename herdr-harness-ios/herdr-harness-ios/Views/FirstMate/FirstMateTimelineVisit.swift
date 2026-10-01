@@ -36,6 +36,7 @@ struct FirstMateTimelineVisit: View {
                 Text("\(isCurrent ? "Current · " : "")Visit \(index + 1) · revision \(visit.revision)")
                     .herdrFont(.footnote).foregroundStyle(isCurrent ? HerdrTheme.accent : HerdrTheme.tertiaryText)
                 FirstMateResourceButtons(store: store, snapshot: snapshot, visit: visit)
+                FirstMateVisitCommits(visit: visit, complete: complete)
             }
             .padding(.bottom, isLast ? 0 : 12)
             .frame(maxWidth: .infinity, alignment: .leading)

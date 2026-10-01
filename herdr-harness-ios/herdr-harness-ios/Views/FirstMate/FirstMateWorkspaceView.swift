@@ -156,7 +156,9 @@ extension FirstMateWorkspaceView {
         let animation: Animation? = reduceMotion ? nil : .snappy(duration: 0.3)
         ZStack(alignment: .trailing) {
             HStack(spacing: 0) {
-                Group {
+                // Each column is its own accessibility container, so its
+                // identifier survives the identifiers of the screens inside.
+                ZStack {
                     if layout.showsRail {
                         FirstMateConversationRail(model: model, fleet: fleet, openFeature: openFeature, openLead: openBriefing)
                             .transition(.opacity)
@@ -167,8 +169,9 @@ extension FirstMateWorkspaceView {
                 .frame(width: layout.leadingWidth)
                 .clipped()
                 .composerLayoutMeasurement(id: "first-mate-sidebar-column")
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("first-mate-sidebar-column")
-                Group {
+                ZStack {
                     if showsBriefing { briefing }
                     else if let target = fleet.selectedTarget { chat(target, topmost: true) }
                     else { ContentUnavailableView("Choose a conversation", systemImage: "sailboat").herdrEmptyColumn() }
@@ -176,6 +179,7 @@ extension FirstMateWorkspaceView {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .environment(\.firstMateRegularChatControls, chatControls(layout))
                 .composerLayoutMeasurement(id: "first-mate-chat-column")
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("first-mate-chat-column")
                 if layout.inspector == .docked {
                     inspectorPanel(layout)
@@ -215,7 +219,7 @@ extension FirstMateWorkspaceView {
     }
 
     @ViewBuilder fileprivate func inspectorPanel(_ layout: FirstMateIPadLayout) -> some View {
-        Group {
+        ZStack {
             if let target = fleet.selectedTarget, let store = fleet.store(for: target) {
                 FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target,
                     assignmentID: assignmentID(for: target), openFeature: openFeature, embedded: true)
@@ -233,6 +237,7 @@ extension FirstMateWorkspaceView {
             togglePin: { inspectorPinned.toggle(); inspectorOpen = true },
             close: { setInspector(open: false) }))
         .composerLayoutMeasurement(id: "first-mate-info-column")
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-info-column")
     }
 

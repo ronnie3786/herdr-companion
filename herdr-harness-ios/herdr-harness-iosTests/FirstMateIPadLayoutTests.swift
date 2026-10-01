@@ -157,6 +157,28 @@ final class FirstMateIPadRenderTests: XCTestCase {
         try save(render, "a2-iphone-chat-402")
     }
 
+    func testInspectorPanelOverviewAndWorkflowAtColumnWidth() async throws {
+        let model = await fixture(), fleet = model.firstMateFleet
+        model.selectedTab = .firstMate
+        let target = FirstMateFeatureTarget(machineID: "demo1", featureID: "demo-receipts")
+        XCTAssertTrue(fleet.open(target))
+        let store = try XCTUnwrap(fleet.store(for: target))
+        let context = FirstMateInspectorContext(model: model, target: target, featureTitle: "Receipt export", openGit: { _ in },
+            conversation: fleet.chat.conversation(for: target, fleet: fleet), machineName: "desktop")
+        for tab in [FirstMateInspector.overview, .workflow] {
+            store.inspector = tab
+            let render = await IOSNativeRenderHarness().render(
+                FirstMateInfoScreen(model: model, fleet: fleet, store: store, target: target, embedded: true)
+                    .environment(\.firstMateInspectorContext, context)
+                    .environment(\.firstMateInspectorPanelControls, FirstMateInspectorPanelControls(
+                        isFloating: true, canPin: true, isPinned: false, togglePin: {}, close: {}))
+                    .frame(height: 1300), width: 400, dynamicType: .defaultSize, background: .dusk)
+            XCTAssertTrue(render.drewHierarchy)
+            if tab == .overview { XCTAssertNotNil(render.element(identifier: "first-mate-now-card"), render.measurementDiagnostics) }
+            try save(render, "a2-inspector-\(tab.id)-400")
+        }
+    }
+
     /// Git, then ⋯, then the inspector/Info control on the far right.
     private func assertChatBarOrder(_ render: IOSNativeRenderHarness.HostedRender) throws {
         let git = try XCTUnwrap(render.element(identifier: "chat-git-control"), render.measurementDiagnostics).frame

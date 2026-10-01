@@ -47,6 +47,7 @@ struct FirstMateNowCard: View {
         .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(tint.opacity(0.28)) }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("first-mate-now-card")
+        .composerLayoutMeasurement(id: "first-mate-now-card")
     }
 }
 

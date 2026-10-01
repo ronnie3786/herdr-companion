@@ -207,7 +207,7 @@ struct FirstMateChatView: View {
                                 .foregroundStyle(HerdrTheme.accent)
                                 .accessibilityHidden(true)
                             ProgressView().controlSize(.small)
-                            Text("First Mate is working…")
+                            Text(snapshot.feature.isLead ? "First Mate is working…" : "Second Mate is working…")
                                 .herdrFont(size: HerdrTheme.TextSize.small)
                                 .foregroundStyle(HerdrTheme.secondaryText)
                         }
@@ -270,7 +270,7 @@ struct FirstMateChatView: View {
         FirstMateMessageView(
             message: message,
             isPendingDecision: pendingDecisionID == message.id,
-            isLead: isLead,
+            isLead: snapshot.feature.isLead,
             canQuote: canControl && !featureIsClosed && eligibleQuoteIDs.contains(message.id),
             quoteSource: "First Mate feature \(snapshot.feature.id) · message \(message.id)",
             saveQuote: { quote in

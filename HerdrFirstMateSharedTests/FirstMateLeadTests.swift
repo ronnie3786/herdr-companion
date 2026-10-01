@@ -224,11 +224,11 @@ struct FirstMateLeadTests {
                                                               contextWindow: 1_000_000, handoffTargetTokens: 150_000)
         let presentation = FirstMateCoordinatorContextPresentation(feature: lead, capabilityAvailable: true)
         #expect(presentation.compactLine.hasPrefix("Context 6%"))
-        #expect(presentation.policy.contains("compacts"))
+        #expect(presentation.policy.contains("Pi compaction is cancelled only for this managed session"))
         #expect(presentation.pressure == "Managed handoff target 150,000 tokens")
 
         let feature = ChatFixtures.feature("fmf_synthetic_feature")
-        #expect(FirstMateCoordinatorContextPresentation(feature: feature, capabilityAvailable: true).summary.hasPrefix("Coordinator context"))
+        #expect(FirstMateCoordinatorContextPresentation(feature: feature, capabilityAvailable: true).summary.hasPrefix("Second Mate context"))
     }
 
     @Test("The demo lead is a lead with a skimmed answer, never a feature")

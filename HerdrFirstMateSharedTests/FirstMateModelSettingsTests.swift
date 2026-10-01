@@ -47,7 +47,7 @@ struct FirstMateModelSettingsTests {
         #expect(blankSelection.compactDisplayName == "Not configured")
         #expect(blankSelection.requestedDisplayName == "Not configured")
         #expect(blankSelection.actualDisplayName == "Unavailable — no observed runtime evidence")
-        #expect(blankSelection.fullDisplayName == "Profile: architect · Requested: Not configured · Actual: Unavailable — no observed runtime evidence")
+        #expect(blankSelection.fullDisplayName == "Profile: Architect · Requested: Not configured · Actual: Unavailable — no observed runtime evidence")
 
         let whitespace = Data(#"{"profile":" architect ","requested_model":" \t ","requested_thinking":"max","actual_thinking":"low","source":"host_policy"}"#.utf8)
         let whitespaceSelection = try JSONDecoder().decode(FirstMateModelSelection.self, from: whitespace)
@@ -67,11 +67,11 @@ struct FirstMateModelSettingsTests {
         let matchingSelection = try JSONDecoder().decode(FirstMateModelSelection.self, from: matching)
         #expect(matchingSelection.requestedDisplayName == "synthetic/architect · high")
         #expect(matchingSelection.actualDisplayName == "synthetic/architect · high")
-        #expect(matchingSelection.fullDisplayName == "Profile: architect · Requested: synthetic/architect · high · Actual: synthetic/architect · high")
+        #expect(matchingSelection.fullDisplayName == "Profile: Architect · Requested: synthetic/architect · high · Actual: synthetic/architect · high")
 
         let mismatched = Data(#"{"profile":"architect","requested_model":"synthetic/architect","requested_thinking":"high","actual_model":"synthetic/unexpected-architect","actual_thinking":"medium","source":"host_policy"}"#.utf8)
         let mismatchedSelection = try JSONDecoder().decode(FirstMateModelSelection.self, from: mismatched)
-        #expect(mismatchedSelection.fullDisplayName == "Profile: architect · Requested: synthetic/architect · high · Actual: synthetic/unexpected-architect · medium")
+        #expect(mismatchedSelection.fullDisplayName == "Profile: Architect · Requested: synthetic/architect · high · Actual: synthetic/unexpected-architect · medium")
     }
 
     @Test("Old and routed catalogs both decode")

@@ -2,7 +2,7 @@
 
 ## First Mate inspector
 
-- The First Mate inspector's **Overview** no longer has a **Verification** section. The companion still records and enforces gate verification exactly as before; the browser Overview, `herdr-first-mate get` and managed `fm_status` still show it. The iPhone/iPad inspector drops the section too in its next build. Presentation only; no companion update is needed.
+- The First Mate inspector's **Overview** no longer has a **Verification** section. The companion still records and enforces gate verification exactly as before; the browser Overview, `herdr-first-mate get` and managed `fm_status` still show it. The iPhone/iPad inspector already dropped it in iOS 0.18.0 (47). Presentation only; no companion update is needed.
 
 ## First Mate HUD placement
 

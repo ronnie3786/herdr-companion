@@ -37,16 +37,6 @@ struct FirstMateOverviewView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .herdrCard()
 
-                if snapshot.feature.verification != nil {
-                    FirstMateVerificationSummaryView(
-                        verification: snapshot.feature.verification,
-                        isLastReported: !store.isDemo && store.error != nil
-                    )
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .herdrCard()
-                }
-
                 if let visit = snapshot.currentVisit {
                     VStack(alignment: .leading, spacing: 0) {
                         HerdrMicroLabel(text: "Current focus")

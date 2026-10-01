@@ -13,15 +13,12 @@ import Testing
 struct FirstMatePollPresentationTests {
     private func snapshot() -> FirstMateSnapshot {
         var snapshot = FirstMateSnapshot(feature: ChatFixtures.feature("synthetic"))
-        snapshot.feature.verification = FirstMateVerification(status: .failed, featureRevision: 1,
-            coverageReasons: ["Synthetic failed gate"], computedAt: "2030-01-01T00:00:00Z")
-        snapshot.feature.includesVerification = true
         snapshot.runtimeHealth = FirstMateRuntimeHealth(status: "healthy", schedulerAlive: true,
             lastSuccessAt: "2030-01-01T00:00:00Z", errorKind: nil, consecutiveFailures: 0)
         return snapshot
     }
 
-    @Test("Timestamp-only snapshots stay quiet while a changed verdict publishes")
+    @Test("Heartbeat-only snapshots stay quiet while a changed feature publishes")
     func quietPoll() {
         let store = FirstMateStore()
         var snapshot = snapshot()
@@ -32,35 +29,18 @@ struct FirstMatePollPresentationTests {
             _ = store.features
             _ = store.runtimeHealth
         } onChange: { changes.withLock { $0 += 1 } }
-        snapshot.feature.verification?.computedAt = "2030-01-01T00:00:10Z"
         snapshot.runtimeHealth?.lastSuccessAt = "2030-01-01T00:00:10Z"
         store.receive(snapshot)
         #expect(changes.withLock { $0 } == 0)
-        snapshot.feature.verification?.status = .partiallyVerified
+        snapshot.feature.status = "paused"
         store.receive(snapshot)
         #expect(changes.withLock { $0 } == 1)
-        #expect(store.snapshots[snapshot.feature.id]?.feature.verification?.status == .partiallyVerified)
+        #expect(store.snapshots[snapshot.feature.id]?.feature.status == "paused")
     }
 
-    @Test("An unpublished newer failure still fences a delayed green")
-    func retainsOrderingFence() {
-        let store = FirstMateStore()
-        var snapshot = snapshot()
-        store.receive(snapshot)
-        snapshot.feature.verification?.computedAt = "2030-01-01T00:00:20Z"
-        store.receive(snapshot)
-        snapshot.feature.verification?.computedAt = "2030-01-01T00:00:10Z"
-        snapshot.feature.verification?.status = .verified
-        store.receive(snapshot)
-        #expect(store.snapshots[snapshot.feature.id]?.feature.verification?.status == .failed)
-        snapshot.feature.verification?.computedAt = "2030-01-01T00:00:30Z"
-        store.receive(snapshot)
-        #expect(store.snapshots[snapshot.feature.id]?.feature.verification?.status == .verified)
-    }
-
-    @Test("Feature list polls retain ordering without redrawing")
+    @Test("Unchanged feature list polls do not redraw")
     func listPoll() async throws {
-        var snapshot = snapshot()
+        let snapshot = snapshot()
         let client = SyntheticChatFleetClient(features: [snapshot.feature])
         let store = FirstMateStore()
         store.configure(client: client, demo: false)
@@ -68,18 +48,11 @@ struct FirstMatePollPresentationTests {
         await store.refresh()
         let changes = OSAllocatedUnfairLock(initialState: 0)
         withObservationTracking { _ = store.features; _ = store.snapshots } onChange: { changes.withLock { $0 += 1 } }
-        snapshot.feature.verification?.computedAt = "2030-01-01T00:00:20Z"
-        client.features = .success([snapshot.feature])
-        client.snapshots = [snapshot.feature.id: snapshot]
         await store.refresh()
         #expect(changes.withLock { $0 } == 0)
-        snapshot.feature.verification?.computedAt = "2030-01-01T00:00:10Z"
-        snapshot.feature.verification?.status = .verified
-        store.receive(snapshot)
-        #expect(store.features.first?.verification?.status == .failed)
     }
 
-    @Test("Warnings, evidence, transcript edits and event ordering remain observable")
+    @Test("Warnings, transcript edits and event ordering remain observable")
     func meaningfulChanges() {
         let original = snapshot()
         var next = original
@@ -89,17 +62,11 @@ struct FirstMatePollPresentationTests {
         laterWarning.runtimeHealth?.lastSuccessAt = "2030-01-01T00:00:20Z"
         #expect(!FirstMatePollPresentation.sameSnapshot(next, laterWarning))
         next = original
-        next.feature.verification?.coverageReasons.append("A second synthetic gate")
-        #expect(!FirstMatePollPresentation.sameSnapshot(original, next))
-        next = original
         next.eventCursor = 5
         #expect(!FirstMatePollPresentation.sameSnapshot(original, next))
         next = original
         next.messages.append(.init(id: "reply", featureID: original.feature.id, role: "assistant",
             text: "An actual reply", status: "delivered", createdAt: "2030-01-01T00:00:10Z"))
-        #expect(!FirstMatePollPresentation.sameSnapshot(original, next))
-        next = original
-        next.feature.verification = nil
         #expect(!FirstMatePollPresentation.sameSnapshot(original, next))
     }
 

@@ -19,8 +19,6 @@ struct FirstMatePerformanceMeasurements {
         // Keep the real composer mounted while the selected feature is idle.
         // Completed features intentionally replace it with a closed notice.
         value.feature.status = "paused"
-        value.feature.verification = FirstMateVerification(status: .partiallyVerified, featureRevision: value.feature.revision,
-            coverageReasons: ["Synthetic coverage is incomplete."], computedAt: "2030-01-01T00:00:00Z")
         value.runtimeHealth = FirstMateRuntimeHealth(status: "healthy", schedulerAlive: true,
             lastSuccessAt: "2030-01-01T00:00:00Z", errorKind: nil, consecutiveFailures: 0)
         value.messages = (0..<177).map { index in
@@ -82,8 +80,7 @@ struct FirstMatePerformanceMeasurements {
                 publications.withLock { $0 += 1 }
             }
             var poll = snapshot
-            poll.feature.verification?.computedAt = "2030-01-01T00:00:\(String(format: "%02d", index))Z"
-            poll.runtimeHealth?.lastSuccessAt = poll.feature.verification?.computedAt
+            poll.runtimeHealth?.lastSuccessAt = "2030-01-01T00:00:\(String(format: "%02d", index))Z"
             store.receive(poll)
         }
         print("FM_PERF unchanged-poll-publications: \(publications.withLock { $0 }) / 10")
@@ -153,8 +150,7 @@ struct FirstMatePerformanceMeasurements {
             for index in 0..<200 {
                 let inputStart = ContinuousClock.now
                 if index % 100 == 0 {
-                    poll.feature.verification?.computedAt = "2030-01-01T00:\(phase == "idle" ? "01" : phase == "draft-edits" ? "02" : "03"):\(index == 0 ? "00" : "02")Z"
-                    poll.runtimeHealth?.lastSuccessAt = poll.feature.verification?.computedAt
+                    poll.runtimeHealth?.lastSuccessAt = "2030-01-01T00:\(phase == "idle" ? "01" : phase == "draft-edits" ? "02" : "03"):\(index == 0 ? "00" : "02")Z"
                     if phase == "reply-arrival" {
                         poll.messages.append(.init(id: "arriving-reply-\(index)", featureID: poll.feature.id,
                             role: "assistant", text: "Read Synthetic document \(index). A new synthetic reply has arrived.",

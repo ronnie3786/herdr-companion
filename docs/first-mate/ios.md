@@ -332,6 +332,21 @@ portrait floats it over the chat as a glass sheet that you close, swipe away, or
 pin to dock beside the chat. The chat bar ends with Git, ⋯, and the inspector
 button on iPad, and with Git, ⋯, and Info on iPhone. The app's tab bar stays
 visible on iPad. The lead has only Overview, and older-host briefing remains explicit.
+
+Git opens full screen from the chat bar, or from a Workflow commit at that commit
+(the Mac opens the same view in its own window). It needs a companion advertising
+`first-mate-git-v1` and uses the feature's Git routes: the checkout catalog,
+status, file and commit diffs, and stage/unstage. On iPad the changes and recent
+commits sit beside the diff; on iPhone the file list comes first and a file or
+commit pushes its diff. Stage boxes stage and unstage, untracked files included.
+
+Overview's Builds card lists the feature's Mobile App Hub builds (Settings ›
+Builds › Mobile App Hub address) and its simulator checkpoints. **Install** opens
+the build's install link on the device; **Open in Simulator** opens the
+checkpoint's simulator full screen through the companion's SimPortal relay
+(`first-mate-simulator-previews-v1`), with touch and keyboard input, Home, Lock,
+Type, Stop, and **Open in SimPortal** for the browser viewer. See
+[simulator checkpoints](simulator-previews.md).
 The whole app uses dark dusk chrome and capped scalable text with native scrolling.
 Widget colors are unchanged.
 

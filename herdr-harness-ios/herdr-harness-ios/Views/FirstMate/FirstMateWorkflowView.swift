@@ -48,5 +48,6 @@ struct FirstMateWorkflowView: View {
                 .padding(.vertical, 8)
             }
         }
+        .firstMateBuildsRefresh(snapshot: snapshot)
     }
 }

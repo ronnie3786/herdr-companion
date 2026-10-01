@@ -110,6 +110,7 @@ struct FirstMateOverviewView: View {
                     .frame(minHeight: 44).contentShape(.rect)
             }
         }
+        .firstMateBuildsRefresh(snapshot: snapshot)
     }
 
     /// The goal as rendered markdown. A long brief is cut to its first lines

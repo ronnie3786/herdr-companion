@@ -33,10 +33,11 @@ struct FirstMateResourceMetadataView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 12)
         } label: {
-            Text("Source details")
+            Text("Source details").foregroundStyle(HerdrTheme.secondaryText)
+                .frame(minHeight: 44)
                 .accessibilityIdentifier("first-mate-source-details")
         }
-        .font(.subheadline)
-        .padding(.vertical, 8)
+        .herdrFont(.subheadline)
+        .tint(HerdrTheme.iconTint)
     }
 }

@@ -21,10 +21,10 @@ struct FirstMateSession: Codable, Equatable, Identifiable, Sendable {
 
     var kindDisplayName: String {
         switch kind {
-        case "coordinator": "First Mate coordinator"
+        case "coordinator": "Second Mate · Feature lead"
         case "worker": "Worker"
         case "advisor": "Advisor"
-        default: role == "first_mate" ? "First Mate coordinator" : "Worker"
+        default: role == "first_mate" ? "Second Mate · Feature lead" : "Worker"
         }
     }
 

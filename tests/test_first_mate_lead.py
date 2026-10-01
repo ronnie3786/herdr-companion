@@ -298,7 +298,7 @@ class LeadRuntimeTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--system-prompt") + 1], LEAD_PROMPT)
         self.assertEqual(argv[argv.index("--model") + 1], "synthetic/lead-model")
         self.assertEqual(argv[argv.index("--thinking") + 1], "high")
-        self.assertEqual(json.loads((directory / "auto-compaction.json").read_text())["enabled"], True)
+        self.assertFalse((directory / "auto-compaction.json").exists(), "Lead sessions must not persist a shared Pi compaction toggle")
         # A ready feature that asked a question is idle, with an unread message.
         self.assertIn("Features on this machine right now: 1 moving, 1 with an unread message.", job["prompt"])
         self.until(lambda: self.store.get_feature(lead_id)["coordinator_owner"] is None)

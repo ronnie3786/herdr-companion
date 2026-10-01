@@ -73,6 +73,7 @@ struct FirstMateResourceSheet: View {
                                 }
                                 .disabled(store.isLoadingEarlier)
                                 .accessibilityIdentifier("first-mate-load-earlier")
+                                if store.isLoadingEarlier { ProgressView().controlSize(.small) }
                             }
                         }
                         if let error = store.sessionPageError {
@@ -81,7 +82,7 @@ struct FirstMateResourceSheet: View {
                     }
                     Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     if store.resourceLoading {
-                        ProgressView("Loading saved resource…")
+                        ProgressView(resource.nativeSessionID == nil ? "Loading document…" : "Loading saved conversation…")
                             .frame(maxWidth: .infinity, minHeight: 220)
                     } else if let error = store.resourceError {
                         ContentUnavailableView("Resource unavailable", systemImage: "exclamationmark.circle", description: Text(error))
@@ -93,8 +94,13 @@ struct FirstMateResourceSheet: View {
                         FirstMateSessionTranscriptView(
                             messages: store.sessionMessages,
                             fallbackText: store.resourceText,
-                            sessionID: resource.nativeSessionID ?? ""
+                            sessionID: resource.nativeSessionID ?? "",
+                            isRunning: store.sessionIsRunning
                         )
+                        if let error = store.sessionRefreshError {
+                            Label("Conversation refresh failed: \(error)", systemImage: "wifi.exclamationmark")
+                                .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.warning)
+                        }
                     } else {
                         Text(store.resourceText)
                             .herdrFont(size: HerdrTheme.TextSize.body)
@@ -113,6 +119,13 @@ struct FirstMateResourceSheet: View {
         .frame(minWidth: 580, idealWidth: 720, minHeight: 480, idealHeight: 650)
         .background(FirstMatePalette(scheme: scheme).background).foregroundStyle(HerdrTheme.primaryText, HerdrTheme.secondaryText, HerdrTheme.tertiaryText)
         .accessibilityIdentifier("first-mate-resource-sheet")
+        .task(id: resource.nativeSessionID) {
+            guard resource.nativeSessionID != nil else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                await store.refreshSessionMessages()
+            }
+        }
     }
 
     private var rendersMarkdownDocument: Bool {

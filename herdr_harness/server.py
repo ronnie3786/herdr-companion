@@ -470,6 +470,7 @@ def api_description() -> dict:
             simulator_previews.CAPABILITY,
             "pr-review-v1",
             "pr-review-guide-v1",
+            "pr-review-walkthroughs-v1",
             "pr-review-context-v2",
             "git-comparison-v1",
             "pr-review-comparison-v1",
@@ -514,6 +515,8 @@ def api_description() -> dict:
             "prReviewContext": "/api/v1/pr-reviews/{reviewId}/context",
             "prReviewGuide": "/api/v1/pr-reviews/{reviewId}/guide",
             "prReviewGuideJob": "/api/v1/pr-reviews/{reviewId}/guide/{guideId}",
+            "prReviewWalkthroughs": "/api/v1/pr-reviews/{reviewId}/walkthroughs",
+            "prReviewWalkthroughSeen": "/api/v1/pr-reviews/{reviewId}/walkthroughs/{guideId}/seen",
             "issueReports": "/api/v1/issue-reports",
             "issueReportCapabilities": "/api/v1/issue-reports/capabilities",
             "network": "/api/v1/network",
@@ -644,6 +647,7 @@ def api_description() -> dict:
             "notes.changed",
             "agent_profiles.changed",
             "pr_review.updated",
+            "pr_review.walkthrough",
             "snapshot.updated",
             "alert.created",
             "alert.updated",
@@ -1604,7 +1608,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             store = service.pr_review_store
             runtime = service.pr_review
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-comparison-v1", "git-comparison-v1"], **runtime.capabilities(), "skills": store.skills()}
+                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-walkthroughs-v1", "pr-review-comparison-v1", "git-comparison-v1"], **runtime.capabilities(), "skills": store.skills()}
             if method == "POST" and tail == ["review-status", "refresh"]:
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Review status refresh contains an unsupported field")
@@ -1641,7 +1645,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if rest in (["archive"], ["unarchive"]) and method == "POST":
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Archive contains an unsupported field")
-                return {"ok": True, "review": store.archive(review_id, _string(body["request_id"], "request_id", maximum=200), rest == ["archive"])}
+                return {"ok": True, "review": runtime.archive(review_id, _string(body["request_id"], "request_id", maximum=200), rest == ["archive"])}
             if rest == ["refresh"] and method == "POST":
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Refresh contains an unsupported field")
@@ -1672,6 +1676,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return {"ok": True, "guide": runtime.guide.start(review_id, body)}, 202
             if len(rest) == 2 and rest[0] == "guide" and method == "GET":
                 return {"ok": True, "guide": runtime.guide.get(review_id, _identifier(rest[1], "guide_id"))}
+            if rest == ["walkthroughs"] and method == "GET":
+                return {"ok": True, "walkthroughs": runtime.guide.walkthroughs(review_id)}
+            if len(rest) == 3 and rest[0] == "walkthroughs" and rest[2] == "seen" and method == "POST":
+                if set(body) != {"request_id"}:
+                    raise HTTPValidationError("Seen contains an unsupported field")
+                _string(body.get("request_id"), "request_id", maximum=200)
+                return {"ok": True, "walkthrough": runtime.guide.mark_seen(review_id, _identifier(rest[1], "guide_id"))}
             if rest == ["findings"] and method == "GET":
                 return {"ok": True, **runtime.findings_for_path(review_id, _string((query.get("path") or [None])[0], "path", maximum=4096))}
             if rest == ["runs"] and method == "POST":

@@ -19,7 +19,7 @@ The Mac app uses the same `PromptComposerView` for pane Chat and First Mate. Fir
 
 When the companion advertises `first-mate-context-v1`, the composer reports only the current native coordinator session's measured context tokens, window, percentage, handoff target, and observation time. Zero is a real measurement; missing, malformed, stale-session, or unavailable data is shown as unknown rather than zero.
 
-At 90% of the configured target, the app distinguishes an approaching handoff from a reached threshold. Context details name the actual measurement time and explain the managed behavior: First Mate checkpoints at a safe turn boundary and starts a fresh coordinator while retaining full history. Ordinary compaction is disabled. There is no manual compact or handoff action in this interface.
+At 90% of the configured target, the app distinguishes an approaching handoff from a reached threshold. Context details name the actual measurement time and explain the managed behavior: Second Mate checkpoints at a safe turn boundary and starts a fresh coordinator while retaining full history. Compaction is cancelled only inside managed sessions; ordinary Pi sessions keep their own compaction settings. There is no manual compact or handoff action in this interface.
 
 ## Safe model settings
 

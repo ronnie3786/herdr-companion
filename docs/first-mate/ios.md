@@ -168,8 +168,8 @@ cancellable retry deadlines as features. A latest USER summary is not a read key
 the matching snapshot supplies the covered assistant; an unloaded newer user or
 assistant keeps the lead unread. The lead orb never contributes to feature dots,
 even with search/scope changes. Lead Info is Overview only: GOAL, Needs you,
-Moving, Done, native status/machine/now and sync state, with exact-owner capsule
-readouts and Open chat. Feature-only archive/pause/cancel controls are absent.
+Moving, Done, native status/machine/now and sync state, as Mac-style rows whose
+exact-owner readouts offer Open chat. Feature-only archive/pause/cancel controls are absent.
 
 Synthetic tests cover nil/read-only/unsupported lead, ensure and snapshot races,
 pins/removal/ties, failed-poll thresholds, context provenance and frozen retries.
@@ -200,7 +200,11 @@ or control loss never starts fallback or sends. Recognized text stays with its
 original draft; a concurrent edit preserves the result separately for explicit
 Append to draft. Voice messages retain the existing dictation caveat.
 
-The expandable accessory area shows coordinator context and Model and thinking.
+One accessory line above the pill holds two glass chips: the context ring with a
+short reading ("New session", "Context 41%", "… · handoff due") and the model's
+last path component with its thinking level. Both open their sheets; the full
+context summary is the chip's VoiceOver label. The tag and hold-to-talk hint
+appears only while the field is focused, or for voice and unavailable states.
 Settings load from the same host. Running-session changes require confirmation,
 a revision-pinned proposal and safe-model capability. Busy/queued turns, pending
 outgoing submissions, closed features and lost ownership disable mutations.
@@ -225,8 +229,14 @@ single final Mobile App Hub build.
 
 ## Feature chat (Phase 3)
 
-Chat hides the tab bar and uses a custom glass back/title/Info/More bar, retaining
-native edge-swipe back. A lazy, bottom-anchored transcript follows only within
+Chat hides the tab bar. Its back, title pill, Info and More controls, the composer
+pill and the plus button are system Liquid Glass (the tab bar's material), floating
+in `safeAreaBar`s with no band behind them; the transcript fades out at each bar
+edge so the dusk continues under the controls. Native edge-swipe back remains.
+The notice band shows only what the Mac shows: execution warnings, blocked work
+(with the blocking event's summary), interrupted recovery and pause, each with its
+icon. Suggested replies are accent outline chips inside the offering bubble, and
+file cards name the producing agent ("From Device QA"). A lazy, bottom-anchored transcript follows only within
 40pt of the end. Complete messages remain scrollable at the text cap. Bubbles
 use 18pt corners, a 5pt terminal tail, shared day/turn grouping and additional
 response disclosures. First Mate has no avatar/speaker line; crew messages retain
@@ -293,12 +303,50 @@ Hosts without `first-mate-archive-v1` keep their active list and update guidance
 
 On iPhone, a feature opens its conversation. Use the feature controls to inspect
 Overview, Agents, Documents or Workflow, then return to the same conversation.
+Info follows the Mac inspector: the navigation bar names the feature with its
+status and machine, the underline tabs and sync footer float over the content,
+and each tab keeps the Mac's structure. Overview opens with a Now card (the
+status word, "Step n of 6", the six steps as a bar, the feature's current line,
+and its machine and last update), then saved pull requests, Builds (Mobile App
+Hub builds and simulator checkpoints), the goal rendered as Markdown and cut to a
+few lines until **Show full brief**, usage, the current focus with its agents,
+documents and simulator chips, the step's agents as plain rows, and the latest
+journal milestones. There is no Verification card. Agents groups crew rows under
+step disclosure rows; Documents lists "agent · step" rows; Workflow puts
+Timeline/Graph beside "Feature journal" with "Visit n · revision r" steps, and
+each visit lists its commits, which open Git at that commit. Statuses are a glyph and word in the Mac's
+colors (blocked red, your direction green, working yellow). Saved sessions read
+as a transcript: your prompts in bubbles, the agent's Markdown, tool results
+folded. Sheets extend to every edge and close with the system glass button.
 Underline tabs scroll horizontally at narrow widths. A persistent footer shows
 sync state and revision. Mention navigation highlights only the exact assignment
 inside that owner, including its saved-session action. A different feature starts
 on Overview; rotation keeps the current feature, inspector, route and draft.
-On iPad, a NavigationSplitView keeps the conversation list, chat and Info in three
-columns. The lead has only Overview, and older-host briefing remains explicit.
+On iPad the chat comes first. The conversation list sits beside it with My
+First Mate and what needs you as four pinned orbs, and folder chips (All, Needs
+you, Moving, Done) filter the rows; the list folds into an 84 pt orb rail from
+the chat bar's leading button, and folds by itself when a docked inspector would
+leave the chat under 560 pt. The inspector opens on demand from the chat bar's
+trailing button or the title: landscape docks it as a column (open by default),
+portrait floats it over the chat as a glass sheet that you close, swipe away, or
+pin to dock beside the chat. The chat bar ends with Git, ⋯, and the inspector
+button on iPad, and with Git, ⋯, and Info on iPhone. The app's tab bar stays
+visible on iPad. The lead has only Overview, and older-host briefing remains explicit.
+
+Git opens full screen from the chat bar, or from a Workflow commit at that commit
+(the Mac opens the same view in its own window). It needs a companion advertising
+`first-mate-git-v1` and uses the feature's Git routes: the checkout catalog,
+status, file and commit diffs, and stage/unstage. On iPad the changes and recent
+commits sit beside the diff; on iPhone the file list comes first and a file or
+commit pushes its diff. Stage boxes stage and unstage, untracked files included.
+
+Overview's Builds card lists the feature's Mobile App Hub builds (Settings ›
+Builds › Mobile App Hub address) and its simulator checkpoints. **Install** opens
+the build's install link on the device; **Open in Simulator** opens the
+checkpoint's simulator full screen through the companion's SimPortal relay
+(`first-mate-simulator-previews-v1`), with touch and keyboard input, Home, Lock,
+Type, Stop, and **Open in SimPortal** for the browser viewer. See
+[simulator checkpoints](simulator-previews.md).
 The whole app uses dark dusk chrome and capped scalable text with native scrolling.
 Widget colors are unchanged.
 

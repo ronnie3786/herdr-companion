@@ -1,7 +1,11 @@
 import CoreGraphics
 import Foundation
 import Testing
+#if os(macOS)
 @testable import herdr_harness_mac
+#else
+@testable import herdr_harness_ios
+#endif
 
 @Suite("Simulator input math")
 struct SimulatorInputMathTests {

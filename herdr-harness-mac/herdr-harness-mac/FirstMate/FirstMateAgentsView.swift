@@ -9,7 +9,7 @@ struct FirstMateAgentsView: View {
             Text("\(FirstMateCountText.phrase(snapshot.assignments.count, "assignment")), each with its own session and evidence.")
                 .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
             if !snapshot.coordinatorSessions.isEmpty {
-                DisclosureGroup("First Mate coordinator · \(FirstMateCountText.phrase(snapshot.coordinatorSessions.count, "saved session"))") {
+                DisclosureGroup("Second Mate · Feature lead · \(FirstMateCountText.phrase(snapshot.coordinatorSessions.count, "saved session"))") {
                     ForEach(snapshot.coordinatorSessions) { session in
                         FirstMateSessionRow(store: store, session: session)
                     }

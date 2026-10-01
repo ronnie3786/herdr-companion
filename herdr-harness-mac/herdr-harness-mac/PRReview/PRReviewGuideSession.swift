@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -66,6 +67,19 @@ final class PRReviewGuideSession {
     @ObservationIgnored private weak var store: PRReviewStore?
     @ObservationIgnored private var currentPath: (() -> String?)?
     @ObservationIgnored private var isDemo = false
+    @ObservationIgnored private var supportsSavedWalkthroughs = false
+    @ObservationIgnored private var lastWalkthroughSummary: PRReviewWalkthroughSummary?
+    @ObservationIgnored private var walkthroughSyncTask: Task<Void, Never>?
+    @ObservationIgnored private var seenWalkthroughIDs: Set<String> = []
+    /// Whether a review window currently shows this session. Only a review the
+    /// user is looking at, in the active app, clears its walkthrough badge.
+    @ObservationIgnored private(set) var isPresented = false
+    @ObservationIgnored var isAppActive: @MainActor () -> Bool = { NSApplication.shared.isActive }
+    /// A saved walkthrough that is still preparing on the companion.
+    private(set) var pendingWalkthroughID: String?
+    /// The pending request is a walkthrough (not an answer), so it keeps
+    /// going on the companion if this window leaves.
+    private(set) var isPreparingWalkthrough = false
     @ObservationIgnored private let persistenceURL: URL?
     @ObservationIgnored private let allowsDemoPersistence: Bool
 
@@ -122,7 +136,12 @@ final class PRReviewGuideSession {
             if isBusy { return "Preparing a low-impact file explanation…" }
             return "Low-impact files · marked viewed after narration finishes"
         }
-        if isBusy { return answer == nil && plan == nil ? "Preparing your walkthrough…" : "Examining code and review context…" }
+        if isBusy, isPreparingWalkthrough {
+            return supportsSavedWalkthroughs
+                ? "Preparing your walkthrough… You can leave this review. Herdr will notify you when it is ready."
+                : "Preparing your walkthrough…"
+        }
+        if isBusy { return "Examining code and review context…" }
         if isLoadingAudio { return "Preparing narration…" }
         if isDetour { return "Question · your walkthrough place is saved" }
         if isFinished { return "Walkthrough complete · you decide what to review" }
@@ -140,6 +159,14 @@ final class PRReviewGuideSession {
         let scopeChanged = scope != newScope
         guard scopeChanged || connectionChanged else {
             isAvailable = (store.isDemo || store.capabilities?.capabilities.contains("pr-review-guide-v1") == true) && (!store.supportsComparisons || store.currentComparison != nil)
+            let supported = !store.isDemo && store.supportsSavedWalkthroughs
+            let summary = store.snapshot?.review.walkthrough
+            if supported != supportsSavedWalkthroughs || summary != lastWalkthroughSummary {
+                supportsSavedWalkthroughs = supported
+                lastWalkthroughSummary = summary
+                syncSavedWalkthrough()
+                markWalkthroughSeenIfNeeded()
+            }
             return
         }
         stopBreeze()
@@ -172,6 +199,130 @@ final class PRReviewGuideSession {
         } else if !sameReview || changedComparison {
             reset()
             restore()
+        }
+        supportsSavedWalkthroughs = !store.isDemo && store.supportsSavedWalkthroughs
+        lastWalkthroughSummary = store.snapshot?.review.walkthrough
+        syncSavedWalkthrough()
+        markWalkthroughSeenIfNeeded()
+    }
+
+    func setPresented(_ presented: Bool) {
+        guard presented != isPresented else { return }
+        isPresented = presented
+        if presented { markWalkthroughSeenIfNeeded() }
+    }
+
+    /// Opening a review, in the active app, acknowledges its newest
+    /// background walkthrough: the PR Review badge and the delivered
+    /// notification go away whether it finished or failed.
+    func markWalkthroughSeenIfNeeded() {
+        guard isPresented, supportsSavedWalkthroughs, isAppActive(), let client, let store, let scope,
+              let review = store.snapshot?.review, review.id == scope.reviewID,
+              let summary = review.walkthrough, summary.isNew,
+              !seenWalkthroughIDs.contains(summary.id) else { return }
+        seenWalkthroughIDs.insert(summary.id)
+        let reviewID = review.id
+        Task { [weak self, weak store] in
+            do {
+                let updated = try await client.markPRReviewWalkthroughSeen(reviewID: reviewID, guideID: summary.id)
+                store?.noteWalkthroughSeen(updated, reviewID: reviewID)
+                await NotificationManager.removeDelivered(alertIDs: [PRReviewWalkthroughNotification.identifier(guideID: summary.id)])
+            } catch {
+                self?.seenWalkthroughIDs.remove(summary.id)
+            }
+        }
+    }
+
+    /// Archiving a review ends its walkthroughs on the companion; this Mac's
+    /// saved place and answers for that review go with them.
+    func forgetSavedProgress(machineID: String, reviewID: String) {
+        if scope?.machineID == machineID, scope?.reviewID == reviewID {
+            stopBreeze()
+            cancelPending()
+            reset()
+        }
+        guard let persistenceURL,
+              let saved = try? JSONDecoder().decode([Saved].self, from: Data(contentsOf: persistenceURL)) else { return }
+        let kept = saved.filter { $0.scope.machineID != machineID || $0.scope.reviewID != reviewID }
+        guard kept.count != saved.count else { return }
+        try? JSONEncoder().encode(kept).write(to: persistenceURL, options: .atomic)
+    }
+
+    /// Walkthroughs finish on the companion even when no window is watching.
+    /// Show the newest one for this revision and comparison: follow it while
+    /// it prepares, or load it once it is ready.
+    private func syncSavedWalkthrough() {
+        // A walkthrough or answer this window requested is already followed.
+        guard supportsSavedWalkthroughs, isAvailable, !isDemo, !isBusy, let client, let scope else { return }
+        walkthroughSyncTask?.cancel()
+        let generation = generation
+        walkthroughSyncTask = Task { [weak self] in
+            let saved: [PRReviewWalkthroughSummary]
+            do { saved = try await client.prReviewWalkthroughs(reviewID: scope.reviewID) } catch { return }
+            guard let self, generation == self.generation, scope == self.scope, !Task.isCancelled else { return }
+            let matching = saved.filter { $0.matches(scope) }
+            guard let newest = matching.first, !self.isBusy else { return }
+            // Never swap the explanation out from under narration or a question.
+            guard !self.isPlaying, !self.isDetour, !self.isBreezing else { return }
+            if newest.isRunning {
+                self.follow(newest.id, scope: scope)
+            } else if let ready = matching.first(where: { $0.state == "finished" }), ready.id != self.plan?.id {
+                self.follow(ready.id, scope: scope)
+            } else if newest.state == "failed", newest.isNew, self.plan == nil {
+                self.error = newest.error ?? "The walkthrough could not finish. Start a new walkthrough."
+            }
+        }
+    }
+
+    private func follow(_ guideID: String, scope: PRReviewGuideScope) {
+        guard let client else { return }
+        cancelPending()
+        error = nil; isBusy = true; pendingWalkthroughID = guideID; isPreparingWalkthrough = true
+        let generation = generation
+        requestTask = Task { [weak self] in
+            do {
+                let first = try await client.fetchPRReviewGuide(reviewID: scope.reviewID, guideID: guideID)
+                let waited = first.state == "running" || first.state == "queued"
+                let result = try await Self.settled(first, client: client, reviewID: scope.reviewID)
+                guard let self, generation == self.generation, scope == self.scope, !Task.isCancelled else { return }
+                self.pendingWalkthroughID = nil
+                try Self.validate(result, scope: scope)
+                if self.plan?.id != result.id {
+                    self.chapterIndex = 0; self.segmentIndex = 0; self.resumeTime = 0
+                    self.checkpoint = nil; self.isFinished = false
+                }
+                self.plan = result
+                self.isBusy = false; self.isPreparingWalkthrough = false
+                // Someone waiting on this walkthrough sees its first passage;
+                // a saved one opens quietly where it was left.
+                if waited { self.navigateToSegment() }
+                self.persist()
+                self.markWalkthroughSeenIfNeeded()
+            } catch {
+                guard let self, generation == self.generation, !Task.isCancelled else { return }
+                self.isBusy = false; self.isPreparingWalkthrough = false
+                self.pendingWalkthroughID = nil
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private static func settled(_ guide: PRReviewGuide, client: any PRReviewGuideClient, reviewID: String) async throws -> PRReviewGuide {
+        var result = guide
+        while result.state == "running" || result.state == "queued" {
+            try await Task.sleep(for: .seconds(1))
+            try Task.checkCancellation()
+            result = try await client.fetchPRReviewGuide(reviewID: reviewID, guideID: result.id)
+        }
+        return result
+    }
+
+    private static func validate(_ result: PRReviewGuide, scope: PRReviewGuideScope) throws {
+        guard result.baseSHA == scope.baseSHA, result.headSHA == scope.headSHA, result.reviewID == scope.reviewID, result.comparison == scope.comparison else {
+            throw APIError.server(status: 409, message: "This explanation belongs to a different PR revision. Refresh the review and start again.")
+        }
+        guard result.state == "finished", !(result.chapters ?? []).isEmpty else {
+            throw APIError.server(status: 422, message: result.error ?? "The buddy could not prepare an explanation. Try again.")
         }
     }
 
@@ -328,7 +479,7 @@ final class PRReviewGuideSession {
     private func request(kind: String, question: String?, forBreeze: Bool = false) {
         guard let scope else { return }
         cancelPending()
-        error = nil; isBusy = true
+        error = nil; isBusy = true; isPreparingWalkthrough = kind == "walkthrough"
         let generation = generation
         let request = PRReviewGuideRequest(
             requestID: UUID().uuidString, baseSHA: scope.baseSHA, headSHA: scope.headSHA,
@@ -349,19 +500,10 @@ final class PRReviewGuideSession {
                 else {
                     guard let client = self.client else { throw APIError.invalidResponse }
                     result = try await client.startPRReviewGuide(reviewID: scope.reviewID, request: request)
-                    while result.state == "running" || result.state == "queued" {
-                        try await Task.sleep(for: .seconds(1))
-                        try Task.checkCancellation()
-                        result = try await client.fetchPRReviewGuide(reviewID: scope.reviewID, guideID: result.id)
-                    }
+                    result = try await Self.settled(result, client: client, reviewID: scope.reviewID)
                 }
                 guard generation == self.generation, scope == self.scope, !Task.isCancelled else { return }
-                guard result.baseSHA == scope.baseSHA, result.headSHA == scope.headSHA, result.reviewID == scope.reviewID, result.comparison == scope.comparison else {
-                    throw APIError.server(status: 409, message: "This explanation belongs to a different PR revision. Refresh the review and start again.")
-                }
-                guard result.state == "finished", !(result.chapters ?? []).isEmpty else {
-                    throw APIError.server(status: 422, message: result.error ?? "The buddy could not prepare an explanation. Try again.")
-                }
+                try Self.validate(result, scope: scope)
                 if forBreeze, let path = self.breezePath {
                     let targets = (result.chapters ?? []).flatMap(\.segments).compactMap(\.path)
                     guard !targets.isEmpty, targets.allSatisfy({ $0 == path }) else {
@@ -373,8 +515,9 @@ final class PRReviewGuideSession {
                     if !forBreeze { self.transcript.append(.init(id: result.id, question: question, answer: result)) }
                     self.draft = ""; self.selection = nil; self.isAsking = false; self.isExpanded = true
                 } else { self.plan = result; self.chapterIndex = 0 }
-                self.segmentIndex = 0; self.resumeTime = 0; self.isBusy = false
+                self.segmentIndex = 0; self.resumeTime = 0; self.isBusy = false; self.isPreparingWalkthrough = false
                 self.navigateToSegment(); self.persist()
+                if question == nil { self.markWalkthroughSeenIfNeeded() }
                 if forBreeze, self.isBreezing {
                     self.breezeGuide = result
                     self.breezeSegment = 0; self.breezeTime = 0
@@ -382,7 +525,7 @@ final class PRReviewGuideSession {
                 }
             } catch {
                 guard generation == self.generation, !Task.isCancelled else { return }
-                self.isBusy = false
+                self.isBusy = false; self.isPreparingWalkthrough = false
                 self.error = error.localizedDescription
                 if forBreeze { self.breezePaused = true }
             }
@@ -562,6 +705,7 @@ final class PRReviewGuideSession {
     }
     private func cancelPending() {
         generation &+= 1; requestTask?.cancel(); requestTask = nil; isBusy = false
+        walkthroughSyncTask?.cancel(); walkthroughSyncTask = nil; pendingWalkthroughID = nil; isPreparingWalkthrough = false
         cancelAudio()
     }
     private func reset() {

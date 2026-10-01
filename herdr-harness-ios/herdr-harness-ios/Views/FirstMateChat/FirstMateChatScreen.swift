@@ -14,6 +14,8 @@ struct FirstMateChatScreen: View {
     var embedded = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.firstMateRegularChatControls) private var columns
+    @Environment(\.firstMateInspectorContext) private var inspectorContext
     @State private var appeared = false
     @State private var followsLatest = false
     @State private var readLayout: FirstMateMobileTranscriptPolicy.ReadLayout?
@@ -56,8 +58,7 @@ struct FirstMateChatScreen: View {
         // A task may start after observable state has advanced. Its operation
         // must use the exact value that supplied this render's task identity.
         let attempt = readAttempt
-        VStack(spacing: 0) {
-            if isLead { leadBar } else { bar }
+        Group {
             if let snapshot {
                 FirstMateChatTranscript(store: store, snapshot: snapshot, conversation: conversation,
                     catalog: FirstMateMobileTranscriptPolicy.mentionCatalog(conversations: fleet.conversations, snapshot: snapshot, owner: target),
@@ -69,15 +70,24 @@ struct FirstMateChatScreen: View {
                         guard destination.machineID == target.machineID else { return }
                         openMention(FirstMateMention.url(for: .feature(featureID: destination.featureID)))
                     }, canRate: controls)
-                    .background(alignment: .top) { HerdrHazeBand() }
             } else if let error = store.error {
                 ContentUnavailableView {
                     Label("Feature couldn't load", systemImage: "wifi.exclamationmark")
                 } description: { Text(error) } actions: { Button("Try again") { Task { await store.refresh() } } }
             } else { ProgressView("Opening your feature…").frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
-        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
-        .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Bars float over the dusk as Liquid Glass controls with no band; the
+        // transcript fades out at their edges (`herdrEdgeFade`).
+        .safeAreaBar(edge: .top, spacing: 0) { if isLead { leadBar } else { bar } }
+        .safeAreaBar(edge: .bottom, spacing: 0) { composer }
+        .background {
+            ZStack(alignment: .top) {
+                HerdrGlassBackground(level: HerdrTheme.Glass.pane)
+                HerdrHazeBand()
+            }
+            .ignoresSafeArea()
+        }
         .herdrFirstMateChrome()
         .toolbar(.hidden, for: .navigationBar)
         .toolbarVisibility(embedded ? .visible : .hidden, for: .tabBar)
@@ -105,13 +115,11 @@ struct FirstMateChatScreen: View {
     }
 
     private var bar: some View {
-        HStack(spacing: 4) {
-            Button { if let back { back() } else { dismiss() } } label: { circle("chevron.left") }
-                .accessibilityLabel("Back to conversations").accessibilityIdentifier("first-mate-chat-back")
-                .composerLayoutMeasurement(id: "chat-back-control")
-            Button { openInfo(.overview, nil) } label: {
+        HStack(spacing: columns == nil ? 6 : 8) {
+            leadingControl
+            Button { showOverview() } label: {
                 HStack(spacing: 7) {
-                    FirstMateEmojiDisc(emoji: conversation?.emoji ?? "✦", size: 24)
+                    FirstMateEmojiDisc(emoji: conversation?.emoji ?? "✦", size: 28)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(conversation?.name ?? snapshot?.feature.title ?? "First Mate")
                             .herdrFont(.body, weight: .semibold).lineLimit(1)
@@ -119,16 +127,23 @@ struct FirstMateChatScreen: View {
                             .herdrFont(.caption).foregroundStyle(conversation.map { FirstMateChatStatusStyle.color(for: closed ? .done : $0.hudStatus) } ?? HerdrTheme.secondaryText).lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.down").font(.system(size: 10))
+                    // iPhone's bar also carries Git, ⋯ and Info, so the name keeps the chevron's room.
+                    if columns != nil {
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
+                    }
                 }
-                .padding(.horizontal, 10).frame(minHeight: 44)
-                .background(HerdrTheme.codeFill, in: .capsule)
+                .padding(.leading, 8).padding(.trailing, columns == nil ? 12 : 14).frame(minHeight: 44)
+                .herdrControlGlass(in: .capsule)
             }
             .accessibilityIdentifier("first-mate-chat-title")
             .composerLayoutMeasurement(id: "chat-title-control")
-            Button { openInfo(.overview, nil) } label: { circle("info.circle") }
-                .accessibilityLabel("Feature info").accessibilityIdentifier("first-mate-chat-inspector-toggle")
-                .composerLayoutMeasurement(id: "chat-info-control")
+            if let inspectorContext {
+                Button { inspectorContext.openGit(FirstMateGitTarget(feature: target, featureTitle: inspectorContext.featureTitle)) } label: {
+                    circle("arrow.triangle.branch")
+                }
+                .accessibilityLabel("Git").accessibilityIdentifier("first-mate-chat-git")
+                .composerLayoutMeasurement(id: "chat-git-control")
+            }
             Menu {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
                 if store.isDemo {
@@ -152,26 +167,22 @@ struct FirstMateChatScreen: View {
                 Button("Cancel feature", role: .destructive) { perform("cancel") }
                 Button("Keep working", role: .cancel) { }
             } message: { Text("Its conversation, documents, and saved sessions remain available.") }
+            inspectorControl(label: "Feature info")
         }
-        .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, 8).padding(.vertical, 5)
-        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+        .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, columns == nil ? 10 : 12).padding(.top, 2).padding(.bottom, 6)
     }
 
     private var leadBar: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Button { if let back { back() } else { dismiss() } } label: { circle("chevron.left") }
-                    .accessibilityLabel("Back to conversations").accessibilityIdentifier("first-mate-chat-back")
-                    .composerLayoutMeasurement(id: "chat-back-control")
+            HStack(spacing: 8) {
+                leadingControl
                 if followsLeadChoice {
                     FirstMateLeadMachineMenu(model: model, fleet: fleet)
                 } else {
-                    HStack { FirstMateFaceOrb(size: 24); Text("My First Mate").herdrFont(.body, weight: .semibold) }
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                    HStack(spacing: 7) { FirstMateFaceOrb(size: 28); Text("My First Mate").herdrFont(.body, weight: .semibold); Spacer(minLength: 0) }
+                        .padding(.leading, 8).padding(.trailing, 14).frame(maxWidth: .infinity, minHeight: 44)
+                        .herdrControlGlass(in: .capsule, interactive: false)
                 }
-                Button { openInfo(.overview, nil) } label: { circle("info.circle") }
-                    .accessibilityLabel("First Mate overview").accessibilityIdentifier("first-mate-chat-inspector-toggle")
-                    .composerLayoutMeasurement(id: "chat-info-control")
                 Menu {
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refreshLead() } }
                     #if DEBUG
@@ -183,23 +194,63 @@ struct FirstMateChatScreen: View {
                 } label: { circle("ellipsis") }
                 .accessibilityLabel("First Mate options").accessibilityIdentifier("first-mate-lead-options")
                 .composerLayoutMeasurement(id: "chat-more-control")
+                inspectorControl(label: "First Mate overview")
             }
             Text("\(model.machineName(target.machineID)) · \(FirstMateLeadBriefing.headerSubtitle(conversations: fleet.conversations))")
                 .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 56)
                 .accessibilityIdentifier("first-mate-lead-owner")
             if followsLeadChoice, fleet.leadChoice.isFallback, let preferred = fleet.leadChoice.preferred {
                 Text("\(model.machineName(preferred)) is offline. \(model.machineName(target.machineID)) is standing in.")
                     .herdrFont(.caption).foregroundStyle(HerdrTheme.warning).fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 56)
                     .accessibilityIdentifier("first-mate-lead-offline")
             }
         }
-        .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, 8).padding(.vertical, 5)
-        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+        .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 6)
     }
 
     private func circle(_ symbol: String) -> some View {
-        Image(systemName: symbol).font(.body.weight(.medium)).frame(width: 40, height: 40)
-            .background(HerdrTheme.codeFill, in: .circle).frame(width: 44, height: 44).contentShape(.rect)
+        Image(systemName: symbol).font(.system(size: 17, weight: .medium)).herdrGlassCircle(44)
+    }
+
+    /// iPad: the list toggle. iPhone: Back.
+    @ViewBuilder private var leadingControl: some View {
+        if let columns {
+            Button(action: columns.toggleList) { circle("sidebar.left") }
+                .accessibilityLabel(columns.listIsRail ? "Show the conversation list" : "Fold the list into a rail")
+                .accessibilityIdentifier("first-mate-chat-list-toggle")
+                .composerLayoutMeasurement(id: "chat-back-control")
+        } else {
+            Button { if let back { back() } else { dismiss() } } label: { circle("chevron.left") }
+                .accessibilityLabel("Back to conversations").accessibilityIdentifier("first-mate-chat-back")
+                .composerLayoutMeasurement(id: "chat-back-control")
+        }
+    }
+
+    /// The trailing control, after ⋯: the iPad inspector toggle (accent while
+    /// the inspector shows), or iPhone's Info button that pushes Info.
+    @ViewBuilder private func inspectorControl(label: String) -> some View {
+        if let columns {
+            Button(action: columns.toggleInspector) {
+                Image(systemName: "sidebar.right").font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(columns.inspectorOpen ? HerdrTheme.accent : HerdrTheme.primaryText)
+                    .herdrGlassCircle(44)
+                    .overlay { if columns.inspectorOpen { Circle().fill(HerdrTheme.accent.opacity(0.16)).frame(width: 44, height: 44).allowsHitTesting(false) } }
+            }
+            .accessibilityLabel(columns.inspectorOpen ? "Hide the inspector" : "Show the inspector")
+            .accessibilityIdentifier("first-mate-chat-inspector-toggle")
+            .composerLayoutMeasurement(id: "chat-info-control")
+        } else {
+            Button { openInfo(.overview, nil) } label: { circle("info.circle") }
+                .accessibilityLabel(label).accessibilityIdentifier("first-mate-chat-inspector-toggle")
+                .composerLayoutMeasurement(id: "chat-info-control")
+        }
+    }
+
+    /// The title opens Overview: in the iPad inspector, or pushed on iPhone.
+    private func showOverview() {
+        if let columns { columns.showInspector(.overview) } else { openInfo(.overview, nil) }
     }
 
     private var composer: some View {
@@ -220,10 +271,7 @@ struct FirstMateChatScreen: View {
                     .composerLayoutMeasurement(id: "closed-feature-line")
             } else {
                 if let notice {
-                    Text(notice).herdrFont(.footnote).foregroundStyle(HerdrTheme.warning)
-                        .fixedSize(horizontal: false, vertical: true).padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading).background(HerdrTheme.warning.opacity(0.08))
-                        .accessibilityIdentifier("first-mate-checkpoint-status")
+                    FirstMateChatNotice(text: notice, paused: snapshot?.feature.status == "paused" && store.runtimeHealth?.warning == nil && store.error == nil)
                 }
                 FirstMateConversationComposer(model: model, fleet: fleet, store: store, material: material, target: target,
                     placeholder: isLead ? "Ask First Mate about any feature…" : "Message \(conversation?.name ?? "First Mate")",
@@ -232,22 +280,22 @@ struct FirstMateChatScreen: View {
                     presentationChanged: { shown in if shown { excerpts.insert("composer-sheet") } else { excerpts.remove("composer-sheet") } })
             }
         }
-        .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
+        .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 8)
         .frame(maxWidth: 720).frame(maxWidth: .infinity)
-        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).background(HerdrTheme.base) }
     }
 
     private var notice: String? {
         if isLead { return store.error == nil ? nil : "The owning companion is unavailable. Showing its saved conversation." }
         if let warning = store.runtimeHealth?.warning { return warning }
         if store.error != nil { return "Live execution status is unavailable. Showing the last saved workflow." }
+        // The Mac notice band: execution warnings, blocked work, interrupted
+        // recovery, and pause. The header's status already says "Your turn"
+        // or "Planning", so routine states add no band.
         switch snapshot?.feature.status {
-        case "awaiting_direction": return "Your direction is needed before work continues."
         case "paused": return "Work is paused. You can still talk with First Mate."
-        case "blocked": return "First Mate needs your help. Tell it how to proceed."
-        case "running", "coordinating": return store.runtimeHealth == nil
-            ? "Last reported as active. This companion does not report execution health."
-            : "Background monitoring is active. You can talk here."
+        case "blocked":
+            return snapshot?.events.last(where: { $0.type == "reliability.blocked" })?.summary
+                ?? "Work is blocked. Review the retained evidence and give First Mate direction."
         default:
             if snapshot?.recoveryNeedsDirection == true {
                 return store.runtimeHealth?.automaticRecovery == true ? "Checking retained work for a safe automatic continuation."
@@ -294,5 +342,25 @@ struct FirstMateChatScreen: View {
     private func openMention(_ url: URL) {
         guard appeared, topmost, model.selectedTab == .firstMate else { return }
         FirstMateMobileOwnedNavigation.open(url, owner: target, store: store, model: model)
+    }
+}
+
+/// The Mac execution notice: an icon and one short fact above the composer.
+private struct FirstMateChatNotice: View {
+    let text: String
+    let paused: Bool
+    var body: some View {
+        Label {
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: paused ? "pause.circle" : "exclamationmark.triangle").font(.system(size: 13, weight: .semibold))
+        }
+        .herdrFont(.footnote).foregroundStyle(paused ? HerdrTheme.secondaryText : HerdrTheme.warning)
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background((paused ? HerdrTheme.inkFill(0.04) : HerdrTheme.warning.opacity(0.10)), in: .rect(cornerRadius: 14))
+        .herdrControlGlass(in: .rect(cornerRadius: 14), interactive: false)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("first-mate-checkpoint-status")
     }
 }

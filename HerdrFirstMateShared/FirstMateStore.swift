@@ -137,6 +137,9 @@ final class FirstMateStore {
     private(set) var sessionTotalMessages: Int?
     private(set) var sessionLoadedMessages = 0
     private(set) var isLoadingEarlier = false
+    private(set) var isRefreshingSession = false
+    private(set) var sessionIsRunning = false
+    private(set) var sessionRefreshError: String?
     private(set) var sessionPageError: String?
     private var generation = 0
     private var lifecycleIdentity = LifecycleIdentity(value: UUID())
@@ -1977,6 +1980,7 @@ final class FirstMateStore {
                 guard response.ok, response.nativeSessionID == sessionID else { throw APIError.invalidResponse }
                 guard token == resourceGeneration else { return }
                 sessionMessages = response.messages
+                sessionIsRunning = response.isRunning ?? false
                 sessionNextBefore = response.nextBefore
                 sessionTotalMessages = response.totalMessages
                 sessionLoadedMessages = response.messages?.count ?? 0
@@ -1987,6 +1991,17 @@ final class FirstMateStore {
             }
             guard token == resourceGeneration else { return }
             resourceText = content
+            resourceLoading = false
+            // A long tool batch can fill the newest page. Show that page at
+            // once, then look back a bounded distance for conversational text.
+            for _ in 0..<2 {
+                guard token == resourceGeneration, sessionNextBefore != nil,
+                      let messages = sessionMessages,
+                      !messages.contains(where: { ["user", "human", "assistant"].contains($0.role)
+                          && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { break }
+                await loadEarlierSessionMessages()
+                if sessionPageError != nil { break }
+            }
         } catch { if token == resourceGeneration { resourceError = error.localizedDescription } }
     }
 
@@ -2002,7 +2017,7 @@ final class FirstMateStore {
     }
 
     func loadEarlierSessionMessages() async {
-        guard !isLoadingEarlier, let before = sessionNextBefore,
+        guard !isLoadingEarlier, !isRefreshingSession, let before = sessionNextBefore,
               let sessionID = openedResource?.nativeSessionID, let client else { return }
         let token = resourceGeneration
         isLoadingEarlier = true
@@ -2023,6 +2038,37 @@ final class FirstMateStore {
             if let usage = response.usage { resourceUsage = usage }
             if let selection = response.modelSelection { resourceModelSelection = selection }
         } catch { if token == resourceGeneration { sessionPageError = error.localizedDescription } }
+    }
+
+    /// Poll saved messages while the writer is alive. This preserves already
+    /// loaded history and never sends input to the managed session.
+    func refreshSessionMessages() async {
+        guard !isDemo, !resourceLoading, !isLoadingEarlier, !isRefreshingSession,
+              sessionIsRunning, let sessionID = openedResource?.nativeSessionID, let client else { return }
+        let token = resourceGeneration
+        isRefreshingSession = true
+        defer { if token == resourceGeneration { isRefreshingSession = false } }
+        do {
+            let response = try await client.fetchFirstMateSession(sessionID, before: nil)
+            guard token == resourceGeneration else { return }
+            guard response.ok, response.nativeSessionID == sessionID else { throw APIError.invalidResponse }
+            if let newest = response.messages {
+                let existing = sessionMessages ?? []
+                if let first = newest.first?.index, let last = existing.last?.index,
+                   first <= last + 1, existing.allSatisfy({ $0.index != nil }), newest.allSatisfy({ $0.index != nil }) {
+                    sessionMessages = existing.filter { $0.index! < first } + newest
+                } else {
+                    sessionMessages = newest
+                    sessionNextBefore = response.nextBefore
+                }
+                sessionLoadedMessages = sessionMessages?.count ?? 0
+            }
+            sessionTotalMessages = response.totalMessages
+            sessionIsRunning = response.isRunning ?? false
+            sessionRefreshError = nil
+            if let usage = response.usage { resourceUsage = usage }
+            if let selection = response.modelSelection { resourceModelSelection = selection }
+        } catch { if token == resourceGeneration { sessionRefreshError = error.localizedDescription } }
     }
 
     private static func isStrictlyOlderTimestamp(_ candidate: String, than existing: String) -> Bool {
@@ -2090,6 +2136,9 @@ final class FirstMateStore {
     }
 
     private func resetSessionPagination() {
+        isRefreshingSession = false
+        sessionIsRunning = false
+        sessionRefreshError = nil
         sessionNextBefore = nil
         sessionTotalMessages = nil
         sessionLoadedMessages = 0

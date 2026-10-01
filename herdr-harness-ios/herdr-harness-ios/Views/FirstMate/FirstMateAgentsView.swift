@@ -5,14 +5,10 @@ struct FirstMateAgentsView: View {
     let snapshot: FirstMateSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Your crew").font(.title2).bold().accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("first-mate-agents")
-                Text("\(snapshot.assignments.count) \(snapshot.assignments.count == 1 ? "assignment" : "assignments"), grouped by the step they belong to. Open an agent to see its saved session.")
-                    .font(.subheadline)
-                    .foregroundStyle(HerdrTheme.secondaryText)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            FirstMateInspectorHeading(title: "Your crew",
+                detail: "\(snapshot.assignments.count) \(snapshot.assignments.count == 1 ? "assignment" : "assignments"), each with its own session and evidence.")
+                .accessibilityIdentifier("first-mate-agents")
             if !snapshot.coordinatorSessions.isEmpty {
                 FirstMateCoordinatorHistoryView(store: store, sessions: snapshot.coordinatorSessions)
             }
@@ -25,9 +21,11 @@ struct FirstMateAgentsView: View {
                     accessibilityID: "first-mate-advisor-history"
                 )
             }
-            ForEach(snapshot.visits.filter { !snapshot.agents(for: $0.id).isEmpty }) { visit in
-                FirstMateAgentGroup(store: store, snapshot: snapshot, visit: visit,
-                                    initiallyExpanded: visit.id == (store.selectedVisitID ?? snapshot.feature.currentVisitID))
+            VStack(spacing: 0) {
+                ForEach(snapshot.visits.filter { !snapshot.agents(for: $0.id).isEmpty }) { visit in
+                    FirstMateAgentGroup(store: store, snapshot: snapshot, visit: visit,
+                                        initiallyExpanded: visit.id == (store.selectedVisitID ?? snapshot.feature.currentVisitID))
+                }
             }
             if snapshot.assignments.isEmpty {
                 ContentUnavailableView("No agents assigned yet", systemImage: "person.2", description: Text("Discuss the plan in the feature conversation to get started."))

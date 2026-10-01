@@ -131,6 +131,9 @@ thinking_level = "high"
 # worker_thinking = "medium"
 # architect_model = "your-provider/your-architect-model" # Required for architect reviews/implementation second opinions; no fallback or role re-routing.
 # architect_thinking = "high"
+# research_scout_model = "your-provider/your-research-model" # Required for explicit Research Scout assignments.
+# research_scout_thinking = "high"
+# research_scout_instructions_file = "~/.config/herdr-companion/agents/research-scout.md" # Private company/tool instructions, never commit the contents.
 # Role defaults belong in the operator's private configuration. A feature can
 # override only its coordinator selection for the next coordinator turn.
 max_workers = 8

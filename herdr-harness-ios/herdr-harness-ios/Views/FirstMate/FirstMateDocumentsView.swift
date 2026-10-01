@@ -15,18 +15,15 @@ struct FirstMateDocumentsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Feature documents").font(.title2).bold().accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("first-mate-documents")
-                Text("Evidence stays connected to the step and agent that produced it.")
-                    .font(.subheadline)
-                    .foregroundStyle(HerdrTheme.secondaryText)
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            FirstMateInspectorHeading(title: "Feature documents",
+                detail: "Evidence stays connected to the step and agent that produced it.")
+                .accessibilityIdentifier("first-mate-documents")
             if !presentedDocuments.isEmpty {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(HerdrTheme.secondaryText).accessibilityHidden(true)
-                    TextField("Find a document, agent, or step", text: $query)
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(HerdrTheme.iconTint).accessibilityHidden(true)
+                    TextField("", text: $query, prompt: Text("Find a document, agent, or step").foregroundStyle(HerdrTheme.tertiaryText))
+                        .herdrFont(.body)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("first-mate-document-search")
@@ -38,13 +35,16 @@ struct FirstMateDocumentsView: View {
                     }
                 }
                 .frame(minHeight: 44)
-                .padding(.horizontal, 12)
-                .herdrField()
+                .padding(.horizontal, 14)
+                .background(HerdrTheme.fieldFill, in: .capsule)
+                .overlay { Capsule().strokeBorder(HerdrTheme.outline) }
             }
             LazyVStack(spacing: 0) {
                 ForEach(documents) { document in
                     FirstMateDocumentRow(store: store, snapshot: snapshot, document: document)
-                    Divider()
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(HerdrTheme.rowDivider).frame(height: 1).padding(.leading, 46)
+                        }
                 }
             }
             if presentedDocuments.isEmpty {

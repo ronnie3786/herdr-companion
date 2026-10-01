@@ -107,12 +107,12 @@ enum FirstMateDemo {
             guard let id = assignment.nativeSessionID else { return nil }
             return FirstMateSession(nativeSessionID: id, featureID: feature.id, assignmentID: assignment.id, title: assignment.title, role: assignment.role, status: assignment.status, generation: assignment.generation, attempt: assignment.attempt, inputRevision: assignment.inputRevision, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: assignment.status == "running" ? "active" : "retained", kind: "worker", usage: assignment.usage)
         }
-        sessions.append(.init(nativeSessionID: "demo-coordinator-1", featureID: feature.id, assignmentID: nil, title: "First Mate", role: "first_mate", status: "retained", generation: 1, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: step == 5 ? "retained" : "active", kind: "coordinator", usage: usage(cost: 0.008, tokens: 900)))
+        sessions.append(.init(nativeSessionID: "demo-coordinator-1", featureID: feature.id, assignmentID: nil, title: "Second Mate", role: "first_mate", status: "retained", generation: 1, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: step == 5 ? "retained" : "active", kind: "coordinator", usage: usage(cost: 0.008, tokens: 900)))
         if step >= 2 {
             sessions.append(.init(nativeSessionID: "demo-advisor-1", featureID: feature.id, assignmentID: nil, title: "Recovery advisor", role: "recovery_advisor", status: "retained", generation: 1, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "retained", kind: "advisor", parentSessionID: "demo-coordinator-1", usage: usage(cost: 0.002, tokens: 180)))
         }
         if step == 5 {
-            sessions.append(.init(nativeSessionID: "demo-coordinator-2", featureID: feature.id, assignmentID: nil, title: "First Mate", role: "first_mate", status: "active", generation: 2, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "active", kind: "coordinator", usage: usage(cost: 0.006, tokens: 620)))
+            sessions.append(.init(nativeSessionID: "demo-coordinator-2", featureID: feature.id, assignmentID: nil, title: "Second Mate", role: "first_mate", status: "active", generation: 2, createdAt: timestamp, updatedAt: timestamp, ownershipStatus: "active", kind: "coordinator", usage: usage(cost: 0.006, tokens: 620)))
             if let index = assignments.firstIndex(where: { $0.id == "demo-successor" }) {
                 assignments[index].generation = 2
                 assignments[index].attempt = 2

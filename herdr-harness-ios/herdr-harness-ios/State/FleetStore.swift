@@ -28,22 +28,13 @@ final class FleetStore {
     }
 
     /// Builds Fleet from the same persisted machine list as the main shell.
-    /// Tokens are read through `KeychainStore`, and only valid
-    /// `ServerConfiguration`s receive an API client. The display projection
-    /// intentionally drops every connection detail before it reaches a view.
+    /// Tokens are read through `KeychainStore` on the first refresh, off the
+    /// main thread, and only valid `ServerConfiguration`s receive an API
+    /// client. Building the store never touches Keychain, so a view that
+    /// creates one (even a NavigationLink destination) stays cheap. The
+    /// display projection intentionally drops every connection detail before
+    /// it reaches a view.
     convenience init(model: HerdrAppModel) {
-        var clients: [String: HerdrAPIClient] = [:]
-        if !model.isDemoMode {
-            for machine in model.machines {
-                let token = KeychainStore.value(for: "api-token.\(machine.id)")
-                guard let configuration = ServerConfiguration(
-                    urlString: machine.urlString,
-                    token: token
-                ) else { continue }
-                clients[machine.id] = HerdrAPIClient(configuration: configuration)
-            }
-        }
-
         self.init(
             machines: model.machines,
             connectionStates: Dictionary(
@@ -51,9 +42,36 @@ final class FleetStore {
                     ($0.id, model.connectionState(forMachine: $0.id))
                 }
             ),
-            isDemoMode: model.isDemoMode,
-            clients: clients
+            isDemoMode: model.isDemoMode
         )
+        if !model.isDemoMode {
+            pendingClientSources = model.machines.map { .init(id: $0.id, urlString: $0.urlString) }
+        }
+    }
+
+    private struct ClientSource: Sendable {
+        let id: String
+        let urlString: String
+    }
+
+    /// Machines whose clients have not been built yet (see `init(model:)`).
+    @ObservationIgnored private var pendingClientSources: [ClientSource]?
+
+    /// Reads a saved token. A seam so tests can prove building the store
+    /// reads nothing; production always reads Keychain.
+    static var credentialReader: @Sendable (String) -> String = { KeychainStore.value(for: $0) }
+
+    private static func makeClients(_ sources: [ClientSource]) async -> [String: HerdrAPIClient] {
+        let read = credentialReader
+        return await Task.detached(priority: .userInitiated) {
+            var clients: [String: HerdrAPIClient] = [:]
+            for source in sources {
+                let token = read("api-token.\(source.id)")
+                guard let configuration = ServerConfiguration(urlString: source.urlString, token: token) else { continue }
+                clients[source.id] = HerdrAPIClient(configuration: configuration)
+            }
+            return clients
+        }.value
     }
 
     /// A test and preview seam that keeps the store independent from app
@@ -144,6 +162,10 @@ final class FleetStore {
             return
         }
 
+        if let sources = pendingClientSources {
+            pendingClientSources = nil
+            clients = await Self.makeClients(sources)
+        }
         machineErrors = [:]
         let results = await withTaskGroup(of: FleetFetchResult.self, returning: [FleetFetchResult].self) { group in
             for machine in machines {

@@ -8,19 +8,15 @@ struct FirstMateConversationsScreen: View {
     let openInfo: (FirstMateFeatureTarget) -> Void
     let openLead: () -> Void
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @SceneStorage("herdr.firstMate.folder") private var folder: FirstMateListFolder = .all
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsSearch = false
     @State private var archiveRequest: FirstMateMobileArchiveRequest?
     @State private var mutationFeedback = FirstMateListMutationFeedback()
     @FocusState private var searchFocused: Bool
 
-    private var presentation: FirstMateMobileListPresentation {
-        var features: [FirstMateFeatureTarget: FirstMateFeature] = [:]
-        for host in fleet.hosts {
-            for feature in host.features { features[.init(machineID: host.machineID, featureID: feature.id)] = feature }
-        }
-        return .init(conversations: fleet.conversations, scope: fleet.resolvedScope, query: fleet.search, features: features)
-    }
+    private var presentation: FirstMateMobileListPresentation { FirstMateMobileListPresentation(fleet: fleet) }
     private var leadUnread: Bool {
         fleet.leadChoice.current.map { fleet.chat.leadIsUnread(machineID: $0, fleet: fleet) } ?? false
     }
@@ -28,15 +24,24 @@ struct FirstMateConversationsScreen: View {
 
     var body: some View {
         let presentation = presentation
+        let rows = presentation.rows.filter(folder.includes)
         ScrollViewReader { proxy in
             List {
                 if presentation.showsLead || !presentation.pinned.isEmpty {
                     FirstMatePinnedStrip(presentation: presentation, leadUnread: leadUnread,
                         needsYouCount: fleet.conversations.count { $0.hudStatus.needsYou },
-                        orbSize: verticalSizeClass == .compact ? 64 : 88,
+                        orbSize: horizontalSizeClass == .regular ? 62 : verticalSizeClass == .compact ? 64 : 88,
+                        columns: horizontalSizeClass == .regular ? 4 : nil,
                         openLead: openLead, openFeature: openFeature, openInfo: openInfo,
                         archive: presentArchive, canArchive: canArchive,
                         revealOverflow: { id in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo(id, anchor: .top) } })
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+                if !presentation.rows.isEmpty {
+                    FirstMateFolderChips(folder: $folder, rows: presentation.rows)
+                        .padding(.bottom, 6)
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -63,7 +68,13 @@ struct FirstMateConversationsScreen: View {
                             .listRowBackground(Color.clear).listRowSeparator(.hidden)
                     }
                 }
-                ForEach(presentation.rows) { row in
+                if rows.isEmpty, !presentation.rows.isEmpty {
+                    Text(folder.emptyMessage).herdrFont(.body).foregroundStyle(HerdrTheme.secondaryText)
+                        .padding(.vertical, 18).padding(.horizontal, 4)
+                        .accessibilityIdentifier("first-mate-folder-empty")
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                }
+                ForEach(rows) { row in
                     conversationRow(row)
                 }
                 if fleet.showArchived, !archived.isEmpty {
@@ -79,18 +90,31 @@ struct FirstMateConversationsScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .environment(\.defaultMinListRowHeight, 0)
             .refreshable { await fleet.refreshAll() }
+            .herdrEdgeFade(.top)
             .accessibilityIdentifier("first-mate-feature-list")
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     FirstMateConversationsBar(model: model, fleet: fleet, showsSearch: $showsSearch)
                     if showsSearch {
-                        TextField("", text: $fleet.search, prompt: Text("Search conversations").foregroundStyle(HerdrTheme.tertiaryText))
-                            .herdrFont(.body).foregroundStyle(HerdrTheme.primaryText)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .padding(12).frame(minHeight: 44).herdrField(focused: searchFocused)
-                            .focused($searchFocused)
-                            .accessibilityIdentifier("first-mate-chat-search")
-                            .padding(.horizontal, 16).padding(.bottom, 10)
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass").foregroundStyle(HerdrTheme.iconTint).accessibilityHidden(true)
+                            TextField("", text: $fleet.search, prompt: Text("Search conversations").foregroundStyle(HerdrTheme.tertiaryText))
+                                .herdrFont(.body).foregroundStyle(HerdrTheme.primaryText)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .submitLabel(.search)
+                                .focused($searchFocused)
+                                .accessibilityIdentifier("first-mate-chat-search")
+                            if !fleet.search.isEmpty {
+                                Button { fleet.search = "" } label: {
+                                    Image(systemName: "xmark.circle.fill").foregroundStyle(HerdrTheme.iconTint)
+                                        .frame(width: 32, height: 44).contentShape(.rect)
+                                }.buttonStyle(.herdrPlain).accessibilityLabel("Clear search")
+                            }
+                        }
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                        .herdrControlGlass(in: .capsule, interactive: false)
+                        .padding(.horizontal, 16).padding(.bottom, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
             }

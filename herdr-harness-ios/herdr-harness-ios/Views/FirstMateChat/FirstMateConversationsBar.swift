@@ -11,28 +11,7 @@ struct FirstMateConversationsBar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Menu {
-                Button { model.selectFirstMateScope(.all) } label: {
-                    Label("All Machines", systemImage: fleet.resolvedScope == .all ? "checkmark" : "desktopcomputer")
-                }
-                .accessibilityIdentifier("first-mate-machine-all")
-                Divider()
-                ForEach(model.machines) { machine in
-                    Button { model.selectFirstMateScope(.machine(machine.id)) } label: {
-                        Label(machine.name, systemImage: fleet.resolvedScope == .machine(machine.id) ? "checkmark" : "desktopcomputer")
-                    }
-                    .accessibilityIdentifier("first-mate-machine-\(machine.id)")
-                }
-            } label: {
-                Label("Companion host", systemImage: "desktopcomputer")
-                    .labelStyle(.iconOnly).frame(width: 44, height: 44)
-                    .background { HerdrGlassBackground(level: 0.80, cornerRadius: 22) }
-                    .overlay { Circle().strokeBorder(HerdrTheme.hairline, lineWidth: 1) }
-            }
-            .disabled(model.machines.isEmpty)
-            .accessibilityLabel("Companion host, \(model.firstMateScopeLabel)")
-            .accessibilityIdentifier("first-mate-machine-picker")
-            .composerLayoutMeasurement(id: "conversation-host-control")
+            FirstMateMachinePicker(model: model, fleet: fleet)
 
             Spacer(minLength: 0)
             HStack(spacing: 0) {
@@ -84,14 +63,14 @@ struct FirstMateConversationsBar: View {
                 .accessibilityIdentifier("first-mate-options")
                 .composerLayoutMeasurement(id: "conversation-more-control")
             }
-            .background { HerdrGlassBackground(level: 0.80, cornerRadius: 22) }
-            .overlay { Capsule().strokeBorder(HerdrTheme.hairline, lineWidth: 1) }
+            .padding(.horizontal, 4)
+            .herdrControlGlass(in: .capsule)
         }
         .font(.system(size: 17, weight: .medium))
-        .foregroundStyle(HerdrTheme.iconTint)
+        .foregroundStyle(HerdrTheme.primaryText)
         .buttonStyle(.herdrPlain)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-chat-bar")
         #if DEBUG
@@ -99,5 +78,36 @@ struct FirstMateConversationsBar: View {
             Button("OK", role: .cancel) { }
         } message: { Text(diagnostics) }
         #endif
+    }
+}
+
+/// The companion host menu: All Machines or one machine.
+struct FirstMateMachinePicker: View {
+    @Bindable var model: HerdrAppModel
+    @Bindable var fleet: FirstMateMobileFleetStore
+
+    var body: some View {
+        Menu {
+            Button { model.selectFirstMateScope(.all) } label: {
+                Label("All Machines", systemImage: fleet.resolvedScope == .all ? "checkmark" : "desktopcomputer")
+            }
+            .accessibilityIdentifier("first-mate-machine-all")
+            Divider()
+            ForEach(model.machines) { machine in
+                Button { model.selectFirstMateScope(.machine(machine.id)) } label: {
+                    Label(machine.name, systemImage: fleet.resolvedScope == .machine(machine.id) ? "checkmark" : "desktopcomputer")
+                }
+                .accessibilityIdentifier("first-mate-machine-\(machine.id)")
+            }
+        } label: {
+            Label("Companion host", systemImage: "desktopcomputer")
+                .labelStyle(.iconOnly).herdrGlassCircle(44)
+        }
+        .font(.system(size: 17, weight: .medium))
+        .foregroundStyle(HerdrTheme.primaryText)
+        .disabled(model.machines.isEmpty)
+        .accessibilityLabel("Companion host, \(model.firstMateScopeLabel)")
+        .accessibilityIdentifier("first-mate-machine-picker")
+        .composerLayoutMeasurement(id: "conversation-host-control")
     }
 }

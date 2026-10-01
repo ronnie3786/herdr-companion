@@ -68,18 +68,18 @@ struct FirstMateChatBubble: View {
                 Text("You chose: \(choice)").herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             } else if !replies.isEmpty {
-                FirstMateWrappingLayout {
+                // The Mac's suggested-reply chips: accent outline capsules.
+                FirstMateWrappingLayout(spacing: 6) {
                     ForEach(Array(replies.enumerated()), id: \.offset) { index, reply in
                         Button { sendReply(reply) } label: {
-                            Text(reply).herdrFont(size: 14, weight: .semibold, relativeTo: .subheadline)
-                                .foregroundStyle(index == 0 ? HerdrTheme.onPrimary : HerdrTheme.accent)
-                                .fixedSize(horizontal: false, vertical: true)
+                            Text(reply).fixedSize(horizontal: false, vertical: true)
                         }
-                        .buttonStyle(HerdrButtonStyle(kind: index == 0 ? .primary : .outline, height: 36))
+                        .buttonStyle(FirstMateReplyChipStyle())
                         .disabled(!canReply).accessibilityLabel("Reply: \(reply)")
                         .accessibilityIdentifier("first-mate-reply-\(index)")
                     }
                 }
+                .padding(.top, 2)
             }
             if let feedback, let rating = feedback.rating {
                 Button { rate?(nil) } label: {
@@ -137,5 +137,23 @@ struct FirstMateChatBubble: View {
         })
         // The host supplies only its captured owner's catalog and rows.
         return readoutConversations.filter { targets.contains(.feature(featureID: $0.featureID)) }
+    }
+}
+
+/// A suggested reply inside First Mate's bubble: accent text in an accent
+/// outline capsule, 34 pt visual height in a 44 pt hit target.
+private struct FirstMateReplyChipStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .herdrFont(size: 14, weight: .semibold, relativeTo: .subheadline)
+            .foregroundStyle(HerdrTheme.accent)
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .frame(minHeight: 34)
+            .background(configuration.isPressed && enabled ? HerdrTheme.accent.opacity(0.16) : HerdrTheme.accent.opacity(0.06), in: .capsule)
+            .overlay { Capsule().strokeBorder(HerdrTheme.accent.opacity(0.45), lineWidth: 1) }
+            .padding(.vertical, 5)
+            .contentShape(.rect)
+            .opacity(enabled ? 1 : 0.42)
     }
 }

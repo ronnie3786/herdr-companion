@@ -70,8 +70,8 @@ nothing.
   150,000 tokens by default, lowered for small model windows), the next turn
   starts a fresh Pi session that carries the recent conversation, the last 30
   messages at up to 4,000 characters each. The old session stays retained in
-  full. Unlike a feature coordinator, the lead also keeps Pi's automatic
-  compaction for one turn that would overflow before it can hand off.
+  full. The lead and feature coordinators cancel Pi compaction only in their
+  managed sessions; ordinary Pi compaction preferences remain independent.
 - **Skims.** Its replies are First Mate replies, so long ones get a skim like any
   other (`[first_mate] skim_model`). See [skims](skim.md).
 

@@ -103,6 +103,12 @@ struct PRReviewSidebarView: View {
                 }
                 .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.mist)
+                if let walkthrough = PRReviewWalkthroughRowStatus(review.walkthrough) {
+                    Label(walkthrough.text, systemImage: walkthrough.systemImage)
+                        .herdrFont(.caption, weight: walkthrough.isNew ? .semibold : .regular)
+                        .foregroundStyle(walkthrough.failed ? HerdrTheme.alert : walkthrough.isNew ? HerdrTheme.accent : HerdrTheme.mist)
+                        .accessibilityIdentifier("pr-review-walkthrough-\(review.id)")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
@@ -159,5 +165,28 @@ struct PRReviewSidebarView: View {
         else { return false }
         let parts = url.pathComponents.filter { $0 != "/" }
         return parts.count >= 4 && parts[2] == "pull" && Int(parts[3]) != nil
+    }
+}
+
+/// A review row's walkthrough line: preparing, newly ready, or newly failed.
+/// A walkthrough someone already opened needs no line.
+struct PRReviewWalkthroughRowStatus: Equatable {
+    let text: String
+    let systemImage: String
+    let isNew: Bool
+    let failed: Bool
+
+    init?(_ walkthrough: PRReviewWalkthroughSummary?) {
+        guard let walkthrough else { return nil }
+        switch walkthrough.state {
+        case "running":
+            (text, systemImage, isNew, failed) = ("Preparing walkthrough…", "hourglass", false, false)
+        case "finished" where walkthrough.isNew:
+            (text, systemImage, isNew, failed) = ("Walkthrough ready", "sparkles", true, false)
+        case "failed" where walkthrough.isNew:
+            (text, systemImage, isNew, failed) = ("Walkthrough couldn’t finish", "exclamationmark.triangle", true, true)
+        default:
+            return nil
+        }
     }
 }

@@ -2406,7 +2406,7 @@ final class HerdrAppModel: HudChatTransport {
         machines.first.flatMap { runtimes[$0.id]?.client }
     }
 
-    private func client(forMachine id: String) -> HerdrAPIClient? {
+    func client(forMachine id: String) -> HerdrAPIClient? {
         runtimes[id]?.client
     }
 

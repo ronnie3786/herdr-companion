@@ -3,7 +3,11 @@ import Foundation
 import ImageIO
 import Synchronization
 import Testing
+#if os(macOS)
 @testable import herdr_harness_mac
+#else
+@testable import herdr_harness_ios
+#endif
 
 /// Wire messages built byte for byte the way SimPortal's helper writes them
 /// (big-endian, type byte first). Synthetic content only.

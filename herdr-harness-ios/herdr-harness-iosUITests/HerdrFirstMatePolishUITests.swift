@@ -70,7 +70,11 @@ final class HerdrFirstMatePolishUITests: XCTestCase {
         try capture("phase6-live-ipad-1366-capped", app)
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(app.buttons["first-mate-chat-title"].waitForExistence(timeout: 5))
-        assertColumns(app)
+        // Portrait keeps two panes; the inspector comes back on demand as a
+        // sheet over the chat, still on the tab it showed.
+        XCTAssertTrue(app.otherElements["first-mate-info-column"].firstMatch.waitForNonExistence(timeout: 5))
+        app.buttons["first-mate-chat-inspector-toggle"].tap()
+        assertColumns(app, floating: true)
         XCTAssertEqual(input.value as? String, "Retain this exact iPad draft")
         XCTAssertTrue(app.staticTexts["first-mate-documents"].exists)
         assertCap(app)
@@ -172,13 +176,17 @@ final class HerdrFirstMatePolishUITests: XCTestCase {
         }
         XCTAssertTrue(element.exists && element.isHittable, element.debugDescription)
     }
-    private func assertColumns(_ app: XCUIApplication) {
+    private func assertColumns(_ app: XCUIApplication, floating: Bool = false) {
         let list = app.buttons["first-mate-feature-demo1-demo-receipts"]
         let chat = app.buttons["first-mate-chat-title"]
         let info = app.otherElements["first-mate-info-column"].firstMatch
-        XCTAssertTrue(list.isHittable && chat.exists && info.exists)
-        XCTAssertLessThanOrEqual(list.frame.maxX, chat.frame.minX + 1)
-        XCTAssertLessThanOrEqual(chat.frame.maxX, info.frame.minX + 1)
+        XCTAssertTrue(info.waitForExistence(timeout: 5))
+        XCTAssertTrue(chat.exists && info.exists)
+        if !floating {
+            XCTAssertTrue(list.isHittable)
+            XCTAssertLessThanOrEqual(list.frame.maxX, chat.frame.minX + 1)
+            XCTAssertLessThanOrEqual(chat.frame.maxX, info.frame.minX + 1)
+        }
         XCTAssertTrue(app.frame.contains(info.frame))
     }
     private func capture(_ name: String, _ app: XCUIApplication) throws {

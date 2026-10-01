@@ -8,16 +8,18 @@ struct FirstMateResourceButtons: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
+            HStack(spacing: 6) {
                 FirstMateAgentMenu(store: store, snapshot: snapshot, visit: visit)
                 FirstMateDocumentMenu(store: store, snapshot: snapshot, visit: visit)
+                FirstMateSimulatorVisitChip(visitID: visit.id)
             }
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
                 FirstMateAgentMenu(store: store, snapshot: snapshot, visit: visit)
                 FirstMateDocumentMenu(store: store, snapshot: snapshot, visit: visit)
+                FirstMateSimulatorVisitChip(visitID: visit.id)
             }
         }
-        .font(.subheadline.weight(.medium))
+        .buttonStyle(.herdrPlain)
         .tint(HerdrTheme.accent)
     }
 }

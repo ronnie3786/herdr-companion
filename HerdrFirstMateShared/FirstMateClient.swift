@@ -197,17 +197,38 @@ struct FirstMateSessionResponse: Decodable, Sendable {
     var totalMessages: Int?
     var usage: FirstMateUsage? = nil
     var modelSelection: FirstMateModelSelection? = nil
+    var isRunning: Bool? = nil
     enum CodingKeys: String, CodingKey {
         case ok, messages, content
         case nativeSessionID = "native_session_id"
         case nextBefore = "next_before", totalMessages = "total_messages"
-        case usage, modelSelection = "model_selection"
+        case usage, modelSelection = "model_selection", isRunning = "is_running"
     }
 }
 
-struct FirstMateSessionMessage: Decodable, Sendable {
+struct FirstMateSessionMessage: Decodable, Equatable, Sendable {
     var role: String
     var text: String
+    var id: String? = nil
+    var index: Int? = nil
+    var thinking: String? = nil
+    var toolCalls: [FirstMateSessionToolCall]? = nil
+    var toolCallID: String? = nil
+    var toolName: String? = nil
+    var isError: Bool? = nil
+    var stopReason: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case role, text, id, index, thinking
+        case toolCalls = "tool_calls", toolCallID = "tool_call_id", toolName = "tool_name"
+        case isError = "is_error", stopReason = "stop_reason"
+    }
+}
+
+struct FirstMateSessionToolCall: Decodable, Equatable, Sendable {
+    var id: String
+    var name: String
+    var arguments: PiJSONValue?
 }
 
 struct FirstMateModelCatalog: Decodable, Sendable {

@@ -4,10 +4,12 @@ import os
 private let piStreamLog = OSLog(subsystem: HerdrAppIdentity.bundleIdentifier, category: "pi-stream")
 
 actor HerdrAPIClient: FirstMateClient {
-    private let configuration: ServerConfiguration
-    private let session: URLSession
-    private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
+    // Internal so feature extensions in their own files (First Mate Git,
+    // simulator previews) reuse one request path and its timeouts.
+    let configuration: ServerConfiguration
+    let session: URLSession
+    let decoder = JSONDecoder()
+    let encoder = JSONEncoder()
 
     init(configuration: ServerConfiguration, session: URLSession = .shared) {
         self.configuration = configuration
@@ -179,14 +181,14 @@ actor HerdrAPIClient: FirstMateClient {
         )
     }
 
-    private func validatedFirstMateID(_ id: String) throws -> String {
+    func validatedFirstMateID(_ id: String) throws -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.:"))
         guard !id.isEmpty, id != ".", id != "..", id.count <= 256,
               id.unicodeScalars.allSatisfy(allowed.contains) else { throw APIError.invalidResponse }
         return id
     }
 
-    private func firstMatePath(_ collection: String, id: String) throws -> String {
+    func firstMatePath(_ collection: String, id: String) throws -> String {
         "/api/v1/first-mate/\(collection)/" + (try validatedFirstMateID(id))
     }
 
@@ -839,7 +841,7 @@ actor HerdrAPIClient: FirstMateClient {
         guard result.accepted else { throw APIError.invalidResponse }
     }
 
-    private func mutation(
+    func mutation(
         path: String,
         method: String = "POST",
         body: APIActionBody
@@ -847,7 +849,7 @@ actor HerdrAPIClient: FirstMateClient {
         let _: MutationResponse = try await request(path: path, method: method, body: body)
     }
 
-    private func request<Response: Decodable & Sendable>(
+    func request<Response: Decodable & Sendable>(
         path: String,
         query: [URLQueryItem] = []
     ) async throws -> Response {
@@ -857,7 +859,7 @@ actor HerdrAPIClient: FirstMateClient {
         return try decoder.decode(Response.self, from: data)
     }
 
-    private func request<Body: Encodable & Sendable, Response: Decodable & Sendable>(
+    func request<Body: Encodable & Sendable, Response: Decodable & Sendable>(
         path: String,
         method: String,
         body: Body
@@ -870,7 +872,7 @@ actor HerdrAPIClient: FirstMateClient {
         return try decoder.decode(Response.self, from: data)
     }
 
-    private func makeRequest(
+    func makeRequest(
         path: String,
         method: String,
         query: [URLQueryItem] = []
@@ -942,7 +944,7 @@ actor HerdrAPIClient: FirstMateClient {
         return 15
     }
 
-    private static func validate(response: URLResponse, data: Data = Data()) throws {
+    static func validate(response: URLResponse, data: Data = Data()) throws {
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             let payload = try? JSONDecoder().decode(ServerErrorEnvelope.self, from: data).error

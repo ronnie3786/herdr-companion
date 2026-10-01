@@ -28,7 +28,34 @@ enum FirstMateMobileDemo {
         #endif
         // Keep existing automation fixtures alongside the curated chat dataset;
         // their IDs remain valid through the list-to-detail transition.
-        return FirstMateDemo.features(step: 0) + FirstMateDemo.chatWindowFeatures() + [FirstMateDemo.chatWindowLead()]
+        return withDemoCommits(FirstMateDemo.features(step: 0) + FirstMateDemo.chatWindowFeatures() + [FirstMateDemo.chatWindowLead()])
+    }
+
+    /// Synthetic commit receipts for Receipt export's visits, so Workflow can
+    /// open demo Git at a commit. The SHAs match the iOS demo Git history.
+    static let demoCommits: [String: [(sha: String, subject: String, at: String)]] = [
+        "demo-receipts-visit-1": [("a3f9c21e5b7d4c10", "Build the month export PDF", "2026-01-15T09:10:00Z"),
+                                  ("7b2e0d4a9c1f3e22", "Add the Export button to the toolbar", "2026-01-15T10:05:00Z")],
+        "demo-receipts-visit-2": [("3c9e1f2b7a4d8e31", "Address review notes on the export sheet", "2026-01-15T11:20:00Z")],
+        "demo-receipts-visit-3": [("c81d5e9f2a6b4c47", "Add the iPad export UI test", "2026-01-15T12:40:00Z")],
+    ]
+
+    static func withDemoCommits(_ snapshots: [FirstMateSnapshot]) -> [FirstMateSnapshot] {
+        snapshots.map { snapshot in
+            var snapshot = snapshot
+            snapshot.visits = snapshot.visits.map { visit in
+                guard let commits = demoCommits[visit.id] else { return visit }
+                var visit = visit
+                let complete = ["completed", "complete"].contains(visit.status)
+                visit.gitEvidence = [FirstMateVisitGitEvidence(
+                    workspaceID: "demo-worker", startSHA: nil, endSHA: complete ? commits.last?.sha : nil,
+                    status: complete ? "captured" : "open",
+                    commits: commits.map { FirstMateVisitCommit(sha: $0.sha, subject: $0.subject, committedAt: $0.at) },
+                    truncated: false)]
+                return visit
+            }
+            return snapshot
+        }
     }
 
     static func chatFleet(forMachineID machineID: String) -> [FirstMateFleetEntry] {

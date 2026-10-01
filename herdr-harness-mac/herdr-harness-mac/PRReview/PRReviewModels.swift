@@ -185,6 +185,8 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
     var body: String?
     var viewerReview: DashboardReviewState? = nil
     var skillRuns: [DashboardSkillRun]? = nil
+    /// The newest walkthrough, from a companion with `pr-review-walkthroughs-v1`.
+    var walkthrough: PRReviewWalkthroughSummary? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -221,6 +223,7 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
         case documentCount = "document_count"
         case body
         case viewerReview = "viewer_review", skillRuns = "skill_runs"
+        case walkthrough
     }
 
     init(from decoder: Decoder) throws {
@@ -260,6 +263,7 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
         body = try container.decodeIfPresent(String.self, forKey: .body)
         viewerReview = try container.decodeIfPresent(DashboardReviewState.self, forKey: .viewerReview)
         skillRuns = try container.decodeIfPresent([DashboardSkillRun].self, forKey: .skillRuns)
+        walkthrough = try container.decodeIfPresent(PRReviewWalkthroughSummary.self, forKey: .walkthrough)
     }
 }
 

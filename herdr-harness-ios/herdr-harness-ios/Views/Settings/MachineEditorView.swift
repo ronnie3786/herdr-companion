@@ -11,13 +11,17 @@ struct MachineEditorView: View {
     @State private var testState: TestState = .idle
     @State private var validationMessage: String?
     @State private var isPresentingDeleteConfirmation = false
+    /// The saved token loads off the main thread when the editor opens. Saving
+    /// waits for it, so an early Save can never clear the stored credential.
+    @State private var tokenLoaded: Bool
 
     init(model: HerdrAppModel, machine: HerdrMachine?) {
         self.model = model
         self.machine = machine
         _name = State(initialValue: machine?.name ?? "")
         _urlString = State(initialValue: machine?.urlString ?? "")
-        _token = State(initialValue: machine.map { KeychainStore.value(for: "api-token.\($0.id)") } ?? "")
+        _token = State(initialValue: "")
+        _tokenLoaded = State(initialValue: machine == nil)
     }
 
     var body: some View {
@@ -46,7 +50,7 @@ struct MachineEditorView: View {
                         if testState == .testing { ProgressView() }
                     }
                 }
-                .disabled(testState == .testing)
+                .disabled(testState == .testing || !tokenLoaded)
                 .accessibilityIdentifier("machine-editor-test-connection")
 
                 testResult
@@ -68,11 +72,14 @@ struct MachineEditorView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(HerdrBackground())
         .navigationTitle(machine == nil ? "Add machine" : "Edit machine")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save", action: save)
+                    .disabled(!tokenLoaded)
                     .accessibilityIdentifier("machine-editor-save")
             }
         }
@@ -87,6 +94,13 @@ struct MachineEditorView: View {
                 dismiss()
             }
             Button("Cancel", role: .cancel) { }
+        }
+        .task(id: machine?.id) {
+            guard let id = machine?.id, !tokenLoaded else { return }
+            let saved = await Task.detached(priority: .userInitiated) { KeychainStore.value(for: "api-token.\(id)") }.value
+            guard !Task.isCancelled else { return }
+            if token.isEmpty { token = saved }
+            tokenLoaded = true
         }
     }
 

@@ -449,9 +449,68 @@ class ReviewGuideService:
 
     def _path(self, review_id: str, guide_id: str) -> Path:
         if not re.fullmatch(r"prguide_[a-f0-9]{24}", guide_id): _error("Invalid guide ID.")
-        directory = self.runtime._review_dir(review_id) / "guides"
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        return directory / (guide_id + ".json")
+        return self.runtime._review_dir(review_id) / "guides" / (guide_id + ".json")
+
+    def _settled(self, review_id: str, guide: dict) -> None:
+        """Record a finished or failed walkthrough once, whoever observed it."""
+        if guide["kind"] != "walkthrough":
+            return
+        try:
+            self.runtime.store.save_walkthrough(guide)
+        except PRReviewError:
+            return
+        notify = getattr(self.runtime.service, "pr_review_walkthrough_changed", None)
+        if callable(notify):
+            try:
+                review = self.runtime.store.get_review(review_id, False)
+                notify({"review_id": review_id, "guide_id": guide["id"], "state": guide["state"],
+                        "title": review.get("title") or "", "owner": review.get("owner") or "",
+                        "repo": review.get("repo") or "", "number": review.get("number"),
+                        "error": guide.get("error")})
+            except Exception:
+                pass
+        self.runtime._changed(review_id)
+
+    def walkthroughs(self, review_id: str) -> list[dict]:
+        return self.runtime.store.walkthroughs(review_id)
+
+    def mark_seen(self, review_id: str, guide_id: str) -> dict:
+        self._path(review_id, guide_id)
+        walkthrough = self.runtime.store.mark_walkthrough_seen(review_id, guide_id)
+        self.runtime._changed(review_id)
+        return walkthrough
+
+    def reconcile(self) -> None:
+        """Finish walkthroughs nobody is watching, including after a restart."""
+        for review_id, guide_id in self.runtime.store.running_walkthroughs():
+            try:
+                self.get(review_id, guide_id)
+            except PRReviewError as exc:
+                if exc.code != "not_found":
+                    continue
+                # The private record is gone; the index must not spin forever.
+                try:
+                    self.runtime.store.save_walkthrough({"id": guide_id, "review_id": review_id, "state": "failed",
+                        "finished_at": _now(), "error": "Walkthrough not found."})
+                except PRReviewError:
+                    pass
+            except Exception:
+                continue
+
+    def discard(self, review_id: str) -> None:
+        """Archiving a review ends its saved walkthroughs, answers, and pinned evidence."""
+        with self._lock, self.context._lock:
+            directory = self.runtime._review_dir(review_id)
+            for path in sorted((directory / "guides").glob("prguide_*.json")):
+                try:
+                    guide = json.loads(path.read_text())
+                    if guide.get("state") == "running" and guide.get("run_id"):
+                        self.runtime.service.agent_runs.cancel(guide["run_id"])
+                except Exception:
+                    pass
+            for name in ("guides", "guide-contexts", "guide-source"):
+                shutil.rmtree(directory / name, ignore_errors=True)
+            self.runtime.store.delete_walkthroughs(review_id)
 
     def start(self, review_id: str, request: dict) -> dict:
         allowed = {"request_id", "base_sha", "head_sha", "kind", "question", "path", "chapter_id", "continue_from_guide_id", "selection", "model", "thinking_level", "comparison", "viewer_state"}
@@ -470,8 +529,12 @@ class ReviewGuideService:
                 "created_at": _now(), "sources": snapshot["sources"], "coverage": snapshot["coverage"], "question": request.get("question"), "chapters": []}
             self.runtime._write_json(self._path(review_id, guide_id), guide)
             self.runtime.store.save_receipt("guide:" + review_id, request["request_id"], request, {"id": guide_id})
+            if guide["kind"] == "walkthrough":
+                self.runtime.store.save_walkthrough(guide)
             threading.Thread(target=self._launch, args=(review_id, guide_id, request), daemon=True).start()
-            return guide
+        if guide["kind"] == "walkthrough":
+            self.runtime._changed(review_id)
+        return guide
 
     def _launch(self, review_id: str, guide_id: str, request: dict):
         with self._lock:
@@ -508,9 +571,18 @@ class ReviewGuideService:
             result = self.runtime.service.agent_runs.start(prompt=prompt, label="PR review buddy", cwd=str(cwd), topology={}, mode="ask", model=request.get("model"), thinking_level=request.get("thinking_level"), _assistant=metadata)
             guide["run_id"] = result["run"]["id"]
         except Exception:
-            guide.update(state="failed", error="The buddy could not prepare this review. Confirm Pi is configured and try again.")
+            guide.update(state="failed", finished_at=_now(), error="The buddy could not prepare this review. Confirm Pi is configured and try again.")
         with self._lock:
-            self.runtime._write_json(self._path(review_id, guide_id), guide)
+            path = self._path(review_id, guide_id)
+            if not path.exists():
+                # Archived while preparing: nothing is left to save the answer into.
+                if guide.get("run_id"):
+                    try: self.runtime.service.agent_runs.cancel(guide["run_id"])
+                    except Exception: pass
+                return
+            self.runtime._write_json(path, guide)
+            if guide["state"] != "running":
+                self._settled(review_id, guide)
 
     def get(self, review_id: str, guide_id: str) -> dict:
         with self._lock:
@@ -526,8 +598,9 @@ class ReviewGuideService:
                 from datetime import datetime, timezone
                 age = (datetime.now(timezone.utc) - datetime.fromisoformat(guide["created_at"].replace("Z", "+00:00"))).total_seconds()
                 if age > 180:
-                    guide.update(state="failed", error="Preparation was interrupted. Start a new walkthrough.")
+                    guide.update(state="failed", finished_at=_now(), error="Preparation was interrupted. Start a new walkthrough.")
                     self.runtime._write_json(path, guide)
+                    self._settled(review_id, guide)
                 return guide
             try:
                 run = self.runtime.service.agent_runs.get(guide["run_id"])["run"]
@@ -543,5 +616,7 @@ class ReviewGuideService:
                     guide["state"] = "finished"
             except (AgentRunError, PRReviewError, ValueError, TypeError):
                 guide.update(state="failed", error="The buddy returned an incomplete explanation. Try again; your review is unchanged.")
+            guide["finished_at"] = _now()
             self.runtime._write_json(path, guide)
+            self._settled(review_id, guide)
             return guide

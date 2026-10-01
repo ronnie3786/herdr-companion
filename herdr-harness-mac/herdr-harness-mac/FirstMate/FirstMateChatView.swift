@@ -207,7 +207,7 @@ struct FirstMateChatView: View {
                                 .foregroundStyle(HerdrTheme.accent)
                                 .accessibilityHidden(true)
                             ProgressView().controlSize(.small)
-                            Text("First Mate is working…")
+                            Text(snapshot.feature.isLead ? "First Mate is working…" : "Second Mate is working…")
                                 .herdrFont(size: HerdrTheme.TextSize.small)
                                 .foregroundStyle(HerdrTheme.secondaryText)
                         }
@@ -270,6 +270,7 @@ struct FirstMateChatView: View {
         FirstMateMessageView(
             message: message,
             isPendingDecision: pendingDecisionID == message.id,
+            isLead: snapshot.feature.isLead,
             canQuote: canControl && !featureIsClosed && eligibleQuoteIDs.contains(message.id),
             quoteSource: "First Mate feature \(snapshot.feature.id) · message \(message.id)",
             saveQuote: { quote in
@@ -353,11 +354,11 @@ struct FirstMateChatView: View {
         } else if store.error != nil {
             FirstMateExecutionNotice(text: "Live execution status is unavailable. Showing the last saved workflow.")
         } else if snapshot.feature.status == "blocked" {
-            FirstMateExecutionNotice(text: snapshot.events.last(where: { $0.type == "reliability.blocked" })?.summary ?? "Work is blocked. Review the retained evidence and give First Mate direction.")
+            FirstMateExecutionNotice(text: snapshot.events.last(where: { $0.type == "reliability.blocked" })?.summary ?? "Work is blocked. Review the retained evidence and give the Second Mate direction.")
         } else if snapshot.recoveryNeedsDirection {
             FirstMateExecutionNotice(text: store.runtimeHealth?.automaticRecovery == true
                 ? "Checking retained work for a safe automatic continuation. Uncertain effects or human checkpoints will stop recovery and ask for your direction. See Stability & recovery in Workflow."
-                : "Execution was interrupted and needs your direction. Inspect the retained work and latest handoff in Workflow, then ask First Mate to recover the assignment after verifying uncertain effects.")
+                : "Execution was interrupted and needs your direction. Inspect the retained work and latest handoff in Workflow, then ask the Second Mate to recover the assignment after verifying uncertain effects.")
         } else if snapshot.feature.status == "awaiting_direction" {
             FirstMateChatNote(
                 text: snapshot.pendingDecisionMessageID != nil
@@ -454,7 +455,7 @@ extension PromptComposerDestination {
                 ? "Ask First Mate about any feature, or tell it what to pass on…"
                 : "Give direction, ask a question, or change the plan…"),
             sendAccessibilityLabel: "Send",
-            sendAccessibilityHint: isLead ? "Sends your message to First Mate" : "Sends direction to this First Mate feature",
+            sendAccessibilityHint: isLead ? "Sends your message to First Mate" : "Sends direction to this feature’s Second Mate",
             supportsAttachments: store.attachmentsSupported,
             supportsVoice: true,
             supportsPaneTools: false,

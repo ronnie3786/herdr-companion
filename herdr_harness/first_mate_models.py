@@ -79,6 +79,19 @@ def read_model_catalog(pi_bin, environ, cwd):
                     "thinking": architect_thinking,
                     "configured": bool(architect_model),
                 }
+                from .first_mate_research import read_research_instructions
+                from .first_mate_routing import ResearchScoutConfigurationError
+                scout_model = str(environ.get("HERDR_FIRST_MATE_RESEARCH_SCOUT_MODEL") or "").strip()
+                try:
+                    read_research_instructions(environ)
+                    scout_ready = bool(scout_model)
+                except ResearchScoutConfigurationError:
+                    scout_ready = False
+                routing["research_scout"] = {
+                    "model": scout_model,
+                    "thinking": str(environ.get("HERDR_FIRST_MATE_RESEARCH_SCOUT_THINKING") or "").strip(),
+                    "configured": scout_ready,
+                }
                 # The architect row is always present so a missing required pin is
                 # inspectable without making catalog reads fail.
                 result["routing"] = routing

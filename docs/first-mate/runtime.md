@@ -1,7 +1,8 @@
 # First Mate execution runtime
 
-First Mate is one saved Pi conversation per feature, plus one [lead First Mate](lead.md)
-conversation per machine across them. Managed roles also receive
+Each feature has a Second Mate (feature lead) with its own saved Pi conversation.
+The primary [First Mate](lead.md) coordinates features across each machine. See
+[roles, saved sessions, and compaction](roles-and-sessions.md). Managed roles also receive
 compact, validated Companion/role identity and pointers to the installed on-demand
 references; see [agent awareness](../agent-awareness.md). The companion service owns
 its message queue, assignments, process receipts, work log and human checkpoints.
@@ -38,7 +39,7 @@ attributed to a feature.
 The Pi supervisor is a detached Python module using Pi's documented JSONL RPC.
 It maintains a saved session even if the first model request fails.
 
-Every dispatch uses a typed `coordinator`, `planning`, `execution`, or `architect`
+Every dispatch uses a typed `coordinator`, `planning`, `execution`, `architect`, or `research_scout`
 routing profile. `fm_delegate` can choose any delegated profile explicitly. Use
 `architect` when natural-language intent asks for an architecture/design review,
 architect audit, or a second opinion on an implementation, independent of the

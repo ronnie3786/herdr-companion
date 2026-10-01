@@ -1,6 +1,10 @@
 import Foundation
 import Testing
+#if os(macOS)
 @testable import herdr_harness_mac
+#else
+@testable import herdr_harness_ios
+#endif
 
 /// The URLSession transport without a network: the sandbox forbids listening
 /// sockets, so only the paths that never dial are exercised here.

@@ -23,7 +23,6 @@ struct FirstMateConversationComposer: View {
     let presentationChanged: (Bool) -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var voice = FirstMateMobileVoiceController()
-    @State private var expanded = true
     @State private var sheet: AccessorySheet?
     @State private var photos: [PhotosPickerItem] = []
     @State private var showsPhotos = false
@@ -117,9 +116,10 @@ struct FirstMateConversationComposer: View {
                     files: { importTicket = captureImport(); showsFiles = true },
                     paste: { _ = ComposerCodeBlockPaste.paste(into: text) }, sample: sampleAttachmentAction) : nil,
                 hasAttachments: material.hasAttachments, voice: voice, beginVoice: beginVoice,
-                composerHint: voice.hint ?? (store.attachmentsSupported
+                composerHint: voice.hint,
+                focusedHint: store.attachmentsSupported
                     ? "Type @ to tag a feature. Hold the mic to talk."
-                    : "Update this machine's companion server to attach files. Hold the mic to talk."))
+                    : "Update this machine's companion server to attach files. Hold the mic to talk.")
         }
         .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize)
         .photosPicker(isPresented: $showsPhotos, selection: $photos,
@@ -156,42 +156,51 @@ struct FirstMateConversationComposer: View {
         .sensoryFeedback(.impact(weight: .light), trigger: voice.startPulse)
     }
 
+    /// One compact line above the pill, like the Mac composer's context line
+    /// and model pill: the context ring, then model and thinking.
     private var accessories: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 4) {
-                if let contextPresentation {
-                    Button { sheet = .init(kind: .context, context: store.operationContext) } label: {
-                        HStack(spacing: 6) {
-                            ZStack {
-                                Circle().stroke(HerdrTheme.strongOutline, lineWidth: 2)
-                                if let fraction = contextPresentation.fraction {
-                                    Circle().trim(from: 0, to: fraction).stroke(contextPresentation.pressureReached ? HerdrTheme.warning : HerdrTheme.accent, lineWidth: 2)
-                                        .rotationEffect(.degrees(-90))
-                                }
-                            }.frame(width: 16, height: 16).accessibilityHidden(true)
-                            Text(expanded ? contextPresentation.compactLine : "Context").herdrFont(.caption)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }.frame(minHeight: 44)
-                    }.buttonStyle(.plain).accessibilityIdentifier("first-mate-context")
+        HStack(spacing: 8) {
+            contextButton.fixedSize(horizontal: true, vertical: false)
+            modelButton
+            Spacer(minLength: 0)
+        }
+        .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
+    }
+
+    @ViewBuilder private var contextButton: some View {
+        if let contextPresentation {
+            Button { sheet = .init(kind: .context, context: store.operationContext) } label: {
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle().stroke(HerdrTheme.strongOutline, lineWidth: 2)
+                        if let fraction = contextPresentation.fraction {
+                            Circle().trim(from: 0, to: fraction).stroke(contextPresentation.pressureReached ? HerdrTheme.warning : HerdrTheme.accent, lineWidth: 2)
+                                .rotationEffect(.degrees(-90))
+                        }
+                    }.frame(width: 13, height: 13).accessibilityHidden(true)
+                    Text(contextPresentation.chipLine).lineLimit(1)
+                        .foregroundStyle(contextPresentation.pressureReached ? HerdrTheme.warning : HerdrTheme.secondaryText)
                 }
-                Spacer(minLength: 2)
-                Button { expanded.toggle() } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.up").frame(width: 44, height: 44)
-                }.buttonStyle(.plain).accessibilityLabel(expanded ? "Collapse composer accessories" : "Expand composer accessories")
+                .padding(.horizontal, 10).frame(minHeight: 30).herdrControlGlass(in: .capsule)
+                .frame(minHeight: 44).contentShape(.rect)
             }
-            if expanded {
-                Button { sheet = .init(kind: .model, context: store.operationContext) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "slider.horizontal.3")
-                        Text(modelLabel).fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                    }.herdrFont(.caption).padding(.horizontal, 10).frame(minHeight: 44)
-                        .background(HerdrTheme.codeFill, in: .capsule)
-                }.buttonStyle(.plain).accessibilityLabel("Model and thinking, \(modelLabel)")
-                    .accessibilityIdentifier("first-mate-model-controls")
+            .buttonStyle(.plain).accessibilityLabel(contextPresentation.summary)
+            .accessibilityIdentifier("first-mate-context")
+        }
+    }
+
+    private var modelButton: some View {
+        Button { sheet = .init(kind: .model, context: store.operationContext) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "bolt").font(.system(size: 11, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
+                Text(modelLabel).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
             }
-        }.foregroundStyle(HerdrTheme.secondaryText)
+            .padding(.horizontal, 10).frame(minHeight: 30).herdrControlGlass(in: .capsule)
+            .frame(minHeight: 44).contentShape(.rect)
+        }
+        .buttonStyle(.plain).accessibilityLabel("Model and thinking, \(modelLabel)")
+        .accessibilityIdentifier("first-mate-model-controls")
     }
 
     private var modelLabel: String {
@@ -199,7 +208,10 @@ struct FirstMateConversationComposer: View {
         let feature = FirstMateMobileModelPolicy.featureWithObservedSettings(snapshot)
         let model = feature.nativeSessionID == nil ? feature.coordinatorModel : feature.modelSelection?.actualModel
         let thinking = feature.nativeSessionID == nil ? feature.coordinatorThinking : feature.modelSelection?.actualThinking
-        return [model ?? (feature.nativeSessionID == nil ? "Host default" : "Session model not reported"), thinking?.capitalized].compactMap { $0 }.joined(separator: " · ")
+        // The Mac pill shows the model's last path component, never a full
+        // provider route that would wrap onto a second line.
+        let name = model.map { $0.components(separatedBy: "/").last ?? $0 }
+        return [name ?? (feature.nativeSessionID == nil ? "Host default" : "Session model not reported"), thinking?.capitalized].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var sampleAttachmentAction: (() -> Void)? {
@@ -298,10 +310,9 @@ struct FirstMateMobileContextSheet: View {
                     }.fixedSize(horizontal: false, vertical: true).padding(16).frame(maxWidth: 640, alignment: .leading)
                 } else { ContentUnavailableView("Context unavailable", systemImage: "info.circle") }
             }.frame(maxWidth: .infinity)
-                .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
-                .herdrNavigationBarChrome()
+                .herdrSheetSurface()
                 .navigationTitle("Context").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { HerdrSheetCloseButton { dismiss() } } }
         }.herdrAppChrome(separateSurface: true)
             .accessibilityIdentifier("first-mate-context-sheet")
     }

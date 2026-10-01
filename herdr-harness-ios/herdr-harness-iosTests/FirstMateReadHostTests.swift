@@ -217,8 +217,17 @@ struct FirstMateReadHostTests {
         defer { fixture.unmount() }
         await fixture.settle()
         let scroll = try #require(fixture.transcriptScrollView)
-        scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
+        // A screen at a time, like a drag. iOS 27 keeps a lazy stack's anchor
+        // across an instant multi-screen jump and moves the offset back.
+        let top = -scroll.adjustedContentInset.top
+        try await fixture.wait {
+            if scroll.contentOffset.y > top + 1 {
+                scroll.setContentOffset(CGPoint(x: 0, y: max(top, scroll.contentOffset.y - scroll.bounds.height / 2)), animated: false)
+            }
+            return scroll.contentOffset.y <= top + 1
+        }
         await fixture.settle()
+        #expect(scroll.contentOffset.y <= top + 1)
         fixture.presentation.tracking = true
         await fixture.settle()
         #expect(await fixture.client.readIDs.isEmpty)

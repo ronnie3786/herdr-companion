@@ -71,12 +71,17 @@ struct FirstMateModelSettingsView: View {
                 if let routing = catalog?.routing {
                     Divider()
                     Text("Host routing defaults").herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
-                    routingRow("Coordinator", value: routing.coordinator)
+                    routingRow("Second Mate", value: routing.coordinator)
                     routingRow("Planning", value: routing.planning)
                     routingRow("Execution", value: routing.execution)
                     if let architect = routing.architect {
                         routingRow("Architect", value: architect, emptyModelLabel: architect.pinnedDisplayName)
                         Text("Architect is a host-only pin from the private [first_mate] configuration. Change architect_model and architect_thinking there; this feature's model choice never overrides it.")
+                            .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
+                    }
+                    if let scout = routing.researchScout {
+                        routingRow("Research Scout", value: scout, emptyModelLabel: scout.pinnedDisplayName)
+                        Text("Research Scout uses the host’s private model pin and company instructions. Ask the feature lead to invoke it for a ticket, API, or research question.")
                             .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
                     }
                     Text("Host routing applies to new dispatches, retries, continuations, and handoffs. Already-started sessions keep their recorded selection.")
@@ -118,7 +123,7 @@ struct FirstMateModelSettingsView: View {
 
     private func routingRow(_ title: String, value: FirstMateRoutingDefault, emptyModelLabel: String? = nil) -> some View {
         let fallbackDisplayName = emptyModelLabel ?? value.compactDisplayName
-        let displayName = value.configuredDisplayName ?? fallbackDisplayName
+        let displayName = value.configured == false ? "NOT CONFIGURED" : value.configuredDisplayName ?? fallbackDisplayName
         return HStack {
             Text(title).herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.secondaryText)
             Spacer()

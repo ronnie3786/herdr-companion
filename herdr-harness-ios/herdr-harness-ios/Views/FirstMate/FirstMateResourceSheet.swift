@@ -8,7 +8,7 @@ struct FirstMateResourceSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 18) {
                     FirstMateResourceHeader(store: store, resource: resource)
                     if resource.nativeSessionID != nil {
                         if let selection = store.resourceModelSelection ?? resource.modelSelection(in: store.snapshot) {
@@ -19,7 +19,7 @@ struct FirstMateResourceSheet: View {
                             title: "Whole-session usage"
                         )
                     }
-                    Divider()
+                    Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
                     if store.resourceLoading {
                         ProgressView("Loading saved resource…")
                             .frame(maxWidth: .infinity, minHeight: 160)
@@ -41,39 +41,29 @@ struct FirstMateResourceSheet: View {
                         case .document:
                             FirstMateDocumentContentView(source: store.resourceText)
                         case .session, .history:
-                            Text(store.resourceText)
-                                .font(.body)
-                                .lineSpacing(6)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            FirstMateSessionTranscriptView(messages: store.sessionMessages, fallbackText: store.resourceText)
                         }
                         Label(store.isDemo ? "Synthetic demo recording" : "Saved history. Your First Mate conversation stays in the feature.", systemImage: "clock.arrow.circlepath")
-                            .font(.footnote)
-                            .foregroundStyle(HerdrTheme.secondaryText)
-                            .padding(.top, 12)
+                            .herdrFont(.footnote)
+                            .foregroundStyle(HerdrTheme.tertiaryText)
+                            .padding(.top, 4)
                     }
                 }
                 .padding(16)
                 .frame(maxWidth: 720, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+            .herdrEdgeFade(.top)
+            .herdrSheetSurface()
             .foregroundStyle(HerdrTheme.primaryText, HerdrTheme.secondaryText, HerdrTheme.tertiaryText)
-            .herdrNavigationBarChrome()
             .navigationTitle(resource.nativeSessionID == nil ? "Document" : "Saved session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: store.closeResource) {
-                        Text("Done").frame(minWidth: 44, minHeight: 44).contentShape(.rect)
-                            .composerLayoutMeasurement(id: "resource-close-control")
-                    }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(HerdrTheme.accent)
+                    HerdrSheetCloseButton(action: store.closeResource)
                         .accessibilityIdentifier("first-mate-resource-close")
                 }
-                .sharedBackgroundVisibility(.hidden)
             }
         }
         .herdrAppChrome(separateSurface: true)

@@ -6,6 +6,7 @@ struct PiToolInvocation: Identifiable, Equatable, Sendable {
         case running
         case succeeded
         case failed
+        case unavailable
     }
 
     let id: String

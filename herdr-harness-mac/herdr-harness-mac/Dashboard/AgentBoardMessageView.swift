@@ -63,7 +63,7 @@ struct AgentBoardMessageView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("First Mate")
+        .accessibilityLabel("Second Mate")
     }
 
     private var foldedProse: some View {

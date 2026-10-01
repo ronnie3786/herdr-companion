@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Bindable var model: HerdrAppModel
     @AppStorage(HerdrAppearancePreferences.glassKey) private var glass = HerdrAppearancePreferences.glassDefault
     @AppStorage(HerdrAppearancePreferences.hazeKey) private var haze = HerdrAppearancePreferences.hazeDefault
+    @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
@@ -11,6 +12,7 @@ struct SettingsView: View {
             Form {
                 statusSection
                 machinesSection
+                buildsSection
                 appearanceSection
                 carModeSection
                 voiceSection
@@ -21,6 +23,9 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .scrollContentBackground(.hidden)
             .background(HerdrBackground())
+            .navigationDestination(for: SettingsRoute.self) { route in
+                SettingsRouteDestination(model: model, route: route)
+            }
         }
     }
 
@@ -47,34 +52,29 @@ struct SettingsView: View {
 
     private var machinesSection: some View {
         Section {
+            // Value links: a destination is built only when it is pushed. The
+            // editor and Fleet read Keychain credentials, which must never run
+            // on every Settings redraw (that froze Settings on device).
             ForEach(model.machines) { machine in
-                NavigationLink {
-                    MachineEditorView(model: model, machine: machine)
-                } label: {
+                NavigationLink(value: SettingsRoute.editMachine(machine.id)) {
                     MachineListRow(machine: machine, state: model.connectionState(forMachine: machine.id))
                 }
                 .accessibilityIdentifier("settings-machine-row-\(machine.id)")
             }
 
-            NavigationLink {
-                MachineEditorView(model: model, machine: nil)
-            } label: {
+            NavigationLink(value: SettingsRoute.addMachine) {
                 Label("add machine", systemImage: "plus")
             }
             .accessibilityIdentifier("settings-add-machine")
 
-            NavigationLink {
-                MachinesView(model: model)
-            } label: {
+            NavigationLink(value: SettingsRoute.manageMachines) {
                 Label("Manage machines", systemImage: "server.rack")
             }
             .accessibilityIdentifier("settings-manage-machines")
 
             // Fleet is a read-only report about the machines configured above,
             // so it belongs in the same bucket rather than in a fourth tab.
-            NavigationLink {
-                FleetInventoryView(model: model)
-            } label: {
+            NavigationLink(value: SettingsRoute.fleetInventory) {
                 Label("Fleet inventory", systemImage: "point.3.connected.trianglepath.dotted")
             }
             .accessibilityIdentifier("settings-fleet-inventory")
@@ -88,6 +88,28 @@ struct SettingsView: View {
             Label("Machines", systemImage: "server.rack")
         } footer: {
             Text("Use the private HTTPS address created by Tailscale Serve. Each bearer token is stored in Keychain and sent only to its machine.")
+        }
+    }
+
+    /// The Mac's Settings → Builds address, stored the same way: the text as
+    /// typed, read through `MobileAppHubSettings.hubURL(from:)` where it is used.
+    private var buildsSection: some View {
+        Section {
+            TextField("Mobile App Hub address", text: $buildsHubURL, prompt: Text("https://builds.example.invalid"))
+                .keyboardType(.URL)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("settings-builds-hub-url")
+            if !buildsHubURL.isEmpty, MobileAppHubSettings.hubURL(from: buildsHubURL) == nil {
+                Label("Enter the hub's full address, starting with https://", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(HerdrTheme.warning)
+                    .accessibilityIdentifier("settings-builds-hub-url-invalid")
+            }
+        } header: {
+            Label("Builds", systemImage: "iphone")
+        } footer: {
+            Text("Each First Mate's Overview lists the builds its agents published to Mobile App Hub, with Install to put one on this device. Leave the address empty to hide them. Simulator checkpoints come from each machine's companion and need no address.")
         }
     }
 
@@ -219,6 +241,33 @@ struct SettingsView: View {
                         .foregroundStyle(HerdrTheme.secondaryText)
                 }
             }
+        }
+    }
+}
+
+/// Settings pushes by value so each destination is created only when opened.
+enum SettingsRoute: Hashable {
+    case editMachine(HerdrMachine.ID)
+    case addMachine
+    case manageMachines
+    case fleetInventory
+}
+
+struct SettingsRouteDestination: View {
+    @Bindable var model: HerdrAppModel
+    let route: SettingsRoute
+
+    var body: some View {
+        switch route {
+        case .editMachine(let id):
+            if let machine = model.machines.first(where: { $0.id == id }) {
+                MachineEditorView(model: model, machine: machine)
+            } else {
+                ContentUnavailableView("Machine removed", systemImage: "server.rack")
+            }
+        case .addMachine: MachineEditorView(model: model, machine: nil)
+        case .manageMachines: MachinesView(model: model)
+        case .fleetInventory: FleetInventoryView(model: model)
         }
     }
 }

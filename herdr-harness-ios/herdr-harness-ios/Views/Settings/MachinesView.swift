@@ -7,9 +7,7 @@ struct MachinesView: View {
         List {
             Section {
                 ForEach(model.machines) { machine in
-                    NavigationLink {
-                        MachineEditorView(model: model, machine: machine)
-                    } label: {
+                    NavigationLink(value: SettingsRoute.editMachine(machine.id)) {
                         MachineListRow(
                             machine: machine,
                             state: model.connectionState(forMachine: machine.id)
@@ -21,9 +19,7 @@ struct MachinesView: View {
             }
 
             Section {
-                NavigationLink {
-                    MachineEditorView(model: model, machine: nil)
-                } label: {
+                NavigationLink(value: SettingsRoute.addMachine) {
                     Label("add machine", systemImage: "plus")
                         .font(.subheadline.monospaced().bold())
                         .foregroundStyle(HerdrTheme.text)
@@ -40,6 +36,8 @@ struct MachinesView: View {
             }
             .listRowBackground(Color.clear)
         }
+        .scrollContentBackground(.hidden)
+        .background(HerdrBackground())
         .navigationTitle("Machines")
         .toolbar { EditButton() }
     }

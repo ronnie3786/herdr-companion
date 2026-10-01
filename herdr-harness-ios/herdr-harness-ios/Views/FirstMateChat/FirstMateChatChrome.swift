@@ -8,6 +8,10 @@ extension EnvironmentValues {
 
 struct HerdrAppChromeModifier: ViewModifier {
     var separateSurface = false
+    /// First Mate keeps its bars transparent over the dusk (Liquid Glass
+    /// controls and the system scroll-edge effect); other screens keep the
+    /// readable bar fill.
+    var transparentNavigationBar = false
     @AppStorage(HerdrAppearancePreferences.glassKey) private var glass = HerdrAppearancePreferences.glassDefault
     @AppStorage(HerdrAppearancePreferences.hazeKey) private var haze = HerdrAppearancePreferences.hazeDefault
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -28,7 +32,7 @@ struct HerdrAppChromeModifier: ViewModifier {
             }
             .containerBackground(for: .navigation) { HerdrAppBackdrop(active: active) }
             .containerBackground(for: .navigationSplitView) { HerdrAppBackdrop(active: active) }
-            .herdrNavigationBarChrome()
+            .modifier(HerdrNavigationBarChromeModifier(transparent: transparentNavigationBar))
             .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize)
             .background {
                 if !installed || separateSurface {
@@ -56,8 +60,16 @@ struct HerdrAppBackdrop: View {
 }
 
 private struct HerdrNavigationBarChromeModifier: ViewModifier {
+    var transparent = false
     @Environment(\.herdrGlassActive) private var glass
     func body(content: Content) -> some View {
+        if transparent && glass {
+            content.herdrTransparentNavigationBar()
+        } else {
+            opaque(content)
+        }
+    }
+    private func opaque(_ content: Content) -> some View {
         content
             .toolbarBackground(
                 HerdrGlass.darkened(HerdrTheme.railBackground, scheme: .dark)
@@ -69,11 +81,15 @@ private struct HerdrNavigationBarChromeModifier: ViewModifier {
 
 extension View {
     /// Apply to the navigation content so UIKit installs the readable bar fill.
-    func herdrNavigationBarChrome() -> some View { modifier(HerdrNavigationBarChromeModifier()) }
-    func herdrAppChrome(separateSurface: Bool = false) -> some View {
-        modifier(HerdrAppChromeModifier(separateSurface: separateSurface))
+    func herdrNavigationBarChrome(transparent: Bool = false) -> some View {
+        modifier(HerdrNavigationBarChromeModifier(transparent: transparent))
     }
-    func herdrFirstMateChrome() -> some View { herdrAppChrome() }
+    func herdrAppChrome(separateSurface: Bool = false, transparentNavigationBar: Bool = false) -> some View {
+        modifier(HerdrAppChromeModifier(separateSurface: separateSurface, transparentNavigationBar: transparentNavigationBar))
+    }
+    func herdrFirstMateChrome(separateSurface: Bool = false) -> some View {
+        herdrAppChrome(separateSurface: separateSurface, transparentNavigationBar: true)
+    }
 }
 
 #if DEBUG

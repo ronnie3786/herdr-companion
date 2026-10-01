@@ -44,16 +44,17 @@ final class FirstMateInfoRenderTests: XCTestCase {
                     FirstMateResourceSheet(store: store, resource: resource).frame(height: 840),
                     width: width, dynamicType: .accessibility3)
                 XCTAssertTrue(render.drewHierarchy)
-                let close = try XCTUnwrap(render.element(identifier: "resource-close-control"), render.measurementDiagnostics)
-                XCTAssertGreaterThanOrEqual(close.frame.width, 43.99)
-                XCTAssertGreaterThanOrEqual(close.frame.height, 43.99)
-                XCTAssertTrue(render.bounds.contains(close.frame), "Close must remain visible at \(width) points: \(close.frame)")
+                // Close is the system glass close button (a UIKit bar item, so it
+                // has no SwiftUI anchor). HerdrFirstMatePolishUITests reaches and
+                // taps `first-mate-resource-close` on the real sheet.
                 try save(render, "phase6-\(resource.nativeSessionID == nil ? "document" : "session")-\(Int(width))-capped")
                 store.closeResource()
             }
         }
     }
 
+    /// Landscape docks the inspector beside the list and chat; portrait keeps
+    /// two panes until the inspector is asked for (FirstMateIPadLayoutTests).
     func testIPadHasThreeNonoverlappingColumnsAt1024And1366() async throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("Run on the dedicated iPad simulator") }
         let model = await fixture(), fleet = model.firstMateFleet
@@ -70,17 +71,22 @@ final class FirstMateInfoRenderTests: XCTestCase {
             XCTAssertTrue(render.drewHierarchy)
             let sidebar = try XCTUnwrap(render.element(identifier: "first-mate-sidebar-column"), render.measurementDiagnostics).frame
             let chat = try XCTUnwrap(render.element(identifier: "first-mate-chat-column"), render.measurementDiagnostics).frame
-            let info = try XCTUnwrap(render.element(identifier: "first-mate-info-column"), render.measurementDiagnostics).frame
-            XCTAssertGreaterThanOrEqual(sidebar.width, 239)
+            XCTAssertGreaterThanOrEqual(sidebar.width, 83)
             XCTAssertGreaterThanOrEqual(chat.width, 299)
-            XCTAssertGreaterThanOrEqual(info.width, 279)
             XCTAssertGreaterThanOrEqual(sidebar.minX, -1)
             XCTAssertLessThanOrEqual(sidebar.maxX, chat.minX + 1)
-            XCTAssertLessThanOrEqual(chat.maxX, info.minX + 1)
-            XCTAssertLessThanOrEqual(info.maxX, width + 1)
+            if width == 1366 {
+                let info = try XCTUnwrap(render.element(identifier: "first-mate-info-column"), render.measurementDiagnostics).frame
+                XCTAssertGreaterThanOrEqual(info.width, 279)
+                XCTAssertLessThanOrEqual(chat.maxX, info.minX + 1)
+                XCTAssertLessThanOrEqual(info.maxX, width + 1)
+            } else {
+                XCTAssertNil(render.element(identifier: "first-mate-info-column"), "Portrait opens without the inspector")
+                XCTAssertLessThanOrEqual(chat.maxX, width + 1)
+            }
             XCTAssertEqual(fleet.selectedTarget, target)
             XCTAssertEqual(store.draft, "Retained synthetic iPad draft")
-            print("HERDR_IPAD_COLUMNS width=\(width) sidebar=\(sidebar) chat=\(chat) info=\(info)")
+            print("HERDR_IPAD_COLUMNS width=\(width) sidebar=\(sidebar) chat=\(chat)")
             try save(render, "phase6-ipad-\(Int(width))-capped")
         }
     }

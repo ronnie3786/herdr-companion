@@ -10,20 +10,23 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
     /// One line for the composer: "Coordinator context 41% · plenty of room".
     /// The full summary stays in the popover and help.
     var compactLine: String = ""
+    /// The shortest form, for the iPhone's context chip beside the model pill:
+    /// "Context 41%", "New session", "Context 88% · handoff due".
+    var chipLine: String = ""
     var pressureReached = false
 
     init(feature: FirstMateFeature, capabilityAvailable: Bool) {
-        // The lead First Mate hands off the same way, and may also compact
-        // within one turn that would overflow (first-mate-lead-v1).
-        let name = feature.isLead ? "Context" : "Coordinator context"
+        // Both the primary First Mate and feature leads use managed handoff.
+        let name = feature.isLead ? "Context" : "Second Mate context"
         policy = feature.isLead
-            ? "After a reply that reaches the handoff target, First Mate starts a fresh session carrying the recent conversation. If one turn would overflow first, it compacts. Full history remains available."
+            ? "After a reply that reaches the handoff target, First Mate starts a fresh session carrying the recent conversation. Full history remains available; Pi compaction is cancelled only for this managed session."
             : "Managed handoff automatically checkpoints and starts a fresh coordinator at a safe turn boundary. Full history remains available; ordinary compaction is disabled."
         guard capabilityAvailable else {
             summary = "\(name) unavailable · update server"
             pressure = nil
             measurement = nil
             compactLine = summary
+            chipLine = "Context unavailable"
             return
         }
         guard feature.nativeSessionID != nil else {
@@ -31,6 +34,7 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
             pressure = nil
             measurement = nil
             compactLine = summary
+            chipLine = "New session"
             return
         }
         guard let context = feature.coordinatorContext,
@@ -40,6 +44,7 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
             pressure = nil
             measurement = nil
             compactLine = summary
+            chipLine = "Context"
             return
         }
 
@@ -56,17 +61,21 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
         }
 
         var compact = summary
+        var chip = "Context"
         if context.tokens != nil, context.contextWindow != nil, let measuredFraction = context.measuredFraction {
             fraction = measuredFraction
             compact = "\(name) \(Int((measuredFraction * 100).rounded()))%"
+            chip = "Context \(Int((measuredFraction * 100).rounded()))%"
         }
         switch context.managedHandoffPressure {
         case .approaching:
             pressure = "Approaching the managed handoff target"
             compact += " · approaching handoff"
+            chip += " · handoff soon"
         case .thresholdReached:
             pressure = "Managed handoff threshold reached"
             compact += " · handoff threshold reached"
+            chip += " · handoff due"
             pressureReached = true
         case .belowTarget:
             if fraction != nil { compact += " · plenty of room" }
@@ -80,6 +89,7 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
         }
 
         compactLine = compact
+        chipLine = chip
 
         if let observedAt = context.observedAt,
            let date = HerdrTimestamp.date(from: observedAt) {

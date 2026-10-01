@@ -690,6 +690,10 @@ class HerdrService:
             self.pr_review.wake()
         self.broker.publish("pr_review.updated", {"review_id": review_id, "generatedAt": utc_now()})
 
+    def pr_review_walkthrough_changed(self, payload: dict) -> None:
+        """A walkthrough finished or failed in the background; clients alert from this."""
+        self.broker.publish("pr_review.walkthrough", {**payload, "generatedAt": utc_now()})
+
     @property
     def simulator_previews(self):
         """SimPortal checkpoints and previews (docs/first-mate/simulator-previews.md); inert until configured."""

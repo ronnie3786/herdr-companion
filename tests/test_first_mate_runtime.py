@@ -98,6 +98,11 @@ for line in sys.stdin:
   elif job['kind']=='worker':
    if job.get('requires_recovery_ack'):
     tool('fm_acknowledge_recovery',{'summary':'Retained checkpoint inspected; next safe action verified'},'recovery-ack')
+   if 'hold for concurrency check' in job['prompt']:
+    deadline=time.monotonic()+30
+    while not (root.parent.parent/'release-concurrency-check').exists():
+     if time.monotonic()>deadline:raise RuntimeError('synthetic concurrency barrier timed out')
+     time.sleep(.03)
    if 'slow' in job['prompt']:
     time.sleep(1)
    if 'nested review' in job['prompt'] and not job['claim'].get('metadata',{}).get('parent_assignment_id') and not job.get('parent_job_id'):

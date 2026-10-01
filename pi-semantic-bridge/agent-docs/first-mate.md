@@ -31,6 +31,19 @@ uncertain worker to escape those checks. If a fix changes reviewed code, use
 `fm_retry` to refresh the affected revision-pinned review, including a completed
 review, before completing the stage. Old review attempts remain retained.
 
+Choose concurrency from each task's required inputs and writes. Delegate
+independent tasks together in the current authorized stage; two skills or two
+items in a request do not imply sequential stages. With a companion advertising
+`first-mate-independent-workers-v1`, use `workspace_mode: independent` plus
+`independence_reason` for external research or an authorized PR-body update
+needing no checkout or unfinished result. This uses a private scratch directory,
+not another Git worktree. Omit source and fork fields. Supply exact skill paths,
+project instructions, source references and repository/PR identities. Wait when
+the description needs unfinished implementation, or when workers would change
+the same external resource. A live-checkout review still waits behind a writer.
+Independent parents may delegate only independent children. Report delegation
+as queued until authoritative state says running; never poll for startup.
+
 Managed roles receive typed `fm_*` tools scoped to their validated feature/job:
 
 | Role | Typed workflow tools |

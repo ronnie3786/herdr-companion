@@ -278,12 +278,13 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
           hub_build_id: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Mobile App Hub build ID of the matching device build, when you published one" })),
         }));
       }
-      register("fm_delegate", "Queue an independent saved Pi worker in the current authorized stage. This returns immediately. Delegate long work; never wait or poll.", Type.Object({
+      register("fm_delegate", "Queue a saved Pi worker in the current authorized stage. Delegate independent tasks together; serialize only real dependencies or conflicting writes. The receipt means queued, not running. This returns immediately; never wait or poll.", Type.Object({
         title: text("Assignment title"), role: text("Specialist role"),
         prompt: text("Complete assignment including scope, required deliverables, acceptance criteria and explicit human gates"),
         model: Type.Optional(Type.String()),
         model_profile: Type.Optional(Type.Union([Type.Literal("planning"), Type.Literal("execution"), Type.Literal("architect"), Type.Literal("research_scout")], { description: "Explicit routing profile. Use research_scout for explicitly requested Research Scout, ticket/API research, or company-platform investigation. It requires the host-pinned model and private instructions; never substitute another profile when unavailable. Interpret natural-language intent: use architect for an architecture/design review, architect audit, or a second opinion on an implementation, independent of stage (for example, `Give me an architect review`). Use planning for ordinary planning and execution for implementation, routine code review, testing, or other execution. Omit to use only the current stage key: planning maps to planning, every other stage maps to execution. A model name or worker title alone does not override host pins; use this typed model_profile. An unavailable or mismatched requested architect is blocked and must NEVER be re-routed through planning or execution. Acknowledge the requested role/pin, and claim an actual model only from model_selection actual evidence." })),
-        workspace_mode: Type.Union([Type.Literal("read_only"), Type.Literal("isolated")], { description: "Read-only inspection or writable access to the continuing feature worktree. Sequential implementation, builds, review fixes and feedback reuse one worktree and branch." }),
+        workspace_mode: Type.Union([Type.Literal("read_only"), Type.Literal("isolated"), Type.Literal("independent")], { description: "read_only inspects the live checkout and waits behind writers; isolated edits the continuing feature worktree. independent uses a private scratch directory with no checkout, allowing external research or an authorized PR-body update alongside code work. It creates no Git worktree and must not inspect/edit the live checkout or depend on unfinished results. Supply exact skill paths, project instructions and external repository/PR identifiers in the prompt. Serialize conflicting external writes." }),
+        independence_reason: Type.Optional(Type.String({ minLength: 1, maxLength: 1000, description: "Required only for independent: explain why the task needs no live checkout or unfinished result. Omit source_assignment_id, workspace_strategy and fork_reason in this mode." })),
         source_assignment_id: Type.Optional(text("Exact assignment whose retained workspace to continue or review. Omit to use the persistent feature workspace. Does not create a new checkout.")),
         workspace_strategy: Type.Optional(Type.Union([Type.Literal("feature"), Type.Literal("fork")], { description: "Default feature reuses the workspace across assignments and stages, queuing behind any writer. fork explicitly creates a separate worktree for independent parallel implementation or an experiment, from committed source only. Never fork merely for recovery, a build or a feedback round." })),
         fork_reason: Type.Optional(Type.String({ minLength: 1, maxLength: 1000, description: "Required only for fork: explain why this work needs its own branch and checkout." })),
@@ -430,8 +431,13 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       if (restrictedAdvisor && !observational && !["read", "ls", "find", "grep", "fm_status", "fm_read_document", "fm_read_session", "fm_advice", "fm_recovery_brief"].includes(event.toolName)) {
         return { block: true, reason: "Automatic recovery assessment is read-only; return evidence through the advisor tools." };
       }
-      if (job.workspace_mode === "read_only" && event.toolName === "bash" && destructiveSharedGit(event.input?.command)) {
+      if (["read_only", "independent"].includes(job.workspace_mode) && event.toolName === "bash" && destructiveSharedGit(event.input?.command)) {
         return { block: true, reason: "Do not stash, reset, checkout, restore or clean the human's shared checkout. Preserve existing edits and inspect them read-only; request an isolated implementation workspace when needed." };
+      }
+      if (job.workspace_mode === "independent" && ["edit", "write"].includes(event.toolName)) {
+        let localWrite = false;
+        try { localWrite = workspaceEffect(event.input); } catch { /* Unverifiable paths remain blocked. */ }
+        if (!localWrite) return { block: true, reason: "Independent workers may write temporary artifacts only inside their private scratch directory. Ask Second Mate for a code assignment if the task needs project edits." };
       }
       if (job.safety_ledger_version === 1 && !event.toolName.startsWith("fm_") && !["read", "grep", "find", "ls"].includes(event.toolName)) {
         // Explicitly block on failure: extension-handler exceptions alone are

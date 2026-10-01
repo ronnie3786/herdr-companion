@@ -195,6 +195,15 @@ source changes. Branches and worktrees are retained until an explicit cleanup
 decision. See [feature workspaces](workspaces.md) for ownership, legacy adoption,
 concurrency, recovery, and compatibility.
 
+Second Mate also reasons about tasks that need no checkout or unfinished code.
+It can delegate these with `workspace_mode: independent` and a required
+`independence_reason`, running external research or authorized PR-body updates
+alongside implementation in separate private scratch directories. These tasks
+create no Git worktree, enter no code-verification scope, and retain normal
+worker limits and effect receipts. Genuine input dependencies and conflicting
+external writes remain ordered. A delegation receipt is queued, not proof of a
+running agent. See [task routing](workspaces.md#choosing-which-tasks-can-run-together).
+
 Managed dispatches set `HERDR_FIRST_MATE_MANAGED_ROLE`, never the legacy role
 variable. The selected extension also verifies that its real module path matches
 the extension recorded in the private job. This leaves an older configured First

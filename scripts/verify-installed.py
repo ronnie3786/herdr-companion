@@ -57,6 +57,7 @@ print(json.dumps({
     'installed_extension': extension.is_file() and '_bundled' in extension.parts,
     'runtime_extension': runtime.extension == extension,
     'typed_tools': 'fm_delegate' in extension.read_text(),
+    'independent_workers': 'Type.Literal("independent")' in extension.read_text() and 'independence_reason' in extension.read_text(),
     'html': (package / 'static/first-mate/index.html').is_file(),
     'javascript': (package / 'static/first-mate/app.js').is_file(),
     'empty_store': store.list_features() == [],

@@ -17,6 +17,7 @@ every client supports every feature or that all integrations work without setup.
 
 | Feature | What it does |
 | --- | --- |
+| Independent First Mate workers | Second Mate routes tasks by their actual inputs and writes. Research or authorized PR-description work that needs no checkout can run alongside code edits in private scratch directories, without extra Git worktrees. Work that needs unfinished code or the same writable checkout stays ordered. Delegation receipts mean queued until execution starts. Requires the matching companion/Pi package advertising `first-mate-independent-workers-v1`; no native app update is needed. See [task routing](docs/first-mate/workspaces.md#choosing-which-tasks-can-run-together). |
 | First Mate autonomous recovery | Keeps explicitly authorized stages moving through routine interruptions, preserves a new stage when its goal is refined in the same turn, and posts one primary response per turn. Worker status uses bounded references; recovery inspection can finish before another context handoff, and retry budgets refresh only after observed source or child-result progress. A damaged dispatch no longer stalls unrelated features. The Mac groups older duplicate checkpoint replies with their original feedback intact. Matching companion/Pi updates are required for execution changes; the signed Mac feed updates presentation separately. See [autonomy and checkpoints](docs/first-mate/autonomy.md) and [explicit verification targets](docs/first-mate/verification-targets.md). |
 | Multiple computers | Save your computers in one private configuration and switch between their workspaces and sessions. Connection credentials stay in Keychain in the native apps. On Mac, optional per-machine `sidebar_label` and `sidebar_order` values configure the one-to-three-computer segment titles and partial order without changing machine identity or the saved selection. Missing labels use full names; names and roles imply nothing. The first saved companion serves the authoritative private roster on connection or Refresh and identifies its own configured record even when the saved connection uses localhost or another origin alias; other paired computers still require unique exact-origin matches. Runtime updates require matching companion and Mac versions. Zero machines remain hidden and four or more keep the full-name menu. |
 | Mac, iPhone, and browser clients | Follow work from a native desktop app, your phone, or a browser connected to your companion server. The clients have different capabilities. |
@@ -365,8 +366,9 @@ separate, consistent backup and a state migration plan.
 ### First Mate feature workflows
 
 First Mate keeps one feature worktree and branch across sequential stages,
-feedback, builds, and recovery. Independent parallel work uses an explicit fork;
-workspace locks prevent overlapping writers. Existing features adopt an
+feedback, builds, and recovery. Parallel code implementations use an explicit fork;
+tasks needing no checkout use independent scratch directories. Workspace locks
+prevent overlapping writers. Existing features adopt an
 unambiguous retained checkout without resetting edits. This companion/Pi update
 requires no native app update. See [feature workspace lifecycle](docs/first-mate/workspaces.md).
 

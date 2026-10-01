@@ -28,6 +28,7 @@ directory and repository rather than an old branch label.
 | `read_only`, before a feature workspace exists | Inspect the project checkout; create nothing. |
 | `isolated`, default `workspace_strategy: feature` | Create the first feature worktree, then reuse it. |
 | `read_only`, after a feature workspace exists | Inspect the continuing feature worktree. |
+| `independent` with `independence_reason` | Use a private non-Git scratch directory for work needing no checkout or unfinished result. No feature-worktree reservation or extra Git branch. |
 | Exact `source_assignment_id` | Continue or inspect that assignment's owned checkout. A writable continuation selects it as the feature's ongoing workspace. |
 | `isolated`, `workspace_strategy: fork`, and `fork_reason` | Create a separate branch/worktree for independent parallel work or an experiment. Keep the existing primary workspace. |
 | Retry, recovery, context handoff, or a new feedback round | Keep the existing workspace and branch. |
@@ -54,6 +55,49 @@ conversation after the children settle. Use an explicit fork when a child needs
 independent writable work. Read-only parents still cannot grant writable access.
 Read-only is a trusted-agent instruction, not an OS security sandbox. Unmanaged
 tools and human editors do not participate in the runtime's locks.
+
+## Choosing which tasks can run together
+
+Second Mate reasons about inputs and writes before delegating, and queues all
+independent tasks in the same authorized stage. It does not infer dependencies
+from the order of the request, skill names, or a shared feature. The server uses
+the explicit workspace mode; it does not classify natural-language task titles.
+
+| Tasks | Routing |
+| --- | --- |
+| Code cleanup and research using external documentation | `isolated` code worker plus `independent` researcher, at the same time. |
+| Code cleanup and an authorized PR-body update from the published diff | `isolated` code worker plus `independent` PR worker using an explicit repository and PR identity. |
+| Description of an implementation that is still changing | Wait for the required implementation result before publishing the description. |
+| Review or tests of the changing local checkout | `read_only` or `isolated`, with the existing checkout locks and revision checks. |
+| Two workers editing the same checkout, or two changing the same external resource | Order the conflicting work. Separate code implementations may use deliberate forks. |
+
+Independent delegation requires a bounded `independence_reason` stating why no
+live checkout or unfinished result is needed. Omit `source_assignment_id`,
+`workspace_strategy`, and `fork_reason`; conflicting parameters are rejected
+before allocation. Include exact skill paths, necessary project instructions,
+supplied sources, external target identities, and the already-authorized actions
+in the task prompt. Project-local context and repository inference from the
+current directory are unavailable in this mode. If the task turns out to need
+the live code, the worker reports that dependency to Second Mate.
+
+The scratch directory is durable per assignment request, reused by retries and
+handoffs, and absent from the Git workspace catalog and code-verification scope.
+Nested independent workers receive their own scratch directories, even under a
+code worker. An independent parent cannot grant a checkout to its children.
+Missing or redirected scratch directories block execution instead of falling
+back to the feature checkout. Host worker limits, session/workspace locks,
+model routing, human gates, and durable external-effect receipts still apply.
+
+This mode is a trusted-agent scope, not an OS sandbox. Direct `edit` and `write`
+tools are confined to scratch, including symlink checks; arbitrary shell tools
+are not generally sandboxed. External services do not participate in workspace
+locks, so Second Mate must order conflicting external writes. Automatic recovery
+remains conservative: independent work with missing receipts or any mutations
+requires inspection. Scratch artifacts stay in place; no Git backup is claimed.
+
+`fm_delegate` returns `queued`, which means accepted for scheduling. Second Mate
+must not report a worker as started until authoritative state says `running`.
+It can explain known dependencies or checkout waits without polling.
 
 ## Recovery and review
 
@@ -106,6 +150,10 @@ an API change. Existing request receipts and in-flight dispatches are retained.
 Native clients continue to use the existing assignment and Git workspace APIs;
 the catalog already collapses assignments that share a physical checkout.
 No Mac or iOS app update is required for this behavior.
+
+Independent workers additionally require `first-mate-independent-workers-v1` on
+the companion and its matching bundled Pi extension. Existing delegations keep
+their original modes; upgrading does not reroute already-queued assignments.
 
 Focused tests use entirely synthetic Git repositories and real detached worker
 processes. They cover twenty-three sequential stages on one branch/cache,

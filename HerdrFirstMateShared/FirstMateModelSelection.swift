@@ -18,7 +18,12 @@ struct FirstMateModelSelection: Codable, Equatable, Sendable {
     }
 
     var profileDisplayName: String {
-        normalized(profile) ?? "Unknown"
+        switch normalized(profile) {
+        case "coordinator": "Coordinator"
+        case "research_scout": "Research Scout"
+        case "architect": "Architect"
+        default: normalized(profile) ?? "Unknown"
+        }
     }
 
     var requestedDisplayName: String {
@@ -38,7 +43,7 @@ struct FirstMateModelSelection: Codable, Equatable, Sendable {
     }
 
     private var isUnconfiguredArchitectRequest: Bool {
-        normalized(profile)?.lowercased() == "architect" && normalized(requestedModel) == nil
+        ["architect", "research_scout"].contains(normalized(profile)?.lowercased() ?? "") && normalized(requestedModel) == nil
     }
 
     private func normalized(_ value: String?) -> String? {
@@ -67,11 +72,17 @@ struct FirstMateModelRouting: Decodable, Equatable, Sendable {
     var planning: FirstMateRoutingDefault
     var execution: FirstMateRoutingDefault
     var architect: FirstMateRoutingDefault?
+    var researchScout: FirstMateRoutingDefault? = nil
+    enum CodingKeys: String, CodingKey {
+        case coordinator, planning, execution, architect
+        case researchScout = "research_scout"
+    }
 }
 
 struct FirstMateRoutingDefault: Decodable, Equatable, Sendable {
     var model: String
     var thinking: String
+    var configured: Bool? = nil
 
     var compactDisplayName: String {
         if let configuredDisplayName { return configuredDisplayName }
@@ -88,6 +99,6 @@ struct FirstMateRoutingDefault: Decodable, Equatable, Sendable {
     }
 
     var pinnedDisplayName: String {
-        configuredDisplayName ?? "NOT CONFIGURED"
+        configured == false ? "NOT CONFIGURED" : configuredDisplayName ?? "NOT CONFIGURED"
     }
 }

@@ -3,8 +3,9 @@ import SwiftUI
 struct FirstMateMessageView: View {
     let message: FirstMateMessage
     var isPendingDecision = false
+    var isLead = false
     var canQuote = false
-    var quoteSource = "First Mate"
+    var quoteSource = "Second Mate"
     var saveQuote: @MainActor (ChatQuote) async throws -> Void = { _ in }
     var feedback: FirstMateResponseFeedbackPresentation?
     var rateFeedback: @MainActor (FirstMateFeedbackRating) -> Void = { _ in }
@@ -74,7 +75,7 @@ struct FirstMateMessageView: View {
                     .herdrFont(size: 12)
                     .foregroundStyle(palette.accent)
                     .accessibilityHidden(true)
-                Text("First Mate")
+                Text(isLead ? "First Mate" : "Second Mate · Feature lead")
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .semibold)
                     .foregroundStyle(palette.secondaryText)
                 if isPendingDecision {
@@ -135,7 +136,7 @@ struct FirstMateMessageView: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("First Mate")
+        .accessibilityLabel(isLead ? "First Mate" : "Second Mate")
     }
 
     private var responseActions: some View {

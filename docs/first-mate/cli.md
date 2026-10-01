@@ -65,6 +65,14 @@ actions. Resume does not approve another stage. To choose the next stage, use
 scope already authorized by their human. Session inspection is read-only; steer
 workers through the feature's First Mate conversation.
 
+The feature conversation is led by **Second Mate (Feature lead)**; **First Mate**
+is the primary cross-feature assistant. Ask either to use **Research Scout** for
+a specific ticket or API question. The delegated profile is `research_scout`,
+with independent `research_scout_model`, optional `research_scout_thinking`, and
+`research_scout_instructions_file` host settings. Private company instructions
+stay outside the repository. Missing configuration blocks that specialist
+without a fallback. See [roles and saved sessions](roles-and-sessions.md).
+
 Provider configuration belongs on the companion host. First Mate inherits the
 provider credentials resolved from its private configuration, which may differ
 from an interactive shell. Set `[machines.desktop.first_mate].model` to a Pi

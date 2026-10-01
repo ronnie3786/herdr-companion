@@ -40,7 +40,7 @@ from .first_mate_git_history import capture_baselines, capture_commits, capture_
 from .first_mate_link_discovery import FirstMateLinkDiscovery
 from .first_mate_peers import PeerDirectory
 from .first_mate_routing import (
-    ArchitectConfigurationError,
+    SpecialistConfigurationError,
     DELEGATION_PROFILES,
     delegation_profile,
     resolve_dispatch_policy,
@@ -145,7 +145,7 @@ class DeferredOperation(Exception):
 
 
 TERMINAL = {"completed", "failed", "blocked", "cancelled", "superseded", "paused"}
-COORDINATOR_PROMPT = """You are First Mate, the lead developer for ONE feature. The human manages the
+COORDINATOR_PROMPT = """You are Second Mate, the feature lead for ONE feature in First Mate. The human manages the
 feature; you route its work to a team of tracked workers and keep the human in
 the loop the way a good lead would: briefly, and only when it matters.
 Keep every ordinary reply brief: one to three sentences and normally at most 80
@@ -195,7 +195,12 @@ review checkpoint, missing credentials/resources, or unresolved external effects
 Within an authorized stage,
 delegate substantive work through fm_delegate. Give each worker complete scope,
 acceptance criteria, required Documents, the exact revision to inspect when
-applicable, and any internal human gates. Interpret the human's natural-language intent and set model_profile to architect
+applicable, and any internal human gates. When the human asks for Research Scout, ticket/API research, or company-platform
+investigation, delegate with model_profile=research_scout. This profile requires
+its host-pinned model and private instructions. Never substitute another profile
+if it is unavailable. Preserve the exact ticket or question in the assignment.
+
+Interpret the human's natural-language intent and set model_profile to architect
 for an architecture/design review, architect audit, or a second opinion on an
 implementation, independent of the current stage. For example, `Give me an
 architect review` requests the architect profile. Use planning for ordinary
@@ -284,6 +289,11 @@ with an honest verdict and textual documents. A final answer or process exit is
 NOT a completion report. Report needs_changes, blocked or failed when appropriate.
 Never silently skip an explicit human gate. Do not merge, deploy, publish or
 delete branches/worktrees without exact authorization. Use fm_delegate for any specialist or sub-agent work so every child is tracked.
+When the human asks for Research Scout, ticket/API research, or company-platform
+investigation, delegate with model_profile=research_scout. This profile requires
+its host-pinned model and private instructions. Never substitute another profile
+if it is unavailable. Preserve the exact ticket or question in the assignment.
+
 Interpret natural-language intent and set model_profile to architect for an
 architecture/design review, architect audit, or a second opinion on an
 implementation, independent of the current stage. For example, `Give me an
@@ -372,7 +382,7 @@ fm_register_simulator_build at the end of the round. A saved build is a preview,
 verification evidence.""",
 }
 LEAD_PROMPT = """You are First Mate, the human's lead across every First Mate feature on their
-machines. Each feature has its own First Mate (its "second mate") that runs that
+machines. Each feature has its own Second Mate (feature lead) that runs that
 feature's stages and workers. You answer the human about all of them, check
 with them, and pass the human's decisions on. You have no stage authority: you
 never begin, approve, or finish a feature's work yourself.
@@ -393,7 +403,11 @@ label. Skip preamble and never restate the question.
   Never invent, extend, or soften a decision, never approve something they did
   not approve, and never relay on your own initiative. If the feature or the
   decision is unclear, ask one short question first. After relaying, say so in
-  one line; that feature's First Mate replies in its own chat.
+  one line; that feature's Second Mate replies in its own chat.
+- When the human requests Research Scout for a ticket or question, relay that
+  exact request to the feature's Second Mate, including model_profile=research_scout
+  as routing guidance. The specialist requires its own host pin and private
+  instructions; never substitute another worker when it is unavailable.
 - Start a new feature with fm_create_feature only when the human asks for one,
   with a clear goal and an existing absolute project folder on the machine it
   runs on. Ask for the folder, or the machine, when you do not know it.
@@ -707,22 +721,23 @@ def _observed_model_selection(data: Mapping[str, Any]) -> tuple[str | None, str 
 
 def _architect_startup_error(job: Mapping[str, Any], data: Mapping[str, Any]) -> str | None:
     selection = job.get("model_selection")
-    if not isinstance(selection, Mapping) or selection.get("profile") != "architect":
+    if not isinstance(selection, Mapping) or selection.get("profile") not in {"architect", "research_scout"}:
         return None
+    label = "Research Scout" if selection.get("profile") == "research_scout" else "Architect"
     requested_model = selection.get("requested_model")
     requested_thinking = selection.get("requested_thinking")
     actual_model, actual_thinking = _observed_model_selection(data)
     if not isinstance(requested_model, str) or not requested_model:
-        return "Architect startup blocked: the required architect model pin is missing"
+        return f"{label} startup blocked: the required model pin is missing"
     if not actual_model:
-        return "Architect startup blocked: Pi get_state did not report a provider-qualified model"
+        return f"{label} startup blocked: Pi get_state did not report a provider-qualified model"
     if actual_model != requested_model:
-        return f"Architect startup blocked: requested model {requested_model!r}, but Pi reported {actual_model!r}"
+        return f"{label} startup blocked: requested model {requested_model!r}, but Pi reported {actual_model!r}"
     if isinstance(requested_thinking, str) and requested_thinking:
         if not actual_thinking:
-            return "Architect startup blocked: Pi get_state did not report the configured thinking effort"
+            return f"{label} startup blocked: Pi get_state did not report the configured thinking effort"
         if actual_thinking != requested_thinking:
-            return f"Architect startup blocked: requested thinking {requested_thinking!r}, but Pi reported {actual_thinking!r}"
+            return f"{label} startup blocked: requested thinking {requested_thinking!r}, but Pi reported {actual_thinking!r}"
     return None
 
 
@@ -850,6 +865,9 @@ class FirstMateRuntime:
         job["model"] = policy.requested_model
         job["thinking"] = policy.requested_thinking
         job["model_selection"] = policy.selection()
+        if policy.profile == "research_scout":
+            from .first_mate_research import read_research_instructions
+            job["research_scout_instructions"] = read_research_instructions(self.environ)
         if job["kind"] == "coordinator":
             job["model_settings_revision"] = feature.get("model_settings_revision", 0)
 
@@ -866,8 +884,9 @@ class FirstMateRuntime:
                                         *, request_id: str,
                                         verified_stopped: bool = False) -> dict:
         detail = str(error)
-        reason = (detail if detail.startswith("Architect startup blocked:") else
-                  "Architect dispatch blocked by host configuration: " + detail)
+        profile = assignment.get("metadata", {}).get("model_profile", "architect")
+        label = "Research Scout" if profile == "research_scout" else "Architect"
+        reason = detail if "startup blocked:" in detail else label + " dispatch blocked by host configuration: " + detail
         return self.store.block_dispatch_configuration(
             assignment["id"], int(assignment.get("generation", 0)), reason, request_id,
             expected_revision=assignment.get("input_revision"),
@@ -877,10 +896,11 @@ class FirstMateRuntime:
     def _reject_unstarted_job(self, job: dict, error: Exception) -> None:
         directory = self._job_dir(job)
         metadata = job.get("claim", {}).get("metadata", {})
+        prefix = "RESEARCH_SCOUT" if metadata.get("model_profile") == "research_scout" else "ARCHITECT"
         job["blocked_policy"] = {
             "profile": metadata.get("model_profile", "architect"),
             "requested_model": "",
-            "requested_thinking": str(self.environ.get("HERDR_FIRST_MATE_ARCHITECT_THINKING") or "").strip(),
+            "requested_thinking": str(self.environ.get(f"HERDR_FIRST_MATE_{prefix}_THINKING") or "").strip(),
             "source": "host_policy",
         }
         # Keep the last valid queued request immutable for historical display;
@@ -1195,10 +1215,12 @@ class FirstMateRuntime:
                 else:
                     try:
                         selection = self._policy(snapshot["feature"], kind="worker", claim=assignment).selection()
-                    except ArchitectConfigurationError:
+                    except SpecialistConfigurationError:
+                        profile = assignment.get("metadata", {}).get("model_profile", "architect")
+                        prefix = profile.upper()
                         selection = {
-                            "profile": "architect", "requested_model": "",
-                            "requested_thinking": str(self.environ.get("HERDR_FIRST_MATE_ARCHITECT_THINKING") or "").strip(),
+                            "profile": profile, "requested_model": "",
+                            "requested_thinking": str(self.environ.get(f"HERDR_FIRST_MATE_{prefix}_THINKING") or "").strip(),
                             "actual_model": None, "actual_thinking": None,
                             "source": "host_policy",
                         }
@@ -1564,7 +1586,7 @@ class FirstMateRuntime:
             previous_revision = job.get("model_settings_revision")
             try:
                 self._apply_policy(job, self.store.get_feature(job["feature_id"]))
-            except ArchitectConfigurationError as exc:
+            except SpecialistConfigurationError as exc:
                 configuration_error = exc
             if configuration_error is not None:
                 # Rejection, status, and finalization share the writer lock with
@@ -2464,7 +2486,7 @@ class FirstMateRuntime:
                                 continue
                             try:
                                 self._policy(feature, kind="worker", claim=assignment)
-                            except ArchitectConfigurationError as exc:
+                            except SpecialistConfigurationError as exc:
                                 self._block_assignment_configuration(
                                     assignment, exc,
                                     request_id="queued-configuration:" + assignment["id"] + ":" + str(assignment["generation"]),
@@ -2476,7 +2498,7 @@ class FirstMateRuntime:
                                     prompt = self._worker_input(feature, claim)
                                     job = self._new_job(feature, kind="worker", prompt=prompt, claim=claim,
                                                         handoff_id=claim.get("handoff_id"))
-                                except ArchitectConfigurationError as exc:
+                                except SpecialistConfigurationError as exc:
                                     self._block_assignment_configuration(
                                         claim, exc,
                                         request_id="claimed-configuration:" + claim["dispatch_id"],
@@ -2536,7 +2558,7 @@ class FirstMateRuntime:
                     try:
                         self._new_job(feature, kind="worker", claim=assignment,
                                       prompt=self._worker_input(feature, assignment))
-                    except ArchitectConfigurationError as exc:
+                    except SpecialistConfigurationError as exc:
                         self._block_assignment_configuration(
                             assignment, exc,
                             request_id="recovered-configuration:" + assignment["dispatch_id"],
@@ -3745,7 +3767,7 @@ class FirstMateRuntime:
             continuation = self._new_job(feature, kind="worker", claim=claim, parent_job=job,
                 prompt="Resume your current assignment after delegated children settled. Inspect their evidence, repair bounded failures if needed, and report your own honest outcome. You may not advance the major stage.\nYour saved checkpoint:\n"
                        + job["waiting_children"] + "\nChild outcomes:\n" + json.dumps(children, ensure_ascii=False))
-        except ArchitectConfigurationError as exc:
+        except SpecialistConfigurationError as exc:
             self._block_assignment_configuration(
                 claim, exc, request_id="children-configuration:" + job["id"],
                 verified_stopped=True,
@@ -3915,7 +3937,7 @@ class FirstMateRuntime:
                 prompt=self._worker_input(feature, claim) + "\n\nRetained predecessor checkpoint:\n" + handoff["summary"]
                 + "\nInspect this evidence and workspace, then fm_acknowledge_handoff before changing anything.",
                 parent_job=job, handoff_id=handoff["id"])
-        except ArchitectConfigurationError as exc:
+        except SpecialistConfigurationError as exc:
             self._block_assignment_configuration(
                 claim, exc, request_id="handoff-configuration:" + handoff["id"],
                 verified_stopped=True,
@@ -4071,25 +4093,19 @@ class FirstMateRuntime:
         header = next((row for row in rows if row.get("type") == "session"), {})
         if header.get("id") != native_session_id:
             raise ValueError("Saved session identity does not match the retained assignment")
-        messages = []
-        for row in rows:
-            message = row.get("message", {})
-            role = message.get("role")
-            if role not in {"user", "assistant", "toolResult"}:
-                continue
-            content = message.get("content", "")
-            rendered = content if isinstance(content, str) else "\n".join(str(c.get("text", "")) for c in content if isinstance(c, dict) and c.get("type") == "text")
-            messages.append({"role": role, "text": rendered, "created_at": row.get("timestamp")})
+        from .first_mate_transcript import session_messages
+        messages = session_messages(rows)
         total = len(messages)
         end = total if before is None else max(0, min(total, int(before)))
         count = max(1, min(100, int(limit)))
         start = max(0, end - count)
-        selected_messages = [{**m, "index": start + index} for index, m in enumerate(messages[start:end])]
+        selected_messages = messages[start:end]
         parsed_usage = self.usage.session_usage(path, native_session_id)
         usage = self.usage.public_summary(parsed_usage)
         model_selection = self._selection(selected_record if source_kind == "job" else {"kind": kind},
                                           parsed_usage)
         return {"ok": True, "native_session_id": native_session_id, "messages": selected_messages,
+                "is_running": source_kind == "job" and _locked(self._job_dir(selected_record) / "writer.lock"),
                 "next_before": start if start else None, "total_messages": total,
                 "usage": usage, "model_selection": model_selection,
                 "session": {"native_session_id": native_session_id, "feature_id": feature_id,
@@ -4111,6 +4127,12 @@ def _pi_command(job: dict) -> list[str]:
         charter = LEAD_PROMPT
     elif job.get("simulator_previews") and job["kind"] in SIMULATOR_CHECKPOINT_GUIDANCE:
         charter = charter + "\n" + SIMULATOR_CHECKPOINT_GUIDANCE[job["kind"]]
+    if job.get("model_selection", {}).get("profile") == "research_scout":
+        from .first_mate_research import RESEARCH_SCOUT_CHARTER
+        instructions = job.get("research_scout_instructions")
+        if not isinstance(instructions, str) or not instructions.strip():
+            raise ValueError("Research Scout private instructions are missing from this dispatch")
+        charter += "\n\n" + RESEARCH_SCOUT_CHARTER + "\nPrivate operating references:\n" + instructions
     snapshot = job.get("agent_profile_snapshot")
     if isinstance(snapshot, dict) and snapshot.get("prompt"):
         from .agent_profiles import write_prompt_snapshot
@@ -4118,9 +4140,12 @@ def _pi_command(job: dict) -> list[str]:
         # plus the current role charter, without putting personal data in argv.
         charter = write_prompt_snapshot(Path(job["session_file"]).parent / "profile-charter.md",
                                         charter + "\n\n" + snapshot["prompt"])
+    elif job.get("research_scout_instructions"):
+        from .agent_profiles import write_prompt_snapshot
+        charter = write_prompt_snapshot(Path(job["session_file"]).parent / "profile-charter.md", charter)
     prompt_flag = "--system-prompt" if job["kind"] == "coordinator" else "--append-system-prompt"
     command = [job["pi_bin"], "--mode", "rpc", "--session", job["session_file"],
-               "--name", "First Mate" if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),
+               "--name", ("First Mate" if job.get("lead") else "Second Mate") if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),
                prompt_flag, charter, "--extension", job["extension"]]
     if job["kind"] == "advisor" and (job.get("recovery_mode") or job.get("reliability_assessment")):
         command += ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
@@ -4291,19 +4316,19 @@ def _run_detached(directory: Path, locks: ExitStack) -> int:
                             _write_json(directory / "status.json", status)
         reader = threading.Thread(target=consume, name="pi-rpc-events", daemon=True)
         reader.start()
-        # Managed roles hand off instead of compacting. The lead's open-ended
-        # conversation also hands off at the context target after a turn, and
-        # keeps Pi's automatic compaction for a single turn that would overflow.
-        send({"type": "set_auto_compaction", "enabled": bool(job.get("lead")), "id": "no-compaction"})
+        # Pi's set_auto_compaction RPC persists into shared user settings.
+        # The validated First Mate extension cancels compaction for this managed
+        # session without changing ordinary Pi sessions or their preferences.
         send({"type": "get_state", "id": "initial-state"})
         confirmed = ready.wait(float(job.get("startup_timeout_seconds", 30)))
-        architect = job.get("model_selection", {}).get("profile") == "architect"
+        architect = job.get("model_selection", {}).get("profile") in {"architect", "research_scout"}
+        startup_label = "Research Scout" if job.get("model_selection", {}).get("profile") == "research_scout" else "Architect"
         if not confirmed:
-            startup_error = "Architect startup blocked: Pi initial get_state timed out without observed startup evidence"
+            startup_error = f"{startup_label} startup blocked: Pi initial get_state timed out without observed startup evidence"
             if not architect:
                 raise RuntimeError("Pi did not confirm its saved session during startup")
         elif initial_state_error:
-            startup_error = "Architect startup blocked: " + initial_state_error[0]
+            startup_error = f"{startup_label} startup blocked: " + initial_state_error[0]
             if not architect:
                 raise RuntimeError(initial_state_error[0])
         else:

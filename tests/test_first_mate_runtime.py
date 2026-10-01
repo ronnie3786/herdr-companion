@@ -55,6 +55,7 @@ def tool(action,params,key):
  return reply['result']
 for line in sys.stdin:
  command=json.loads(line)
+ with (root/'commands.jsonl').open('a') as f:f.write(json.dumps(command)+'\n')
  name=command['type']
  if name=='get_state':
   state={'sessionId':sid,'sessionFile':str(session)}
@@ -151,7 +152,8 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.fake.write_text(FAKE_PI.replace('#!PYTHON', '#!' + sys.executable, 1))
         self.fake.chmod(0o700)
         self.store = FirstMateStore(self.root / 'store.sqlite3')
-        self.environ = {'HERDR_HARNESS_AGENT_PI_BIN': str(self.fake), 'PATH': os.environ.get('PATH','')}
+        self.environ = {'HERDR_HARNESS_AGENT_PI_BIN': str(self.fake), 'PATH': os.environ.get('PATH',''),
+                        'HERDR_FIRST_MATE_MINIMUM_FREE_MB': '64'}
         self.runtime = FirstMateRuntime(self.store, environ=self.environ, runtime_root=self.root / 'runtime')
         self.managers = [self.runtime]
         self.children = []
@@ -624,6 +626,10 @@ class FirstMateRuntimeTests(unittest.TestCase):
         self.assertTrue(snapshot['feature']['native_session_id'])
         for _ in range(5): self.runtime.reconcile()
         self.assertEqual(len(self.store.snapshot(feature['id'])['visits']), 1)
+        for job in self.runtime._jobs():
+            commands = _records(self.runtime._job_dir(job) / 'commands.jsonl')[0]
+            self.assertNotIn('set_auto_compaction', [command['type'] for command in commands],
+                             'Managed sessions must never persist shared Pi compaction settings')
 
     def test_nested_workers_yield_and_resume_exact_parent_session_without_polling(self):
         feature = self.feature('Plan nested review of the synthetic feature')

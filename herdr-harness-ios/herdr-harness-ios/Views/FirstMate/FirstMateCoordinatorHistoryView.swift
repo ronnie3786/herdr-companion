@@ -3,7 +3,7 @@ import SwiftUI
 struct FirstMateCoordinatorHistoryView: View {
     @Bindable var store: FirstMateStore
     let sessions: [FirstMateSession]
-    var title = "First Mate coordinator"
+    var title = "Second Mate · Feature lead"
     var symbol = "sparkles"
     var accessibilityID = "first-mate-coordinator-history"
     @Environment(\.colorScheme) private var scheme

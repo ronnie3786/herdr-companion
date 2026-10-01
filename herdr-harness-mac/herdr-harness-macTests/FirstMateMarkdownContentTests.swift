@@ -57,8 +57,8 @@ struct FirstMateMarkdownContentTests {
     func hostsReadOnlySessionChat() {
         let messages = [
             FirstMateSessionMessage(role: "user", text: "# Literal prompt"),
-            FirstMateSessionMessage(role: "assistant", text: "## Result\n\nA **formatted** answer with `code`."),
-            FirstMateSessionMessage(role: "toolResult", text: "Synthetic tool output")
+            FirstMateSessionMessage(role: "toolResult", text: "Synthetic tool output"),
+            FirstMateSessionMessage(role: "assistant", text: "## Result\n\nA **formatted** answer with `code`.")
         ]
         for scheme in [ColorScheme.light, .dark] {
             let hosting = NSHostingView(

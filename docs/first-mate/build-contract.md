@@ -20,7 +20,7 @@ Root prefix `/api/v1/first-mate`, authenticated with normal companion read/contr
 - POST `/features/{id}/messages`: `{text,request_id}` -> `{ok:true,message,feature}` immediately after durable queueing. This acknowledgment is partial; clients fetch feature detail separately.
 - POST `/features/{id}/actions`: `{action,request_id,expected_revision?}` for pause/resume/cancel. No HTTP action bypasses a human gate; demo scenario advancement is local to the synthetic native fixture.
 - GET `/features/{id}/events?after=0`: `{ok:true,events,cursor}`
-- GET `/sessions/{native_session_id}?before=<cursor>&limit=100`: `{ok:true,native_session_id,messages:[{role,text,created_at?}],next_before,total_messages,usage,session?:metadata}`, host-owned exact-session lookup. `usage` always describes the entire saved session, independent of the transcript page.
+- GET `/sessions/{native_session_id}?before=<cursor>&limit=100`: `{ok:true,native_session_id,messages:[{role,text,created_at?,id?,index?,thinking?,tool_calls?,tool_call_id?,tool_name?,is_error?,stop_reason?}],next_before,total_messages,usage,is_running?,session?:metadata}`, host-owned exact-session lookup. `usage` always describes the entire saved session, independent of the transcript page. Tool calls contain `id`, `name`, and JSON `arguments`; provider thinking signatures are never projected. Stable message indices allow the Mac viewer to merge refreshed pages. `is_running` reflects the owning dispatch's writer lock, not inferred text activity. All new fields are additive and optional for older clients.
 - GET `/documents/{id}`: `{ok:true,document:{metadata...,content}}`, retaining producer associations.
 
 Feature minimum fields: `id,title,goal,cwd,status,current_visit_id,revision,created_at,updated_at,work_item_id?`. Status vocabulary: `ready,coordinating,running,awaiting_direction,paused,blocked,completed,cancelled,recovering`. Detail arrays use persistent IDs and timestamps. Stage visit: `id,feature_id,stage_key,title,status,revision`. Assignment: `id,feature_id,visit_id,title,role,status,verdict,native_session_id,attempt,generation,input_revision,updated_at`. Document: `id,feature_id,visit_id,assignment_id,native_session_id,title,media_type,content_hash,created_at`. Message: `id,feature_id,role,text,status,created_at`. Event: monotonic `sequence,id,feature_id,type,summary,created_at,payload`.
@@ -361,13 +361,16 @@ review` and uses typed `model_profile: architect` for architecture/design review
 architect audits, and a second opinion on an implementation. A model name or title
 alone does not override host pins. An unavailable or mismatched requested architect
 is blocked and is never re-routed through planning or execution. The delegated
-profile vocabulary is `planning`, `execution`, and `architect`;
+profile vocabulary is `planning`, `execution`, `architect`, and `research_scout`;
 coordinator is a separate runtime profile. The model catalog's additive routing
 object exposes coordinator, planning, execution, and architect defaults. Its
 architect row includes `configured`; an unset architect model remains a readable
 `configured:false` catalog state rather than breaking feature or catalog reads.
 Older clients ignore these additions, and newer clients accept older servers that
-omit architect routing.
+omit architect routing. The optional `research_scout` routing row also includes
+`configured`, requiring a model pin and readable private instructions. It follows
+the same observed startup-model validation and no-fallback rule as Architect.
+See [Research Scout configuration](roles-and-sessions.md#research-scout).
 
 ## Runtime-health extension
 

@@ -122,6 +122,9 @@ struct PiToolCardView: View {
         case .failed:
             Label("Failed", systemImage: "exclamationmark")
                 .foregroundStyle(HerdrTheme.alert)
+        case .unavailable:
+            Text("Result unavailable")
+                .foregroundStyle(HerdrTheme.tertiaryText)
         }
     }
 
@@ -141,6 +144,7 @@ struct PiToolCardView: View {
         case .running: status = "Running"
         case .succeeded: status = "Completed"
         case .failed: status = "Failed"
+        case .unavailable: status = "Result unavailable"
         }
         if let elapsedDuration { return "\(status), \(elapsedDuration)" }
         return status
@@ -152,6 +156,7 @@ struct PiToolCardView: View {
         case .running: 1
         case .succeeded: 2
         case .failed: 3
+        case .unavailable: 4
         }
     }
 

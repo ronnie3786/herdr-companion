@@ -32,7 +32,18 @@ function fixture(role = "worker", overrides = {}) {
 }
 
 test("ordinary Pi sessions gain no First Mate tools", () => {
-  createFirstMateExtension({})({registerTool() { assert.fail("unexpected tool"); }});
+  createFirstMateExtension({})({registerTool() { assert.fail("unexpected tool"); }, on() { assert.fail("unexpected session hook"); }});
+});
+
+test("every managed role cancels compaction even when telemetry is unavailable", () => {
+  for (const role of ["coordinator", "worker", "advisor"]) {
+    const f = fixture(role);
+    try {
+      assert.deepEqual(f.handlers.get("session_before_compact")({}, f.ctx), {cancel:true});
+      f.ctx.sessionManager.getSessionId = () => { throw new Error("synthetic telemetry failure"); };
+      assert.deepEqual(f.handlers.get("session_before_compact")({}, f.ctx), {cancel:true});
+    } finally { f.cleanup(); }
+  }
 });
 
 test("legacy role identity and a non-selected extension copy remain dormant", () => {
@@ -128,7 +139,7 @@ test("coordinator exposes evidence and orchestration while normal tools remain u
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_outcome"}).block, true);
     assert.equal(f.handlers.get("tool_call")({toolName:"fm_delegate"}), undefined);
     const profile = f.tools.get("fm_delegate").parameters.properties.model_profile;
-    assert.deepEqual(profile.anyOf.map((item) => item.const), ["planning", "execution", "architect"]);
+    assert.deepEqual(profile.anyOf.map((item) => item.const), ["planning", "execution", "architect", "research_scout"]);
     assert.match(profile.description, /second opinion on an implementation/);
     assert.match(profile.description, /Give me an architect review/);
     assert.match(profile.description, /model name or worker title alone does not override host pins/);
@@ -137,7 +148,7 @@ test("coordinator exposes evidence and orchestration while normal tools remain u
   } finally { f.cleanup(); }
 });
 
-test("the lead First Mate gets fleet tools only, keeps normal tools, and may compact", async () => {
+test("the lead First Mate gets fleet tools only, keeps normal tools, and uses managed handoff", async () => {
   const f = fixture("coordinator", {lead: true, feature_id: "fmf_synthetic-lead", claim: {id: "fmm_synthetic-turn", role: "user"}});
   try {
     assert.deepEqual([...f.tools.keys()].sort(), ["fm_create_feature", "fm_feature_status", "fm_fleet", "fm_mark_read", "fm_read_document", "fm_relay"]);
@@ -156,8 +167,8 @@ test("the lead First Mate gets fleet tools only, keeps normal tools, and may com
     assert.match(f.tools.get("fm_fleet").description, /other_machines/);
     const awareness = f.handlers.get("before_agent_start")({systemPrompt: "lead charter"});
     assert.match(awareness.systemPrompt, /role=lead/);
-    // A turn that would overflow may compact; the lead still hands off after it.
-    assert.equal(f.handlers.get("session_before_compact")({}, f.ctx), undefined);
+    // The lead follows managed handoff without changing shared Pi settings.
+    assert.deepEqual(f.handlers.get("session_before_compact")({}, f.ctx), {cancel:true});
     await f.handlers.get("turn_end")({}, f.ctx);
     assert.equal(f.messages.length, 0);
     const pending = f.tools.get("fm_relay").execute("relay-call", {feature_id: "fmf_synthetic-feature", text: "Use the second option.", machine: "synthetic-devbox"}, undefined, undefined, f.ctx);

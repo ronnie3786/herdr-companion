@@ -282,7 +282,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         title: text("Assignment title"), role: text("Specialist role"),
         prompt: text("Complete assignment including scope, required deliverables, acceptance criteria and explicit human gates"),
         model: Type.Optional(Type.String()),
-        model_profile: Type.Optional(Type.Union([Type.Literal("planning"), Type.Literal("execution"), Type.Literal("architect")], { description: "Explicit routing profile. Interpret natural-language intent: use architect for an architecture/design review, architect audit, or a second opinion on an implementation, independent of stage (for example, `Give me an architect review`). Use planning for ordinary planning and execution for implementation, routine code review, testing, or other execution. Omit to use only the current stage key: planning maps to planning, every other stage maps to execution. A model name or worker title alone does not override host pins; use this typed model_profile. An unavailable or mismatched requested architect is blocked and must NEVER be re-routed through planning or execution. Acknowledge the requested role/pin, and claim an actual model only from model_selection actual evidence." })),
+        model_profile: Type.Optional(Type.Union([Type.Literal("planning"), Type.Literal("execution"), Type.Literal("architect"), Type.Literal("research_scout")], { description: "Explicit routing profile. Use research_scout for explicitly requested Research Scout, ticket/API research, or company-platform investigation. It requires the host-pinned model and private instructions; never substitute another profile when unavailable. Interpret natural-language intent: use architect for an architecture/design review, architect audit, or a second opinion on an implementation, independent of stage (for example, `Give me an architect review`). Use planning for ordinary planning and execution for implementation, routine code review, testing, or other execution. Omit to use only the current stage key: planning maps to planning, every other stage maps to execution. A model name or worker title alone does not override host pins; use this typed model_profile. An unavailable or mismatched requested architect is blocked and must NEVER be re-routed through planning or execution. Acknowledge the requested role/pin, and claim an actual model only from model_selection actual evidence." })),
         workspace_mode: Type.Union([Type.Literal("read_only"), Type.Literal("isolated")], { description: "Read-only inspection or writable access to the continuing feature worktree. Sequential implementation, builds, review fixes and feedback reuse one worktree and branch." }),
         source_assignment_id: Type.Optional(text("Exact assignment whose retained workspace to continue or review. Omit to use the persistent feature workspace. Does not create a new checkout.")),
         workspace_strategy: Type.Optional(Type.Union([Type.Literal("feature"), Type.Literal("fork")], { description: "Default feature reuses the workspace across assignments and stages, queuing behind any writer. fork explicitly creates a separate worktree for independent parallel implementation or an experiment, from committed source only. Never fork merely for recovery, a build or a feedback round." })),
@@ -413,10 +413,9 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       }
     });
     pi.on("session_before_compact", (_event, ctx) => {
-      // The lead's open-ended conversation may compact within one turn that
-      // would overflow; it still hands off at the context target afterwards.
-      if (lead) return;
-      observe("compaction_prevented", {}, ctx);
+      // A telemetry write failure must not turn compaction back on. Never use
+      // Pi's persistent global toggle to enforce this session-scoped policy.
+      try { observe("compaction_prevented", {}, ctx); } catch { /* best-effort telemetry */ }
       return { cancel: true };
     });
     pi.on("tool_call", (event) => {

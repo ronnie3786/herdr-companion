@@ -16,11 +16,10 @@ struct FirstMateCoordinatorContextPresentation: Equatable {
     var pressureReached = false
 
     init(feature: FirstMateFeature, capabilityAvailable: Bool) {
-        // The lead First Mate hands off the same way, and may also compact
-        // within one turn that would overflow (first-mate-lead-v1).
-        let name = feature.isLead ? "Context" : "Coordinator context"
+        // Both the primary First Mate and feature leads use managed handoff.
+        let name = feature.isLead ? "Context" : "Second Mate context"
         policy = feature.isLead
-            ? "After a reply that reaches the handoff target, First Mate starts a fresh session carrying the recent conversation. If one turn would overflow first, it compacts. Full history remains available."
+            ? "After a reply that reaches the handoff target, First Mate starts a fresh session carrying the recent conversation. Full history remains available; Pi compaction is cancelled only for this managed session."
             : "Managed handoff automatically checkpoints and starts a fresh coordinator at a safe turn boundary. Full history remains available; ordinary compaction is disabled."
         guard capabilityAvailable else {
             summary = "\(name) unavailable · update server"

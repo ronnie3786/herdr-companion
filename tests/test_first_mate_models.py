@@ -214,7 +214,8 @@ sys.stdin.read()
             'coordinator': {'model': 'synthetic/host', 'thinking': 'low'},
             'planning': {'model': 'synthetic/host', 'thinking': 'high'},
             'execution': {'model': 'synthetic/worker', 'thinking': ''},
-            'architect': {'model': 'synthetic/architect', 'thinking': 'xhigh', 'configured': True}})
+            'architect': {'model': 'synthetic/architect', 'thinking': 'xhigh', 'configured': True},
+            'research_scout': {'model': '', 'thinking': '', 'configured': False}})
         self.assertNotIn('private', json.dumps(catalog))
 
         unset = read_model_catalog(str(executable), {'PATH': os.environ['PATH']}, self.temp.name)

@@ -71,15 +71,28 @@ enum FirstMateSimulatorDemo {
             idle: .init(shutdownAfterMinutes: 60, shutdownAt: nil, watchers: 0))
     }
 
-    private static func timestamp(minutesAgo: Int) -> String {
+    /// The same preview after Stop shut it down.
+    static func stoppedPreview(featureID: String, buildID: String) -> FirstMateSimulatorPreview {
+        FirstMateSimulatorPreview(
+            id: "fmsp_demo0000000000000000000000000001", featureID: featureID, buildID: buildID,
+            phase: "stopped", status: "stopped", device: device, stopReason: "user",
+            udid: "00000000-0000-4000-8000-00000000D3E0",
+            idle: .init(shutdownAfterMinutes: 60, shutdownAt: nil, watchers: 0))
+    }
+
+    static func timestamp(minutesAgo: Int) -> String {
         HerdrTimestamp.string(from: Date(timeIntervalSinceNow: -Double(minutesAgo) * 60))
     }
 
-    /// A synthetic app screen standing in for the live picture.
+    @MainActor private static var cachedScreen: CGImage?
+
+    /// A synthetic app screen standing in for the live picture, drawn once.
     @MainActor static func screenImage() -> CGImage? {
+        if let cachedScreen { return cachedScreen }
         let renderer = ImageRenderer(content: FirstMateSimulatorDemoScreen().frame(width: 402, height: 874))
         renderer.scale = 2
-        return renderer.cgImage
+        cachedScreen = renderer.cgImage
+        return cachedScreen
     }
 }
 

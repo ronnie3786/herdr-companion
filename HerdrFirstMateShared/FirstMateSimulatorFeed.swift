@@ -14,8 +14,7 @@ final class FirstMateSimulatorFeed {
     /// The companion predates simulator previews (404/501).
     private(set) var unsupported = false
 
-    @ObservationIgnored private let configuration: @MainActor () -> ServerConfiguration?
-    @ObservationIgnored private let makeAPI: @MainActor (ServerConfiguration) -> FirstMateSimulatorAPI
+    @ObservationIgnored private let makeAPI: @MainActor () -> FirstMateSimulatorAPI?
     @ObservationIgnored private var failures = 0
     @ObservationIgnored private var isDemo = false
 
@@ -24,14 +23,20 @@ final class FirstMateSimulatorFeed {
          makeAPI: @escaping @MainActor (ServerConfiguration) -> FirstMateSimulatorAPI = { FirstMateSimulatorAPI(configuration: $0) }) {
         self.machineID = machineID
         self.featureID = featureID
-        self.configuration = configuration
-        self.makeAPI = makeAPI
+        self.makeAPI = { configuration().map(makeAPI) }
+    }
+
+    /// For a caller that already holds the machine's API (the iOS client), or nil while it is offline.
+    init(machineID: String, featureID: String, api: @escaping @MainActor () -> FirstMateSimulatorAPI?) {
+        self.machineID = machineID
+        self.featureID = featureID
+        self.makeAPI = api
     }
 
     /// Only a configured machine with at least one checkpoint shows the section.
     var isVisible: Bool { !builds.isEmpty }
 
-    var api: FirstMateSimulatorAPI? { configuration().map(makeAPI) }
+    var api: FirstMateSimulatorAPI? { makeAPI() }
 
     func refresh() async {
         guard !isDemo, let api else { return }
@@ -85,15 +90,20 @@ final class FirstMateSimulatorFeed {
 
     /// Synthetic checkpoints for demo mode and renders; nothing is fetched.
     func presentDemo(visitIDs: [String]) {
+        presentDemo(builds: FirstMateSimulatorDemo.builds(featureID: featureID, visitIDs: visitIDs))
+    }
+
+    /// Shows the given synthetic builds; nothing is fetched.
+    func presentDemo(builds: [FirstMateSimulatorBuild], status: FirstMateSimulatorStatus = FirstMateSimulatorDemo.status) {
         isDemo = true
         hasLoaded = true
-        status = FirstMateSimulatorDemo.status
-        builds = FirstMateSimulatorDemo.builds(featureID: featureID, visitIDs: visitIDs)
+        if self.status != status { self.status = status }
+        if self.builds != builds { self.builds = builds }
     }
 }
 
 /// Feeds kept for the app's lifetime, one per machine and feature, so the
-/// Overview and Workflow tabs and each window share the same state.
+/// Overview and Workflow tabs and each simulator view share the same state.
 @MainActor
 final class FirstMateSimulatorFeeds {
     static let shared = FirstMateSimulatorFeeds()
@@ -103,13 +113,27 @@ final class FirstMateSimulatorFeeds {
 
     func feed(machineID: String, featureID: String,
               configuration: @escaping @MainActor () -> ServerConfiguration?) -> FirstMateSimulatorFeed {
+        feed(machineID: machineID, featureID: featureID) {
+            FirstMateSimulatorFeed(machineID: machineID, featureID: featureID, configuration: configuration)
+        }
+    }
+
+    func feed(machineID: String, featureID: String,
+              api: @escaping @MainActor () -> FirstMateSimulatorAPI?) -> FirstMateSimulatorFeed {
+        feed(machineID: machineID, featureID: featureID) {
+            FirstMateSimulatorFeed(machineID: machineID, featureID: featureID, api: api)
+        }
+    }
+
+    private func feed(machineID: String, featureID: String,
+                      make: () -> FirstMateSimulatorFeed) -> FirstMateSimulatorFeed {
         let key = machineID + "|" + featureID
         if let feed = feeds[key] {
             order.removeAll { $0 == key }
             order.append(key)
             return feed
         }
-        let feed = FirstMateSimulatorFeed(machineID: machineID, featureID: featureID, configuration: configuration)
+        let feed = make()
         feeds[key] = feed
         order.append(key)
         if order.count > Self.limit {
@@ -120,74 +144,5 @@ final class FirstMateSimulatorFeeds {
 
     func existing(machineID: String, featureID: String) -> FirstMateSimulatorFeed? {
         feeds[machineID + "|" + featureID]
-    }
-}
-
-/// What the inspector needs to show a feature's simulator checkpoints. The
-/// window hosting the inspector provides it; without it no simulator UI shows.
-struct FirstMateSimulatorContext {
-    let machineID: String
-    let feed: FirstMateSimulatorFeed
-    let isDemo: Bool
-
-    func target(for build: FirstMateSimulatorBuild) -> FirstMateSimulatorWindowTarget {
-        FirstMateSimulatorWindowTarget(machineID: machineID, featureID: build.featureID, buildID: build.id)
-    }
-}
-
-private struct FirstMateSimulatorContextKey: EnvironmentKey {
-    static let defaultValue: FirstMateSimulatorContext? = nil
-}
-
-extension EnvironmentValues {
-    var firstMateSimulator: FirstMateSimulatorContext? {
-        get { self[FirstMateSimulatorContextKey.self] }
-        set { self[FirstMateSimulatorContextKey.self] = newValue }
-    }
-}
-
-extension View {
-    /// Provides the simulator checkpoints of `featureID` on `machineID` to the inspector below.
-    func firstMateSimulator(model: HerdrAppModel, machineID: String?, featureID: String?) -> some View {
-        let context: FirstMateSimulatorContext? = if let machineID, let featureID {
-            FirstMateSimulatorContext(
-                machineID: machineID,
-                feed: FirstMateSimulatorFeeds.shared.feed(machineID: machineID, featureID: featureID,
-                                                          configuration: { [weak model] in model?.firstMateConfiguration(machineID: machineID) }),
-                isDemo: model.isDemoMode)
-        } else {
-            nil
-        }
-        return environment(\.firstMateSimulator, context)
-    }
-}
-
-/// Keeps a feed current while its section is on screen and the app is active.
-private struct FirstMateSimulatorRefreshModifier: ViewModifier {
-    let context: FirstMateSimulatorContext?
-    let demoVisitIDs: [String]
-    @Environment(\.scenePhase) private var scenePhase
-
-    func body(content: Content) -> some View {
-        content.task(id: TaskKey(feed: context.map { ObjectIdentifier($0.feed) }, active: scenePhase == .active)) {
-            guard let context else { return }
-            if context.isDemo {
-                context.feed.presentDemo(visitIDs: demoVisitIDs)
-                return
-            }
-            guard scenePhase == .active else { return }
-            await context.feed.poll()
-        }
-    }
-
-    private struct TaskKey: Equatable {
-        let feed: ObjectIdentifier?
-        let active: Bool
-    }
-}
-
-extension View {
-    func firstMateSimulatorRefresh(_ context: FirstMateSimulatorContext?, demoVisitIDs: [String]) -> some View {
-        modifier(FirstMateSimulatorRefreshModifier(context: context, demoVisitIDs: demoVisitIDs))
     }
 }

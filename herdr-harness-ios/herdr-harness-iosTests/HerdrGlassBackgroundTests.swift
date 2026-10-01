@@ -10,14 +10,23 @@ struct HerdrGlassBackgroundTests {
     func bitmapHashes() throws {
         // Canonical sRGB RGBA8 bytes, not PNG metadata. Changes require visual
         // review on a simulator; never silently accept a new rendering engine.
-        let duskBaseline = try ThemeRaster(HerdrDusk.baselineImage).sha256
-        let dusk = try ThemeRaster(HerdrDusk.image).sha256
-        let hazeBaseline = try ThemeRaster(HerdrHaze.baselineImage).sha256
-        let haze = try ThemeRaster(HerdrHaze.image).sha256
-        #expect(duskBaseline == "b137ac8653010c22c26fd5a486e87f63b91c47fc6927108561b5257025f30ca0")
-        #expect(dusk == "55c25e8988e8de0cdda8cff6c793b847a0655c7624b49f9ea6897689df56a1e5")
-        #expect(hazeBaseline == "eb7e1b0bee1e6b83f6c8539cf3c5fb592421c68f1bb856920e70036f4d5d092e")
-        #expect(haze == "1865cbac9760af1f78fbf2bce37b6da5faac352c45bc5a629db448dc904e7fe2")
+        // Each iOS release's Core Image gets its own reviewed set. iOS 27 differs
+        // from 26 by one level in at most 100 channels of each image.
+        let reviewed: [Int: [String]] = [
+            26: ["b137ac8653010c22c26fd5a486e87f63b91c47fc6927108561b5257025f30ca0",
+                 "55c25e8988e8de0cdda8cff6c793b847a0655c7624b49f9ea6897689df56a1e5",
+                 "eb7e1b0bee1e6b83f6c8539cf3c5fb592421c68f1bb856920e70036f4d5d092e",
+                 "1865cbac9760af1f78fbf2bce37b6da5faac352c45bc5a629db448dc904e7fe2"],
+            27: ["a0a09dceefd42cb2ec1a11365c7ab0c997e473f4cbd7f91d42619a1df524b09e",
+                 "b18b6313f9ac5129f09b5d31677fe54e1fdad22e8b68fdcad79bbedf52e5e1f2",
+                 "4d4b481ba12ac67df23f74bc98d38ddb77c721dbee60ca3960f3ff409ca30759",
+                 "36d1682236b42ef2e03ea1c41711cea4bf4be62910bd5e2832f420de7ebb2540"],
+        ]
+        let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        let expected = try #require(reviewed[major], "No reviewed dusk rasters for iOS \(major)")
+        let hashes = try [HerdrDusk.baselineImage, HerdrDusk.image, HerdrHaze.baselineImage, HerdrHaze.image]
+            .map { try ThemeRaster($0).sha256 }
+        #expect(hashes == expected)
     }
 
     @Test("The exact authored artwork is darkened once, with alpha and cache identity intact")

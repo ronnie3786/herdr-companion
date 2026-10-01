@@ -75,6 +75,19 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         }
     }
 
+    /// Routes a `herdr://` link through this app's own URL handler, which
+    /// validates it before navigating.
+    static func openOwnURL(_ url: URL) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        configuration.createsNewApplicationInstance = false
+        configuration.allowsRunningApplicationSubstitution = false
+        NSWorkspace.shared.open([url], withApplicationAt: Bundle.main.bundleURL, configuration: configuration) { _, error in
+            if let error { NSLog("Herdr could not open its PR Review link: %@", error.localizedDescription) }
+        }
+    }
+
     // MARK: Dock menu
 
     /// The First Mate conversations the Dock menu lists, and what choosing one
@@ -155,6 +168,11 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         didReceive response: UNNotificationResponse
     ) async {
         let userInfo = response.notification.request.content.userInfo
+        if let route = (userInfo[PRReviewWalkthroughNotification.routeKey] as? String).flatMap(URL.init(string:)),
+           route.scheme == "herdr", route.host == "pr-review" {
+            await MainActor.run { Self.openOwnURL(route) }
+            return
+        }
         guard let paneID = Self.resolvedPaneID(fromUserInfo: userInfo) else { return }
         await MainActor.run {
             Self.openPaneURLWithFallback(paneID)

@@ -200,6 +200,10 @@ class PRReviewRuntime:
                 self.schedule_review_status_refresh()
             except Exception:
                 pass
+            try:
+                self.guide.reconcile()
+            except Exception:
+                pass
             self._wake.wait(2)
             self._wake.clear()
 
@@ -545,6 +549,14 @@ class PRReviewRuntime:
             self.store.update_review(review_id, status="ready" if retained else "failed", error=error)
             self.store.add_event(review_id, "review.refresh_failed" if retained else "review.failed", error)
             self._changed(review_id)
+
+    def archive(self, review_id: str, request_id: str, archived: bool = True) -> dict[str, Any]:
+        review = self.store.archive(review_id, request_id, archived)
+        if archived:
+            self.guide.discard(review_id)
+            review = self.store.get_review(review_id, True)
+        self._changed(review_id)
+        return review
 
     def refresh_review(self, review_id: str, request_id: str) -> dict[str, Any]:
         scope = f"refresh:{review_id}"

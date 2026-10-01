@@ -200,6 +200,7 @@ struct WorkspaceNavigationView: View {
                         openFirstMate: { shell.show(.firstMate, model: model) },
                         openPRReview: { shell.show(.prReview, model: model) },
                         firstMateAttentionCount: firstMateAttentionCount,
+                        prReviewWalkthroughCount: shell.prReview.walkthroughAttentionCount,
                         showsHeader: false
                     )
                 }

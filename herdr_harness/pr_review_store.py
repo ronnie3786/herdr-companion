@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS prr_viewer_reviews(review_id TEXT PRIMARY KEY REFEREN
 CREATE TABLE IF NOT EXISTS prr_run_revisions(run_id TEXT PRIMARY KEY,binding_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS prr_document_sources(review_id TEXT,document_id TEXT,run_id TEXT,provenance TEXT,PRIMARY KEY(document_id,run_id));
 CREATE INDEX IF NOT EXISTS prr_skill_runs_summary ON prr_skill_runs(review_id,skill_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS prr_walkthroughs(id TEXT PRIMARY KEY,review_id TEXT NOT NULL,state TEXT NOT NULL,base_sha TEXT,head_sha TEXT,comparison_id TEXT,created_at TEXT,finished_at TEXT,seen_at TEXT,error TEXT,chapter_count INTEGER);
+CREATE INDEX IF NOT EXISTS prr_walkthroughs_review ON prr_walkthroughs(review_id,created_at DESC);
 """
 
 
@@ -154,6 +156,8 @@ class PRReviewStore:
                 SELECT *,row_number() OVER (PARTITION BY skill_id ORDER BY created_at DESC,rowid DESC) AS position
                 FROM prr_skill_runs WHERE review_id=?) WHERE position=1 ORDER BY title,skill_id""", (result["id"],))]
         result["viewer_review"] = self.viewer_review(result["id"])
+        latest = self._db.execute("SELECT * FROM prr_walkthroughs WHERE review_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1", (result["id"],)).fetchone()
+        result["walkthrough"] = self._walkthrough(latest) if latest else None
         if not full:
             result.pop("body", None)
         return result
@@ -240,6 +244,50 @@ class PRReviewStore:
             self._touch(review_id)
             self._event(review_id, "review.archived" if archived else "review.unarchived", "Review archived" if archived else "Review unarchived")
             return self._save(scope, request_id, payload, self.get_review(review_id, True))
+
+    @staticmethod
+    def _walkthrough(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        # Background completion is news until someone opens the review.
+        item["needs_attention"] = item["state"] in {"finished", "failed"} and not item["seen_at"]
+        return item
+
+    def save_walkthrough(self, guide: Mapping[str, Any]) -> dict[str, Any]:
+        """Index a walkthrough's lifecycle; the full explanation stays in its private file."""
+        with self._transaction():
+            self.get_review(guide["review_id"])
+            self._db.execute("""INSERT INTO prr_walkthroughs(id,review_id,state,base_sha,head_sha,comparison_id,created_at,finished_at,error,chapter_count)
+                VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,finished_at=excluded.finished_at,
+                error=excluded.error,chapter_count=excluded.chapter_count""", (
+                guide["id"], guide["review_id"], guide["state"], guide.get("base_sha"), guide.get("head_sha"),
+                (guide.get("comparison") or {}).get("id"), guide.get("created_at") or _now(), guide.get("finished_at"),
+                guide.get("error"), len(guide.get("chapters") or [])))
+            return self._walkthrough(self._db.execute("SELECT * FROM prr_walkthroughs WHERE id=?", (guide["id"],)).fetchone())
+
+    def walkthroughs(self, review_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            self.get_review(review_id)
+            return [self._walkthrough(row) for row in self._db.execute("SELECT * FROM prr_walkthroughs WHERE review_id=? ORDER BY created_at DESC,rowid DESC", (review_id,))]
+
+    def running_walkthroughs(self) -> list[tuple[str, str]]:
+        with self._lock:
+            return [(row["review_id"], row["id"]) for row in self._db.execute("SELECT review_id,id FROM prr_walkthroughs WHERE state='running'")]
+
+    def mark_walkthrough_seen(self, review_id: str, guide_id: str) -> dict[str, Any]:
+        with self._transaction():
+            self.get_review(review_id)
+            row = self._db.execute("SELECT * FROM prr_walkthroughs WHERE id=? AND review_id=?", (guide_id, review_id)).fetchone()
+            if row is None:
+                raise PRReviewError("Walkthrough not found.", code="not_found", status=404)
+            if not row["seen_at"]:
+                self._db.execute("UPDATE prr_walkthroughs SET seen_at=? WHERE id=?", (_now(), guide_id))
+            return self._walkthrough(self._db.execute("SELECT * FROM prr_walkthroughs WHERE id=?", (guide_id,)).fetchone())
+
+    def delete_walkthroughs(self, review_id: str) -> list[str]:
+        with self._transaction():
+            ids = [row["id"] for row in self._db.execute("SELECT id FROM prr_walkthroughs WHERE review_id=?", (review_id,))]
+            self._db.execute("DELETE FROM prr_walkthroughs WHERE review_id=?", (review_id,))
+            return ids
 
     def files(self, review_id: str) -> list[dict[str, Any]]:
         with self._lock:

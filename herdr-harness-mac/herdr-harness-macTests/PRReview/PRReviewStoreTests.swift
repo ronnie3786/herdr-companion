@@ -486,7 +486,23 @@ final class TestPRReviewClient: PRReviewClient, PRReviewGuideClient, @unchecked 
         }
         return guide
     }
-    func fetchPRReviewGuide(reviewID: String, guideID: String) async throws -> PRReviewGuide { throw APIError.invalidResponse }
+    var savedWalkthroughs: [PRReviewWalkthroughSummary] = []
+    var savedGuides: [String: [PRReviewGuide]] = [:]
+    private(set) var seenWalkthroughIDs: [String] = []
+    /// Each fetch returns the next saved state for that guide, then repeats the last.
+    func fetchPRReviewGuide(reviewID: String, guideID: String) async throws -> PRReviewGuide {
+        guard var states = savedGuides[guideID], let next = states.first else { throw APIError.invalidResponse }
+        if states.count > 1 { states.removeFirst(); savedGuides[guideID] = states }
+        return next
+    }
+    func prReviewWalkthroughs(reviewID: String) async throws -> [PRReviewWalkthroughSummary] { savedWalkthroughs }
+    func markPRReviewWalkthroughSeen(reviewID: String, guideID: String) async throws -> PRReviewWalkthroughSummary {
+        seenWalkthroughIDs.append(guideID)
+        guard var walkthrough = savedWalkthroughs.first(where: { $0.id == guideID }) else { throw APIError.invalidResponse }
+        walkthrough.seenAt = "2026-10-01T12:00:00Z"
+        walkthrough.needsAttention = false
+        return walkthrough
+    }
     func prReviewNarrationCapabilities() async throws -> PRReviewNarrationCapabilities {
         .init(available: true, voices: ["synthetic"], defaultVoice: "synthetic", reason: nil)
     }

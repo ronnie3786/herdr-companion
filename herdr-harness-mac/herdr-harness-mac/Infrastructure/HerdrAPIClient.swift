@@ -476,6 +476,17 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         return result.guide
     }
 
+    func prReviewWalkthroughs(reviewID: String) async throws -> [PRReviewWalkthroughSummary] {
+        let result: PRReviewWalkthroughsResponse = try await request(path: try prReviewPath(id: reviewID) + "/walkthroughs")
+        return result.walkthroughs
+    }
+
+    func markPRReviewWalkthroughSeen(reviewID: String, guideID: String) async throws -> PRReviewWalkthroughSummary {
+        let path = try prReviewPath(id: reviewID) + "/walkthroughs/" + guideID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#%")))! + "/seen"
+        let result: PRReviewWalkthroughResponse = try await request(path: path, method: "POST", body: PRReviewRequestID(requestID: UUID().uuidString))
+        return result.walkthrough
+    }
+
     func prReviewNarrationCapabilities() async throws -> PRReviewNarrationCapabilities {
         try await request(path: "/api/v1/response-audio/captioned-capabilities")
     }

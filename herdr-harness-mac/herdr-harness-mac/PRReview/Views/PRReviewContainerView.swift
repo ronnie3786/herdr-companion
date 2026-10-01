@@ -79,10 +79,17 @@ struct PRReviewContainerView: View {
         .onAppear {
             comments.updateScope(from: store)
             store.guide.configure(store: store)
+            store.guide.setPresented(true)
             comments.configure(openURL: openURL)
         }
         .onChange(of: guideScopeIdentity) { _, _ in store.guide.configure(store: store) }
-        .onDisappear { store.guide.pause() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.guide.markWalkthroughSeenIfNeeded()
+        }
+        .onDisappear {
+            store.guide.pause()
+            store.guide.setPresented(false)
+        }
         .onChange(of: store.selectedPath) { _, path in store.guide.observedFileNavigation(path) }
         .onChange(of: store.currentMachineID) { _, _ in comments.updateScope(from: store) }
         .onChange(of: store.selectedReviewID) { _, _ in comments.updateScope(from: store) }

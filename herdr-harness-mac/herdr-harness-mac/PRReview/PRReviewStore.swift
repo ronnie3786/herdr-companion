@@ -760,6 +760,9 @@ final class PRReviewStore {
                 archived: archived,
                 requestID: UUID().uuidString
             )
+            if archived, let machineID = scope.machineID {
+                guide.forgetSavedProgress(machineID: machineID, reviewID: selectedReviewID)
+            }
             guard isCurrentSelection(scope) else { return }
             receive(value)
             await refresh()
@@ -1529,6 +1532,21 @@ extension PRReviewStore {
     }
 
     var supportsComparisons: Bool { capabilities?.capabilities.contains("git-comparison-v1") == true }
+    var supportsSavedWalkthroughs: Bool { capabilities?.capabilities.contains("pr-review-walkthroughs-v1") == true }
+
+    /// Active reviews whose newest walkthrough settled while nobody had the
+    /// review open. The PR Review navigator entry badges this count.
+    var walkthroughAttentionCount: Int { reviews.count(where: { $0.walkthrough?.isNew == true }) }
+
+    /// Publishes an acknowledged walkthrough before the next list refresh.
+    func noteWalkthroughSeen(_ walkthrough: PRReviewWalkthroughSummary, reviewID: String) {
+        for index in reviews.indices where reviews[index].id == reviewID && reviews[index].walkthrough?.id == walkthrough.id {
+            reviews[index].walkthrough = walkthrough
+        }
+        if snapshot?.review.id == reviewID, snapshot?.review.walkthrough?.id == walkthrough.id {
+            snapshot?.review.walkthrough = walkthrough
+        }
+    }
 
     var comparisonLoadIdentity: PRReviewDiffRequestIdentity? {
         guard supportsComparisons, let review = snapshot?.review, review.status == .ready else { return nil }

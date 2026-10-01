@@ -841,6 +841,11 @@ struct AppRootView: View {
             // First Mate's fleet observation and Dock badge also belong to the
             // process, so the chat window keeps working after this one closes.
             shell.startFirstMateServices(model: model)
+            model.prReviewIsOnScreen = { [weak shell] machineID, reviewID in
+                guard let shell else { return false }
+                return shell.detailScope == .prReview && shell.prReview.currentMachineID == machineID
+                    && shell.prReview.selectedReviewID == reviewID
+            }
             agentControl.configure(
                 model: model,
                 shell: shell,

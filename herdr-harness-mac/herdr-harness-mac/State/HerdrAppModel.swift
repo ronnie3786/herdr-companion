@@ -136,6 +136,10 @@ final class HerdrAppModel {
     var activeWorkRefreshTick = 0
     /// Changes whenever a companion publishes PR Review activity.
     var prReviewRefreshTick = 0
+    /// Whether the main window shows this review now (installed by the root
+    /// view, which owns the shell).
+    @ObservationIgnored var prReviewIsOnScreen: (@MainActor (_ machineID: String, _ reviewID: String) -> Bool)?
+    @ObservationIgnored private var announcedPRReviewWalkthroughIDs: Set<String> = []
     var prReviewMachineRevision = 0
     var isRefreshing = false
     var isSending = false
@@ -5164,6 +5168,22 @@ final class HerdrAppModel {
         }
     }
 
+    /// A walkthrough finished or failed on a review host. The banner is
+    /// skipped while the review is already on screen in the active app; the
+    /// PR Review badge comes from the refreshed review list either way.
+    func handlePRReviewWalkthrough(_ event: HerdrEvent, machineID: String) async {
+        guard !isDemoMode,
+              let walkthrough = PRReviewWalkthroughNotification.Event(machineID: machineID, payload: event.data),
+              walkthrough.isFresh(),
+              announcedPRReviewWalkthroughIDs.insert(walkthrough.guideID).inserted
+        else { return }
+        if NSApplication.shared.isActive, prReviewIsOnScreen?(machineID, walkthrough.reviewID) == true { return }
+        let route = machines.first { $0.id == machineID }.flatMap {
+            PRReviewWalkthroughNotification.routeURL(reviewID: walkthrough.reviewID, machineURL: $0.urlString)
+        }
+        await NotificationManager.postPRReviewWalkthrough(walkthrough, route: route)
+    }
+
     private func handlePushDelivery(_ event: HerdrEvent, machineID: String) async {
         guard case let .object(payload) = event.data else { return }
         let sent: Int
@@ -5460,6 +5480,9 @@ final class HerdrAppModel {
                         activeWorkRefreshTick &+= 1
                     } else if event.event == "pr_review.updated" {
                         prReviewRefreshTick &+= 1
+                    } else if event.event == "pr_review.walkthrough" {
+                        prReviewRefreshTick &+= 1
+                        await handlePRReviewWalkthrough(event, machineID: machine.id)
                     } else if event.event == "snapshot.updated" || event.event == "alert.created" ||
                         event.event == "alert.updated" || event.event == "alerts.read_state_changed" ||
                         event.event == "stars.changed" || event.event == "stream.reset" ||

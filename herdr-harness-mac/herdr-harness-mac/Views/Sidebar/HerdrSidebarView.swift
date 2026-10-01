@@ -14,6 +14,8 @@ struct HerdrSidebarView: View {
     /// Features waiting on a human across every configured host. The Chat
     /// navigator badges First Mate with this count; zero keeps the entry plain.
     var firstMateAttentionCount: Int = 0
+    /// Reviews with a walkthrough that finished while nobody had them open.
+    var prReviewWalkthroughCount: Int = 0
     /// The main window draws the rail's 40pt header itself (traffic lights and
     /// the sidebar toggle); standalone hosts keep the brand header here.
     var showsHeader = true
@@ -247,7 +249,7 @@ struct HerdrSidebarView: View {
                         )
                     }
                     if let openPRReview {
-                        SidebarNavRow(title: "PR Review", systemImage: "arrow.triangle.pull", action: openPRReview)
+                        PRReviewNavigationButton(readyCount: prReviewWalkthroughCount, action: openPRReview)
                             .accessibilityIdentifier("open-pr-review")
                     }
                 }

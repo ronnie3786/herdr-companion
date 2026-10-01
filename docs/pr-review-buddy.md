@@ -5,6 +5,26 @@ request in short chapters. Open a prepared review's **Files** tab and choose
 **Start walkthrough**. Existing review skills do not run again when you start a
 walkthrough. **Suggested order** still controls the file list independently.
 
+## Saved walkthroughs
+
+A walkthrough keeps preparing on the companion after you leave the review, switch
+reviews, or close the window. When it is ready, or if it fails, the Mac posts a
+notification and badges **PR Review** in the navigator. The review's row shows
+**Walkthrough ready** until you open it. Choose the notification to open the
+review. Opening the review in the active app clears its badge on every Mac
+connected to that companion.
+
+Walkthroughs stay saved with the review. Reopening a review shows its newest
+walkthrough for the current revision and comparison. A walkthrough that is still
+preparing shows its progress there. Archiving a review deletes its walkthroughs,
+answers, and pinned walkthrough source on the companion and this Mac's saved
+place. Unarchiving does not restore them.
+
+Notifications use Herdr's existing notification permission and never ask for
+it. A banner is skipped when the review is already open in the active app. A
+walkthrough that settled more than 30 minutes before the Mac reconnected only
+updates the badge.
+
 The compact dock keeps the code in view. Play an explanation, pause, replay, seek,
 or change playback speed. **Next** advances the chapter only when you choose it.
 Expand to read the explanation, choose a chapter, inspect sources, and revisit
@@ -40,8 +60,9 @@ The guide does not add a vector database or require a new review producer format
 
 Refreshing to a different code revision pauses the old walkthrough and leaves
 its transcript readable. Start a new walkthrough to explain the current revision.
-Playback and question state are owned by each review window; progress is saved
-privately on the Mac. The restricted Pi tools are a tool policy, not an operating
+Playback and question state are owned by each review window. Your place in a
+walkthrough is saved privately on the Mac; the walkthrough itself is saved on
+the companion. The restricted Pi tools are a tool policy, not an operating
 system filesystem sandbox.
 
 ## Narration and drawings
@@ -67,7 +88,11 @@ inventing synchronized timing. Changing voices restarts the current passage.
 ## Compatibility and delivery
 
 This feature requires a matching companion advertising `pr-review-guide-v1`,
-`pr-review-context-v2`, and captioned narration support for speech. These are
+`pr-review-context-v2`, and captioned narration support for speech. Saved
+walkthroughs, background notifications, and the badge also require
+`pr-review-walkthroughs-v1`. It adds `GET /api/v1/pr-reviews/{reviewId}/walkthroughs`,
+`POST /api/v1/pr-reviews/{reviewId}/walkthroughs/{guideId}/seen`, a `walkthrough`
+summary on each review, and the `pr_review.walkthrough` event. These are
 additive APIs. Existing `pr-review-v1` clients and ordinary response audio retain
 their original contracts. An older companion keeps the existing review workbench
 and reports that the walkthrough requires an update.

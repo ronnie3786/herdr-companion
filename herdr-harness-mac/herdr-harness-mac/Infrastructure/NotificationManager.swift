@@ -85,6 +85,18 @@ enum NotificationManager {
         try? await UNUserNotificationCenter.current().add(request)
     }
 
+    /// A walkthrough settled on the companion. Like App Shots, this observes
+    /// the existing authorization and never prompts.
+    static func postPRReviewWalkthrough(_ event: PRReviewWalkthroughNotification.Event, route: URL?) async {
+        guard await isAuthorizedForAppShots() else { return }
+        let request = UNNotificationRequest(
+            identifier: PRReviewWalkthroughNotification.identifier(guideID: event.guideID),
+            content: PRReviewWalkthroughNotification.content(for: event, route: route),
+            trigger: nil
+        )
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+
     static func removeDelivered(alertIDs: Set<String>) async {
         guard !alertIDs.isEmpty else { return }
         if let removeDeliveredOverride {

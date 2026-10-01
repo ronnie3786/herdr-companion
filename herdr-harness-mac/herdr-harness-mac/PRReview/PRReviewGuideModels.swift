@@ -141,9 +141,46 @@ struct PRReviewGuideRequest: Encodable, Sendable {
     }
 }
 
+/// The companion's index entry for one walkthrough. Walkthroughs finish on
+/// the companion whether or not a window is watching, and stay until the
+/// review is archived. The explanation itself comes from `fetchPRReviewGuide`.
+struct PRReviewWalkthroughSummary: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var state: String
+    var baseSHA: String?
+    var headSHA: String?
+    var comparisonID: String?
+    var createdAt: String?
+    var finishedAt: String?
+    var seenAt: String?
+    var error: String?
+    var chapterCount: Int?
+    /// Finished or failed and not yet opened by anyone.
+    var needsAttention: Bool?
+    enum CodingKeys: String, CodingKey {
+        case id, state, error
+        case baseSHA = "base_sha", headSHA = "head_sha", comparisonID = "comparison_id"
+        case createdAt = "created_at", finishedAt = "finished_at", seenAt = "seen_at"
+        case chapterCount = "chapter_count", needsAttention = "needs_attention"
+    }
+    var isRunning: Bool { state == "running" }
+    var isNew: Bool { needsAttention == true }
+
+    /// A walkthrough belongs to one review revision and comparison.
+    func matches(_ scope: PRReviewGuideScope) -> Bool {
+        baseSHA == scope.baseSHA && headSHA == scope.headSHA
+            && (scope.comparison == nil || comparisonID == scope.comparison?.id)
+    }
+}
+
+struct PRReviewWalkthroughsResponse: Decodable, Sendable { var walkthroughs: [PRReviewWalkthroughSummary] }
+struct PRReviewWalkthroughResponse: Decodable, Sendable { var walkthrough: PRReviewWalkthroughSummary }
+
 protocol PRReviewGuideClient: Sendable {
     func startPRReviewGuide(reviewID: String, request: PRReviewGuideRequest) async throws -> PRReviewGuide
     func fetchPRReviewGuide(reviewID: String, guideID: String) async throws -> PRReviewGuide
+    func prReviewWalkthroughs(reviewID: String) async throws -> [PRReviewWalkthroughSummary]
+    func markPRReviewWalkthroughSeen(reviewID: String, guideID: String) async throws -> PRReviewWalkthroughSummary
     func prReviewNarrationCapabilities() async throws -> PRReviewNarrationCapabilities
     func captionedPRReviewSpeech(text: String, voice: String, drawings: [PRReviewGuideDrawing]) async throws -> PRReviewNarrationManifest
     func transcribeVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse

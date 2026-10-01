@@ -21,6 +21,8 @@ class FakeRuntime:
         self.store = store
         self.root = Path(root)
         self.refreshes = []
+        self.archives = []
+        self.guide = SimpleNamespace(walkthroughs=store.walkthroughs, mark_seen=store.mark_walkthrough_seen)
 
     def capabilities(self):
         return {"available": True, "gh_available": True, "runner": "synthetic", "runner_available": True, "pi_available": True, "workspace_label": "PR Reviews", "auto_rank": False, "sync_viewed_to_github": True, "reason": None}
@@ -35,6 +37,10 @@ class FakeRuntime:
     def refresh_review(self, review_id, request_id):
         self.refreshes.append((review_id, request_id))
         return self.store.get_review(review_id, True)
+
+    def archive(self, review_id, request_id, archived=True):
+        self.archives.append((review_id, archived))
+        return self.store.archive(review_id, request_id, archived)
 
     def schedule_review_status_refresh(self, *, force=False):
         self.refreshes.append(("viewer-review-status", force))
@@ -185,6 +191,7 @@ class PRReviewHTTPTests(unittest.TestCase):
         self.assertIsNotNone(self.store.get_review(review_id)["archived_at"])
         self.assertEqual(self.request(archive.replace("archive", "unarchive"), {"request_id": "unarchive"}, method="POST")[0], 200)
         self.assertIsNone(self.store.get_review(review_id)["archived_at"])
+        self.assertEqual(self.service.pr_review.archives, [(review_id, True), (review_id, False)])
         self.assertEqual(self.request(f"/api/v1/pr-reviews/{review_id}/refresh", {"request_id": "refresh"}, method="POST")[0], 202)
 
         status, run, _ = self.request(f"/api/v1/pr-reviews/{review_id}/runs", {"skill_id": "comprehensive-pr-review", "request_id": "run"}, method="POST")
@@ -217,6 +224,27 @@ class PRReviewHTTPTests(unittest.TestCase):
         self.assertGreater(events["cursor"], 0)
         _, later, _ = self.request(f"/api/v1/pr-reviews/{review_id}/events?after={events['cursor']}")
         self.assertEqual(later["events"], [])
+
+    def test_saved_walkthroughs_list_and_seen(self):
+        review_id = self.create()
+        status, body, _ = self.request("/api/v1/pr-reviews/capabilities")
+        self.assertIn("pr-review-walkthroughs-v1", body["capabilities"])
+        guide_id = "prguide_" + "a" * 24
+        self.store.save_walkthrough({"id": guide_id, "review_id": review_id, "state": "finished", "base_sha": "base", "head_sha": "head",
+                                     "comparison": {"id": "gitcmp_synthetic"}, "created_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:01:00Z", "chapters": [{}, {}]})
+        status, body, _ = self.request(f"/api/v1/pr-reviews/{review_id}/walkthroughs")
+        self.assertEqual(status, 200)
+        self.assertEqual([(item["id"], item["chapter_count"], item["comparison_id"], item["needs_attention"]) for item in body["walkthroughs"]],
+                         [(guide_id, 2, "gitcmp_synthetic", True)])
+        self.assertTrue(self.request("/api/v1/pr-reviews")[1]["reviews"][0]["walkthrough"]["needs_attention"])
+        seen = f"/api/v1/pr-reviews/{review_id}/walkthroughs/{guide_id}/seen"
+        self.assertEqual(self.request(seen, {"request_id": "seen", "extra": True}, method="POST")[0], 400)
+        status, body, _ = self.request(seen, {"request_id": "seen"}, method="POST")
+        self.assertEqual(status, 200)
+        self.assertFalse(body["walkthrough"]["needs_attention"])
+        self.assertFalse(self.request("/api/v1/pr-reviews")[1]["reviews"][0]["walkthrough"]["needs_attention"])
+        missing = f"/api/v1/pr-reviews/{review_id}/walkthroughs/prguide_{'b' * 24}/seen"
+        self.assertEqual(self.request(missing, {"request_id": "missing"}, method="POST")[0], 404)
 
     def test_document_upload_limit_link_title_and_content_type_validation(self):
         review_id = self.create("upload-limit")

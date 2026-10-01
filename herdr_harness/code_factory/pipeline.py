@@ -54,7 +54,7 @@ MAX_ERROR_CHARS = 2000
 MAX_SESSION_SUMMARY_CHARS = 2000
 MAX_NOTES_BYTES = 128 * 1024
 TERMINAL_STAGES = frozenset({"release", "done"})
-ACTIONS = ("retry", "skip", "cleanup", "release_now")
+ACTIONS = ("retry", "authorize_pr_ready", "skip", "cleanup", "release_now")
 RELEASE_RESUMABLE = frozenset({"failed", "verifying", "publishing"})
 RELEASE_RETRY_MIN_SECONDS = 600
 RELEASE_RETRY_MAX_SECONDS = 6 * 3600
@@ -1410,8 +1410,35 @@ class CodeFactory:
             self._store.add_event(number, "pull_request", "warning",
                                   f"The branch has no commits beyond {self._base_ref()}; returning to the implement stage")
             return "implement"
-        self._git.push(cwd, "origin", f"HEAD:refs/heads/{branch}")
         existing = self._github.find_pull_request(branch)
+        if (existing and str(existing.get("state") or "OPEN").upper() == "OPEN"
+                and existing.get("isDraft") is not True):
+            # A ready PR inherited from an older run has no receipt proving that
+            # this policy observed a draft and a human subsequently made that exact
+            # head ready. Refuse it before pushing the local branch or posting a
+            # review, so migration cannot modify or merge the existing PR.
+            pr_number = int(existing["number"])
+            remote_head = str(existing.get("headRefOid") or "")
+            plan["pr_ready_authorization"] = {
+                "prNumber": pr_number,
+                "headSha": remote_head,
+                "draftObserved": False,
+                "parkedAt": utc_now(),
+                "authorizedAt": None,
+                "source": None,
+            }
+            self._save_plan(issue, plan, self._paths(number))
+            self._store.update_issue(
+                number, prNumber=pr_number, prUrl=str(existing.get("url") or "")[:500],
+                headSha=remote_head or None, ciStatus=None,
+            )
+            self._block(
+                number, "pull_request", "awaiting_pr_ready_authorization",
+                f"PR #{pr_number} was already ready when this policy found it. It has no trusted draft-readiness "
+                "receipt, so Code Factory will not push to, review, authorize, or merge it; finish it manually.",
+            )
+            return None
+        self._git.push(cwd, "origin", f"HEAD:refs/heads/{branch}")
         if existing and str(existing.get("state") or "OPEN").upper() == "OPEN":
             pr = existing
             self._store.add_event(number, "pull_request", "info", f"Reusing open PR #{pr['number']}")
@@ -1659,6 +1686,44 @@ class CodeFactory:
                 "No posted approval for the exact pull request head; returning to review",
             )
             return "review"
+        readiness = plan.get("pr_ready_authorization")
+        receipt_valid = (
+            isinstance(readiness, dict)
+            and readiness.get("prNumber") == pr_number
+            and readiness.get("headSha") == head
+            and readiness.get("draftObserved") is True
+            and isinstance(readiness.get("authorizedAt"), str)
+            and bool(readiness["authorizedAt"].strip())
+            and readiness.get("source") == "explicit_operator_action"
+        )
+        pull = self._github.pull_request(pr_number)
+        remote_head = str(pull.get("headRefOid") or "")
+        if receipt_valid and (pull.get("isDraft") is True or remote_head != head):
+            receipt_valid = False
+            plan.pop("pr_ready_authorization", None)
+        if not receipt_valid:
+            draft_observed = pull.get("isDraft") is True
+            plan["pr_ready_authorization"] = {
+                "prNumber": pr_number,
+                "headSha": head,
+                "draftObserved": draft_observed,
+                "parkedAt": utc_now(),
+                "authorizedAt": None,
+                "source": None,
+            }
+            self._save_plan(issue, plan, paths)
+            if draft_observed:
+                instruction = (
+                    f"PR #{pr_number} is a draft. A human must mark this exact head ready in GitHub, then run "
+                    f"`herdr-code-factory action {number} authorize_pr_ready`. Retry does not authorize readiness."
+                )
+            else:
+                instruction = (
+                    f"PR #{pr_number} was not observed as a draft when this policy parked it. It has no trusted readiness "
+                    "receipt and Code Factory will not merge it; finish it manually."
+                )
+            self._block(number, "merge", "awaiting_pr_ready_authorization", instruction)
+            return None
         merged = self._github.merge_pull_request(
             pr_number,
             subject=self._public(prompts.pull_request_title(plan, issue)),
@@ -1785,9 +1850,57 @@ class CodeFactory:
         if issue is None:
             raise CodeFactoryError(f"issue #{number} is not tracked", code="not_found")
         queued = False
-        if action == "retry":
+        if action == "authorize_pr_ready":
+            if issue["status"] != "blocked" or issue.get("blockedReason") != "awaiting_pr_ready_authorization":
+                raise CodeFactoryError(
+                    f"issue #{number} is not waiting for pull request readiness authorization",
+                    code="invalid_request",
+                )
+            pr_number = issue.get("prNumber")
+            head = str(issue.get("headSha") or "")
+            plan = self._plan_for(issue)
+            readiness = plan.get("pr_ready_authorization")
+            if not (
+                isinstance(pr_number, int) and head and isinstance(readiness, dict)
+                and readiness.get("prNumber") == pr_number and readiness.get("headSha") == head
+                and readiness.get("draftObserved") is True
+            ):
+                raise CodeFactoryError(
+                    f"PR #{pr_number or '?'} was not recorded as a parked draft for the exact reviewed head; "
+                    "Code Factory cannot authorize it",
+                    code="invalid_request",
+                )
+            pull = self._github.pull_request(pr_number)
+            remote_head = str(pull.get("headRefOid") or "")
+            if remote_head != head:
+                raise CodeFactoryError(
+                    f"PR #{pr_number} now points to {remote_head[:12] or 'an unknown head'}, not the reviewed head {head[:12]}",
+                    code="invalid_request",
+                )
+            if pull.get("isDraft") is not False:
+                raise CodeFactoryError(
+                    f"PR #{pr_number} is still a draft; a human must mark it ready in GitHub before authorization",
+                    code="invalid_request",
+                )
+            readiness = dict(readiness)
+            readiness.update(authorizedAt=utc_now(), source="explicit_operator_action")
+            plan["pr_ready_authorization"] = readiness
+            self._save_plan(issue, plan, self._paths(number))
+            self._store.update_issue(number, status="active", error=None, blockedReason=None, failureRetries=0)
+            self._store.add_event(
+                number, "merge", "info",
+                f"Operator authorized ready PR #{pr_number} for reviewed head {head[:12]}",
+                {"prNumber": pr_number, "headSha": head},
+            )
+            queued = self._submit(number)
+        elif action == "retry":
             if issue["status"] not in ("blocked", "failed"):
                 raise CodeFactoryError(f"issue #{number} is {issue['status']}; only blocked or failed issues can be retried", code="invalid_request")
+            if issue.get("blockedReason") == "awaiting_pr_ready_authorization":
+                raise CodeFactoryError(
+                    f"issue #{number} requires the scoped authorize_pr_ready action; Retry cannot authorize a pull request",
+                    code="invalid_request",
+                )
             retry_stage = issue["stage"]
             retry_fields: dict[str, Any] = {}
             if issue.get("blockedReason") == "human_question":

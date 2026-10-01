@@ -110,6 +110,16 @@ execution; `fm_retry` handles a reported failure. Neither authorizes another sta
 
 ## Gate verification evidence
 
+The current [operating policy](workflow-policy.md) requires draft PRs unless the
+human explicitly authorizes readiness for the specific PR. Preserve that rule
+through every relay and delegation. "Keep sessions moving" never grants readiness.
+
+Reporting completion and proving coverage are separate. Reuse retained run IDs
+across handoffs; do not rerun tests merely to reattach evidence. Missing inventories
+or references lower coverage confidence and never establish a pass, but they do
+not block an otherwise valid outcome. Omit optional run IDs for one lineage lookup,
+or report the available IDs and explain the limit. Never loop on bookkeeping.
+
 Before reporting an outcome for work that changed code, discover every suite in
 every changed package from the project's own test discovery or manifest, then
 record the inventory and the exact per-suite results with

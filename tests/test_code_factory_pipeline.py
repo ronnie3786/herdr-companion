@@ -254,11 +254,19 @@ class FakeGitHub:
         with self._merge_lock:
             number = 100 + len(self.prs)
             pr = {"number": number, "url": f"https://github.com/{REPOSITORY}/pull/{number}", "state": "OPEN",
-                  "headRefName": head, "baseRefName": base, "title": title, "body": body, "headRefOid": ""}
+                  "isDraft": True, "headRefName": head, "baseRefName": base, "title": title, "body": body,
+                  "headRefOid": self._remote_head(head)}
             self.prs[number] = pr
             self.pr_by_branch[head] = number
             self.created_prs.append(pr)
-        return {"number": number, "url": pr["url"]}
+        return {"number": number, "url": pr["url"], "isDraft": True}
+
+    def _remote_head(self, branch: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(self._checkout), "ls-remote", "origin", f"refs/heads/{branch}"],
+            env=self._env, capture_output=True, text=True, check=True,
+        )
+        return result.stdout.split()[0] if result.stdout.strip() else ""
 
     def find_pull_request(self, head_branch: str) -> dict[str, Any] | None:
         self.calls.append(("find_pull_request", (head_branch,)))
@@ -266,9 +274,14 @@ class FakeGitHub:
         if number is None:
             return None
         pr = self.prs[number]
-        return {"number": number, "url": pr["url"], "state": pr["state"], "headRefOid": pr["headRefOid"]}
+        pr["headRefOid"] = self._remote_head(pr["headRefName"]) or pr["headRefOid"]
+        return {"number": number, "url": pr["url"], "state": pr["state"], "isDraft": pr["isDraft"],
+                "headRefOid": pr["headRefOid"]}
 
     def pull_request(self, number: int) -> dict[str, Any]:
+        pr = self.prs[number]
+        if pr["state"] == "OPEN":
+            pr["headRefOid"] = self._remote_head(pr["headRefName"]) or pr["headRefOid"]
         return dict(self.prs[number])
 
     def pull_request_diff(self, number: int) -> str:
@@ -577,6 +590,7 @@ class PipelineTestCase(unittest.TestCase):
         self.local = FakeLocalVerifier()
         self.side_clones: list[Path] = []
         self.store: CodeFactoryStore | None = None
+        self.auto_authorize_ready = True
         self.factory = self.make_factory()
 
     def git(self, args, cwd=None) -> str:
@@ -607,11 +621,45 @@ class PipelineTestCase(unittest.TestCase):
             self.store = CodeFactoryStore(self.settings.state_path)
             self.addCleanup(self.store.close)
         self.repo = GitRepository(self.checkout, environ=self.env)
-        return CodeFactory(
+        factory = CodeFactory(
             self.settings, self.store, github=self.github, git=self.repo, pi=self.pi, clock=self.clock,
             sleep=self.clock.sleep, release_runner=self.releases, log=self.logs.append, check_runner=self.checks,
             message_runner=self.messages, local_verifier=self.local,
         )
+        # Most pre-readiness tests exercise behavior after merge. Keep those journeys
+        # explicit by simulating the operator's two real actions in the fixture: mark
+        # the parked draft ready, then invoke the scoped authorization action. Tests
+        # for the readiness boundary disable this helper and observe the park directly.
+        raw_finish_run = factory._finish_run
+
+        def finish_run_with_test_operator(number: int) -> None:
+            raw_finish_run(number)
+            issue = self.store.get_issue(number)
+            if not (
+                self.auto_authorize_ready and issue is not None and issue["status"] == "blocked"
+                and issue.get("blockedReason") == "awaiting_pr_ready_authorization"
+            ):
+                return
+            pr_number = issue.get("prNumber")
+            if isinstance(pr_number, int) and pr_number in self.github.prs:
+                self.github.prs[pr_number]["isDraft"] = False
+                factory.action(number, "authorize_pr_ready")
+
+        factory._finish_run = finish_run_with_test_operator  # type: ignore[method-assign]
+        raw_run_issue = factory.run_issue
+
+        def run_issue_with_test_operator(number: int) -> dict[str, Any] | None:
+            issue = raw_run_issue(number)
+            if not self.auto_authorize_ready or issue is None:
+                return issue
+            readiness = (issue.get("planJson") or {}).get("pr_ready_authorization")
+            if issue["status"] == "active" and issue["stage"] == "merge" and isinstance(readiness, dict) \
+                    and readiness.get("source") == "explicit_operator_action":
+                return raw_run_issue(number)
+            return issue
+
+        factory.run_issue = run_issue_with_test_operator  # type: ignore[method-assign]
+        return factory
 
     def sessions(self, number: int | None) -> list[str]:
         """Session roles in start order, derived from the fake's chronological call log."""
@@ -690,7 +738,7 @@ class HappyPathTests(PipelineTestCase):
         self.assertEqual(issue["status"], "active")
         self.assertEqual(issue["stage"], "release")
         self.assertEqual(issue["kind"], "bug")
-        self.assertEqual(issue["attempts"], 1)
+        self.assertEqual(issue["attempts"], 2, "the synthetic operator resumes the parked draft in a second run")
         self.assertEqual(issue["reviewRound"], 2, "request_changes + approve")
         self.assertEqual(issue["ciFailures"], 1)
         self.assertEqual(issue["ciStatus"], "success")
@@ -843,6 +891,124 @@ class HappyPathTests(PipelineTestCase):
         self.assertTrue(self.factory.poll_once()["releaseStarted"] is False, "nothing left to release")
 
 
+class PullRequestReadinessTests(PipelineTestCase):
+    def setUp(self):
+        super().setUp()
+        self.auto_authorize_ready = False
+
+    def test_draft_parks_once_and_only_scoped_operator_authorization_resumes(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.factory.poll_once()
+
+        issue = self.factory.run_issue(12)
+
+        self.assertEqual(
+            (issue["status"], issue["stage"], issue["blockedReason"]),
+            ("blocked", "merge", "awaiting_pr_ready_authorization"),
+        )
+        self.assertTrue(self.github.created_prs[0]["isDraft"])
+        self.assertEqual(self.github.merges, [])
+        self.assertEqual(self.sessions(12), ["planner", "implementer", "implementer", "reviewer"])
+        self.assertEqual((issue["ciFailures"], issue["reviewRound"], issue["failureRetries"]), (0, 1, 0))
+        parked = issue["planJson"]["pr_ready_authorization"]
+        self.assertEqual((parked["prNumber"], parked["headSha"], parked["draftObserved"]),
+                         (100, issue["headSha"], True))
+        self.assertIsNone(parked["authorizedAt"])
+        events_before = self.events(12)
+        sessions_before = list(self.pi.calls)
+        with self.assertRaisesRegex(CodeFactoryError, "Retry cannot authorize"):
+            self.factory.action(12, "retry")
+        self.assertEqual(self.events(12), events_before, "generic Retry is quiet at the readiness boundary")
+        self.assertEqual(self.pi.calls, sessions_before, "generic Retry starts no model session")
+        self.assertEqual(len(self.messages.calls), 0, "the readiness park sends no repeated notification")
+
+        with self.assertRaisesRegex(CodeFactoryError, "still a draft"):
+            self.factory.action(12, "authorize_pr_ready")
+        self.github.prs[100]["isDraft"] = False
+        authorized = self.factory.action(12, "authorize_pr_ready")
+        self.assertEqual((authorized["issue"]["status"], authorized["issue"]["stage"]), ("active", "merge"))
+        receipt = authorized["issue"]["planJson"]["pr_ready_authorization"]
+        self.assertEqual(receipt["source"], "explicit_operator_action")
+        self.assertIsNotNone(receipt["authorizedAt"])
+
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["stage"], "release")
+        self.assertEqual(len(self.github.merges), 1)
+        self.assertEqual(self.sessions(12), ["planner", "implementer", "implementer", "reviewer"],
+                         "authorization resumes merge without another model session")
+
+    def test_ready_pr_without_recorded_draft_provenance_stays_parked(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.factory.poll_once()
+
+        def make_ready_during_review(call: dict[str, Any]) -> None:
+            if call["charter"] == prompts.REVIEWER_CHARTER:
+                self.github.prs[100]["isDraft"] = False
+
+        self.pi.on_call = make_ready_during_review
+        issue = self.factory.run_issue(12)
+
+        self.assertEqual(issue["blockedReason"], "awaiting_pr_ready_authorization")
+        self.assertFalse(issue["planJson"]["pr_ready_authorization"]["draftObserved"])
+        self.assertEqual(self.github.merges, [])
+        with self.assertRaisesRegex(CodeFactoryError, "not recorded as a parked draft"):
+            self.factory.action(12, "authorize_pr_ready")
+        self.assertEqual(self.store.get_issue(12)["status"], "blocked")
+
+    def test_preexisting_ready_pr_is_parked_before_push_or_review(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        legacy_head = self.git(["rev-parse", "HEAD"], cwd=self.checkout)
+        original_find = self.github.find_pull_request
+
+        def find_legacy_ready_pr(head_branch: str) -> dict[str, Any] | None:
+            original_find(head_branch)
+            return {
+                "number": 88,
+                "url": f"https://github.com/{REPOSITORY}/pull/88",
+                "state": "OPEN",
+                "isDraft": False,
+                "headRefOid": legacy_head,
+            }
+
+        self.github.find_pull_request = find_legacy_ready_pr  # type: ignore[method-assign]
+        self.factory.poll_once()
+
+        issue = self.factory.run_issue(12)
+
+        self.assertEqual(
+            (issue["status"], issue["stage"], issue["blockedReason"], issue["prNumber"], issue["headSha"]),
+            ("blocked", "pull_request", "awaiting_pr_ready_authorization", 88, legacy_head),
+        )
+        self.assertEqual(self.sessions(12), ["planner", "implementer", "implementer"])
+        self.assertEqual(self.github.created_prs, [])
+        self.assertEqual(self.github.merges, [])
+        self.assertEqual(
+            self.git(["ls-remote", "--heads", "origin", "codefactory/issue-12"], cwd=self.checkout), "",
+            "the local implementation must not be pushed into a legacy ready PR",
+        )
+        receipt = issue["planJson"]["pr_ready_authorization"]
+        self.assertEqual((receipt["prNumber"], receipt["headSha"], receipt["draftObserved"]),
+                         (88, legacy_head, False))
+        with self.assertRaisesRegex(CodeFactoryError, "not recorded as a parked draft"):
+            self.factory.action(12, "authorize_pr_ready")
+
+    def test_authorization_rejects_a_ready_pr_whose_head_moved(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.factory.poll_once()
+        issue = self.factory.run_issue(12)
+        self.assertEqual(issue["blockedReason"], "awaiting_pr_ready_authorization")
+        self.github.prs[100]["isDraft"] = False
+        moved = self.side_push("codefactory/issue-12", "app/after-review.txt", "Move after review")
+
+        with self.assertRaisesRegex(CodeFactoryError, "not the reviewed head"):
+            self.factory.action(12, "authorize_pr_ready")
+
+        issue = self.store.get_issue(12)
+        self.assertEqual((issue["status"], issue["headSha"]), ("blocked", issue["planJson"]["last_review_head"]))
+        self.assertNotEqual(issue["headSha"], moved)
+        self.assertEqual(self.github.merges, [])
+
+
 class BlockingAndActionTests(PipelineTestCase):
     def run_to_block(self, number: int = 12, plan=None):
         self.github.add_issue(number, "Crash when opening the HUD")
@@ -884,7 +1050,7 @@ class BlockingAndActionTests(PipelineTestCase):
             self.factory.action(12, "retry")
         issue = self.factory.run_issue(12)
         self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
-        self.assertEqual(issue["attempts"], 2)
+        self.assertEqual(issue["attempts"], 3, "planning retry plus the synthetic readiness authorization each resume the issue")
         self.assertEqual(self.sessions(12), ["planner", "planner", "implementer", "implementer", "reviewer"])
         second_planner = [call for call in self.pi.calls if call["charter"] == prompts.PLANNER_CHARTER][1]
         self.assertIn("<<<ISSUE_BODY\n" + amended + "\nISSUE_BODY>>>", second_planner["prompt"])

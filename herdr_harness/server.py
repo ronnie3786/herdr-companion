@@ -23,6 +23,7 @@ from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .first_mate_read_models import feature_summary
 from .first_mate_verification import VERIFICATION_CAPABILITY
+from .workflow_policy import POLICY_VERSION
 from .pr_review_store import PRReviewError
 from .agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
@@ -468,6 +469,7 @@ def api_description() -> dict:
             first_mate_peers.CAPABILITY,
             first_mate_fleet.CAPABILITY,
             VERIFICATION_CAPABILITY,
+            "first-mate-lenient-verification-recording-v1", POLICY_VERSION,
             simulator_previews.CAPABILITY,
             "pr-review-v1",
             "pr-review-guide-v1",
@@ -1265,6 +1267,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     first_mate_peers.CAPABILITY,
                     first_mate_fleet.CAPABILITY,
                     VERIFICATION_CAPABILITY,
+                    "first-mate-lenient-verification-recording-v1", POLICY_VERSION,
                     simulator_previews.CAPABILITY,
                 ], **runtime.capabilities(),
                     **({"skim": service.skims.capabilities()} if hasattr(service, "skims") else {})}

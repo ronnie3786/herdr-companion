@@ -34,7 +34,7 @@ SHA_PATTERN = re.compile(r"^[0-9a-f]{7,64}$")
 COLOR_PATTERN = re.compile(r"^[0-9A-Fa-f]{6}$")
 ISSUE_FIELDS = "number,title,body,author,labels,url,createdAt,updatedAt"
 ISSUE_VIEW_FIELDS = ISSUE_FIELDS + ",comments,state,closedByPullRequestsReferences"
-PR_VIEW_FIELDS = "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus"
+PR_VIEW_FIELDS = "number,url,state,isDraft,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus"
 RUN_FIELDS = "status,conclusion,databaseId,url"
 VERIFY_WORKFLOW = "Verify"
 MAX_STDERR_CHARS = 300
@@ -330,17 +330,19 @@ class GitHubClient:
             path.write_text(body_text, encoding="utf-8")
             self._run([
                 "pr", "create", "--repo", self.repository, "--head", head_branch, "--base", base_branch,
-                "--title", title_text, "--body-file", str(path),
+                "--title", title_text, "--body-file", str(path), "--draft",
             ], timeout=max(self.timeout, 120))
-        payload = self._json(["pr", "view", head_branch, "--repo", self.repository, "--json", "number,url"])
+        payload = self._json(["pr", "view", head_branch, "--repo", self.repository, "--json", "number,url,isDraft"])
         if not isinstance(payload, dict) or not isinstance(payload.get("number"), int):
             raise _failed("gh pr view did not return the new pull request")
-        return {"number": payload["number"], "url": str(payload.get("url") or "")}
+        if payload.get("isDraft") is not True:
+            raise _failed("gh pr create did not leave the new pull request in draft state")
+        return {"number": payload["number"], "url": str(payload.get("url") or ""), "isDraft": True}
 
     def find_pull_request(self, head_branch: str) -> dict[str, Any] | None:
         payload = self._json([
             "pr", "list", "--repo", self.repository, "--head", _branch(head_branch, "head"),
-            "--state", "all", "--json", "number,url,state,headRefOid",
+            "--state", "all", "--json", "number,url,state,isDraft,headRefOid",
         ])
         candidates = [item for item in self._dict_list(payload) if isinstance(item.get("number"), int)]
         if not candidates:
@@ -351,6 +353,7 @@ class GitHubClient:
             "number": chosen["number"],
             "url": str(chosen.get("url") or ""),
             "state": str(chosen.get("state") or ""),
+            "isDraft": chosen.get("isDraft") is True,
             "headRefOid": str(chosen.get("headRefOid") or ""),
         }
 

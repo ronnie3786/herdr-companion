@@ -4237,7 +4237,8 @@ def _pi_command(job: dict) -> list[str]:
     command = [job["pi_bin"], "--mode", "rpc", "--session", job["session_file"],
                "--name", ("First Mate" if job.get("lead") else "Second Mate") if job["kind"] == "coordinator" else job["claim"].get("title", "First Mate advisor"),
                prompt_flag, charter, "--extension", job["extension"]]
-    if job["kind"] == "advisor" and (job.get("recovery_mode") or job.get("reliability_assessment")):
+    restricted_advisor = job["kind"] == "advisor" and bool(job.get("recovery_mode") or job.get("reliability_assessment"))
+    if restricted_advisor:
         command += ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files",
                     "--tools", "read,grep,find,ls,bash,fm_status,fm_read_document,fm_read_session,fm_advice,fm_recovery_brief"]
     parent_session_id = job.get("parent_session_id")
@@ -4246,7 +4247,11 @@ def _pi_command(job: dict) -> list[str]:
             raise ValueError("Managed Pi parent session ID is invalid")
         if parent_session_id == job.get("native_session_id"):
             raise ValueError("Managed Pi session cannot be its own parent")
-        command += ["--herdr-parent-session-id", parent_session_id]
+        # The semantic bridge registers this flag, and --no-extensions keeps it
+        # unloaded: Pi would exit on an unknown option before confirming the
+        # session. The job record retains the parent for restricted advisors.
+        if not restricted_advisor:
+            command += ["--herdr-parent-session-id", parent_session_id]
     if job.get("model"):
         command += ["--model", job["model"]]
     if job.get("thinking"):

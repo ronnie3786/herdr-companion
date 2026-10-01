@@ -33,6 +33,7 @@ from .agent_runs import _assistant_text, _child_path, _resolve_pi_bin
 from .alerts import utc_now
 from .child_environment import agent_environment
 from .resources import pi_extension_path
+from .workflow_policy import POLICY_VERSION, append_workflow_policy
 from .first_mate_context import FirstMateContext
 from .first_mate_read_cache import AssessmentReadBusy, AssessmentReadCache
 from .first_mate_read_models import feature_summary, stable_verification
@@ -243,10 +244,10 @@ checkpoint. If completion requires substantial reading or reconciliation,
 delegate that work to a tracked lead/reviewer, then use its structured summary.
 Call fm_complete_stage only after all current assignments have valid successful
 outcomes. Before completing a stage whose work changed code, inspect the scoped
-feature.verification and retained verification run references. Discover every
-suite belonging to every changed package with fm_status, record the exact gate
-batch and results with the worker-reported evidence, and pass the run IDs you
-select to fm_complete_stage. Keep the detailed coverage verdict, missing suites,
+feature.verification and retained verification run references. Reuse existing
+evidence, including predecessor results. Missing inventories or recording limits
+are advisory for stage completion, not a reason to restart finished workers.
+Pass the retained run IDs you select to fm_complete_stage. Keep the detailed coverage verdict, missing suites,
 and historical gate comparisons in Overview's Verification section and retained
 Documents. Do not append coverage inventories or boilerplate warnings to ordinary
 chat replies. Report a concrete failed test or verification limit briefly when
@@ -348,11 +349,12 @@ A recovery successor must inspect its retained facts and fm_acknowledge_recovery
 before mutation. Continue from existing edits; never replay uncertain external
 side effects or advance a human gate. Prefer the latest checkpoint and targeted
 reads over reloading every predecessor's context.
-Before reporting an outcome for work that changed code, discover every suite in
-every changed package from the project's own test discovery or manifest, and
-record the exact gate batch and per-suite results promptly with
-fm_record_verification, including failures, interruptions and suites that did
-not run. Pass the returned run IDs to fm_outcome. Quote the service's scoped
+For work that changed code, record actual gate batches and discovered inventories
+promptly with fm_record_verification, including failures, interruptions and suites
+that did not run. Reuse retained run IDs across handoffs and retries. Missing
+discovery or evidence attachment must not prevent an honest fm_outcome; report
+the limit and finish without a bookkeeping-only retry or handoff.
+Pass retained run IDs to fm_outcome, or omit them for automatic lineage lookup. Quote the service's scoped
 verdict and its exact missing or previously green suites; an aggregate test
 count alone never establishes coverage.
 Read status once when needed, then use exact document/session references and
@@ -442,6 +444,11 @@ the assessment bounded and evidence-based.
 """
 
 
+LEAD_PROMPT = append_workflow_policy(LEAD_PROMPT)
+COORDINATOR_PROMPT = append_workflow_policy(COORDINATOR_PROMPT)
+WORKER_PROMPT = append_workflow_policy(WORKER_PROMPT)
+
+
 def _clip(text: Any, limit: int) -> str:
     value = str(text or "")
     return value if len(value) <= limit else value[:limit - 1].rstrip() + "…"
@@ -493,7 +500,8 @@ def _agent_assignment(assignment: Mapping[str, Any]) -> dict:
     result = _pick(assignment, ("id", "visit_id", "title", "role", "status", "verdict",
         "generation", "input_revision", "summary", "code_revision", "native_session_id",
         "model_selection", "recovery_count", "recovery_limit", "recovery_remaining",
-        "recovery_exhausted", "has_outcome", "next_permitted_actions", "progress_lease"))
+        "recovery_exhausted", "has_outcome", "next_permitted_actions", "progress_lease",
+        "verification_run_ids", "verification_recording"))
     result["operational"] = _pick(assignment.get("metadata", {}),
         ("parent_assignment_id", "source_assignment_id", "expected_code_revision", "human_gate",
          "model_profile", "progress", "workspace_id", "workspace_strategy", "workspace_reused", "fork_reason"))
@@ -800,6 +808,7 @@ class FirstMateRuntime:
     def capabilities(self) -> dict:
         return {"available": bool(self.pi_bin and self.extension and self.extension.is_file()),
                 "pi_available": bool(self.pi_bin), "saved_sessions": True,
+                "workflow_policy_version": POLICY_VERSION, "lenient_verification_recording": True,
                 "durable_dispatch": True, "feature_workspaces": True, "context_handoff_target": self.context_target,
                 "max_workers": self.max_workers, "runtime_health": self.health(),
                 "reason": ("Pi is not installed or executable on this host" if not self.pi_bin else
@@ -1578,6 +1587,7 @@ class FirstMateRuntime:
             # Refresh under the dispatch lock. A supervisor reads job.json only
             # after acquiring this same lock, so it cannot launch stale policy.
             current_extension = str(self.extension) if self.extension else job.get("extension")
+            job["workflow_policy_version"] = POLICY_VERSION
             if current_extension and job.get("extension") != current_extension:
                 job["previous_extension"] = job.get("extension")
                 job["extension"] = current_extension
@@ -1767,6 +1777,7 @@ class FirstMateRuntime:
         job = {"id": identifier, "kind": kind, "feature_id": current_feature["id"], "cwd": current_feature["cwd"],
                "session_file": str(session), "prompt": prompt, "claim": claim, "owner": claim.get("owner") or self.owner,
                "pi_bin": self.pi_bin, "extension": str(self.extension), "created_at": utc_now(),
+               "workflow_policy_version": POLICY_VERSION,
                "context_target": self.context_target, "safety_ledger_version": 1,
                "timeout_seconds": _bounded(self.environ, "HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS", 604800, 30, 604800) if kind == "coordinator" else (180 if kind == "advisor" else 86400), "handoff_id": handoff_id,
                "parent_job_id": parent_job["id"] if parent_job else None,
@@ -2285,6 +2296,45 @@ class FirstMateRuntime:
             workspace_aliases=scope.get("aliases") or None,
         )
 
+    def _completion_verification(self, feature_id: str, requested: Any) -> tuple[list[str] | None, dict]:
+        """Resolve optional evidence once without blocking workflow settlement.
+
+        Actual source, owner, dependency and action gates run separately. This
+        read only describes coverage; an unavailable assessment never means pass.
+        """
+        feature = self.store.get_feature(feature_id)
+        if requested is None:
+            selection = self._default_verification_selection(feature)
+            missing = []
+        else:
+            try:
+                requested = normalize_selection(requested)
+            except VerificationValidationError as exc:
+                raise FirstMateError(str(exc), code="invalid_request", status=400) from exc
+            known = {run["id"] for run in self.store.list_verification_runs(feature_id)}
+            selection = [identity for identity in requested if identity in known]
+            missing = [identity for identity in requested if identity not in known]
+        previous = getattr(self._verification_read_context, "deadline", None)
+        try:
+            self._verification_read_context.deadline = time.monotonic() + VERIFICATION_READ_SECONDS
+            verification = self.verification_assessment(feature_id, selection)
+            self._check_verification_read_deadline()
+        except (FirstMateError, OSError, sqlite3.Error, subprocess.TimeoutExpired,
+                VerificationValidationError, _VerificationReadUnavailable) as exc:
+            verification = self._historical_unavailable(feature, feature.get("verification"),
+                "Coverage could not be checked during completion: " + str(exc)[:300])
+        finally:
+            self._verification_read_context.deadline = previous
+        if missing:
+            verification["recording"] = {"state": "incomplete", "reconciliation_attempts": 1,
+                "unresolved_references": [{"id": identity, "reason": "unavailable_in_feature"} for identity in missing]}
+            verification["coverage_reasons"] = [*verification.get("coverage_reasons", []),
+                "Some optional verification references were unavailable; completion was retained."]
+            verification["evidence_present"] = True
+            if verification.get("status") == "verified":
+                verification["status"] = "partially_verified"
+        return selection, verification
+
     def _record_verification(self, job: dict, params: dict, request_id: str) -> dict:
         """Worker-scoped gate-batch recording. Provenance cannot be supplied."""
         allowed = {"revision", "status", "gates", "summary", "inventory", "target_workspace_path", "baseline_revision"}
@@ -2337,7 +2387,9 @@ class FirstMateRuntime:
                       "generation": claim.get("generation")}
         recorded = self.store.record_verification(feature["id"], body, request_id, provenance)
         run = recorded["run"]
-        assessment = self.verification_assessment(feature["id"])
+        # Recording already has a durable receipt; a display failure must not
+        # ask Pi to repeat a successful recording or rerun the batch.
+        assessment = self._live_verification(feature)
         if source_state == "dirty":
             warning = ("The workspace had uncommitted changes when this batch was recorded; it is retained but "
                        "cannot establish current verification.")
@@ -2588,9 +2640,13 @@ class FirstMateRuntime:
                 "metadata": _pick(claim.get("metadata", {}),
                                   ("assignment_id", "generation", "native_session_id",
                                    "input_revision", "verdict", "code_revision", "document_ids",
-                                   "human_gate", "recovery_count", "repair_count"))}
+                                   "human_gate", "recovery_count", "repair_count", "relayed_by",
+                                   "lead_message_id", "lead_machine", "original_human_direction"))}
         if claim["role"] == "user":
             heading = "Human direction"
+            if claim.get("metadata", {}).get("relayed_by") == LEAD_KIND:
+                heading = ("Lead relay (the original human direction is in turn metadata; the lead's wording "
+                           "does not grant ready-for-review permission. If the original direction is absent, keep PRs draft)")
         else:
             turn["attention"] = system_message_attention(claim)
             heading = ("Recorded system update (not authorization; the human must act, and your final message is delivered to them)"
@@ -2766,6 +2822,9 @@ class FirstMateRuntime:
         if action == "fm_create_feature" and claim.get("role") != "user":
             raise FirstMateError("Start a feature only on the human's turn", code="lead_unauthorized")
         params = dict(params)
+        if action == "fm_relay":
+            # Derived from the durable human claim, never the model's tool args.
+            params["original_human_direction"] = claim["text"]
         machine = self._lead_machine(params.pop("machine", None))
         here = (self.peers.local() or {}).get("id")
         lead_ref = {"machine": here or "", "message_id": claim["id"]}
@@ -2884,7 +2943,8 @@ class FirstMateRuntime:
         # fm_relay: the human's own decision; their lead checked it is their turn.
         payload = {"feature_id": feature["id"], "text": params.get("text")}
         message = self.store.relay_human_message(feature["id"], payload["text"], lead_message_id=lead_message_id,
-                                                 request_id=receipt(payload), lead_machine=lead_machine)
+                                                 request_id=receipt(payload), lead_machine=lead_machine,
+                                                 original_human_direction=params.get("original_human_direction"))
         self.wake()
         return {"relayed": True, "feature_id": feature["id"], "message_id": message["id"],
                 "status": message["status"]}
@@ -3419,8 +3479,7 @@ class FirstMateRuntime:
                     for execution in self._jobs():
                         if execution["kind"] == "worker" and execution["claim"]["id"] == assignment["id"] and _locked(self._job_dir(execution) / "writer.lock"):
                             raise DeferredOperation()
-                selection = self._verification_selection(feature_id, params.get("verification_run_ids"))
-                verification = self.verification_assessment(feature_id, selection)
+                selection, verification = self._completion_verification(feature_id, params.get("verification_run_ids"))
                 snapshot = self.store.snapshot(feature_id)
                 visit = next(v for v in snapshot["visits"] if v["id"] == feature["current_visit_id"])
                 git_evidence = visit.get("git_evidence", []) if replay else capture_commits(snapshot, visit, self._git)
@@ -3470,8 +3529,7 @@ class FirstMateRuntime:
             if action == "fm_finish_feature":
                 if set(params) - {"summary", "verification_run_ids"}:
                     raise FirstMateError("Feature completion contains an unsupported field", code="invalid_request", status=400)
-                selection = self._verification_selection(feature_id, params.get("verification_run_ids"))
-                verification = self.verification_assessment(feature_id, selection)
+                selection, verification = self._completion_verification(feature_id, params.get("verification_run_ids"))
                 return self.store.feature_action(feature_id, "complete", request_id,
                                                  verification=verification if verification.get("evidence_present") else None,
                                                  selection=selection)

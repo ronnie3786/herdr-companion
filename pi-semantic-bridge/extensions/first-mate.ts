@@ -3,6 +3,7 @@
  * exposed to a worker. Ordinary Pi sessions do not register these tools.
  */
 import { Type } from "@earendil-works/pi-ai/compat";
+import { appendWorkflowPolicy } from "../lib/workflow-policy";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
@@ -167,7 +168,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     const lead = role === "coordinator" && job.lead === true;
     const awareness = firstMateAwarenessInstructions(job, lead ? "lead" : role!);
     pi.on("before_agent_start", (event) => {
-      const systemPrompt = appendCompanionAwareness(event.systemPrompt, awareness);
+      const systemPrompt = appendWorkflowPolicy(appendCompanionAwareness(event.systemPrompt, awareness));
       if (systemPrompt !== event.systemPrompt) return { systemPrompt };
     });
     mkdirSync(join(root, "requests"), { recursive: true, mode: 0o700 });
@@ -329,10 +330,10 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       register("fm_acknowledge_recovery", "Before mutation in a recovery successor inspect retained progress, predecessor session, workspace facts and recovery brief. If the advisor was uncertain, read the exact predecessor with fm_read_session; request a human decision if the next step remains unresolved. Never repeat an unverified external effect.", Type.Object({ summary: Type.String({ maxLength: 8000 }) }));
       register("fm_retry", "Retry only a directly delegated child after its stopped execution reported failure, or refresh its completed revision-pinned review when the source changed. Reuses the workspace and retains prior evidence.", Type.Object({ assignment_id: text("Direct child assignment ID"), prompt: text("Complete corrected assignment and evidence required") }));
       register("fm_wait_for_children", "Yield this worker conversation while its delegated children run. Save a checkpoint and end your turn. The service resumes this exact native conversation when they settle, without model polling.", Type.Object({ summary: text("Current assignment state, delegated work, acceptance criteria and what to do when children report") }));
-      register("fm_outcome", "Report the assignment's structured verdict and durable deliverables. An ordinary final answer or clean exit does not count as completion. Before reporting work that changed code, discover every suite belonging to every changed package, record the exact gate batch with fm_record_verification including failures and suites that did not run, and cite the returned run IDs here. End your turn after this tool succeeds.", Type.Object({
+      register("fm_outcome", "Report the assignment's honest structured verdict and durable deliverables. An ordinary final answer or clean exit does not count as completion. Record actual gate batches promptly, including failures, and reuse retained run IDs across handoffs. Missing inventories or optional evidence references must not block reporting otherwise finished work; explain the limit and let coverage remain incomplete. End your turn after this tool succeeds.", Type.Object({
         verdict: Type.Union(["success", "passed", "needs_changes", "blocked", "failed"].map(value => Type.Literal(value))),
         summary: text("Evidence, checks run, limitations and findings"), documents: Type.Array(documentSchema),
-        verification_run_ids: Type.Optional(Type.Array(Type.String(), { description: "Retained verification run IDs recorded by this execution with fm_record_verification." })),
+        verification_run_ids: Type.Optional(Type.Array(Type.String(), { description: "Retained verification run IDs from this assignment's lineage, including predecessors and children. Omit for one automatic lookup at the current source revision. Unknown references are reported as incomplete without blocking the outcome. An explicit empty list selects none." })),
       }));
       register("fm_record_verification", "Record the exact discovered suite inventory and one append-only gate batch from this execution, including failures, errors, skipped suites, and interrupted runs. Report every batch promptly rather than only a final successful report. The service derives the tested workspace and revision and returns the scoped verification verdict; quote that verdict and never claim unqualified green from a total test count.", Type.Object({
         revision: text("Exact tested source revision (commit SHA) for this batch"),

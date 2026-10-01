@@ -962,9 +962,18 @@
     if (issue.worktreeCleaned) { return { text: "cleaned up", cls: "ok", glyph: "✓" }; }
     return { text: "pending cleanup", cls: "quiet", glyph: "○" };
   }
+  function hasParkedDraftProvenance(issue) {
+    var plan = issue && issue.planJson;
+    var receipt = plan && plan.pr_ready_authorization;
+    return !!(receipt && receipt.draftObserved === true && receipt.prNumber === issue.prNumber && receipt.headSha === issue.headSha);
+  }
   function availableActions(issue) {
     var actions = [];
-    if (issue.status === "blocked" || issue.status === "failed") { actions.push({ id: "retry", label: "Retry", cls: "btn small primary" }); }
+    if (issue.status === "blocked" && issue.blockedReason === "awaiting_pr_ready_authorization" && hasParkedDraftProvenance(issue)) {
+      actions.push({ id: "authorize_pr_ready", label: "Approve ready PR", cls: "btn small primary" });
+    } else if (issue.status === "blocked" || issue.status === "failed") {
+      actions.push({ id: "retry", label: "Retry", cls: "btn small primary" });
+    }
     if (issue.status !== "done" && issue.status !== "skipped") { actions.push({ id: "skip", label: "Skip", cls: "btn small" }); }
     if (issue.worktreePath && !issue.worktreeCleaned) { actions.push({ id: "cleanup", label: "Clean up worktree", cls: "btn small" }); }
     return actions;
@@ -972,6 +981,7 @@
   function confirmationFor(number, action) {
     switch (action) {
       case "retry": return "Retry issue #" + number + "? The pipeline resumes from its current stage.";
+      case "authorize_pr_ready": return "Approve the ready pull request for issue #" + number + "? Confirm only if you explicitly marked its reviewed draft ready in GitHub. This authorizes Code Factory to merge that exact head.";
       case "skip": return "Skip issue #" + number + "? Its worktree is removed and the trigger label is cleared.";
       case "cleanup": return "Remove the worktree and local branch for issue #" + number + "?";
       case "release_now": return "Start a release batch now?";
@@ -983,6 +993,12 @@
     var notice = h("div", { className: "notice", "aria-live": "polite" });
     var stored = state.notices[issue.number];
     if (stored) { notice.textContent = stored.text; notice.classList.add(stored.kind); }
+    else if (issue.blockedReason === "awaiting_pr_ready_authorization") {
+      notice.textContent = hasParkedDraftProvenance(issue)
+        ? "Inspect the draft, explicitly mark it ready in GitHub, then approve this exact reviewed head here. Retry cannot authorize it."
+        : "This ready PR was not observed as a parked draft under the current policy. Code Factory cannot authorize or merge it; finish it manually.";
+      notice.classList.add("info");
+    }
     availableActions(issue).forEach(function (action) {
       var busy = state.pending[issue.number] === action.id;
       var button = h("button", { type: "button", className: action.cls, disabled: !!state.pending[issue.number] },
@@ -1329,7 +1345,7 @@
       .then(function (payload) {
         delete state.pending[number];
         var kind = "success";
-        var text = ({ retry: "Retry queued", skip: "Issue skipped", cleanup: "Worktree cleaned up" })[action] || "Done";
+        var text = ({ retry: "Retry queued", authorize_pr_ready: "Ready PR authorized for merge", skip: "Issue skipped", cleanup: "Worktree cleaned up" })[action] || "Done";
         if (action === "retry" && payload && payload.queued === false) {
           kind = "info";
           text = "Retry recorded but not started; the daemon resumes the issue on its next poll while it carries the trigger label";

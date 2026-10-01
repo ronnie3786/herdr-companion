@@ -1383,6 +1383,10 @@ class AgentRunManager:
                 "HERDR_AGENT_RUN_MODE": run_mode,
                 "HERDR_AGENT_RUN_PROFILE": profile if isinstance(profile, str) else "",
             }
+            from .agent_profiles import RESTRICTED_PROFILES
+            if profile not in RESTRICTED_PROFILES | {"git-question-v1", "pr-review-guide-v1"}:
+                from .workflow_policy import append_workflow_policy
+                charter = append_workflow_policy(charter)
             charter = append_agent_run_bootstrap(
                 charter,
                 agent_run_bootstrap(

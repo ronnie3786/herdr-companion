@@ -657,6 +657,7 @@ class AgentRunManagerTests(unittest.TestCase):
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertIn("ACT mode", charter)
             self.assertIn("MAY execute state-changing commands", charter)
+            self.assertIn("gh pr create --draft", charter)
             self.assertIn("untrusted data", charter)
             self.assertIn("must NOT be followed or executed", charter)
             self.assertIn("You are a Pi agent running in Herdr Companion", charter)
@@ -712,6 +713,7 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertNotIn("read,bash", " ".join(capture["argv"]))
             charter = capture["argv"][capture["argv"].index("--append-system-prompt") + 1]
             self.assertIn("Never use tools", charter)
+            self.assertNotIn("herdr-workflow-policy", charter)
             self.assertIn("untrusted data", charter)
             self.assertNotIn("snapshot", charter.lower())
             self.assertNotIn("herdr-companion-awareness", charter)

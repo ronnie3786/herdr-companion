@@ -6,7 +6,7 @@ Subcommands:
 - ``once``         – one discovery poll, then process every runnable issue synchronously.
 - ``status``       – print the ledger snapshot (or one issue with ``--issue``).
 - ``enqueue N``    – track an issue manually and process it (``--queue-only`` to skip processing).
-- ``action N …``   – ``retry``/``skip``/``cleanup`` an issue; ``release-now`` starts a release batch.
+- ``action N …``   – retry, explicitly authorize a ready PR, skip, or clean up an issue.
 - ``cleanup``      – remove worktrees left behind by finished issues and prune git's bookkeeping.
 - ``doctor``       – check the local setup (``gh``, labels, Pi, models, releases, dashboard, disk).
 
@@ -55,7 +55,7 @@ REQUIRED_LABELS: tuple[tuple[str, str, str], ...] = (
     ("herdr-app-report", "8A7FD8", "Filed from the Herdr Mac app"),
     ("released", "9CCDB9", "Shipped in a Code Factory release"),
 )
-ISSUE_ACTIONS = ("retry", "skip", "cleanup")
+ISSUE_ACTIONS = ("retry", "authorize_pr_ready", "skip", "cleanup")
 RUNNABLE_EXCLUDED_STAGES = frozenset({"release", "done"})
 # Stages whose progress lives in the worktree; re-enqueueing a skipped issue there starts over.
 WORKTREE_STAGES = frozenset({"plan", "implement", "pull_request", "verify", "review", "revise", "merge"})
@@ -531,7 +531,7 @@ def cmd_action(ctx: Context, args: argparse.Namespace) -> int:
     ctx.daemon_lock.acquire(f"action {number} {args.action}")
     result = ctx.factory.action(number, args.action)
     payload: dict[str, Any] = {"ok": True, "action": args.action}
-    if args.action == "retry":
+    if args.action in ("retry", "authorize_pr_ready"):
         # Without a running worker pool the pipeline only re-activates the issue; process it here
         # (``enqueue`` semantics) so the CLI never reports a retry that nothing will pick up.
         queued = bool(result.get("queued")) if isinstance(result, dict) else False
@@ -781,7 +781,7 @@ def build_parser() -> argparse.ArgumentParser:
     enqueue.add_argument("--queue-only", action="store_true", help="record the issue without processing it")
     enqueue.set_defaults(handler=cmd_enqueue)
 
-    action = commands.add_parser("action", help="retry, skip or clean up one issue")
+    action = commands.add_parser("action", help="retry, authorize a ready pull request, skip or clean up one issue")
     action.add_argument("number", type=_positive_int, metavar="N")
     action.add_argument("action", choices=ISSUE_ACTIONS)
     action.set_defaults(handler=cmd_action)

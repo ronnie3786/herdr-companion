@@ -206,6 +206,8 @@ class PageTests(DashboardTestCase):
         self.assertIn("payload.releaseStarted === false", text)
         self.assertIn("A release batch is already running", text)
         self.assertIn("payload.queued === false", text)
+        self.assertIn('id: "authorize_pr_ready", label: "Approve ready PR"', text)
+        self.assertIn("Retry cannot authorize it", text)
         self.assertIn("state.tokenPromptForced", text)
         self.assertIn("if (state.tokenPromptForced) { hideTokenPrompt(); }", text)
         self.assertIn("state.drawerSignature", text)
@@ -295,6 +297,14 @@ class ActionTests(DashboardTestCase):
         self.assertEqual(payload["action"], "retry")
         self.assertEqual(payload["issue"]["number"], 13)
         self.assertEqual(self.factory.calls, [(13, "retry")])
+
+    def test_ready_pr_authorization_is_routed_as_a_distinct_action(self):
+        status, _, payload = self.json_request(
+            "/api/issues/12/actions", method="POST", body={"action": "authorize_pr_ready"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["action"], "authorize_pr_ready")
+        self.assertEqual(self.factory.calls, [(12, "authorize_pr_ready")])
 
     def test_issue_action_passes_the_queued_flag_through(self):
         self.factory.replies["retry"] = {"ok": True, "action": "retry", "issue": {"number": 13}, "queued": False}

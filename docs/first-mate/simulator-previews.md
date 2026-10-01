@@ -2,10 +2,11 @@
 
 First Mate can keep **simulator checkpoints**: compiled iOS Simulator builds of
 a feature, saved along the way (for example at the end of each implementation
-round), that you can open in a live, interactive simulator from the Mac app.
-The builds and simulators live in [SimPortal](#simportal), a separate local
-service on the machine that compiled them. The companion connects the two;
-the Mac shows the simulator in a native window.
+round), that you can open in a live, interactive simulator from the Mac app
+or the iPad and iPhone app. The builds and simulators live in
+[SimPortal](#simportal), a separate local service on the machine that compiled
+them. The companion connects the two; the Mac shows the simulator in a native
+window, and iPad and iPhone show it full screen.
 
 Capability: `first-mate-simulator-previews-v1`, advertised by `GET /api/v1` and
 `GET /api/v1/first-mate/capabilities`. The feature is inert until the
@@ -19,6 +20,7 @@ companion's private configuration has a `[simportal]` section.
 | SimPortal, on the build machine | The saved build bytes, each owned simulator's create → boot → install → launch lifecycle, readiness receipts, and the viewer stream |
 | The companion on that machine | The SimPortal URL and credential, build ↔ feature/stage/assignment/session associations, a durable request outbox, the idle and capacity policy, and a stream relay scoped to one exact simulator |
 | The Mac app | Showing checkpoints, the explicit **Open in Simulator** choice, the pop-out simulator window, and **Open in Browser** |
+| The iPad and iPhone app | The same Builds rows and stage chip, a full-screen simulator with touch and hardware-keyboard input, Home, Lock and Type, and **Open in SimPortal** (the tailnet browser link) |
 
 The Mac never holds the SimPortal credential and never talks to SimPortal
 directly. A **ready** simulator means SimPortal booted it, installed the exact
@@ -224,7 +226,8 @@ its companion is on the same machine and the tailnet link otherwise. The
 browser signs in to SimPortal on its own (tailnet identity or SimPortal's login
 page). **Opening SimPortal's normal viewer makes that simulator SimPortal's
 focused simulator**, the one agents use when they do not name one. The Mac
-says so before opening.
+says so before opening, and so do iPad and iPhone (Open in SimPortal), which
+pick the link the same way.
 
 ## Configuration
 

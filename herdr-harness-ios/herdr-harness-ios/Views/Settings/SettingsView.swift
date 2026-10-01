@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Bindable var model: HerdrAppModel
     @AppStorage(HerdrAppearancePreferences.glassKey) private var glass = HerdrAppearancePreferences.glassDefault
     @AppStorage(HerdrAppearancePreferences.hazeKey) private var haze = HerdrAppearancePreferences.hazeDefault
+    @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
@@ -11,6 +12,7 @@ struct SettingsView: View {
             Form {
                 statusSection
                 machinesSection
+                buildsSection
                 appearanceSection
                 carModeSection
                 voiceSection
@@ -86,6 +88,28 @@ struct SettingsView: View {
             Label("Machines", systemImage: "server.rack")
         } footer: {
             Text("Use the private HTTPS address created by Tailscale Serve. Each bearer token is stored in Keychain and sent only to its machine.")
+        }
+    }
+
+    /// The Mac's Settings → Builds address, stored the same way: the text as
+    /// typed, read through `MobileAppHubSettings.hubURL(from:)` where it is used.
+    private var buildsSection: some View {
+        Section {
+            TextField("Mobile App Hub address", text: $buildsHubURL, prompt: Text("https://builds.example.invalid"))
+                .keyboardType(.URL)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("settings-builds-hub-url")
+            if !buildsHubURL.isEmpty, MobileAppHubSettings.hubURL(from: buildsHubURL) == nil {
+                Label("Enter the hub's full address, starting with https://", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(HerdrTheme.warning)
+                    .accessibilityIdentifier("settings-builds-hub-url-invalid")
+            }
+        } header: {
+            Label("Builds", systemImage: "iphone")
+        } footer: {
+            Text("Each First Mate's Overview lists the builds its agents published to Mobile App Hub, with Install to put one on this device. Leave the address empty to hide them. Simulator checkpoints come from each machine's companion and need no address.")
         }
     }
 

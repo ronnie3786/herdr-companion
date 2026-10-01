@@ -1,11 +1,13 @@
 """Feature continuity, deliberate forks, and real process workspace exclusion."""
 import fcntl
+import json
 from pathlib import Path
 import time
 from unittest import TestCase
 from unittest.mock import patch
 
-from herdr_harness.first_mate_runtime import FirstMateRuntime, _read_json, _write_json, run_detached
+from herdr_harness.first_mate_runtime import FirstMateRuntime, _agent_assignment, _read_json, _write_json, run_detached
+from herdr_harness.first_mate_backup import BackupUnavailable
 from herdr_harness.first_mate_store import FirstMateError
 from herdr_harness.first_mate_workspaces import lock_path
 from tests import test_first_mate_runtime as harness
@@ -61,6 +63,155 @@ class FeatureWorkspaceTests(TestCase):
 
     def trees(self):
         return list((self.runtime.root / 'worktrees').glob('*'))
+
+    def independent(self, key, **params):
+        return self.delegate(key, workspace_mode='independent',
+                             independence_reason='Uses supplied references and external APIs; needs no live checkout or unfinished code.', **params)
+
+    def test_research_and_pr_body_workers_overlap_code_without_extra_worktrees(self):
+        self.begin()
+        writer = self.delegate('code', prompt='hold for concurrency check')
+        second_writer = self.delegate('follow-up code')
+        review = self.delegate('review', workspace_mode='read_only')
+        research = self.independent('research', prompt='hold for concurrency check')
+        description = self.independent('PR body', prompt='hold for concurrency check')
+        parallel = (writer, research, description)
+        try:
+            self.pump(lambda: all(self.store.get_assignment(a['id'])['status'] == 'running' for a in parallel))
+            self.assertEqual(self.store.get_assignment(second_writer['id'])['status'], 'queued')
+            self.assertEqual(self.store.get_assignment(review['id'])['status'], 'queued')
+            jobs = [j for j in self.runtime._jobs() if j['kind'] == 'worker']
+            self.assertEqual(len(jobs), 3)
+            self.assertEqual(len({j['cwd'] for j in jobs}), 3)
+            self.assertEqual(len(self.trees()), 1)
+            self.assertEqual(set(self.runtime._verification_workspace_scope(self.current)['workspaces'].values()),
+                             {writer['metadata']['worktree_path']})
+        finally:
+            (self.runtime.root / 'release-concurrency-check').touch()
+        self.pump(lambda: all(a['status'] == 'completed' for a in self.store.list_assignments(feature_id=self.current['id'])), timeout=30)
+
+    def test_independent_work_still_respects_host_worker_limit(self):
+        self.begin()
+        self.runtime.max_workers = 1
+        writer = self.delegate('code', prompt='hold for concurrency check')
+        self.pump(lambda: self.store.get_assignment(writer['id'])['status'] == 'running')
+        research = self.independent('research')
+        try:
+            self.runtime.reconcile()
+            self.assertEqual(self.store.get_assignment(research['id'])['status'], 'queued')
+        finally:
+            (self.runtime.root / 'release-concurrency-check').touch()
+        self.pump(lambda: self.store.get_assignment(research['id'])['status'] == 'completed', timeout=30)
+
+    def test_independent_work_needs_no_git_and_replay_preserves_scratch_and_routing(self):
+        self.begin()
+        with patch.object(self.runtime, '_git', side_effect=AssertionError('Independent work must not touch Git')):
+            first = self.independent('research')
+            scratch = Path(first['metadata']['execution_path'])
+            (scratch / 'notes.txt').write_text('Retained research')
+            self.runtime.environ['HERDR_FIRST_MATE_WORKER_MODEL'] = 'synthetic/new-default'
+            replay = self.independent('research')
+        self.assertEqual(first['id'], replay['id'])
+        self.assertEqual(first['metadata'], replay['metadata'])
+        self.assertEqual((scratch / 'notes.txt').read_text(), 'Retained research')
+        self.assertNotIn('worktree_path', first['metadata'])
+        self.assertFalse(self.runtime.workspaces.record_path(self.current).exists())
+        self.assertEqual(self.trees(), [])
+        self.assertEqual(self.runtime._verification_workspace_scope(self.current)['workspaces'], {})
+        self.assertEqual(_agent_assignment(first)['operational']['workspace_mode'], 'independent')
+        with self.assertRaises(FirstMateError):
+            self.independent('research', prompt='Changed instructions')
+
+    def test_independent_work_rejects_ambiguous_scope_before_allocating(self):
+        self.begin()
+        for params in ({}, {'independence_reason': ' '}, {'independence_reason': 'x', 'workspace_strategy': 'feature'},
+                       {'independence_reason': 'x', 'workspace_strategy': 'fork', 'fork_reason': 'x'},
+                       {'independence_reason': 'x', 'source_assignment_id': 'synthetic-source'}):
+            with self.subTest(params=params), self.assertRaises(FirstMateError):
+                self.delegate('bad', workspace_mode='independent', **params)
+        self.assertFalse((self.runtime.root / 'independent-workspaces').exists())
+        self.assertEqual(self.store.list_assignments(feature_id=self.current['id']), [])
+        with self.assertRaises(FirstMateError):
+            self.delegate('bad-code', independence_reason='Independent')
+
+    def test_independent_children_do_not_inherit_checkout_or_grant_one(self):
+        self.begin()
+        parent = self.delegate('code')
+        parent_job = self.job(parent)
+        self.runtime._bind(parent_job, 'synthetic-code-parent', parent_job['session_file'])
+        params = {'title': 'External research', 'role': 'researcher', 'prompt': 'Use supplied sources',
+                  'workspace_mode': 'independent', 'independence_reason': 'No checkout or unfinished result needed'}
+        child = self.runtime._tool(parent_job, 'fm_delegate', params, 'external-child')
+        self.assertEqual(child['metadata']['parent_assignment_id'], parent['id'])
+        self.assertNotIn('source_assignment_id', child['metadata'])
+        child_job = self.job(child)
+        self.assertNotEqual(child_job['cwd'], parent_job['cwd'])
+        self.runtime._bind(child_job, 'synthetic-independent-parent', child_job['session_file'])
+        nested = self.runtime._tool(child_job, 'fm_delegate', params, 'external-grandchild')
+        self.assertNotEqual(nested['metadata']['execution_path'], child_job['cwd'])
+        for mode in ('read_only', 'isolated'):
+            with self.subTest(mode=mode), self.assertRaises(FirstMateError):
+                self.runtime._tool(child_job, 'fm_delegate', {**params, 'workspace_mode': mode}, 'forbidden-'+mode)
+        with self.assertRaises(FirstMateError):
+            self.delegate('code-from-research', source_assignment_id=child['id'])
+
+    def test_independent_retry_preserves_scratch_and_missing_directory_blocks_launch(self):
+        self.begin()
+        assignment = self.independent('research')
+        job = self.job(assignment)
+        self.runtime._bind(job, 'synthetic-research-retry', job['session_file'])
+        scratch = Path(job['cwd'])
+        (scratch / 'notes.txt').write_text('Retained findings')
+        self.runtime._tool(job, 'fm_outcome', {'verdict': 'needs_changes', 'summary': 'Another source needed'}, 'outcome')
+        retry = self.runtime._tool(self.coordinator, 'fm_retry', {'assignment_id': assignment['id'], 'prompt': 'Check the extra source'}, 'retry')
+        next_job = self.job(retry)
+        self.assertEqual(next_job['cwd'], str(scratch))
+        self.assertEqual((scratch / 'notes.txt').read_text(), 'Retained findings')
+        (scratch / 'notes.txt').unlink()
+        scratch.rmdir()
+        with self.assertRaises(FirstMateError), patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            self.runtime._launch(next_job)
+        spawn.assert_not_called()
+        with self.assertRaises(FirstMateError):
+            self.independent('research')
+
+    def test_independent_workspace_redirection_is_rejected_before_dispatch(self):
+        self.begin()
+        assignment = self.independent('research')
+        job = self.job(assignment)
+        scratch = Path(job['cwd'])
+        scratch.rmdir()
+        scratch.symlink_to(self.cwd, target_is_directory=True)
+        with patch('herdr_harness.first_mate_runtime.subprocess.Popen') as spawn:
+            with self.assertRaises(FirstMateError):
+                self.runtime._launch(job)
+            with self.assertRaises(FirstMateError):
+                run_detached(self.runtime._job_dir(job))
+        spawn.assert_not_called()
+        with self.assertRaises(FirstMateError):
+            self.independent('research')
+        scratch.unlink()
+        scratch.parent.rmdir()
+        scratch.parent.symlink_to(self.cwd, target_is_directory=True)
+        with self.assertRaises(FirstMateError):
+            self.independent('other research')
+
+    def test_independent_recovery_does_not_replay_external_effects_or_assume_scratch_backup(self):
+        self.begin()
+        job = self.job(self.independent('research'))
+        directory = self.runtime._job_dir(job)
+        with self.assertRaises(BackupUnavailable):
+            self.runtime.reliability._preserve(job)
+        ready = {'type': 'ledger_ready', 'version': 1, 'job_id': job['id']}
+        start = {'type': 'start', 'id': 'external', 'tool': 'bash', 'scope': 'external', 'command': 'gh pr edit 42 --repo synthetic/project --body text'}
+        for rows in ([ready, start], [ready, start, {'type': 'end', 'id': 'external', 'is_error': True}],
+                     [ready, start, {'type': 'end', 'id': 'external', 'is_error': False}]):
+            (directory / 'effects.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            with self.subTest(rows=rows), self.assertRaises(BackupUnavailable):
+                self.runtime.reliability._preserve(job)
+        (directory / 'effects.jsonl').write_text(json.dumps(ready)+'\n')
+        self.runtime.reliability._preserve(job)
+        self.assertEqual(job['recovery_backup']['status'], 'not_needed')
 
     def test_twenty_three_sequential_stages_keep_one_branch_worktree_and_build_cache(self):
         self.begin()

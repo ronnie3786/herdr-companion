@@ -18,8 +18,8 @@ at each bar edge. Info mirrors the Mac inspector's layout tab for tab.
 The conversations list combines exact-owner features from every configured host.
 Feature chat and My First Mate share grouped transcripts, frozen optimistic sends,
 explicit retries, owned attachments and voice, safe model changes, context, mentions
-and response feedback. iPhone pushes Info; iPad shows conversations, chat and Info
-in three columns. Info uses Overview, Agents, Documents and Workflow underline tabs
+and response feedback. iPhone pushes Info; iPad shows the list (or its orb rail)
+beside the chat, with Info docked in landscape or floating over the chat in portrait. Info uses Overview, Agents, Documents and Workflow underline tabs
 with a persistent sync footer. Documents and saved sessions remain separate sheets.
 The lead keeps its Overview-only inspector. Rotation preserves the selected owner,
 Info tab and draft, and inline Info does not revoke chat's control or read visibility.
@@ -57,8 +57,8 @@ destination clears the previous folder. Every message, archive action, and saved
 resource resolves the machine that owns the feature, even when two hosts share a
 feature ID. One offline or older companion shows its own notice without hiding a
 healthy host's features. iPhone pushes Info from chat; documents and sessions still
-open as sheets from Info. iPad keeps the conversation list, chat and inspector
-visible in three columns. The app is dark-only, with capped `.xxxLarge`
+open as sheets from Info. iPad keeps the chat first: the list folds into a rail,
+and the inspector docks in landscape or floats over the chat in portrait, on demand. The app is dark-only, with capped `.xxxLarge`
 scaling and full readable messages. My First Mate opens the real lead on a capable
 host, with Automatic/pinned selection and a named stand-in after two failed LIST
 polls. Recovery returns to the preferred host; drafts, history and pending sends

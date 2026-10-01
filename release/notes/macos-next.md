@@ -48,6 +48,11 @@
 - Smart-input text and recordings are sent only to the selected companion's configured Pi and transcription services and are not published. Only **File report** files the reviewed title and description word for word; a submission is never started automatically and **File report** is unavailable while a draft or transcription is in progress. Missing Pi or transcription configuration reports an actionable error without losing typed text. AI drafting requires a companion advertising `issue-report-draft-v1`; an older companion disables only that optional action with upgrade guidance, while manual reporting, attachments, recording, and transcription keep working. See docs/issue-report-smart-input.md.
 - **Start the automated fix pipeline** labels the issue for the optional Code Factory daemon. Requires a companion server advertising `issue-reports-v1`; older servers show an update message.
 
+## First Mate chat window
+
+- With a feature selected, the inspector now has a trailing Git button beside its tabs. **Open Git in New Window** opens that feature's Git window on the recommended checkout, with the checkout picker; reopening brings the same window forward. My First Mate and the main-window inspector are unchanged.
+- This is Mac-only; no companion update is needed beyond existing First Mate Git support.
+
 ## First Mate conversation names
 
 - In the standalone Mac First Mate chat window, right-click a conversation row, rail avatar, header, or transcript for **Rename or Change Emoji…**, or click the feature header's avatar or name. A sheet edits the display name and emoji with a quick palette and macOS Character Viewer. The new name appears in the row, header, mentions, composer and First Mate HUD; the feature's underlying title stays unchanged. Cancel leaves both fields alone, reset restores defaults, and a failed save keeps the sheet open with an error. Saved presentation survives reconnect and relaunch on its owning companion.

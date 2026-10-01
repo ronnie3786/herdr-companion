@@ -56,10 +56,32 @@ struct MobileAppHubBuild: Decodable, Identifiable, Equatable, Sendable {
         let page: URL
         let appPage: URL?
         let icon: URL?
+        /// The `itms-services://` link that installs the build on an iPhone or iPad.
+        let install: URL?
+        let ipa: URL?
 
         enum CodingKeys: String, CodingKey {
-            case page, icon
+            case page, icon, install, ipa
             case appPage = "app_page"
+        }
+
+        init(page: URL, appPage: URL? = nil, icon: URL? = nil, install: URL? = nil, ipa: URL? = nil) {
+            self.page = page
+            self.appPage = appPage
+            self.icon = icon
+            self.install = install
+            self.ipa = ipa
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            page = try container.decode(URL.self, forKey: .page)
+            // Optional links never fail a build: an odd one is dropped.
+            appPage = try? container.decodeIfPresent(URL.self, forKey: .appPage)
+            icon = try? container.decodeIfPresent(URL.self, forKey: .icon)
+            install = (try? container.decodeIfPresent(URL.self, forKey: .install))
+                .flatMap { $0.scheme?.lowercased() == "itms-services" ? $0 : nil }
+            ipa = try? container.decodeIfPresent(URL.self, forKey: .ipa)
         }
     }
 
@@ -100,6 +122,21 @@ struct MobileAppHubBuild: Decodable, Identifiable, Equatable, Sendable {
         case builtAt = "built_at"
         case uploadedAt = "uploaded_at"
         case herdrContexts = "herdr_contexts"
+    }
+
+    init(id: String, app: App, version: String, buildNumber: String, builtAt: Date? = nil, uploadedAt: Date,
+         label: Label, source: Source, urls: URLs, signing: Signing? = nil, herdrContexts: [HerdrContext] = []) {
+        self.id = id
+        self.app = app
+        self.version = version
+        self.buildNumber = buildNumber
+        self.builtAt = builtAt
+        self.uploadedAt = uploadedAt
+        self.label = label
+        self.source = source
+        self.urls = urls
+        self.signing = signing
+        self.herdrContexts = herdrContexts
     }
 
     init(from decoder: Decoder) throws {

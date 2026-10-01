@@ -16,6 +16,20 @@ def lock_path(root: Path, cwd: str) -> Path:
     return root / "workspace-locks" / (identity + ".lock")
 
 
+def independent_path(root: Path, metadata: dict) -> str:
+    value = metadata.get("execution_path")
+    if not isinstance(value, str) or not value:
+        raise FirstMateError("Independent workspace has no execution path", code="workspace_identity_mismatch")
+    path = Path(value)
+    parent = root / "independent-workspaces"
+    if (not path.is_absolute() or path.is_symlink() or parent.is_symlink() or path.parent.resolve() != parent.resolve()
+            or not path.resolve().is_relative_to(root.resolve())):
+        raise FirstMateError("Independent workspace identity changed", code="workspace_identity_mismatch")
+    if not path.is_dir():
+        raise FirstMateError("The retained independent workspace is missing", code="workspace_missing")
+    return str(path)
+
+
 class FeatureWorkspaces:
     def __init__(self, runtime, read, write):
         self.runtime, self.read, self.write = runtime, read, write
@@ -76,6 +90,8 @@ class FeatureWorkspaces:
         source = self.runtime.store.get_assignment(source_id) if source_id else None
         if source and source["feature_id"] != feature["id"]:
             raise FirstMateError("Source assignment belongs to another feature")
+        if source and source.get("metadata", {}).get("workspace_mode") == "independent":
+            raise FirstMateError("Independent assignments have no source checkout; omit source_assignment_id or select a code assignment", code="workspace_selection_required")
         if source:
             path = source.get("metadata", {}).get("worktree_path") or feature["cwd"]
         elif primary:

@@ -226,6 +226,43 @@ test("writable workers retain execution and detailed evidence capabilities", () 
   } finally { f.cleanup(); }
 });
 
+test("independent work is available to coordinators and workers without losing scope fields", async () => {
+  for (const role of ["coordinator", "worker"]) {
+    const f = fixture(role);
+    try {
+      const tool = f.tools.get("fm_delegate");
+      assert.ok(tool.parameters.properties.workspace_mode.anyOf.some(item => item.const === "independent"));
+      const params = {title:"Research",role:"researcher",prompt:"Use supplied sources",workspace_mode:"independent",independence_reason:"No live checkout or unfinished result needed"};
+      const pending = tool.execute("independent-synthetic",params,undefined,undefined,f.ctx);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const name = readdirSync(join(f.root,"requests"))[0];
+      const request = JSON.parse(readFileSync(join(f.root,"requests",name),"utf8"));
+      assert.deepEqual(request.params, params);
+      writeFileSync(join(f.root,"responses",name),JSON.stringify({ok:true,result:{id:"synthetic-research",status:"queued"}}));
+      assert.equal((await pending).details.status, "queued");
+    } finally { f.cleanup(); }
+  }
+});
+
+test("independent workers retain external effect receipts and confine direct file edits to scratch", () => {
+  const scratch = mkdtempSync(join(tmpdir(),"herdr-independent-scratch-"));
+  const f = fixture("worker",{workspace_mode:"independent",cwd:scratch,safety_ledger_version:1});
+  try {
+    const call = f.handlers.get("tool_call");
+    assert.equal(call({toolName:"write",toolCallId:"note",input:{path:"notes.txt"}}),undefined);
+    f.handlers.get("tool_result")({toolCallId:"note",isError:false});
+    for (const path of ["../shared.txt",join(f.root,"outside.txt"),""])
+      assert.equal(call({toolName:"edit",input:{path}}).block,true);
+    symlinkSync(f.root,join(scratch,"outside"));
+    assert.equal(call({toolName:"write",input:{path:"outside/file.txt"}}).block,true);
+    assert.equal(call({toolName:"bash",input:{command:"git -C /synthetic reset --hard"}}).block,true);
+    assert.equal(call({toolName:"bash",toolCallId:"pr-body",input:{command:"gh pr edit 42 --repo synthetic/project --body text"}}),undefined);
+    const rows = readFileSync(join(f.root,"effects.jsonl"),"utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(rows.find(row => row.id === "note" && row.type === "start").scope,"workspace");
+    assert.equal(rows.find(row => row.id === "pr-body").scope,"external");
+  } finally { f.cleanup(); rmSync(scratch,{recursive:true,force:true}); }
+});
+
 test("verification recording is worker-scoped and carries the exact gate contract", () => {
   const worker = fixture("worker", {workspace_mode:"isolated"});
   try {

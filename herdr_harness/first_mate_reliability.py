@@ -451,13 +451,13 @@ class FirstMateReliability:
         return self._effect_status(job)['safe']
 
     def _preserve(self, job):
-        if job.get('workspace_mode') == 'read_only':
+        if job.get('workspace_mode') in {'read_only', 'independent'}:
             # read_only is an instruction, not a tool sandbox in current Pi.
             # No receipt or a capable tool in an unmanaged checkout requires
             # inspection; never assume this label proves the workspace unchanged.
             effects = self._effect_status(job)
             if not effects['safe']:
-                raise BackupUnavailable('Read-only intent does not prove effect safety. Inspect the missing or uncertain tool receipts before continuation.')
+                raise BackupUnavailable('Workspace intent does not prove effect safety. Inspect the missing or uncertain tool receipts before continuation.')
             if effects['has_mutations']:
                 raise BackupUnavailable('An effect-capable tool ran outside a managed isolated worktree. Inspect its workspace and external effects before recovery.')
         if not job.get('recovery_backup'):

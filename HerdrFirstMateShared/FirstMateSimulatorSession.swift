@@ -1,9 +1,11 @@
-import AppKit
+import CoreGraphics
 import Foundation
+import Observation
 
-/// One simulator window: a saved build shown in a live simulator on the
-/// feature's machine. The value is the window's identity, so opening the same
-/// build again focuses its window instead of starting a second simulator.
+/// One simulator view (a window on the Mac, a full-screen cover on iPad and
+/// iPhone): a saved build shown in a live simulator on the feature's machine.
+/// On the Mac the value is the window's identity, so opening the same build
+/// again focuses its window instead of starting a second simulator.
 struct FirstMateSimulatorWindowTarget: Codable, Hashable, Identifiable, Sendable {
     let machineID: String
     let featureID: String
@@ -45,6 +47,8 @@ final class FirstMateSimulatorSession {
     private(set) var stream: SimulatorStreamController?
     /// Demo mode's stand-in for the live picture.
     private(set) var demoFrame: CGImage?
+    /// Demo mode's picture for a caller's own synthetic build.
+    @ObservationIgnored private var demoScreen: CGImage?
     /// True while the window has been hidden long enough that its stream is paused.
     private(set) var isPausedWhileHidden = false
 
@@ -128,6 +132,10 @@ final class FirstMateSimulatorSession {
     // MARK: Actions
 
     func stop() async {
+        if isDemo {
+            presentDemoStopped()
+            return
+        }
         guard let api, let preview, !isSubmitting else { return }
         isSubmitting = true
         defer { isSubmitting = false }
@@ -149,6 +157,10 @@ final class FirstMateSimulatorSession {
     /// Starts a new simulator after the last one was stopped or failed.
     func startAgain() async {
         guard !isSubmitting else { return }
+        if isDemo {
+            presentDemoRunning()
+            return
+        }
         openRequestID = UUID().uuidString.lowercased()
         stopRequestID = nil
         preview = nil
@@ -308,13 +320,41 @@ final class FirstMateSimulatorSession {
         demoFrame = FirstMateSimulatorDemo.screenImage()
     }
 
+    /// Demo mode with the caller's own synthetic build and picture (the iOS
+    /// demo's builds), running unless `startingAt` names a start step.
+    func presentDemo(build: FirstMateSimulatorBuild, feature: FirstMateSimulatorFeatureSummary?, screen: CGImage?,
+                     startingAt step: String? = nil) {
+        guard isDemo else { return }
+        self.build = build
+        if let feature { self.feature = feature }
+        demoScreen = screen
+        if let step { presentDemoStarting(at: step) } else { presentDemoRunning() }
+    }
+
+    /// Demo mode: the simulator is running and shows its synthetic picture.
+    func presentDemoRunning() {
+        guard isDemo else { return }
+        preview = FirstMateSimulatorDemo.preview(featureID: target.featureID, buildID: target.buildID)
+        phase = .running
+        notice = nil
+        demoFrame = demoScreen ?? FirstMateSimulatorDemo.screenImage()
+    }
+
     /// Demo mode shows the loading timeline at a given step instead of a picture.
     func presentDemoStarting(at step: String) {
         guard isDemo else { return }
         preview = FirstMateSimulatorDemo.preview(featureID: target.featureID, buildID: target.buildID, startingAt: step)
         phase = .starting
         demoFrame = FirstMateSimulatorDemo.startSteps.firstIndex(of: step).map { $0 >= 4 } == true
-            ? FirstMateSimulatorDemo.screenImage() : nil
+            ? (demoScreen ?? FirstMateSimulatorDemo.screenImage()) : nil
+    }
+
+    /// Demo mode: Stop shut the simulator down.
+    func presentDemoStopped() {
+        guard isDemo else { return }
+        preview = FirstMateSimulatorDemo.stoppedPreview(featureID: target.featureID, buildID: target.buildID)
+        phase = .stopped
+        demoFrame = nil
     }
 
     /// Demo mode: the simulator was deleted on SimPortal's Machines page.

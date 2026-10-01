@@ -68,6 +68,12 @@ struct FirstMateChatWindowRenderTests {
         try await render("fmchat-chrome-receipts-1440.png", session: session)
     }
 
+    @Test("Receipt export at 1440 × 900 with the inspector Git button")
+    func inspectorGitButton() async throws {
+        let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: true)
+        try await render("fmchat-chrome-inspector-git-1440.png", session: session)
+    }
+
     @Test("A demo rename and emoji change render in the row and header")
     func renamedConversation() async throws {
         let session = try await session(selecting: .feature(Self.receipts))

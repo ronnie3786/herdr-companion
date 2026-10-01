@@ -189,6 +189,7 @@ class FirstMateHTTPTests(unittest.TestCase):
             "first-mate-attachments-v1",
             "first-mate-context-v1",
             "first-mate-safe-model-settings-v1",
+            "first-mate-independent-workers-v1",
         ):
             self.assertIn(capability, top["capabilities"])
             self.assertIn(capability, first_mate["capabilities"])

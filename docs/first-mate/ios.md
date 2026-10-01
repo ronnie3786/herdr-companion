@@ -305,11 +305,16 @@ On iPhone, a feature opens its conversation. Use the feature controls to inspect
 Overview, Agents, Documents or Workflow, then return to the same conversation.
 Info follows the Mac inspector: the navigation bar names the feature with its
 status and machine, the underline tabs and sync footer float over the content,
-and each tab keeps the Mac's structure. Overview reads "The feature at a glance"
-(Goal, usage and current-focus cards, the step's agents as plain rows, the latest
-journal milestones); Agents groups crew rows under step disclosure rows; Documents
-lists "agent · step" rows; Workflow puts Timeline/Graph beside "Feature journal"
-with "Visit n · revision r" steps. Statuses are a glyph and word in the Mac's
+and each tab keeps the Mac's structure. Overview opens with a Now card (the
+status word, "Step n of 6", the six steps as a bar, the feature's current line,
+and its machine and last update), then saved pull requests, Builds (Mobile App
+Hub builds and simulator checkpoints), the goal rendered as Markdown and cut to a
+few lines until **Show full brief**, usage, the current focus with its agents,
+documents and simulator chips, the step's agents as plain rows, and the latest
+journal milestones. There is no Verification card. Agents groups crew rows under
+step disclosure rows; Documents lists "agent · step" rows; Workflow puts
+Timeline/Graph beside "Feature journal" with "Visit n · revision r" steps, and
+each visit lists its commits, which open Git at that commit. Statuses are a glyph and word in the Mac's
 colors (blocked red, your direction green, working yellow). Saved sessions read
 as a transcript: your prompts in bubbles, the agent's Markdown, tool results
 folded. Sheets extend to every edge and close with the system glass button.
@@ -317,8 +322,31 @@ Underline tabs scroll horizontally at narrow widths. A persistent footer shows
 sync state and revision. Mention navigation highlights only the exact assignment
 inside that owner, including its saved-session action. A different feature starts
 on Overview; rotation keeps the current feature, inspector, route and draft.
-On iPad, a NavigationSplitView keeps the conversation list, chat and Info in three
-columns. The lead has only Overview, and older-host briefing remains explicit.
+On iPad the chat comes first. The conversation list sits beside it with My
+First Mate and what needs you as four pinned orbs, and folder chips (All, Needs
+you, Moving, Done) filter the rows; the list folds into an 84 pt orb rail from
+the chat bar's leading button, and folds by itself when a docked inspector would
+leave the chat under 560 pt. The inspector opens on demand from the chat bar's
+trailing button or the title: landscape docks it as a column (open by default),
+portrait floats it over the chat as a glass sheet that you close, swipe away, or
+pin to dock beside the chat. The chat bar ends with Git, ⋯, and the inspector
+button on iPad, and with Git, ⋯, and Info on iPhone. The app's tab bar stays
+visible on iPad. The lead has only Overview, and older-host briefing remains explicit.
+
+Git opens full screen from the chat bar, or from a Workflow commit at that commit
+(the Mac opens the same view in its own window). It needs a companion advertising
+`first-mate-git-v1` and uses the feature's Git routes: the checkout catalog,
+status, file and commit diffs, and stage/unstage. On iPad the changes and recent
+commits sit beside the diff; on iPhone the file list comes first and a file or
+commit pushes its diff. Stage boxes stage and unstage, untracked files included.
+
+Overview's Builds card lists the feature's Mobile App Hub builds (Settings ›
+Builds › Mobile App Hub address) and its simulator checkpoints. **Install** opens
+the build's install link on the device; **Open in Simulator** opens the
+checkpoint's simulator full screen through the companion's SimPortal relay
+(`first-mate-simulator-previews-v1`), with touch and keyboard input, Home, Lock,
+Type, Stop, and **Open in SimPortal** for the browser viewer. See
+[simulator checkpoints](simulator-previews.md).
 The whole app uses dark dusk chrome and capped scalable text with native scrolling.
 Widget colors are unchanged.
 

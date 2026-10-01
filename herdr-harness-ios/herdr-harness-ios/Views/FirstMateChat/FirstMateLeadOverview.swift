@@ -32,10 +32,14 @@ struct FirstMateLeadOverview: View {
         }
         .herdrEdgeFade()
         .safeAreaBar(edge: .top, spacing: 0) {
-            HerdrTabs(selection: .constant(FirstMateInspector.overview), tabs: [
-                .init(value: .overview, title: FirstMateInspector.overview.rawValue, accessibilityIdentifier: "first-mate-lead-info-tab")
-            ], style: .underline, accessibilityLabel: "My First Mate info tabs")
-            .padding(.horizontal, 16)
+            HStack(spacing: 8) {
+                HerdrTabs(selection: .constant(FirstMateInspector.overview), tabs: [
+                    .init(value: .overview, title: FirstMateInspector.overview.rawValue, accessibilityIdentifier: "first-mate-lead-info-tab")
+                ], style: .underline, accessibilityLabel: "My First Mate info tabs")
+                Spacer(minLength: 0)
+                FirstMateInspectorPanelButtons()
+            }
+            .padding(.leading, 16).padding(.trailing, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .herdrHairline(.bottom)
         }

@@ -55,6 +55,10 @@ def capture_backup(runtime, job: dict) -> dict:
     """One immutable archive per stopped execution; receipt recreation is safe."""
     if job.get('workspace_mode') == 'read_only':
         return {'status': 'not_needed', 'reason': 'Read-only assignment'}
+    if job.get('workspace_mode') == 'independent':
+        # Automatic recovery separately requires proof of no mutations. Human
+        # recovery retains scratch artifacts in place for explicit inspection.
+        return {'status': 'not_needed', 'reason': 'Independent scratch retained in place; no Git archive'}
     cwd = Path(job['cwd']).resolve()
     if not cwd.is_relative_to((runtime.root / 'worktrees').resolve()):
         raise BackupUnavailable('Automatic continuation requires a managed isolated worktree')

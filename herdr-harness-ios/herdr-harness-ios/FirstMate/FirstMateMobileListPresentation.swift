@@ -85,3 +85,50 @@ struct FirstMateMobileListPresentation {
               latestFirstMateMessageID: nil, isUnread: false, isArchived: true)
     }
 }
+
+extension FirstMateMobileListPresentation {
+    /// The list as the conversations screen shows it: every host's features
+    /// in the current machine scope and search.
+    @MainActor init(fleet: FirstMateMobileFleetStore) {
+        var features: [FirstMateFeatureTarget: FirstMateFeature] = [:]
+        for host in fleet.hosts {
+            for feature in host.features { features[.init(machineID: host.machineID, featureID: feature.id)] = feature }
+        }
+        self.init(conversations: fleet.conversations, scope: fleet.resolvedScope, query: fleet.search, features: features)
+    }
+}
+
+/// Telegram-style folders over the conversation list: everything, what
+/// needs you, what's moving, and what's done.
+enum FirstMateListFolder: String, CaseIterable, Identifiable, Sendable {
+    case all, needsYou, moving, done
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .needsYou: "Needs you"
+        case .moving: "Moving"
+        case .done: "Done"
+        }
+    }
+
+    func includes(_ row: FirstMateConversation) -> Bool {
+        switch self {
+        case .all: true
+        case .needsYou: row.hudStatus.needsYou
+        case .moving: !row.hudStatus.needsYou && row.hudStatus != .done
+        case .done: row.hudStatus == .done
+        }
+    }
+
+    var emptyMessage: String {
+        switch self {
+        case .all: "No conversations yet."
+        case .needsYou: "Nothing needs you right now."
+        case .moving: "Nothing is moving right now."
+        case .done: "Nothing is done yet."
+        }
+    }
+}

@@ -36,18 +36,9 @@ struct FirstMateInfoScreen: View {
     }
 
     var body: some View {
+        // On iPad the chat bar beside this panel already names the feature, so
+        // the panel starts with its tabs (and Pin/Close when it floats).
         VStack(spacing: 0) {
-            if embedded {
-                VStack(spacing: 1) {
-                    Text(title).herdrFont(.body, weight: .semibold).lineLimit(1)
-                    Text(subtitle).herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText).lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, minHeight: 52)
-                .padding(.horizontal, 16)
-                // The same pane glass as the inspector below, so the header
-                // reads as one surface with it rather than bare dusk.
-                .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea(edges: .top) }
-            }
             if let snapshot = store.snapshots[target.featureID] {
                 if snapshot.feature.isLead {
                     FirstMateLeadOverview(fleet: fleet, snapshot: snapshot, openFeature: openFeature)

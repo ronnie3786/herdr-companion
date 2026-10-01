@@ -14,6 +14,8 @@ struct FirstMateChatScreen: View {
     var embedded = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.firstMateRegularChatControls) private var columns
+    @Environment(\.firstMateInspectorContext) private var inspectorContext
     @State private var appeared = false
     @State private var followsLatest = false
     @State private var readLayout: FirstMateMobileTranscriptPolicy.ReadLayout?
@@ -113,11 +115,9 @@ struct FirstMateChatScreen: View {
     }
 
     private var bar: some View {
-        HStack(spacing: 8) {
-            Button { if let back { back() } else { dismiss() } } label: { circle("chevron.left") }
-                .accessibilityLabel("Back to conversations").accessibilityIdentifier("first-mate-chat-back")
-                .composerLayoutMeasurement(id: "chat-back-control")
-            Button { openInfo(.overview, nil) } label: {
+        HStack(spacing: columns == nil ? 6 : 8) {
+            leadingControl
+            Button { showOverview() } label: {
                 HStack(spacing: 7) {
                     FirstMateEmojiDisc(emoji: conversation?.emoji ?? "✦", size: 28)
                     VStack(alignment: .leading, spacing: 1) {
@@ -127,16 +127,23 @@ struct FirstMateChatScreen: View {
                             .herdrFont(.caption).foregroundStyle(conversation.map { FirstMateChatStatusStyle.color(for: closed ? .done : $0.hudStatus) } ?? HerdrTheme.secondaryText).lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
+                    // iPhone's bar also carries Git, ⋯ and Info, so the name keeps the chevron's room.
+                    if columns != nil {
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
+                    }
                 }
-                .padding(.leading, 8).padding(.trailing, 14).frame(minHeight: 44)
+                .padding(.leading, 8).padding(.trailing, columns == nil ? 12 : 14).frame(minHeight: 44)
                 .herdrControlGlass(in: .capsule)
             }
             .accessibilityIdentifier("first-mate-chat-title")
             .composerLayoutMeasurement(id: "chat-title-control")
-            Button { openInfo(.overview, nil) } label: { circle("info.circle") }
-                .accessibilityLabel("Feature info").accessibilityIdentifier("first-mate-chat-inspector-toggle")
-                .composerLayoutMeasurement(id: "chat-info-control")
+            if let inspectorContext {
+                Button { inspectorContext.openGit(FirstMateGitTarget(feature: target, featureTitle: inspectorContext.featureTitle)) } label: {
+                    circle("arrow.triangle.branch")
+                }
+                .accessibilityLabel("Git").accessibilityIdentifier("first-mate-chat-git")
+                .composerLayoutMeasurement(id: "chat-git-control")
+            }
             Menu {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refresh() } }
                 if store.isDemo {
@@ -160,16 +167,15 @@ struct FirstMateChatScreen: View {
                 Button("Cancel feature", role: .destructive) { perform("cancel") }
                 Button("Keep working", role: .cancel) { }
             } message: { Text("Its conversation, documents, and saved sessions remain available.") }
+            inspectorControl(label: "Feature info")
         }
-        .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 6)
+        .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, columns == nil ? 10 : 12).padding(.top, 2).padding(.bottom, 6)
     }
 
     private var leadBar: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Button { if let back { back() } else { dismiss() } } label: { circle("chevron.left") }
-                    .accessibilityLabel("Back to conversations").accessibilityIdentifier("first-mate-chat-back")
-                    .composerLayoutMeasurement(id: "chat-back-control")
+                leadingControl
                 if followsLeadChoice {
                     FirstMateLeadMachineMenu(model: model, fleet: fleet)
                 } else {
@@ -177,9 +183,6 @@ struct FirstMateChatScreen: View {
                         .padding(.leading, 8).padding(.trailing, 14).frame(maxWidth: .infinity, minHeight: 44)
                         .herdrControlGlass(in: .capsule, interactive: false)
                 }
-                Button { openInfo(.overview, nil) } label: { circle("info.circle") }
-                    .accessibilityLabel("First Mate overview").accessibilityIdentifier("first-mate-chat-inspector-toggle")
-                    .composerLayoutMeasurement(id: "chat-info-control")
                 Menu {
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refreshLead() } }
                     #if DEBUG
@@ -191,6 +194,7 @@ struct FirstMateChatScreen: View {
                 } label: { circle("ellipsis") }
                 .accessibilityLabel("First Mate options").accessibilityIdentifier("first-mate-lead-options")
                 .composerLayoutMeasurement(id: "chat-more-control")
+                inspectorControl(label: "First Mate overview")
             }
             Text("\(model.machineName(target.machineID)) · \(FirstMateLeadBriefing.headerSubtitle(conversations: fleet.conversations))")
                 .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
@@ -208,6 +212,45 @@ struct FirstMateChatScreen: View {
 
     private func circle(_ symbol: String) -> some View {
         Image(systemName: symbol).font(.system(size: 17, weight: .medium)).herdrGlassCircle(44)
+    }
+
+    /// iPad: the list toggle. iPhone: Back.
+    @ViewBuilder private var leadingControl: some View {
+        if let columns {
+            Button(action: columns.toggleList) { circle("sidebar.left") }
+                .accessibilityLabel(columns.listIsRail ? "Show the conversation list" : "Fold the list into a rail")
+                .accessibilityIdentifier("first-mate-chat-list-toggle")
+                .composerLayoutMeasurement(id: "chat-back-control")
+        } else {
+            Button { if let back { back() } else { dismiss() } } label: { circle("chevron.left") }
+                .accessibilityLabel("Back to conversations").accessibilityIdentifier("first-mate-chat-back")
+                .composerLayoutMeasurement(id: "chat-back-control")
+        }
+    }
+
+    /// The trailing control, after ⋯: the iPad inspector toggle (accent while
+    /// the inspector shows), or iPhone's Info button that pushes Info.
+    @ViewBuilder private func inspectorControl(label: String) -> some View {
+        if let columns {
+            Button(action: columns.toggleInspector) {
+                Image(systemName: "sidebar.right").font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(columns.inspectorOpen ? HerdrTheme.accent : HerdrTheme.primaryText)
+                    .herdrGlassCircle(44)
+                    .overlay { if columns.inspectorOpen { Circle().fill(HerdrTheme.accent.opacity(0.16)).frame(width: 44, height: 44).allowsHitTesting(false) } }
+            }
+            .accessibilityLabel(columns.inspectorOpen ? "Hide the inspector" : "Show the inspector")
+            .accessibilityIdentifier("first-mate-chat-inspector-toggle")
+            .composerLayoutMeasurement(id: "chat-info-control")
+        } else {
+            Button { openInfo(.overview, nil) } label: { circle("info.circle") }
+                .accessibilityLabel(label).accessibilityIdentifier("first-mate-chat-inspector-toggle")
+                .composerLayoutMeasurement(id: "chat-info-control")
+        }
+    }
+
+    /// The title opens Overview: in the iPad inspector, or pushed on iPhone.
+    private func showOverview() {
+        if let columns { columns.showInspector(.overview) } else { openInfo(.overview, nil) }
     }
 
     private var composer: some View {

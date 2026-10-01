@@ -207,3 +207,18 @@ class FirstMateAutonomyTests(unittest.TestCase):
         self.assertNotIn("write", allowed)
         self.assertIn("--no-extensions", command)
         self.assertIn("/synthetic/first-mate.ts", command)
+
+    def test_restricted_advisor_omits_bridge_lineage_flag(self):
+        # The bridge that registers --herdr-parent-session-id is not loaded with
+        # --no-extensions; passing it made Pi exit before confirming startup.
+        base = {"kind": "advisor", "pi_bin": "pi", "session_file": str(self.root / "session.jsonl"),
+                "extension": "/synthetic/first-mate.ts", "claim": {},
+                "parent_session_id": "synthetic-worker-session"}
+        for mode in ("recovery_mode", "reliability_assessment"):
+            with self.subTest(mode=mode):
+                command = _pi_command({**base, mode: True})
+                self.assertIn("--no-extensions", command)
+                self.assertNotIn("--herdr-parent-session-id", command)
+        command = _pi_command(base)
+        self.assertNotIn("--no-extensions", command)
+        self.assertEqual(command[command.index("--herdr-parent-session-id") + 1], "synthetic-worker-session")

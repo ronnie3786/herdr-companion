@@ -8,10 +8,52 @@ struct FirstMateGitTargetTests {
         let project = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: "project")
         let worker = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: "worker")
         let otherMachine = FirstMateGitWindowTarget(machineID: "machine-b", featureID: "feature", workspaceID: "project")
+        #expect(project.id == "machine-a|feature|project")
+        #expect(worker.id == "machine-a|feature|worker")
         #expect(project != worker)
         #expect(project != otherMachine)
         #expect(Set([project.id, worker.id, otherMachine.id]).count == 3)
         #expect(try JSONDecoder().decode(FirstMateGitWindowTarget.self, from: JSONEncoder().encode(worker)) == worker)
+    }
+
+    @Test("Unpinned window identity stays separate from pinned checkouts and other features or machines")
+    func unpinnedIdentity() {
+        let feature = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: nil)
+        let project = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: "project")
+        let worker = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: "worker")
+        let otherMachine = FirstMateGitWindowTarget(machineID: "machine-b", featureID: "feature", workspaceID: nil)
+        let otherFeature = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "other-feature", workspaceID: nil)
+        #expect(feature.id == "machine-a|feature")
+        #expect(Set([feature.id, project.id, worker.id, otherMachine.id, otherFeature.id]).count == 5)
+    }
+
+    @Test("Unpinned targets round trip without encoding a workspace key")
+    func unpinnedCoding() throws {
+        let target = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: nil)
+        let data = try JSONEncoder().encode(target)
+        #expect(try JSONDecoder().decode(FirstMateGitWindowTarget.self, from: data) == target)
+        #expect(try JSONDecoder().decode([String: String].self, from: data) == [
+            "machineID": "machine-a", "featureID": "feature",
+        ])
+    }
+
+    @Test("Legacy pinned targets keep their JSON fields and exact window identity")
+    func pinnedCodingCompatibility() throws {
+        let target = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: "project")
+        let legacy = Data(#"{"machineID":"machine-a","featureID":"feature","workspaceID":"project"}"#.utf8)
+        #expect(try JSONDecoder().decode(FirstMateGitWindowTarget.self, from: legacy) == target)
+        #expect(try JSONDecoder().decode([String: String].self, from: JSONEncoder().encode(target)) == [
+            "machineID": "machine-a", "featureID": "feature", "workspaceID": "project",
+        ])
+
+        let sha = String(repeating: "a", count: 40)
+        let commit = FirstMateGitWindowTarget(machineID: "machine-a", featureID: "feature", workspaceID: "project", commitSHA: sha)
+        #expect(commit.id == "machine-a|feature|project|\(sha)")
+        let data = try JSONEncoder().encode(commit)
+        #expect(try JSONDecoder().decode(FirstMateGitWindowTarget.self, from: data) == commit)
+        #expect(try JSONDecoder().decode([String: String].self, from: data) == [
+            "machineID": "machine-a", "featureID": "feature", "workspaceID": "project", "commitSHA": sha,
+        ])
     }
 
     @Test("First Mate web route escapes identity and keeps the token out of the URL")
@@ -493,9 +535,11 @@ struct FirstMateGitCatalogTests {
             workspacesByFeature: [:],
             titlesByFeature: [:]
         )
-        let catalog = FirstMateGitCatalog()
+        let catalog = FirstMateGitCatalog(pinnedWorkspaceID: nil)
         await catalog.load(machineID: "demo", featureID: "demo-feature", client: fixture, demo: true)
-        catalog.selectWorkspace(id: "demo-worker")
+        #expect(catalog.phase == .ready)
+        #expect(!catalog.isPinned)
+        #expect(catalog.selectedWorkspaceID == "demo-worker")
         let selected = try #require(catalog.selectedWorkspace)
         #expect(selected.path == "/demo/worktrees/implementation")
         #expect(FirstMateGitDemo.nativeWorkspace(for: selected).displayPath == selected.path)

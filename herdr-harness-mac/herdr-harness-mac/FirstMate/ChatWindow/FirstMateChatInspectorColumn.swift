@@ -27,17 +27,30 @@ struct FirstMateChatInspectorColumn: View {
         .accessibilityLabel("Inspector")
     }
 
+    static func gitTarget(for selection: FirstMateChatWindowSession.Selection) -> FirstMateGitWindowTarget? {
+        switch selection {
+        case .lead:
+            return nil
+        case .feature(let identity):
+            return FirstMateGitWindowTarget(
+                machineID: identity.machineID, featureID: identity.featureID, workspaceID: nil
+            )
+        }
+    }
+
     @ViewBuilder private var content: some View {
         switch session.selection {
         case .lead:
             FirstMateLeadOverviewView(session: session)
         case .feature(let identity):
-            if let store = session.selectedStore {
+            if let store = session.selectedStore, let target = Self.gitTarget(for: .feature(identity)) {
                 FirstMateChatFeatureInspector(store: store, snapshot: session.selectedSnapshot, openCommit: { selection in
                     openWindow(id: HerdrWindowID.firstMateGit, value: FirstMateGitWindowTarget(
                         machineID: identity.machineID, featureID: identity.featureID,
                         workspaceID: selection.workspaceID, commitSHA: selection.commitSHA
                     ))
+                }, openGit: {
+                    openWindow(id: HerdrWindowID.firstMateGit, value: target)
                 })
                 .firstMateSimulator(model: session.model, machineID: identity.machineID, featureID: identity.featureID)
             } else {
@@ -53,12 +66,13 @@ private struct FirstMateChatFeatureInspector: View {
     @Bindable var store: FirstMateStore
     let snapshot: FirstMateSnapshot?
     var openCommit: ((FirstMateGitCommitSelection) -> Void)?
+    var openGit: (() -> Void)?
     @Environment(\.colorScheme) private var scheme
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
     var body: some View {
-        FirstMateInspectorView(store: store, snapshot: snapshot, openCommit: openCommit)
+        FirstMateInspectorView(store: store, snapshot: snapshot, openCommit: openCommit, openGit: openGit)
             .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
             .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.regular))
             .tint(palette.accent)

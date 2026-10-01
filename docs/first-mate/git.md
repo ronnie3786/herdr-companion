@@ -22,7 +22,7 @@ comparison and AI inspection contract.
 Assignments sharing a checkout appear once. The checkout menu puts the feature
 branch and project checkout first, with historical workers under **Other
 checkouts**. An explicit choice is retained when switching to Chat and back or
-refreshing; pop-out windows and recorded commit links stay on their exact target.
+refreshing; pinned pop-out windows and recorded commit links stay on their exact target.
 
 The default uses local Git's actual branch, upstream, target, and repository
 identity, never task titles, ticket text, assignment order, or a "latest" worker.
@@ -68,9 +68,20 @@ never falls back to the project checkout.
 
 ## Pop-out windows
 
-Choose **Open Git in New Window** beside the workspace picker. The window is
-identified by machine ID, feature ID, workspace ID, and an optional selected
-commit SHA:
+In the standalone First Mate chat window, select a feature and open its
+inspector. The trailing Git button beside **Overview / Agents / Documents /
+Workflow** has the tooltip and accessibility label **Open Git in New Window**.
+It opens an unpinned target: the selected feature's machine ID and feature ID,
+with no workspace ID or commit SHA. Git uses the feature's recommended checkout
+and keeps the checkout picker available; an ambiguous catalog asks you to choose.
+Reopening Git for that feature focuses the same window, even after choosing a
+different checkout in its picker. Another feature or machine gets its own window.
+**My First Mate** has no Git button, and the main window's inspector is unchanged.
+This button is Mac-only and needs no companion update beyond existing Git support.
+
+Choose **Open Git in New Window** beside the main Git workbench's workspace
+picker to pin an exact checkout instead. That window is identified by machine ID,
+feature ID, workspace ID, and an optional selected commit SHA:
 
 - reopening the same target focuses its existing window;
 - another workspace opens a distinct window;
@@ -133,6 +144,11 @@ authenticated native web container.
       and remains present in pane Git.
 - [ ] Open a workflow commit and confirm the exact workspace and captured SHA
       are selected. Expand its step to open another recorded commit.
+- [ ] In the First Mate chat window, select a synthetic feature, open the inspector,
+      and click its trailing Git button. Confirm the feature's recommended checkout
+      and checkout picker appear; reopening focuses the same window, while another
+      feature or machine opens its own. My First Mate and the main-window inspector
+      have no new button. Check the **Open Git in New Window** tooltip and VoiceOver label.
 - [ ] Pop out project and worker targets; confirm each window remains pinned as
       the main window changes machine, feature, and workspace.
 - [ ] Stop only the terminal-pane connection while leaving the companion API

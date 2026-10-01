@@ -6,6 +6,7 @@ struct FirstMateInspectorView: View {
     @Bindable var store: FirstMateStore
     var snapshot: FirstMateSnapshot? = nil
     var openCommit: ((FirstMateGitCommitSelection) -> Void)? = nil
+    var openGit: (() -> Void)? = nil
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var scheme
@@ -34,6 +35,13 @@ struct FirstMateInspectorView: View {
                     accessibilityLabel: "Inspector"
                 )
                 Spacer(minLength: 0)
+                if let openGit {
+                    Button("Open Git in New Window", systemImage: "arrow.triangle.branch") { openGit() }
+                        .buttonStyle(FirstMateGitIconButtonStyle(palette: palette))
+                        .help("Open Git in New Window")
+                        .accessibilityLabel("Open Git in New Window")
+                        .accessibilityIdentifier("first-mate-inspector-open-git")
+                }
             }
             .padding(.horizontal, 16)
             .frame(height: HerdrTheme.ControlHeight.bar)

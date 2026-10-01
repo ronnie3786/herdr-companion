@@ -160,9 +160,11 @@ The lead chat needs the Phase 2 lead First Mate. Until then:
 - Drafts are per feature and per window. They survive switching chats.
 
 ### 4.6 Inspector
-**Reuse `FirstMateInspectorView` as it is:** underline tabs Overview, Agents, Documents and Workflow, and the 32 pt sync footer. Bind it to the window's own store, so its tab and selection are independent of the main window's. The reference HTML reproduces it only to show placement.
+**Reuse `FirstMateInspectorView`:** underline tabs Overview, Agents, Documents and Workflow, and the 32 pt sync footer. Bind it to the window's own store, so its tab and selection are independent of the main window's. The reference HTML reproduces it only to show placement.
 
-The only change: the `FirstMateResourceButtons` chips say "1 agent" and "1 document". Pluralize them there, since it fixes both screens.
+For a selected feature only, add a compact trailing Git icon button after the tabs. Its tooltip and accessibility label are **Open Git in New Window**, with accessibility identifier `first-mate-inspector-open-git`. It opens that feature's own machine/feature Git window on the recommended checkout, with the checkout picker; reopening focuses the same window. My First Mate and the main-window inspector have no new button. Tab-bar height and padding stay unchanged. This is Mac-only and needs no companion update beyond existing Git support.
+
+The `FirstMateResourceButtons` chips say "1 agent" and "1 document". Pluralize them there, since it fixes both screens.
 
 ---
 

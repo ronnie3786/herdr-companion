@@ -72,7 +72,7 @@ final class HerdrFirstMatePolishUITests: XCTestCase {
         XCTAssertTrue(app.buttons["first-mate-chat-title"].waitForExistence(timeout: 5))
         // Portrait keeps two panes; the inspector comes back on demand as a
         // sheet over the chat, still on the tab it showed.
-        XCTAssertFalse(app.otherElements["first-mate-info-column"].firstMatch.exists)
+        XCTAssertTrue(app.otherElements["first-mate-info-column"].firstMatch.waitForNonExistence(timeout: 5))
         app.buttons["first-mate-chat-inspector-toggle"].tap()
         assertColumns(app, floating: true)
         XCTAssertEqual(input.value as? String, "Retain this exact iPad draft")

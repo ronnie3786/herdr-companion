@@ -28,13 +28,19 @@ struct FirstMatePinnedStrip: View {
         return (shown, Array(needs.dropFirst(shown.count)))
     }
 
+    /// One row of equal cells. A plain stack, not a lazy grid: a lazy grid
+    /// inside a List row can keep resizing the row while the list lays out.
     private func grid(_ columns: Int) -> some View {
         let slots = gridSlots(columns)
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4, alignment: .top), count: columns), spacing: 8) {
-            if presentation.showsLead { leadAvatar }
-            ForEach(slots.shown) { row in featureAvatar(row) }
+        let used = (presentation.showsLead ? 1 : 0) + slots.shown.count + (slots.hidden.isEmpty ? 0 : 1)
+        return HStack(alignment: .top, spacing: 4) {
+            if presentation.showsLead { leadAvatar.frame(maxWidth: .infinity, alignment: .top) }
+            ForEach(slots.shown) { row in featureAvatar(row).frame(maxWidth: .infinity, alignment: .top) }
             if let first = slots.hidden.first {
-                overflowButton(count: slots.hidden.count, first: first.id)
+                overflowButton(count: slots.hidden.count, first: first.id).frame(maxWidth: .infinity, alignment: .top)
+            }
+            ForEach(0..<max(0, columns - used), id: \.self) { _ in
+                Color.clear.frame(maxWidth: .infinity, maxHeight: 1).accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 10)

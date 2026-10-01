@@ -35,7 +35,11 @@ struct FirstMateWorkspaceView: View {
         Group {
             if regular {
                 GeometryReader { geometry in
-                    regularColumns(FirstMateIPadLayout.resolve(size: geometry.size, inspectorOpen: inspectorOpen,
+                    // Orientation counts the bars and the keyboard back in, so
+                    // typing in portrait never reads as landscape.
+                    let size = CGSize(width: geometry.size.width,
+                                      height: geometry.size.height + geometry.safeAreaInsets.top + geometry.safeAreaInsets.bottom)
+                    regularColumns(FirstMateIPadLayout.resolve(size: size, inspectorOpen: inspectorOpen,
                                                                list: listPreference, pinned: inspectorPinned))
                 }
                 .toolbarVisibility(.visible, for: .tabBar)
@@ -85,6 +89,9 @@ struct FirstMateWorkspaceView: View {
             path = [.chat(route.target)]
             if route.inspector != nil { path.append(.info(route.target, assignmentID: route.assignmentID)) }
         }
+        // A container of its own, so the identifier names the workspace
+        // instead of overriding the columns' identifiers inside it.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-workspace")
     }
 

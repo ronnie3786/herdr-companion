@@ -29,7 +29,8 @@ final class HerdrFirstMateIPadA2UITests: XCTestCase {
 
         // The list folds into the rail and comes back.
         app.buttons["first-mate-chat-list-toggle"].tap()
-        XCTAssertTrue(app.otherElements["first-mate-conversation-rail"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["first-mate-rail-lead"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["first-mate-rail-demo1-demo-receipts"].exists)
         try capture("a2-live-rail", app)
         app.buttons["first-mate-chat-list-toggle"].tap()
         XCTAssertTrue(receipt.waitForExistence(timeout: 5))
@@ -53,12 +54,11 @@ final class HerdrFirstMateIPadA2UITests: XCTestCase {
         app.buttons["Done"].firstMatch.tap()
         XCTAssertTrue(cover.waitForNonExistence(timeout: 5))
 
-        // Portrait keeps two panes; the inspector floats over the chat on demand.
+        // The inspector was opened explicitly, so portrait keeps it, floating
+        // over the chat with Close; closed, portrait keeps two panes.
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(info.waitForNonExistence(timeout: 5))
-        toggle.tap()
-        XCTAssertTrue(info.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["first-mate-inspector-close"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["first-mate-inspector-close"].waitForExistence(timeout: 5))
+        XCTAssertTrue(info.exists)
         try capture("a2-live-portrait-floating", app)
         app.buttons["first-mate-inspector-close"].tap()
         XCTAssertTrue(info.waitForNonExistence(timeout: 5))

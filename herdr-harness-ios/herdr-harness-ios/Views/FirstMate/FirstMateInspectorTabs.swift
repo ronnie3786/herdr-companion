@@ -12,11 +12,11 @@ struct FirstMateInspectorTabs: View {
             HerdrTabs(selection: $store.inspector, tabs: tabs.map {
                 .init(value: $0, title: $0.rawValue, accessibilityIdentifier: "first-mate-tab-\($0.id)")
             }, style: .underline, accessibilityLabel: "Feature info tabs")
+            .accessibilityIdentifier("first-mate-info-tabs")
             Spacer(minLength: 0)
             FirstMateInspectorPanelButtons()
         }
         .padding(.leading, 16).padding(.trailing, 8)
         .herdrHairline(.bottom)
-        .accessibilityIdentifier("first-mate-info-tabs")
     }
 }

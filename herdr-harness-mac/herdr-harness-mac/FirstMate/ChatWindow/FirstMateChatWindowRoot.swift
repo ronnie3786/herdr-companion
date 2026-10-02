@@ -18,7 +18,8 @@ struct FirstMateChatWindowLayout: Equatable {
     static let collapseBelow: CGFloat = 170
     /// Chat never gets narrower than this; the list collapses first.
     static let minimumChatWidth: CGFloat = 380
-    static let inspectorWidth: CGFloat = 360
+    static let minimumInspectorWidth: CGFloat = 320
+    static let maximumInspectorWidth: CGFloat = 720
     /// With no preference, the inspector opens at this width and wider.
     static let autoOpenWidth: CGFloat = 1280
     /// The chat header's height; the inspector's tab bar lines up with it.
@@ -57,6 +58,18 @@ struct FirstMateChatWindowLayout: Equatable {
         }
         let proposed = displayed + step
         return proposed < minimumExpandedSidebarWidth ? railWidth : min(proposed, maximumSidebarWidth)
+    }
+
+    static func clampedInspectorWidth(_ proposed: CGFloat) -> CGFloat {
+        guard proposed.isFinite else { return CGFloat(FirstMateChatPreferences.defaultInspectorWidth) }
+        return min(max(proposed, minimumInspectorWidth), maximumInspectorWidth)
+    }
+
+    /// Resizing the inspector leaves the displayed list and at least 380 pt
+    /// of chat intact. Widening the window makes more inspector room available.
+    static func resizedInspectorWidth(_ proposed: CGFloat, total: CGFloat, sidebar: CGFloat) -> CGFloat {
+        let room = max(minimumInspectorWidth, total - sidebar - minimumChatWidth)
+        return min(clampedInspectorWidth(proposed), room)
     }
 
     static func inspectorVisible(width: CGFloat, preference: Bool?) -> Bool {
@@ -123,7 +136,7 @@ struct FirstMateChatColumnsLayout: Layout {
         let total = max(0, total)
         let sidebar = min(max(0, sidebar), total)
         let inspector = if let pinnedChat {
-            min(max(0, total - sidebar - pinnedChat), FirstMateChatWindowLayout.inspectorWidth)
+            min(max(0, total - sidebar - pinnedChat), max(0, inspector))
         } else {
             min(max(0, inspector), total - sidebar)
         }
@@ -143,7 +156,9 @@ struct FirstMateChatWindowRoot: View {
     @AppStorage(FirstMateChatPreferences.sidebarWidthKey)
     private var storedSidebarWidth = FirstMateChatPreferences.defaultSidebarWidth
     @State private var liveSidebarWidth: CGFloat?
-    @State private var sidebarDragStartWidth: CGFloat?
+    @AppStorage(FirstMateChatPreferences.inspectorWidthKey)
+    private var storedInspectorWidth = FirstMateChatPreferences.defaultInspectorWidth
+    @State private var liveInspectorWidth: CGFloat?
     @State private var availableWidth = FirstMateChatWindowLayout.minimumWindowWidth
     @State private var extender = FirstMateChatWindowExtender()
     /// Where the inspector is heading: the person's last toggle, applied.
@@ -247,6 +262,10 @@ struct FirstMateChatWindowRoot: View {
         )
     }
 
+    private var preferredInspectorWidth: CGFloat {
+        FirstMateChatWindowLayout.clampedInspectorWidth(CGFloat(storedInspectorWidth))
+    }
+
     /// The window's minimum grows by the inspector once it has settled open,
     /// so dragging the window narrower never squeezes chat below its floor.
     private var minimumWidth: CGFloat {
@@ -283,6 +302,12 @@ struct FirstMateChatWindowRoot: View {
         .overlay(alignment: .leading) {
             sidebarResizeHandle(displayedWidth: layout.sidebarWidth)
                 .offset(x: layout.sidebarWidth - 3)
+        }
+        .overlay(alignment: .trailing) {
+            if inspectorPresented, inspectorOpen, inspectorSlide == nil {
+                inspectorResizeHandle
+                    .offset(x: -inspectorTarget + 3)
+            }
         }
         .background { shortcuts }
         .background { FirstMateChatWindowReader(extender: extender) }
@@ -331,7 +356,7 @@ struct FirstMateChatWindowRoot: View {
             session: session,
             topInset: FirstMateChatWindowLayout.headerHeight - HerdrTheme.ControlHeight.bar
         )
-        .frame(width: FirstMateChatWindowLayout.inspectorWidth)
+        .frame(width: liveInspectorWidth ?? preferredInspectorWidth)
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
         .clipped()
         .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane, base: HerdrTheme.windowBackground) }
@@ -352,7 +377,7 @@ struct FirstMateChatWindowRoot: View {
         let open = preference ?? false
         inspectorOpen = open
         inspectorPresented = open
-        inspectorTarget = open ? FirstMateChatWindowLayout.inspectorWidth : 0
+        inspectorTarget = open ? preferredInspectorWidth : 0
         session.inspectorPreference = preference
     }
 
@@ -362,7 +387,7 @@ struct FirstMateChatWindowRoot: View {
     private func setInspector(open: Bool) {
         guard didSettleInspector, open != inspectorOpen else { return }
         inspectorOpen = open
-        let inspectorWidth = FirstMateChatWindowLayout.inspectorWidth
+        let inspectorWidth = liveInspectorWidth ?? preferredInspectorWidth
         let layout = currentLayout
         let widths = FirstMateChatColumnsLayout.columnWidths(
             total: availableWidth,
@@ -440,42 +465,54 @@ struct FirstMateChatWindowRoot: View {
     /// persisted preference is not reduced when the whole window temporarily
     /// forces the rail, so widening the window restores the chosen size.
     private func sidebarResizeHandle(displayedWidth: CGFloat) -> some View {
-        Color.clear
-            .frame(width: 6)
-            .contentShape(Rectangle())
-            .pointerStyle(.columnResize)
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        if sidebarDragStartWidth == nil { sidebarDragStartWidth = displayedWidth }
-                        let proposed = (sidebarDragStartWidth ?? displayedWidth) + value.translation.width
-                        liveSidebarWidth = FirstMateChatWindowLayout.snappedSidebarWidth(proposed)
-                    }
-                    .onEnded { _ in
-                        if let liveSidebarWidth { storedSidebarWidth = Double(liveSidebarWidth) }
-                        liveSidebarWidth = nil
-                        sidebarDragStartWidth = nil
-                    }
-            )
-            .focusable()
-            .onKeyPress(.leftArrow) { adjustSidebar(by: -20, displayedWidth: displayedWidth) }
-            .onKeyPress(.rightArrow) { adjustSidebar(by: 20, displayedWidth: displayedWidth) }
-            .accessibilityElement()
-            .accessibilityLabel("Conversation list width")
-            .accessibilityValue(displayedWidth < FirstMateChatWindowLayout.minimumExpandedSidebarWidth
-                ? "Avatars only" : "\(Int(displayedWidth)) points")
-            .accessibilityAdjustableAction { direction in
-                let step: CGFloat = direction == .increment ? 20 : direction == .decrement ? -20 : 0
-                adjustSidebar(by: step, displayedWidth: displayedWidth)
+        FirstMateChatResizeHandle(
+            displayedWidth: displayedWidth,
+            widthDirection: 1,
+            label: "Conversation list width",
+            value: displayedWidth < FirstMateChatWindowLayout.minimumExpandedSidebarWidth
+                ? "Avatars only" : "\(Int(displayedWidth)) points",
+            identifier: "first-mate-chat-sidebar-resize-handle",
+            help: "Drag to resize the conversation list; drag past its minimum to show avatars only",
+            onResize: { proposed, finished in
+                let width = FirstMateChatWindowLayout.snappedSidebarWidth(proposed)
+                if finished {
+                    storedSidebarWidth = Double(width)
+                    liveSidebarWidth = nil
+                } else {
+                    liveSidebarWidth = width
+                }
+            },
+            onStep: { step in
+                storedSidebarWidth = Double(FirstMateChatWindowLayout.steppedSidebarWidth(from: displayedWidth, by: step))
             }
-            .accessibilityIdentifier("first-mate-chat-sidebar-resize-handle")
-            .help("Drag to resize the conversation list; drag past its minimum to show avatars only")
+        )
+        .disabled(inspectorSlide != nil)
     }
 
-    private func adjustSidebar(by step: CGFloat, displayedWidth: CGFloat) -> KeyPress.Result {
-        guard step != 0 else { return .ignored }
-        storedSidebarWidth = Double(FirstMateChatWindowLayout.steppedSidebarWidth(from: displayedWidth, by: step))
-        return .handled
+    private var inspectorResizeHandle: some View {
+        FirstMateChatResizeHandle(
+            displayedWidth: inspectorTarget,
+            widthDirection: -1,
+            label: "Inspector width",
+            value: "\(Int(inspectorTarget)) points",
+            identifier: "first-mate-chat-inspector-resize-handle",
+            help: "Drag left to widen the inspector or right to narrow it",
+            onResize: resizeInspector,
+            onStep: { resizeInspector(to: inspectorTarget + $0, finished: true) }
+        )
+    }
+
+    private func resizeInspector(to proposed: CGFloat, finished: Bool) {
+        let width = FirstMateChatWindowLayout.resizedInspectorWidth(
+            proposed, total: availableWidth, sidebar: currentLayout.sidebarWidth
+        )
+        inspectorTarget = width
+        if finished {
+            storedInspectorWidth = Double(width)
+            liveInspectorWidth = nil
+        } else {
+            liveInspectorWidth = width
+        }
     }
 
     // MARK: Routing

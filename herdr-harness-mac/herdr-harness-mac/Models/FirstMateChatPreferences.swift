@@ -9,6 +9,9 @@ enum FirstMateChatPreferences {
     /// single standalone chat scene and restored after relaunch.
     static let sidebarWidthKey = "herdr.mac.firstMate.chatWindow.sidebarWidth"
     static let defaultSidebarWidth = 320.0
+    /// The inspector's chosen width, restored after closing or relaunching.
+    static let inspectorWidthKey = "herdr.mac.firstMate.chatWindow.inspectorWidth"
+    static let defaultInspectorWidth = 410.0
     /// Settings ▸ General ▸ "Show First Mate count on the Dock icon".
     /// Independent of the preview window.
     static let dockBadgeEnabledKey = "herdr.mac.firstMate.dockBadge"

@@ -247,3 +247,55 @@ struct WatchersRenderTests {
         for avatar in WatcherAvatar.characters + WatcherAvatar.instruments { #expect(NSImage(named: "Watcher-\(avatar)-idle") != nil) }
     }
 }
+
+@MainActor @Suite("Watchers design parity")
+struct WatchersDesignTests {
+    @Test("Next-run phrases follow the prototype: minutes, then today, tomorrow, a weekday, a date")
+    func relativePhrases() throws {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = try #require(TimeZone(identifier: "America/Chicago")); calendar.locale = Locale(identifier: "en_US")
+        let now = try #require(calendar.date(from: DateComponents(year: 2030, month: 1, day: 7, hour: 8, minute: 30)))
+        func phrase(_ minutes: Double) -> String { WatchersDate.relative(now.addingTimeInterval(minutes * 60), now: now, calendar: calendar) }
+        #expect(phrase(0) == "soon" && phrase(0.2) == "in 1 min")
+        #expect(phrase(8) == "in 8 min")
+        #expect(phrase(135).hasPrefix("Today at 10:45"))
+        #expect(phrase(17 * 60 + 30).hasPrefix("Tomorrow at 2:00"))
+        #expect(phrase(6 * 1440).hasPrefix("Sunday at 8:30"))
+        #expect(phrase(9 * 1440).hasPrefix("Jan 16 at 8:30"))
+    }
+    @Test("Breakpoints keep three, two and one columns and scale the card like the prototype")
+    func breakpoints() {
+        #expect(WatchersMetrics.forWidth(1600).avatar == 92 && WatchersMetrics.forWidth(1600).story == 14)
+        #expect(WatchersMetrics.forWidth(1200) == .regular)
+        #expect(WatchersMetrics.forWidth(1000).columns == 3 && WatchersMetrics.forWidth(1000).cardSide == 19)
+        #expect(WatchersMetrics.forWidth(800).columns == 2)
+        #expect(WatchersMetrics.forWidth(600).columns == 1 && WatchersMetrics.forWidth(600).stacksIntro)
+    }
+    @Test("Avatar tones match the prototype palette, including periwinkle")
+    func palette() {
+        #expect(WatcherAvatar.toneHex("bolt") == 0x95A9EC && WatcherAvatar.toneHex("atlas") == 0x95A9EC)
+        #expect(WatcherAvatar.toneHex("hoot") == 0xE3BF7F && WatcherAvatar.toneHex("relay") == 0xABA5F2)
+    }
+    @Test("Card status uses the design's words; attention shows on the card, not as a status")
+    func statusWords() {
+        #expect(Watcher(["state": .string("active"), "attention": .object(["reason": .string("Failed")])]).status == "On watch")
+        #expect(Watcher(["state": .string("active"), "schedule": .object(["kind": .string("once")])]).status == "One-time task")
+        #expect(Watcher(["state": .string("paused")]).status == "Resting")
+    }
+    @Test("Summary lines keep one rhythm with or without chips")
+    func lineRhythm() {
+        func height(_ markup: String) -> CGFloat {
+            NSHostingView(rootView: WatcherSummaryView(markup: markup, schedule: "every 15 min").frame(width: 300).fixedSize(horizontal: false, vertical: true)).fittingSize.height
+        }
+        #expect(height("Plain words only.") == 25)
+        #expect(height("{time}, I run {script:check.sh}.") == 25)
+        #expect(height("{time}, I look for {gh:open PRs that request your review}. When one is new, {agent:Sol} runs {skill:triage}.").truncatingRemainder(dividingBy: 25) == 0)
+    }
+    @Test("Avatar drawings carry no CSS transforms, which asset catalogs ignore")
+    func avatarSVGs() throws {
+        let catalog = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "herdr-harness-mac/Assets.xcassets/WatcherAvatars")
+        let files = try #require(FileManager.default.enumerator(at: catalog, includingPropertiesForKeys: nil)).compactMap { $0 as? URL }.filter { $0.pathExtension == "svg" }
+        #expect(files.count == 58)
+        for file in files { #expect(!(try String(contentsOf: file, encoding: .utf8)).contains("style="), "\(file.lastPathComponent) uses a CSS style") }
+    }
+}

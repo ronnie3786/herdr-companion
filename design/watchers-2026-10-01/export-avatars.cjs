@@ -17,6 +17,9 @@ function save(name, drawing) {
   fs.mkdirSync(directory, {recursive: true});
   const svg = drawing.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ')
     .replace(/\sclass="[^"]*"/g, "")
+    // Asset catalogs ignore CSS transforms; keep the resting pose as SVG attributes.
+    .replace(/style="transform-origin:([\d.]+)px ([\d.]+)px;transform:rotate\((-?[\d.]+)deg\)"/g, 'transform="rotate($3 $1 $2)"')
+    .replace(/\sstyle="transform-origin:[\d.]+px [\d.]+px"/g, "")
     .replace(/(fill|stroke)="#([0-9a-f]{6})([0-9a-f]{2})"/gi,
       (_, attribute, color, alpha) => `${attribute}="#${color}" ${attribute}-opacity="${Number.parseInt(alpha, 16) / 255}"`);
   fs.writeFileSync(path.join(directory, `${name}.svg`), svg);

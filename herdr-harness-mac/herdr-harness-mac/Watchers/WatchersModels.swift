@@ -27,7 +27,6 @@ struct Watcher: Codable, Equatable, Identifiable, Sendable {
         if state == "draft" { return "Draft, not scheduled yet" }
         if state == "paused" { return "Resting" }
         if state == "done" { return "All done" }
-        if attention != nil { return "Needs you" }
         return schedule.text("kind") == "once" ? "One-time task" : "On watch"
     }
     var definition: [String: PiJSONValue] {
@@ -67,10 +66,21 @@ enum WatchersDate {
         let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
     }
-    static func relative(_ date: Date, now: Date = .now) -> String {
+    /// The prototype's phrasing: "in 8 min" within the hour, then "Today at 6:00 PM",
+    /// "Tomorrow at 2:00 AM", a weekday within the week, else a date.
+    static func relative(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
         let minutes = max(0, Int(ceil(date.timeIntervalSince(now) / 60)))
-        if minutes < 1 { return "soon" }; if minutes < 60 { return "in \(minutes) min" }; if minutes < 1440 { return "in \(minutes / 60) hr" }
-        return date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        if minutes < 1 { return "soon" }
+        if minutes < 60 { return "in \(minutes) min" }
+        let style = Date.FormatStyle(locale: calendar.locale ?? .current, calendar: calendar, timeZone: calendar.timeZone)
+        let time = date.formatted(style.hour().minute())
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        switch days {
+        case ...0: return "Today at \(time)"
+        case 1: return "Tomorrow at \(time)"
+        case 2...6: return date.formatted(style.weekday(.wide)) + " at \(time)"
+        default: return date.formatted(style.month(.abbreviated).day()) + " at \(time)"
+        }
     }
 }
 extension Dictionary where Key == String, Value == PiJSONValue {

@@ -68,7 +68,7 @@ struct WatcherBuilderSheet: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         if let draft {
-                            WatcherCard(entry: .init(machineID: machineID, machineName: machineName, watcher: draft), preview: true)
+                            WatcherCard(entry: .init(machineID: machineID, machineName: machineName, watcher: draft), preview: true).frame(maxWidth: 340).frame(maxWidth: .infinity)
                             HStack { Button("Shuffle", systemImage: "shuffle") { Task { await setAvatar((draft.kind == "script" ? WatcherAvatar.instruments : WatcherAvatar.characters).randomElement() ?? draft.avatar) } }; Button("Choose", systemImage: "square.grid.2x2") { showAvatars = true } }.buttonStyle(.bordered).font(.caption).disabled(working || sending || draft.state != "draft")
                                 .popover(isPresented: $showAvatars) { WatcherAvatarPicker(character: draft.kind != "script", selection: Binding(get: { draft.avatar }, set: { value in showAvatars = false; Task { await setAvatar(value) } })) }
                             WatcherPipeline(watcher: draft, inspectScript: { scriptStep = $0 })

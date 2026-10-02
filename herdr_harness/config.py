@@ -92,6 +92,7 @@ ENVIRONMENT_FIELDS = {
         "max_workers": "HERDR_FIRST_MATE_MAX_WORKERS",
         "usage_enabled": "HERDR_FIRST_MATE_USAGE_ENABLED",
         "context_target": "HERDR_FIRST_MATE_CONTEXT_TARGET", "stall_seconds": "HERDR_FIRST_MATE_STALL_SECONDS",
+        "peer_timeout_seconds": "HERDR_FIRST_MATE_PEER_TIMEOUT_SECONDS",
         "coordinator_timeout_seconds": "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS",
         "coordinator_max_seconds": "HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS",
         "auto_recovery": "HERDR_FIRST_MATE_AUTO_RECOVERY", "sweep_seconds": "HERDR_FIRST_MATE_SWEEP_SECONDS",

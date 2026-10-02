@@ -8,6 +8,7 @@ struct FirstMateWorkflowView: View {
     @Environment(\.firstMateSimulator) private var simulator
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            FirstMateActivityView(store: store, snapshot: snapshot)
             HStack {
                 Text("Feature journal").herdrFont(size: 15, weight: .semibold)
                 Spacer()

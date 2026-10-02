@@ -222,7 +222,7 @@ class ControlClient:
         token: str,
         *,
         opener: Callable[..., Any] | Any | None = None,
-        timeout: float = 20,
+        timeout: float = 60,
     ) -> None:
         self.base_url = _validate_origin(base_url)
         try:
@@ -273,8 +273,16 @@ class ControlClient:
         if body is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        timeout = self.timeout
+        route = path.split("/")
+        if (method == "POST" and len(route) == 6 and route[3] in {"panes", "agents"}
+                and route[5] == "prompt" and isinstance(payload, Mapping) and payload.get("wait") is True):
+            wait_ms = payload.get("timeoutMs", 120000)
+            if type(wait_ms) is int and 100 <= wait_ms <= 300000:
+                # The companion socket itself permits the requested wait + 5s.
+                timeout = max(timeout, wait_ms / 1000.0 + 15.0)
         try:
-            with self._open(request, timeout=self.timeout) as response:
+            with self._open(request, timeout=timeout) as response:
                 final_url = response.geturl() if callable(getattr(response, "geturl", None)) else url
                 if final_url != url:
                     raise CLIError("Herdr redirects are not allowed", "redirect_not_allowed", 3)
@@ -305,6 +313,10 @@ class ControlClient:
             exit_code = 4 if exc.code == 409 else 5
             raise CLIError(message, code, exit_code, exc.code) from exc
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+            if isinstance(reason, TimeoutError):
+                raise CLIError("The selected Herdr backend did not answer within the request budget",
+                               "herdr_timeout", 3) from exc
             raise CLIError("Could not reach the selected Herdr backend", "herdr_unavailable", 3) from exc
         if len(raw) > MAX_RESPONSE_BYTES:
             raise CLIError("Herdr response is too large", "response_too_large", 3)
@@ -578,7 +590,7 @@ def machine_client(
     *,
     roster: Mapping[str, Mapping[str, Any]],
     opener: Callable[..., Any] | Any | None = None,
-    timeout: float = 20,
+    timeout: float = 60,
 ) -> ControlClient:
     """A client for one roster machine, authenticated with that machine's own
     configured credential, never the caller's. Shared by this CLI and the lead

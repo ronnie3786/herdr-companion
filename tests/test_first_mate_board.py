@@ -23,7 +23,8 @@ ASSIGNMENT_FIELDS = {"id", "feature_id", "visit_id", "visit_ids", "title", "role
                      "native_session_id", "attempt", "generation", "input_revision", "created_at",
                      "updated_at", "summary"}
 BOARD_FIELDS = {"version", "unchanged", "feature", "visits", "assignments", "messages", "messages_total",
-                "journal", "journal_total", "sessions", "sessions_truncated", "event_cursor"}
+                "journal", "journal_total", "sessions", "sessions_truncated", "event_cursor",
+                "pending_messages", "pending_messages_truncated"}
 PRIVATE_PROMPT = "SYNTHETIC-PRIVATE-PROMPT"
 PRIVATE_METADATA = "SYNTHETIC-PRIVATE-METADATA"
 
@@ -75,7 +76,7 @@ class FirstMateBoardStoreTests(BoardFixture, unittest.TestCase):
         board = self.store.board(self.id, messages=2, journal=3)
         self.assertEqual(set(board), BOARD_FIELDS)
         self.assertFalse(board["unchanged"])
-        self.assertTrue(board["version"].startswith("b2-"))
+        self.assertTrue(board["version"].startswith("b3-"))
         self.assertEqual(board["feature"], self.store.list_features()[0])
         self.assertIn("dashboard_summary", board["feature"])
         snapshot = self.store.snapshot(self.id)
@@ -284,7 +285,8 @@ class FirstMateBoardStoreTests(BoardFixture, unittest.TestCase):
         self.assertEqual((summary()["needs_user_prompt"], len(summary()["latest_message"])), ("Q" * 600, 1200))
 
         assignment = self.store.create_assignment(visit["id"], {"title": "Survey", "role": "planner", "prompt": PRIVATE_PROMPT, "request_id": "assign"})
-        self.assertTrue(summary()["awaiting_turn"], "queued work is not running")
+        self.assertFalse(summary()["awaiting_turn"], "queued work can proceed without human direction")
+        self.assertEqual(summary()["queued_assignment_count"], 1)
         self.store.claim_assignment(assignment["id"], "worker")
         self.assertEqual((summary()["awaiting_turn"], summary()["needs_user_prompt"]), (False, None))
         direct("UPDATE fm_assignments SET status='completed',updated_at=? WHERE id=?", _now(), assignment["id"])

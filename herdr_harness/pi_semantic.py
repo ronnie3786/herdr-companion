@@ -1448,7 +1448,7 @@ class PiSemanticManager:
         timeout = _bounded_int(
             self.environ,
             "HERDR_HARNESS_PI_COMMAND_TIMEOUT_MS",
-            3000,
+            30000,
             minimum=250,
             maximum=30000,
         ) / 1000.0

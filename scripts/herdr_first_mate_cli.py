@@ -21,6 +21,7 @@ class Parser(BaseParser):
 
 class FirstMateClient(NotesClient):
     api_path = "/api/v1/first-mate"
+    timeout_seconds = 90
 
 
 LINKS_CAPABILITY = "first-mate-links-v1"

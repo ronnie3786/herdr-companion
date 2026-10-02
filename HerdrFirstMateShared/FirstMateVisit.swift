@@ -9,6 +9,7 @@ struct FirstMateVisit: Codable, Equatable, Identifiable, Sendable {
     var revision: Int
     var createdAt: String?
     var predecessorVisitID: String?
+    var followupStages: [String]? = nil
     var gitEvidence: [FirstMateVisitGitEvidence]? = nil
 
     /// Dates order independent workspace tips for presentation only. The
@@ -26,6 +27,7 @@ struct FirstMateVisit: Codable, Equatable, Identifiable, Sendable {
         case featureID = "feature_id", stageKey = "stage_key", createdAt = "created_at"
         case predecessorVisitID = "predecessor_visit_id"
         case gitEvidence = "git_evidence"
+        case followupStages = "followup_stages"
     }
 }
 

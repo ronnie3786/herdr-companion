@@ -131,8 +131,8 @@ struct FleetTests {
         // The Mac gives /fleet/sync and /fleet/action a 150 s budget because it
         // holds those POSTs open. iOS leaves both on the shared 15 s default
         // precisely because nothing here calls them.
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet", method: "GET") == 15)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet/sync", method: "POST") == 15)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet", method: "GET") == 45)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet/sync", method: "POST") == 45)
     }
 
     @Test("Prunes a removed machine item without dropping another machine's state")

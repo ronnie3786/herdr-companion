@@ -111,7 +111,7 @@ class HerdrClient:
         socket_path: Optional[str] = None,
         session: Optional[str] = None,
         *,
-        timeout: float = 4.0,
+        timeout: float = 30.0,
         max_line_bytes: int = DEFAULT_MAX_LINE_BYTES,
         environ: Optional[Mapping[str, str]] = None,
     ) -> None:
@@ -201,6 +201,12 @@ class HerdrClient:
                     # Herdr waits for agent readiness before replying. Keep the
                     # socket alive beyond that wait, including a cold Pi launch
                     # in a reserved shell. Ordinary requests keep their limit.
+                    connection.settimeout(max(self.timeout, timeout_ms / 1000.0 + 5.0))
+            elif method == "agent.prompt" and isinstance((params or {}).get("wait"), dict):
+                timeout_ms = params["wait"].get("timeout_ms", 120000)
+                if type(timeout_ms) is int and 100 <= timeout_ms <= 300000:
+                    # A caller can explicitly wait for the agent to settle.
+                    # The acknowledgement is not due at the ordinary RPC limit.
                     connection.settimeout(max(self.timeout, timeout_ms / 1000.0 + 5.0))
             try:
                 connection.sendall(payload)

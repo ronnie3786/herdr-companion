@@ -18,6 +18,11 @@ struct FirstMateDashboardSummary: Codable, Equatable, Sendable {
     /// First Mate finished its turn and is parked until a person replies,
     /// while the feature status still reads as working (companion ≥ 0.45).
     var awaitingTurn: Bool? = nil
+    var queuedAssignmentCount: Int? = nil
+    var queuedMessageCount: Int? = nil
+    var processingMessageCount: Int? = nil
+    var pendingHumanMessageCount: Int? = nil
+    var followupStages: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
         case currentStageTitle = "current_stage_title", currentStageIndex = "current_stage_index"
@@ -27,6 +32,9 @@ struct FirstMateDashboardSummary: Codable, Equatable, Sendable {
         case assignmentCount = "assignment_count", runningAssignmentCount = "running_assignment_count"
         case activityAt = "activity_at"
         case awaitingTurn = "awaiting_turn"
+        case queuedAssignmentCount = "queued_assignment_count", queuedMessageCount = "queued_message_count"
+        case processingMessageCount = "processing_message_count", pendingHumanMessageCount = "pending_human_message_count"
+        case followupStages = "followup_stages"
     }
 
     static func from(_ snapshot: FirstMateSnapshot) -> Self {
@@ -34,14 +42,21 @@ struct FirstMateDashboardSummary: Codable, Equatable, Sendable {
         let stages = visits.isEmpty ? snapshot.visits : visits
         let latest = snapshot.messages.last { $0.role == "assistant" && $0.isConversation }
         let needsUser = ["awaiting_direction", "blocked"].contains(snapshot.feature.status)
+        let activity = FirstMateActivity(snapshot: snapshot)
+        let currentAgents = snapshot.feature.currentVisitID.map { snapshot.agents(for: $0) } ?? []
         return Self(
             currentStageTitle: snapshot.currentVisit?.title,
             currentStageIndex: stages.firstIndex { $0.id == snapshot.feature.currentVisitID }.map { $0 + 1 },
             stageCount: stages.count, stageCountIsEstimate: true,
             latestMessage: latest?.text, latestMessageAt: latest?.createdAt,
             needsUser: needsUser, needsUserPrompt: needsUser ? latest?.text : nil,
-            assignmentCount: snapshot.assignments.count,
-            runningAssignmentCount: snapshot.assignments.filter { ["running", "starting", "recovering"].contains($0.status) }.count
+            assignmentCount: currentAgents.count,
+            runningAssignmentCount: currentAgents.filter { FirstMateActivity.activeAssignmentStatuses.contains($0.status) }.count,
+            queuedAssignmentCount: currentAgents.filter { $0.status == "queued" }.count,
+            queuedMessageCount: activity.queuedMessages.count,
+            processingMessageCount: activity.processingMessages.count,
+            pendingHumanMessageCount: (activity.queuedMessages + activity.processingMessages).filter { ["user", "human"].contains($0.role) }.count,
+            followupStages: activity.followupStages
         )
     }
 }

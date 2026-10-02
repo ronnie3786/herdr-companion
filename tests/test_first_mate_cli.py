@@ -12,9 +12,10 @@ class Reply:
 
 class FirstMateCLITests(unittest.TestCase):
     def run_cli(self, argv, value=None, stdin='', responses=None):
-        self.requests=[];self.launches=[]
+        self.requests=[];self.launches=[];self.timeouts=[]
         def opener(request, **kwargs):
             self.requests.append(request)
+            self.timeouts.append(kwargs.get("timeout"))
             if responses:
                 for suffix, payload in responses.items():
                     if request.full_url.endswith(suffix):
@@ -23,6 +24,11 @@ class FirstMateCLITests(unittest.TestCase):
         out, err=io.StringIO(),io.StringIO()
         code=cli.main(argv,environ={'HERDR_HARNESS_API_TOKEN':'synthetic-token','HERDR_HARNESS_URL':'https://host.example.test'},stdin=io.StringIO(stdin),stdout=out,stderr=err,opener=opener,launch=lambda *a,**k:self.launches.append(a))
         return code,json.loads(out.getvalue() or err.getvalue())
+
+    def test_reads_allow_time_for_peer_status_and_saved_history(self):
+        code, _ = self.run_cli(['get', 'fmf_sample'])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.timeouts, [90])
 
     def test_send_preserves_stdin_and_request_identity(self):
         code,_=self.run_cli(['send','fmf_sample','--text-file','-','--request-id','stable-send'],'', 'Plan only.\nDo not implement.')

@@ -124,7 +124,7 @@ struct IssueReportClientTests {
         #expect(capabilities.maxTotalAttachmentBytes == 40 * 1024 * 1024)
         #expect(capabilities.publicRepository)
         #expect(IssueReportStubURLProtocol.recordedRequests().map(\.path) == ["/api/v1/issue-reports/capabilities"])
-        #expect(IssueReportStubURLProtocol.recordedRequests().first?.timeout == 15)
+        #expect(IssueReportStubURLProtocol.recordedRequests().first?.timeout == 45)
     }
 
     @Test("Only the issue-report POST gets the long upload timeout")
@@ -133,8 +133,8 @@ struct IssueReportClientTests {
         // 120 s each); a shorter idle timeout invites a duplicate issue.
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/issue-reports", method: "POST") >= 5 * 120)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/issue-reports", method: "POST") == 600)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/issue-reports", method: "GET") == 15)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/issue-reports/capabilities", method: "GET") == 15)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/issue-reports", method: "GET") == 45)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/issue-reports/capabilities", method: "GET") == 45)
     }
 
     // MARK: - Helpers

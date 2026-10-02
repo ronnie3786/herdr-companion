@@ -44,9 +44,12 @@ nothing.
   machine's ID as `machine`. Each call goes to the other companion's
   `POST /api/v1/first-mate/lead/remote` off the runtime loop, so a slow machine
   never holds up this one.
-- **A machine that goes down takes only its own features.** One that does not
-  answer shows as offline in `fm_fleet`, with when it last answered, and is not
-  asked again for 30 seconds. The lead says so and keeps helping with the rest.
+- **A machine that goes down takes only its own features.** A connection failure
+  shows as offline in `fm_fleet`, with when it last answered, and is not asked
+  again for 30 seconds. Peer requests allow 60 seconds by default. A timeout or
+  server error is reported as unavailable activity, without declaring the whole
+  machine offline. The lead says so and keeps helping with the rest. See
+  [activity freshness and request budgets](activity-freshness.md).
 - **Machines it cannot reach** (no credential on its host, or an older
   companion) still come along as a small read-only snapshot the Mac sends with
   each message: label, status, step, the "now" line, unread, and the latest

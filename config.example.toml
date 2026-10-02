@@ -149,6 +149,7 @@ max_workers = 8
 usage_enabled = true
 context_target = 150000
 stall_seconds = 600
+peer_timeout_seconds = 60 # Cross-machine First Mate reads/relays; bounded to 15–300 seconds.
 coordinator_timeout_seconds = 86400 # Inactivity; model output/completed tools renew it.
 coordinator_max_seconds = 604800 # Seven-day absolute ceiling, even with continuous activity.
 # Service-owned checks continue with every client closed. No model polling.

@@ -1,4 +1,4 @@
-# Companion 0.78.1-beta.1
+# Companion 0.79.1-beta.1
 
 Improves smart reply chip reliability in Main Chat, First Mate, and HUD chats. When the skim model proposes options that all fail formatting or source validation, the companion can make one bounded attempt to repair those options while keeping the original useful summary. A repair must still refer to the original offered next step and pass the same source checks. Failed repairs leave the original skim available.
 

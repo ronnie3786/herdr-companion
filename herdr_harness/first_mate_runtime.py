@@ -36,7 +36,7 @@ from .resources import pi_extension_path
 from .workflow_policy import POLICY_VERSION, append_workflow_policy
 from .first_mate_context import FirstMateContext
 from .first_mate_read_cache import AssessmentReadBusy, AssessmentReadCache
-from .first_mate_read_models import feature_summary, stable_verification
+from .first_mate_read_models import activity_presentation, feature_summary, stable_verification
 from .first_mate_git_history import capture_baselines, capture_commits, capture_comparison_baseline, recorded_comparison_baseline
 from .first_mate_link_discovery import FirstMateLinkDiscovery
 from .first_mate_peers import PeerDirectory
@@ -623,8 +623,18 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
         assignment_ids.add(claim_assignment_id)
     assignments = [assignment for assignment in snapshot.get("assignments", [])
                    if assignment.get("id") in assignment_ids]
+    # A long stage can retain more than fifty completed attempts. Keep its
+    # current work visible before spending the bounded status budget on history.
+    active_statuses = {"queued", "dispatching", "running", "waiting_children",
+                       "handoff_pending", "awaiting_ack", "recovering"}
+    assignments = ([assignment for assignment in assignments if assignment.get("status") in active_statuses]
+                   + [assignment for assignment in reversed(assignments) if assignment.get("status") not in active_statuses])
     documents = [document for document in snapshot.get("documents", [])
                  if document.get("assignment_id") in assignment_ids]
+    pending = snapshot.get("pending_messages")
+    if pending is None:
+        pending = [message for message in snapshot.get("messages", [])
+                   if message.get("status") in {"queued", "processing"}]
     return {
         "feature": _pick(feature, ("id", "title", "goal", "status", "revision",
                                      "current_visit_id", "work_item_id")),
@@ -637,6 +647,13 @@ def _coordinator_state(snapshot: dict, claim: dict | None = None) -> dict:
                                 for membership in memberships],
         "assignments": [_agent_assignment(assignment) for assignment in assignments[:50]],
         "assignments_truncated": len(assignments) > 50,
+        "pending_messages": [{**_pick(message, ("id", "role", "status", "created_at")),
+                              "text": str(message.get("text", ""))[:600]}
+                             for message in pending[:20]],
+        "pending_messages_truncated": bool(snapshot.get("pending_messages_truncated")) or len(pending) > 20,
+        "activity": _pick(feature.get("dashboard_summary"), (
+            "running_assignment_count", "queued_assignment_count", "queued_message_count",
+            "processing_message_count", "pending_human_message_count", "followup_stages")),
         "document_references": [_pick(document, ("id", "visit_id", "assignment_id", "title",
                                                      "media_type", "content_hash", "generation",
                                                      "input_revision", "native_session_id"))
@@ -1169,14 +1186,13 @@ class FirstMateRuntime:
     def _coordinator_projection(self, snapshot: dict, claim: dict | None = None) -> dict:
         """Attach bounded requested/actual routing evidence to router status."""
         try:
-            detail = self.snapshot(snapshot["feature"]["id"])
+            detail = self.snapshot(snapshot["feature"]["id"], events="journal")
         except FirstMateError:
             # Keep the pure projection usable for synthetic/offline snapshots.
             return _coordinator_state(snapshot, claim)
-        enriched = {**snapshot, "feature": detail["feature"],
-                    "assignments": detail["assignments"],
-                    "verification_runs": detail.get("verification_runs", snapshot.get("verification_runs", []))}
-        return _coordinator_state(enriched, claim)
+        # Visit membership and queue state must come from the same ledger read
+        # as the feature revision, not the caller's potentially older snapshot.
+        return _coordinator_state(detail, claim)
 
     def _usage_account(self, feature: dict, *, assignments: list[dict] | None = None,
                        jobs: list[dict] | None = None,
@@ -1373,7 +1389,7 @@ class FirstMateRuntime:
             selection = self._policy(board["feature"], kind="coordinator", claim={}).selection()
             board["feature"] = {**board["feature"], "model_selection": selection,
                                 "verification": verification}
-        return board
+        return activity_presentation(board)
 
     def snapshot(self, feature_id: str, events: str = "all") -> dict:
         snapshot = self.store.snapshot(feature_id, events=events)
@@ -1507,7 +1523,7 @@ class FirstMateRuntime:
                 if isinstance(marker_feature.get("usage"), dict):
                     marker_feature["usage"] = {key: value for key, value in marker_feature["usage"].items()
                                                if key != "updated_at"}
-                version = "r1-" + hashlib.sha256(json.dumps(
+                version = "r2-" + hashlib.sha256(json.dumps(
                     [read_version, view, messages, before, marker_feature, sessions, header["has_queued_work"]],
                     sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
                 if version == if_version:
@@ -1530,12 +1546,12 @@ class FirstMateRuntime:
             marker_feature = {key: value for key, value in result["feature"].items() if key != "updated_at"}
             marker_feature["verification"] = stable_verification(marker_feature.get("verification") or {})
             marker_result["feature"] = marker_feature
-            version = "r1-" + hashlib.sha256(json.dumps(
+            version = "r2-" + hashlib.sha256(json.dumps(
                 [read_version, view, messages, before, marker_result],
                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
         if version == if_version:
             return {"version": version, "unchanged": True, "view": view}
-        return {**result, "version": version, "unchanged": False, "view": view}
+        return activity_presentation({**result, "version": version, "unchanged": False, "view": view})
 
     def start(self) -> None:
         with self._mutex:
@@ -2143,7 +2159,7 @@ class FirstMateRuntime:
             metadata = {"workspace_mode": mode, "worktree_path": source, "source_assignment_id": source_assignment,
                         "base_revision": baseline, "model_profile": profile,
                         "model_selection": policy.selection()}
-            prior_baseline = recorded_comparison_baseline(self.store.snapshot(feature["id"]), source_assignment or "project")
+            prior_baseline = recorded_comparison_baseline(self.store.snapshot(feature["id"], events="journal"), source_assignment or "project")
             if prior_baseline is None and source_assignment:
                 prior_baseline = self.store.get_assignment(source_assignment).get("metadata")
             metadata.update(capture_comparison_baseline(source, baseline, self._git, prior=prior_baseline))
@@ -2751,8 +2767,7 @@ class FirstMateRuntime:
                             job["preempt_requested"] = True
                             self._save_job(job)
                     if job["kind"] == "worker":
-                        assignment = next((a for a in self.store.snapshot(feature["id"])["assignments"]
-                                           if a["id"] == job["claim"]["id"]), {})
+                        assignment = self.store.get_assignment(job["claim"]["id"])
                         if assignment.get("status") in {"paused", "cancelled", "superseded"} or (assignment.get("input_revision") != feature["revision"] and not self.store.assignment_is_in_current_visit(assignment["id"])):
                             if not job.get("cancel_requested"):
                                 self._control(job, "abort", "Assignment no longer owns the active plan revision")
@@ -2818,13 +2833,13 @@ class FirstMateRuntime:
                     if feature["id"] not in active_features:
                         claim = self.store.claim_message(feature["id"], self.owner)
                         if claim:
-                            snapshot = self.store.snapshot(feature["id"])
+                            snapshot = self.store.snapshot(feature["id"], events="journal")
                             prompt = self._coordinator_input(snapshot, claim)
                             job = self._new_job(feature, kind="coordinator", prompt=prompt, claim=claim)
                             self._launch(job)
                     if feature["status"] in {"paused", "blocked", "awaiting_direction", "recovering"}:
                         continue
-                    for assignment in self.store.snapshot(feature["id"])["assignments"]:
+                    for assignment in self.store.list_assignments(feature_id=feature["id"]):
                         if worker_count >= self.max_workers:
                             break
                         if assignment["status"] == "queued":
@@ -2919,7 +2934,7 @@ class FirstMateRuntime:
                 continue
             if message["status"] == "processing" and (message["id"], message["owner"]) not in message_claims:
                 try:
-                    snapshot = self.store.snapshot(message["feature_id"])
+                    snapshot = self.store.snapshot(message["feature_id"], events="journal")
                     self._new_job(snapshot["feature"], kind="coordinator", claim=message,
                                   prompt=self._coordinator_input(snapshot, message))
                 except Exception as exc:
@@ -3437,7 +3452,7 @@ class FirstMateRuntime:
         visit_id = (assignment or {}).get("visit_id") or feature.get("current_visit_id")
         visit_title = None
         if visit_id:
-            visit_title = next((visit.get("title") for visit in self.store.snapshot(feature_id)["visits"]
+            visit_title = next((visit.get("title") for visit in self.store.snapshot(feature_id, events="journal")["visits"]
                                 if visit.get("id") == visit_id), None)
         context = CheckpointContext(
             feature_id=feature_id, feature_title=str(feature.get("title") or ""),
@@ -3508,13 +3523,13 @@ class FirstMateRuntime:
                 assignment = self.store.get_assignment(params["assignment_id"])
                 if assignment["feature_id"] != feature_id:
                     raise FirstMateError("Assignment belongs to another feature")
-                detail = self.snapshot(feature_id)
+                detail = self.snapshot(feature_id, events="journal")
                 assignment = next(a for a in detail["assignments"] if a["id"] == assignment["id"])
                 return {"assignment": _agent_assignment(assignment),
                         "document_references": [_pick(d, ("id", "title", "assignment_id", "native_session_id"))
                             for d in detail["documents"] if d.get("assignment_id") == assignment["id"]][-100:]}
             if job["kind"] == "coordinator":
-                snapshot = self.store.snapshot(feature_id)
+                snapshot = self.store.snapshot(feature_id, events="journal")
                 status = self._coordinator_projection(snapshot, claim)
                 status["last_updates"] = [{"sequence": event["sequence"], "type": event["type"],
                                             "summary": event["summary"][:500], "created_at": event["created_at"]}
@@ -3523,7 +3538,7 @@ class FirstMateRuntime:
             # Workers and advisors need the same validated requested/actual model
             # evidence as the public runtime snapshot, not frozen queued metadata.
             # Build that usage/session projection once for this status request.
-            snapshot = self.snapshot(feature_id)
+            snapshot = self.snapshot(feature_id, events="journal")
             # Workers used to receive every historical Document body, assignment
             # metadata and verification row. Repeated status reads alone could
             # trigger the next handoff before a successor performed useful work.
@@ -3624,14 +3639,14 @@ class FirstMateRuntime:
                 else:
                     if params.get("followup_stages") or not feature.get("current_visit_id"):
                         raise FirstMateError("System updates cannot authorize more stages", code="human_direction_required")
-                    prior = next(v for v in self.store.snapshot(feature_id)["visits"] if v["id"] == feature["current_visit_id"])
+                    prior = next(v for v in self.store.snapshot(feature_id, events="journal")["visits"] if v["id"] == feature["current_visit_id"])
                     authorization_id, followups = prior["authorization_message_id"], []
                 return self.store.start_visit(feature_id, params["stage_key"], params["title"], request_id,
                                               feature["revision"], authorization_id, followup_stages=followups,
-                                              git_baselines=capture_baselines(self.store.snapshot(feature_id), self._git))
+                                              git_baselines=capture_baselines(self.store.snapshot(feature_id, events="journal"), self._git))
             if action == "fm_delegate":
                 if not feature.get("current_visit_id") or feature["status"] != "running":
-                    visits = self.store.snapshot(feature_id)["visits"]
+                    visits = self.store.snapshot(feature_id, events="journal")["visits"]
                     current = next((v for v in visits if v["id"] == feature.get("current_visit_id")), {})
                     followups = current.get("followup_stages", []) if current.get("status") == "completed" else []
                     actions = ([{"tool": "fm_begin_stage", "stage_key": followups[0], "requires_human_direction": False}]
@@ -3784,7 +3799,7 @@ class FirstMateRuntime:
                             "The checkpoint is what the human reads: state the result, the deliverable (PR or Document ID), "
                             "the verification verdict, and any decision needed. Leave detail in Documents.",
                             code="report_too_long")
-                for assignment in self.store.snapshot(feature_id)["assignments"]:
+                for assignment in self.store.list_assignments(feature_id=feature_id):
                     metadata = assignment.get("metadata", {})
                     if self.store.assignment_is_in_current_visit(assignment["id"]) and metadata.get("expected_code_revision"):
                         if self._git(metadata["worktree_path"], "rev-parse", "HEAD") != metadata["expected_code_revision"]:
@@ -3793,7 +3808,7 @@ class FirstMateRuntime:
                         if execution["kind"] == "worker" and execution["claim"]["id"] == assignment["id"] and _locked(self._job_dir(execution) / "writer.lock"):
                             raise DeferredOperation()
                 selection, verification = self._completion_verification(feature_id, params.get("verification_run_ids"))
-                snapshot = self.store.snapshot(feature_id)
+                snapshot = self.store.snapshot(feature_id, events="journal")
                 visit = next(v for v in snapshot["visits"] if v["id"] == feature["current_visit_id"])
                 git_evidence = visit.get("git_evidence", []) if replay else capture_commits(snapshot, visit, self._git)
                 return self.store.complete_visit(feature["current_visit_id"], params["summary"], params["recommendation"], request_id,
@@ -3829,7 +3844,7 @@ class FirstMateRuntime:
                                     raise FirstMateError("Cannot carry completed code evidence from a dirty isolated worktree. Preserve all edits and revise that assignment instead; never stash or clean the human checkout.")
                                 carry[assignment["id"]] = self._git(path, "rev-parse", "HEAD")
                     _write_json(prepared_path, carry)
-                snapshot = self.store.snapshot(feature_id)
+                snapshot = self.store.snapshot(feature_id, events="journal")
                 boundary = capture_baselines(snapshot, self._git)
                 prior = next((v for v in snapshot["visits"] if v["id"] == feature.get("current_visit_id")), None)
                 prior_git_evidence = capture_commits(snapshot, prior, self._git, end_baselines=boundary) if prior else None
@@ -3942,7 +3957,7 @@ class FirstMateRuntime:
         feature = self.store.get_feature(job["feature_id"])
         if feature["status"] in {"paused", "cancelled", "completed", "blocked", "recovering"}:
             return blocked("The feature's current state does not permit automatic continuation.")
-        snapshot = self.store.snapshot(feature["id"])
+        snapshot = self.store.snapshot(feature["id"], events="journal")
         if any(a.get("metadata", {}).get("human_gate", {}).get("status") == "pending"
                for a in snapshot["assignments"]):
             return blocked("A recorded human decision is pending.")
@@ -4184,7 +4199,7 @@ class FirstMateRuntime:
                 or context["tokens"] < context["handoff_target_tokens"]
                 or context["native_session_id"] != job.get("native_session_id")):
             return
-        snapshot = self.store.snapshot(job["feature_id"])
+        snapshot = self.store.snapshot(job["feature_id"], events="journal")
         if job.get("lead"):
             checkpoint = self._lead_checkpoint(job, snapshot)
         else:
@@ -4237,7 +4252,7 @@ class FirstMateRuntime:
                 checkpoint["local_commands_to_check"] = job["recovery_local_effects"]
                 _write_json(path, checkpoint)
             return checkpoint
-        snapshot = self.store.snapshot(job["feature_id"])
+        snapshot = self.store.snapshot(job["feature_id"], events="journal")
         handoffs = [h for h in snapshot["handoffs"] if h["assignment_id"] == job["claim"]["id"]
                     and h["predecessor_generation"] <= job["claim"]["generation"]]
         latest = max(handoffs, key=lambda h: h["predecessor_generation"], default=None)

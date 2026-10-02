@@ -1896,16 +1896,21 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
         if path == "/api/v1/response-audio/captioned-speech" { return 180 }
-        if method == "POST", path.hasPrefix("/api/v1/first-mate/") { return 24 * 60 * 60 }
+        if path.hasPrefix("/api/v1/first-mate/") {
+            // First Mate reads include persisted plans, queues and peer results.
+            // Leave headroom beyond the companion's 60-second peer budget.
+            if path.hasSuffix("/attachments"), method == "POST" { return 90 }
+            return method == "POST" ? 24 * 60 * 60 : 90
+        }
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/content") { return 600 }
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/documents") && method == "POST" { return 90 }
         if path.hasPrefix("/api/v1/pr-reviews") { return 30 }
         if path.hasPrefix("/api/v1/watchers") { return path.contains("/builder/") && method == "POST" ? 90 : 30 }
         if path == "/api/v1/health" || path == "/api/v1/network" || path == "/api/v1/config/machines" {
-            return 8
+            return 30
         }
         if path == "/api/v1/response-audio/capabilities" {
-            return 8
+            return 30
         }
         if path.hasPrefix("/api/v1/agent-profiles") {
             return 30
@@ -1937,13 +1942,13 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
             return 150
         }
         if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") {
-            return 30
+            return 45
         }
         if path.hasPrefix("/api/v1/result-artifacts/") && path.hasSuffix("/content") {
             return 10 * 60
         }
         if method != "GET", ["/send-text", "/send-keys", "/run"].contains(where: path.hasSuffix) {
-            return 5
+            return 45
         }
         if method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream")) {
             return 24 * 60 * 60
@@ -1967,7 +1972,9 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
             // seconds respectively. The client must outlive the upstream call.
             return 30
         }
-        return 15
+        // The companion's native/Pi request may take 30 seconds. Keep its
+        // result observable before a user retries a possibly accepted command.
+        return 45
     }
 
     private static func isValidResultArtifactID(_ id: String) -> Bool {

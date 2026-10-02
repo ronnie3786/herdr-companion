@@ -18,25 +18,37 @@ struct HerdrAPIClientTimeoutTests {
     @Test func uploadsAndStreamsKeepTheirLongerBudgets() {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w1/attachments", method: "POST") == 90)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/voice/transcriptions", method: "POST") == 120)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/response-audio/capabilities", method: "GET") == 8)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/response-audio/capabilities", method: "GET") == 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/response-audio/prepare", method: "POST") == 150)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/response-audio/speech", method: "POST") == 150)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/cleanup/runs/clr_1/apply", method: "POST") == 15)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/cleanup/runs/clr_1/apply", method: "POST") == 45)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/stream", method: "GET") == 24 * 60 * 60)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/events", method: "GET") == 24 * 60 * 60)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces", method: "GET") == 15)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces", method: "GET") == 45)
     }
 
-    @Test func firstMateWritesAllowDayLongRequestsWithoutSlowingPolling() {
+    @Test func firstMateWritesAndReadsHaveSeparateBudgets() {
         for path in ["/api/v1/first-mate/features", "/api/v1/first-mate/features/f1/messages", "/api/v1/first-mate/features/f1/actions"] {
             #expect(HerdrAPIClient.timeoutInterval(path: path, method: "POST") == 86_400)
-            #expect(HerdrAPIClient.timeoutInterval(path: path, method: "GET") == 15)
+            #expect(HerdrAPIClient.timeoutInterval(path: path, method: "GET") == 90)
         }
     }
 
-    @Test func terminalMutationsFailFast() {
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-text", method: "POST") == 5)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-keys", method: "POST") == 5)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/run", method: "POST") == 5)
+    @Test func terminalMutationsOutliveNativeCommandBudget() {
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-text", method: "POST") == 45)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/send-keys", method: "POST") == 45)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p1/run", method: "POST") == 45)
+    }
+
+    @Test func statusReadsOutlivePeerAndNativeRequests() {
+        for path in ["/api/v1/first-mate/features", "/api/v1/first-mate/features/f/overview",
+                     "/api/v1/first-mate/features/events", "/api/v1/first-mate/lead", "/api/v1/first-mate/sessions/s"] {
+            #expect(HerdrAPIClient.timeoutInterval(path: path, method: "GET") == 90)
+        }
+        for path in ["/api/v1/health", "/api/v1/network"] {
+            #expect(HerdrAPIClient.timeoutInterval(path: path, method: "GET") == 30)
+        }
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p/pi/prompt", method: "POST") > 30)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/features/f/messages", method: "POST") == 86_400)
     }
 }

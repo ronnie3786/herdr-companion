@@ -26,6 +26,10 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
     /// mistake a journal-only snapshot for an older one.
     var eventCursor: Int? = nil
     var hasQueuedWork: Bool? = nil
+    /// Independent of the paginated conversation and present on compact reads.
+    /// Nil means an older companion; an empty array explicitly clears the queue.
+    var pendingMessages: [FirstMateMessage]? = nil
+    var pendingMessagesTruncated: Bool? = nil
 
     /// The newest event sequence this snapshot reflects.
     var latestEventSequence: Int { eventCursor ?? events.map(\.sequence).max() ?? 0 }
@@ -52,6 +56,7 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         case runtimeHealth = "runtime_health"
         case eventCursor = "event_cursor"
         case hasQueuedWork = "has_queued_work"
+        case pendingMessages = "pending_messages", pendingMessagesTruncated = "pending_messages_truncated"
     }
 
     init(from decoder: Decoder) throws {
@@ -73,6 +78,8 @@ struct FirstMateSnapshot: Codable, Equatable, Sendable {
         runtimeHealth = try c.decodeIfPresent(FirstMateRuntimeHealth.self, forKey: .runtimeHealth)
         eventCursor = try c.decodeIfPresent(Int.self, forKey: .eventCursor)
         hasQueuedWork = try c.decodeIfPresent(Bool.self, forKey: .hasQueuedWork)
+        pendingMessages = try c.decodeIfPresent([FirstMateMessage].self, forKey: .pendingMessages)
+        pendingMessagesTruncated = try c.decodeIfPresent(Bool.self, forKey: .pendingMessagesTruncated)
     }
 
     var recoveryNeedsDirection: Bool {

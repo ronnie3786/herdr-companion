@@ -50,6 +50,16 @@ struct FirstMateInspectorView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let snapshot = resolved {
+                        if let readError {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("Showing last received activity", systemImage: "exclamationmark.circle")
+                                    .font(.subheadline.weight(.semibold))
+                                Text(readError).font(.caption).textSelection(.enabled)
+                                Button("Retry now") { Task { await refresh() } }
+                            }
+                            .foregroundStyle(palette.secondaryText)
+                            .accessibilityIdentifier("first-mate-stale-activity")
+                        }
                         switch store.inspector {
                         case .overview: FirstMateOverviewView(store: store, snapshot: snapshot)
                         case .agents: FirstMateAgentsView(store: store, snapshot: snapshot)
@@ -75,8 +85,15 @@ struct FirstMateInspectorView: View {
                     .herdrFont(size: 12)
                     .foregroundStyle(palette.iconTint)
                     .accessibilityHidden(true)
-                Text(store.isDemo ? "Synthetic data · no agents launched" : readError != nil ? "Connection needs attention" : resolved == nil ? "Loading from companion…" : "Synced with companion")
-                    .lineLimit(1)
+                if store.isDemo {
+                    Text("Synthetic data · no agents launched")
+                } else if readError != nil {
+                    Text("Last received activity")
+                } else if let featureID, let checkedAt = store.inspectorCheckedAt[store.inspectorKey(featureID: featureID, view: store.inspectorReadView)] {
+                    Text("Checked \(checkedAt, style: .relative) ago")
+                } else {
+                    Text(resolved == nil ? "Loading from companion…" : "Refreshing activity…")
+                }
                 Spacer()
                 Text(resolved.map { "Revision \($0.feature.revision)" } ?? "")
                     .monospacedDigit()

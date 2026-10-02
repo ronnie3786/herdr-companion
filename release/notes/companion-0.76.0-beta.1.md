@@ -2,6 +2,8 @@
 
 Adds configurable PR Review Agents, team selection, isolated reviewer runs, retained raw reports, and automatic consolidation tied to the selected reviewers and PR revision. Reviewer profiles and copied skill packages remain in the operator's private state. A generic Comprehensive reviewer is included; it uses the execution host's default Pi model.
 
+Watchers script runs now wait for terminated background processes to exit before finishing, keeping their execution locks accurate during cleanup.
+
 Use Mac **0.89.0-beta.1** or later for the agent picker, reviewer cards, and profile editor. Older clients keep the legacy skill API. Existing review and agent-role records migrate additively.
 
 Build and install this wheel in a new versioned Python 3.11+ runtime, update the matching installed CLIs and Pi package paths, preserve private configuration and state, and restart the affected companion services using the server update procedure in the README. Retain the previous runtime and service definitions for rollback. Mac updates do not install this package.

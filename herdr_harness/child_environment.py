@@ -7,6 +7,9 @@ settings are not propagated into agent processes.
 from __future__ import annotations
 
 from typing import Mapping
+from pathlib import Path
+import os
+import sys
 
 _AGENT_SETTINGS = frozenset({
     "HERDR_HARNESS_API_TOKEN", "HERDR_HARNESS_API_TOKEN_FILE",
@@ -28,6 +31,11 @@ def agent_environment(environment: Mapping[str, str], *, integration: bool = Tru
         name: value for name, value in environment.items()
         if not name.startswith("HERDR_") or (integration and name in _AGENT_SETTINGS)
     }
+    if integration:
+        # Installed companion wrappers live beside this interpreter. Preserve
+        # their environment instead of resolving unrelated user PATH binaries.
+        wrapper_bin = str(Path(sys.executable).parent)
+        result["PATH"] = os.pathsep.join(dict.fromkeys([wrapper_bin, *(result.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin").split(os.pathsep)]))
     if integration and not result.get("HERDR_HARNESS_URL"):
         port = environment.get("HERDR_HARNESS_PORT", "9092")
         try:

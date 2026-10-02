@@ -127,7 +127,7 @@ struct ShellNavigationHistoryTests {
         #expect(HerdrDetailScope.pickerSelection(for: .attention) == .attention)
         #expect(
             HerdrDetailScope.pickerCases == HerdrDetailScope.allCases.filter {
-                $0 != .firstMate && $0 != .prReview && $0 != .dashboard && $0 != .agentBoard
+                $0 != .firstMate && $0 != .prReview && $0 != .watchers && $0 != .dashboard && $0 != .agentBoard
             }
         )
 
@@ -154,6 +154,27 @@ struct ShellNavigationHistoryTests {
 
             #expect(shell.detailScope == .prReview)
             #expect(shell.history.current == .prReview)
+        }
+    }
+
+    @Test("Watchers uses the sidebar and restores its navigation history")
+    func watchersUsesSidebarAndRecordsNavigation() throws {
+        #expect(!HerdrDetailScope.pickerCases.contains(.watchers))
+        #expect(HerdrDetailScope.pickerSelection(for: .watchers) == nil)
+
+        try withModel { model, shell, firstPane, _, _, _ in
+            shell.openPane(id: firstPane.id, model: model)
+            shell.show(.watchers, model: model)
+
+            #expect(shell.detailScope == .watchers)
+            #expect(shell.currentDestination(for: model) == .watchers)
+            #expect(shell.history.current == .watchers)
+            #expect(shell.goBack(model: model))
+            #expect(shell.detailScope == .session)
+            #expect(model.selectedPaneID == firstPane.id)
+            #expect(shell.goForward(model: model))
+            #expect(shell.detailScope == .watchers)
+            #expect(shell.history.current == .watchers)
         }
     }
 

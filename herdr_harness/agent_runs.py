@@ -1485,7 +1485,7 @@ class AgentRunManager:
                     "--herdr-parent-session-id",
                     str(run["responseBriefParentSessionId"]),
                 ])
-            if profile == "hud-chat-v1":
+            if profile in {"hud-chat-v1", "watcher-builder-v1"}:
                 # Normal Pi discovery and tool access; preserve Pi's configured
                 # project trust decisions instead of forcing trust or denial.
                 index = command.index("--tools")

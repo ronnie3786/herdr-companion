@@ -1,4 +1,18 @@
-# Next macOS update — unreleased
+# Next macOS update, unreleased
+
+## Watchers
+
+- Open **Watchers** below **PR Review** in the sidebar, or press **Command-9**.
+  Original avatars and smart-chip descriptions sit in a responsive card grid
+  using Herdr's purple Glass and Haze appearance.
+- See what is on watch, working, resting or needs you, with real step progress,
+  the next routine to wake, past runs, logs and a separate Watcher inbox.
+- **New watcher** opens a focused agent chat with a live draft and **How it runs**
+  preview. Review scripts and next fires, or use the manual editor, before
+  clicking **Create watcher**. Machines retain their own schedules and state.
+- Requires the matching companion with Watchers enabled. The Mac updater does
+  not install the companion or migrate Cronboard. Older and offline hosts show
+  their availability instead of accepting changes they cannot apply.
 
 ## First Mate inspector
 

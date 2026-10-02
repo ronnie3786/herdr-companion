@@ -1,9 +1,9 @@
-# Companion 0.75.0 beta 1
+# Companion 0.75.0 preview
 
-Adds configurable PR Review Agents, team selection, isolated reviewer runs, retained raw reports, and automatic consolidation tied to the selected reviewers and PR revision. Reviewer profiles and copied skill packages remain in the operator's private state. A generic Comprehensive reviewer is included; it uses the execution host's default Pi model.
+Adds the optional Watchers scheduler, authenticated API and `herdr-watchers` CLI. Each machine owns its timezone-aware schedules, revisioned scripts, detached runs, gate cursors, logs and Watcher inbox. The service supports restart recovery, overlap protection, retention and request receipts. It works without an open Mac app.
 
-Use Mac **0.88.0-beta.1** or later for the agent picker, reviewer cards, and profile editor. Older clients keep the legacy skill API. Existing review and agent-role records migrate additively.
+Agents can discover the schema, examples, assets and smart-chip syntax, create drafts, ask for clarification, and stage edits through the focused Watcher builder. Activation remains the person's review step. This version executes scripts, gates and inbox delivery; agent and external delivery steps are draft-only.
 
-Build and install this wheel in a new versioned Python 3.11+ runtime, update the matching installed CLIs and Pi package paths, preserve private configuration and state, and restart the affected companion services using the server update procedure in the README. Retain the previous runtime and service definitions for rollback. Mac updates do not install this package.
+Cronboard import has a nonexecuting preview, all-or-nothing imports, and explicit cutover and rollback commands. Confirmed enabled jobs arrive resting; disabled jobs stay as drafts. Import never changes Cronboard itself. Review scripts before execution: a Watcher dry run still performs a script's external effects.
 
-After updating, check `pr-review-agents-v1` in the authenticated PR Review capabilities and Agent Roles responses. In the Mac app, open **Settings → Agent Roles → PR Review Agents**, then select a reviewer when starting a PR review.
+Install this wheel and its matching CLIs separately from the Mac app, following the normal backup, hash verification, versioned-runtime and service-upgrade procedure. Python 3.11 or newer is required. Configure `HERDR_WATCHERS_ENABLED=1` in the selected machine's private environment, use a supervisor that restarts the companion, and check `herdr-watchers doctor`. Existing APIs remain compatible and Watchers is disabled by default. Mac 0.88.0 beta 1 adds the native Watchers interface. The app updater does not deploy server packages or migrate jobs. See `docs/watchers.md` for setup and migration.

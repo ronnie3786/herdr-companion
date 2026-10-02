@@ -21,6 +21,7 @@ RESTRICTED_AGENT_PROFILES = frozenset({
 })
 
 TOPICS = {
+    "watchers": ("Scheduled routines, smart chips, assets, drafts and human activation", "watchers.md"),
     "overview": ("Herdr, Pi, Companion, surfaces, limits, and upgrades", "overview.md"),
     "control": ("Capability-driven discovery and typed app/resource control", "control.md"),
     "first-mate": ("First Mate roles, typed self-management, and human gates", "first-mate.md"),

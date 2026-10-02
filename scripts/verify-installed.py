@@ -41,7 +41,25 @@ def main():
         docs_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-docs' and e.value == 'herdr_harness.agent_docs:main' for e in eps); print('ok')")
         assert docs_entry.strip() == "ok"
         docs_cli = json.loads(run("import json, subprocess, sys; from pathlib import Path; cwd=Path.cwd(); empty=not any(cwd.iterdir()); exe=Path(sys.executable).with_name('herdr-docs'); help_text=subprocess.check_output([str(exe),'--help'], cwd=cwd, text=True); listing=subprocess.check_output([str(exe),'list'], cwd=cwd, text=True); topic=subprocess.check_output([str(exe),'read','overview'], cwd=cwd, text=True); first_mate=subprocess.check_output([str(exe),'read','first-mate'], cwd=cwd, text=True); first_mate_path=Path(subprocess.check_output([str(exe),'path','first-mate'], cwd=cwd, text=True).strip()); print(json.dumps({'empty': empty, 'help': 'Read Herdr Companion agent references offline' in help_text, 'topics': len(json.loads(listing)['topics']), 'overview': topic.startswith('# Herdr Companion agent overview'), 'firstMate': first_mate.startswith('# First Mate agent reference'), 'firstMatePath': first_mate_path.is_absolute() and first_mate_path.is_file()}))"))
-        assert all(docs_cli.values()) and docs_cli["topics"] == 4, docs_cli
+        assert all(docs_cli.values()) and docs_cli["topics"] == 5, docs_cli
+        watchers_install = run("""
+import json, subprocess, sys
+from pathlib import Path
+from herdr_harness.resources import pi_extension_path
+from herdr_harness.agent_docs import topic_path
+from herdr_harness.watchers.validation import validate_definition
+from herdr_harness.watchers.runner import main
+exe = Path(sys.executable).with_name('herdr-watchers')
+schema = json.loads(subprocess.check_output([str(exe), 'schema'], text=True))
+example = json.loads(subprocess.check_output([str(exe), 'example'], text=True))
+validate_definition(example['definition'])
+assert len(schema['schema']['assets']['characters']) == 20
+assert len(schema['schema']['assets']['instruments']) == 8
+assert topic_path('watchers').is_file()
+subprocess.check_output([sys.executable, '-P', '-m', 'herdr_harness.watchers.runner', '--help'])
+print('ok')
+""")
+        assert watchers_install.strip() == "ok", watchers_install
         first_mate = json.loads(run("""
 import json
 from pathlib import Path

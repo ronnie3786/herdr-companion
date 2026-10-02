@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import plistlib
@@ -11,6 +12,8 @@ import re
 import shutil
 import stat
 import sys
+import tomllib
+from xml.parsers.expat import ExpatError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -52,6 +55,91 @@ def _raw_sha_strings(path: Path) -> list[str]:
     except OSError:
         return []
     return [match.group().decode("ascii") for match in RAW_REVISION_RE.finditer(content)]
+
+
+def watcher_runtime_references(home: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Read only the run manifests whose worker locks are still owned.
+
+    Include standard state, explicit environment paths, and roots in private
+    configuration and launch agents, so a detached worker protects its revision
+    even after the companion launcher has switched to a newer revision.
+    """
+    roots = {home / '.local/share/herdr-companion/watchers'}
+    configs = {home / '.config/herdr-companion/config.toml'}
+    references, warnings = [], []
+
+    def path(value, base=home):
+        if not isinstance(value, str) or not value:
+            return None
+        if value == '~' or value.startswith('~/'):
+            return home / value[2:] if value != '~' else home
+        candidate = Path(value)
+        return candidate if candidate.is_absolute() else base / candidate
+
+    def environment(values, base=home):
+        if not isinstance(values, dict):
+            return
+        for key, suffix in (('HERDR_HARNESS_WATCHERS_ROOT', ''), ('HERDR_STATE_DIR', 'watchers')):
+            root = path(values.get(key), base)
+            if root:
+                roots.add(root / suffix if suffix else root)
+        configured = path(values.get('HERDR_CONFIG'), base)
+        if configured:
+            configs.add(configured)
+
+    environment(dict(os.environ))
+    agents = home / 'Library/LaunchAgents'
+    if agents.is_dir():
+        for agent in agents.glob('*.plist'):
+            try:
+                with agent.open('rb') as handle:
+                    document = plistlib.load(handle)
+                if isinstance(document, dict):
+                    environment(document.get('EnvironmentVariables', {}))
+            except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
+                pass  # Launcher parsing already reports these warnings.
+    for config in list(configs):
+        if not config.is_file():
+            continue
+        try:
+            with config.open('rb') as handle:
+                document = tomllib.load(handle)
+            sections = [document, *document.get('machines', {}).values()]
+            for section in sections:
+                if not isinstance(section, dict):
+                    continue
+                environment(section.get('environment', {}), config.parent)
+                root = path(section.get('watchers', {}).get('root'), config.parent)
+                state = path(section.get('server', {}).get('state_dir'), config.parent)
+                if root:
+                    roots.add(root)
+                if state:
+                    roots.add(state / 'watchers')
+        except (OSError, ValueError, AttributeError) as exc:
+            warnings.append({'file': str(config), 'problem': 'Could not inspect Watcher runtime references: ' + type(exc).__name__})
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for lock in root.glob('*/runs/*/runner.lock'):
+            try:
+                fd = os.open(lock, os.O_RDWR)
+            except OSError:
+                continue
+            try:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    manifest = lock.parent / 'run.json'
+                    try:
+                        document = json.loads(manifest.read_text(encoding='utf-8'))
+                        if isinstance(document.get('runtime_path'), str):
+                            references.append(document['runtime_path'])
+                    except (OSError, ValueError, AttributeError):
+                        references.extend(_raw_sha_strings(manifest))
+                        warnings.append({'file': str(manifest), 'problem': 'Live Watcher runner has an unreadable runtime manifest'})
+            finally:
+                os.close(fd)
+    return references, warnings
 
 
 def reference_strings(home: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -107,6 +195,9 @@ def reference_strings(home: Path) -> tuple[list[str], list[dict[str, str]]]:
         except Exception as exc:
             found.extend(_raw_sha_strings(launcher))
             warnings.append({"file": str(launcher), "problem": str(exc) or type(exc).__name__})
+    watcher_references, watcher_warnings = watcher_runtime_references(home)
+    found.extend(watcher_references)
+    warnings.extend(watcher_warnings)
     return found, warnings
 
 

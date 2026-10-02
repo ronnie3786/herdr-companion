@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import io
 import json
 import os
@@ -33,6 +34,39 @@ class PruneCompanionRuntimesTests(unittest.TestCase):
         if mtime is not None:
             os.utime(path, (mtime, mtime))
         return path
+
+    def test_live_watcher_runner_keeps_previous_runtime_after_launcher_upgrade(self):
+        previous, current = revision('a', '1'), revision('b', '2')
+        self.runtime(previous)
+        self.runtime(current)
+        scripts = self.home / '.local/bin'
+        scripts.mkdir(parents=True)
+        (scripts / 'herdr-harness').write_text(current)
+        run = self.home / '.local/share/herdr-companion/watchers/wat_test/runs/wrun_test'
+        run.mkdir(parents=True)
+        (run / 'run.json').write_text(json.dumps({'runtime_path': str(self.root / previous)}))
+        with (run / 'runner.lock').open('w') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = prune.prune(self.root, self.home, 0, apply=True)
+            self.assertEqual(result['inUse'], sorted([previous, current]))
+            self.assertTrue((self.root / previous).exists())
+        result = prune.prune(self.root, self.home, 0, apply=True)
+        self.assertEqual(result['removed'], [previous])
+        self.assertFalse((self.root / previous).exists())
+
+    def test_private_configuration_custom_watcher_root_is_checked(self):
+        previous = revision('a', '1')
+        self.runtime(previous)
+        custom = self.base / 'custom-watchers'
+        run = custom / 'wat_test/runs/wrun_test'
+        run.mkdir(parents=True)
+        (run / 'run.json').write_text(json.dumps({'runtime_path': str(self.root / previous)}))
+        config = self.home / '.config/herdr-companion/config.toml'
+        config.parent.mkdir(parents=True)
+        config.write_text('[watchers]\nroot = ' + json.dumps(str(custom)) + '\n')
+        with (run / 'runner.lock').open('w') as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(prune.prune(self.root, self.home, 0, apply=False)['inUse'], [previous])
 
     def test_detects_references_from_every_supported_source(self):
         arguments = revision("a", "1")

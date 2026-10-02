@@ -1,5 +1,24 @@
 # Next companion update, unreleased
 
+## Watchers
+
+- Adds the optional `watchers-v1` API, disabled until `HERDR_WATCHERS_ENABLED=1`.
+  Schedules support intervals, daily times, cron and one-time tasks in IANA
+  timezones, with daylight-saving handling and bounded next-fire calculations.
+- Private definitions, script revisions, run history and Watcher inbox results
+  survive restarts. Detached script workers, checks, overlap control, catch-up,
+  cancellation, liveness checks and retention work while the Mac app is closed.
+- `herdr-watchers` provides schema and asset discovery, draft/script editing,
+  non-executing schedule and Cronboard import previews, history, inbox, bundles,
+  and doctor. Confirmed Cronboard imports arrive resting and never change the
+  original jobs. Cutover and rollback remain explicit operator actions.
+- A focused skills-enabled Watchers agent builder supplies the feature context,
+  asks about unclear requirements and saves drafts for the person to activate.
+  Main-token activation records are an audit convention, not scoped security.
+- Install and restart this companion package separately from the signed Mac app
+  update. See `docs/watchers.md` for compatibility, private configuration and
+  migration instructions.
+
 ## First Mate simulator checkpoints (SimPortal)
 
 - Adds `first-mate-simulator-previews-v1`, advertised by `GET /api/v1` and

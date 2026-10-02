@@ -106,7 +106,7 @@ class HookSelectionTests(SkimFixture, unittest.TestCase):
         key = self.skim_row(long_reply["id"])
         self.assertEqual((key["format"], key["prompt_version"], key["segmenter_version"], key["skim_version"],
                           key["model"], key["thinking"]),
-                         ("breath_balanced", "skim-v5", 1, 1, "synthetic-provider/fast-model", "low"))
+                         ("breath_balanced", "skim-v6", 1, 1, "synthetic-provider/fast-model", "low"))
 
     def test_background_turns_and_disabled_skims_record_nothing(self):
         self.service(self.manager(), enabled=False)
@@ -142,7 +142,7 @@ class ProjectionTests(SkimFixture, unittest.TestCase):
         reply = self.reply()
         board = self.store.board(self.feature_id)
         message = next(m for m in board["messages"] if m["id"] == reply["id"])
-        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_balanced", "prompt_version": "skim-v5",
+        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_balanced", "prompt_version": "skim-v6",
                                            "segmenter_version": 1, "skim_version": 1})
         pending_version = board["version"]
         self.assertTrue(self.store.board(self.feature_id, if_version=pending_version)["unchanged"])

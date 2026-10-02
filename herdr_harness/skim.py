@@ -24,7 +24,7 @@ from typing import Any, Iterable, Mapping
 
 SEGMENTER_VERSION = 1
 SKIM_VERSION = 1
-PROMPT_VERSION = "skim-v5"
+PROMPT_VERSION = "skim-v6"
 DEFAULT_FORMAT = "breath_balanced"
 
 # ECMAScript `\s`: WhiteSpace plus LineTerminator. Python's `\s` differs (it
@@ -620,6 +620,8 @@ def parse_markup(raw: Any, *, final: bool = True) -> tuple[dict, list[str]]:
                 fields = [js_trim(part) for part in value.split("|")]
                 if len(fields) == 3:
                     parsed.setdefault("actions", []).append(dict(zip(("label", "explanation", "refs"), fields)))
+                else:
+                    notes.append("action_shape")
                 last = None
             elif key == "drawer":
                 fields = [js_trim(part) for part in value.split("|")]
@@ -738,6 +740,9 @@ def normalize(parsed: Any, reply: ReplyDocument, *, voice: str = "buddy",
     def warn(code: str, message: str, level: str = "warn") -> None:
         warnings.append({"level": level, "code": code, "message": message})
 
+    for code in ACTION_REPAIR_WARNINGS:
+        if code in notes:
+            _warn_action(warnings, code)
     if "continuation" in notes:
         warn("continuation", "Joined a wrapped line onto the line before it.", "info")
     if "unlabeled_line" in notes or "unlabeled_headline" in notes:
@@ -750,7 +755,7 @@ def normalize(parsed: Any, reply: ReplyDocument, *, voice: str = "buddy",
     version = _get(parsed, "skim")
     if not (isinstance(version, (int, float)) and not isinstance(version, bool) and version == SKIM_VERSION):
         warn("version", f'Expected "skim": 1, got {_js_json(version)}.', "info")
-    extra = [key for key in parsed if key not in {"skim", "status", "headline", "blocks", "drawers"}]
+    extra = [key for key in parsed if key not in {"skim", "status", "headline", "blocks", "drawers", "actions"}]
     if extra:
         warn("unknown_keys", f"Ignored keys: {', '.join(extra)}.", "info")
 
@@ -932,7 +937,7 @@ def normalize(parsed: Any, reply: ReplyDocument, *, voice: str = "buddy",
         "drawers": drawers,
         "rest": {"refs": uncovered},
         "anchors": anchors,
-        **({"actions": normalize_actions(parsed.get("actions"), reply, blocks)}
+        **({"actions": normalize_actions(parsed.get("actions"), reply, blocks, warnings=warnings)}
            if isinstance(parsed, dict) and "actions" in parsed else {}),
         "stats": {
             "sourceWords": source_words,
@@ -979,13 +984,30 @@ def _is_followup_sentence(sentence: str) -> bool:
         r"(?!(?:not|never|already|confirm|see|tell)\b)\S", offer))
 
 
-def normalize_actions(raw: Any, reply: ReplyDocument, blocks: list[dict]) -> list[dict]:
-    """Optional reply buttons are bounded, plain text, and grounded in source blocks.
+# Fixed codes carry no model output or source text into diagnostics.
+_ACTION_WARNINGS = {
+    "action_shape": "Omitted a reply option with an invalid shape.",
+    "action_label": "Omitted a reply option with an invalid label.",
+    "action_explanation": "Omitted a reply option with an invalid explanation.",
+    "action_refs": "Omitted a reply option without valid offer references.",
+}
+ACTION_REPAIR_WARNINGS = frozenset(_ACTION_WARNINGS)
 
-    A malformed option is dropped without sacrificing an otherwise useful skim.
-    Older documents have no actions, and legacy `reply` lines stay non-actionable.
-    """
-    if not isinstance(raw, list) or not any(block["kind"] in {"ask", "next"} for block in blocks):
+
+def _warn_action(warnings: list[dict] | None, code: str) -> None:
+    if warnings is not None and not any(warning["code"] == code for warning in warnings):
+        warnings.append({"level": "info", "code": code, "message": _ACTION_WARNINGS[code]})
+
+
+def normalize_actions(raw: Any, reply: ReplyDocument, blocks: list[dict], *,
+                      warnings: list[dict] | None = None) -> list[dict]:
+    """Drop malformed options while retaining the useful skim and fixed diagnostics."""
+    if not any(block["kind"] in {"ask", "next"} for block in blocks):
+        return []
+    if not isinstance(raw, list):
+        # Null/empty optional fields do not establish that an option was generated.
+        if raw:
+            _warn_action(warnings, "action_shape")
         return []
     ids = {segment["id"] for segment in reply.segments
            if segment["kind"] not in {"code", "table", "rule", "quote"}
@@ -994,14 +1016,23 @@ def normalize_actions(raw: Any, reply: ReplyDocument, blocks: list[dict]) -> lis
     labels: set[str] = set()
     for entry in raw[:12]:
         if not isinstance(entry, dict):
+            _warn_action(warnings, "action_shape")
             continue
         label, explanation = entry.get("label"), entry.get("explanation")
-        if not isinstance(label, str) or not isinstance(explanation, str):
+        if not isinstance(label, str):
+            _warn_action(warnings, "action_label")
             continue
-        label, explanation = label.strip(), explanation.strip()
-        if (not 1 <= words(label) <= 5 or len(label) > 64 or not explanation or len(explanation) > 240
-                or any(ord(c) < 32 for c in label + explanation)
-                or any(c in label for c in "[]`*<>|") or label.casefold() in labels):
+        label = label.strip()
+        if (not 1 <= words(label) <= 5 or len(label) > 64
+                or any(ord(c) < 32 for c in label)
+                or any(c in label for c in "[]`*<>|")):
+            _warn_action(warnings, "action_label")
+            continue
+        if (not isinstance(explanation, str) or not explanation.strip() or len(explanation.strip()) > 240
+                or any(ord(c) < 32 for c in explanation.strip())):
+            _warn_action(warnings, "action_explanation")
+            continue
+        if label.casefold() in labels:
             continue
         refs = []
         for start, end in parse_refs(_refs_text(entry.get("refs"))):
@@ -1009,13 +1040,56 @@ def normalize_actions(raw: Any, reply: ReplyDocument, blocks: list[dict]) -> lis
                 continue
             refs.extend(f"s{n}" for n in range(start, end + 1))
         if not refs or not all(ref in ids for ref in refs):
+            _warn_action(warnings, "action_refs")
             continue
         labels.add(label.casefold())
-        result.append({"id": f"r{len(result) + 1}", "label": label, "explanation": explanation,
+        result.append({"id": f"r{len(result) + 1}", "label": label, "explanation": explanation.strip(),
                        "refs": list(dict.fromkeys(refs))})
         if len(result) == 3:
             break
     return result
+
+
+def _followup_text(text: str) -> str:
+    return " ".join(re.sub(r"[`*_]", "", text).split())
+
+
+def action_repair_asks(document: dict, reply: ReplyDocument) -> list[dict]:
+    """Only rejected candidates paired with a retained source ask warrant repair.
+
+    A valid empty result, a useful surviving option, and an unsupported follow-up
+    never request another inference. Quoted examples cannot authorize options.
+    """
+    if document.get("actions") or not any(
+            warning.get("code") in ACTION_REPAIR_WARNINGS for warning in document.get("warnings", [])):
+        return []
+    asks = []
+    for block in document.get("blocks", []):
+        if block.get("kind") not in {"ask", "next"}:
+            continue
+        text = _followup_text(plain(block.get("tokens", [])))
+        refs = [source["id"] for source in reply.segments
+                if source["kind"] not in {"code", "table", "rule", "quote"}
+                and any(text == sentence and _is_followup_sentence(sentence)
+                        for sentence in _followup_sentences(source["text"]))]
+        if refs and not any(ask["text"] == text for ask in asks):
+            asks.append({"text": text, "refs": refs})
+    return asks
+
+
+def repaired_actions(output: str, reply: ReplyDocument, original: dict) -> list[dict]:
+    """Accept only options for one unchanged original ask, using the same validators."""
+    asks = action_repair_asks(original, reply)
+    if not asks:
+        return []
+    _, repaired, _ = skim_from_output(reply=reply.text, output=output, format=original["format"])
+    if (not repaired or repaired["headline"] or repaired["drawers"]
+            or len(repaired["blocks"]) != 1 or repaired["blocks"][0]["kind"] not in {"ask", "next"}):
+        return []
+    text = _followup_text(plain(repaired["blocks"][0]["tokens"]))
+    allowed = next((set(ask["refs"]) for ask in asks if ask["text"] == text), set())
+    result = [action for action in repaired.get("actions", []) if set(action["refs"]) <= allowed]
+    return [{**action, "id": f"r{index + 1}"} for index, action in enumerate(result)]
 
 
 def skim_from_output(*, reply: str, output: str, voice: str = "buddy", format: str = DEFAULT_FORMAT) -> tuple[ReplyDocument, dict, str]:

@@ -3,9 +3,10 @@
 A finished conversation reply (First Mate replies, notices, stage results, and
 escalations) or a completed HUD chat turn of at least `skim_min_words` words
 gets a pending skim in the same write that stores it, so clients can show a
-quiet "Skimming…" right away. A small worker pool then runs one tool-free Pi
-inference per reply (profile `first-mate-skim-v1`), normalizes the markup with
-herdr_harness.skim, and stores the result beside the reply. The reply itself is
+quiet "Skimming…" right away. A small worker pool runs a tool-free Pi
+inference per reply, with at most one action repair per attempt (profile
+`first-mate-skim-v1`), normalizes the markup with herdr_harness.skim, and stores
+the result beside the reply. The reply itself is
 never delayed, changed, or re-sent: a failed or rejected skim only means the
 client keeps showing the full reply.
 
@@ -44,6 +45,10 @@ CAPABILITY = "first-mate-skim-v1"
 HUD_PROFILE = "hud-chat-v1"
 SKIM_FILE = "skim.json"
 MAX_ATTEMPTS = 2
+# Initial generation and its optional repair share one deadline. Restart recovery
+# remains two attempts, so a hard interruption can allow four model calls total.
+INFERENCE_DEADLINE_SECONDS = SKIM_TIMEOUT_SECONDS + 30
+ACTION_REPAIR_VERSION = "skim-v6"
 MAX_USER_MESSAGE_CHARS = 131072
 SWEEP_SECONDS = 300
 REFRESH_BATCH_LIMIT = 8
@@ -400,32 +405,24 @@ class SkimService:
         _LOG.info("Skim %s for HUD turn %s in %s ms", outcome["status"], run_id, outcome.get("duration_ms"))
 
     def _infer(self, question: Optional[str], reply: str, key: Mapping[str, Any]) -> Optional[dict]:
-        """One tool-free Pi inference, normalized. Never raises for model problems.
+        """Generate a skim and optionally repair its rejected options once.
 
-        Returns None when the companion is stopping, so the skim stays pending.
+        A completed useful skim survives every repair failure. Only an interrupted
+        first inference stays pending for the existing bounded restart recovery.
         """
         prompt = skim.prompt_for(_question(question), reply, format=key["format"], version=key["prompt_version"])
         if len(prompt.user) > MAX_USER_MESSAGE_CHARS:
             return {"status": "failed", "error": "reply_too_long"}
         manager = self._agent_runs()
         started = time.monotonic()
+        deadline = started + INFERENCE_DEADLINE_SECONDS
         try:
-            envelope = manager.start(
-                prompt=prompt.user, label="Skim", cwd=tempfile.gettempdir(), topology={}, mode="ask",
-                model=key["model"] or None, thinking_level=key["thinking"] or None,
-                _assistant={"profile": SKIM_PROFILE, "skimSystem": prompt.system},
-            )
+            run = self._model_output(manager, system=prompt.system, user=prompt.user, key=key, deadline=deadline)
         except AgentRunError as exc:
             return {"status": "failed", "error": f"start:{exc.code}"}
-        run_id = envelope["run"]["id"]
-        run = self._wait(manager, run_id)
         duration_ms = int((time.monotonic() - started) * 1000)
         if self._stop.is_set() and (run is None or run.get("status") != "completed"):
             return None
-        try:
-            manager.delete(run_id)  # The skim row keeps what matters; drop the copy.
-        except AgentRunError:
-            pass
         if run is None or run.get("status") != "completed":
             return {"status": "failed", "error": _failure(run), "duration_ms": duration_ms}
         output = run.get("response") or ""
@@ -436,16 +433,66 @@ class SkimService:
         if not skim.has_content(normalized):
             return {"status": "rejected", "output": output, "error": "The skim had no sentence or next step.",
                     "duration_ms": duration_ms}
-        return {"status": "ready", "output": output, "document": normalized,
-                "segments": skim.segment_table(document), "warnings": normalized["warnings"],
-                "duration_ms": duration_ms}
+        outcome = {"status": "ready", "output": output, "document": normalized,
+                   "segments": skim.segment_table(document), "warnings": normalized["warnings"]}
+        if key["prompt_version"] == ACTION_REPAIR_VERSION:
+            # Nothing in this optional phase may discard the useful first skim.
+            try:
+                asks = skim.action_repair_asks(normalized, document)
+                if asks and not self._stop.is_set() and time.monotonic() < deadline:
+                    repair_user = prompt.user + "\n\nRETAINED ASKS (choose exactly one, copy its text verbatim):\n" + json.dumps(asks)
+                    repair_user += "\n\nREJECTED OPTION CODES:\n" + ", ".join(sorted({
+                        warning["code"] for warning in normalized["warnings"]
+                        if warning["code"] in skim.ACTION_REPAIR_WARNINGS}))
+                    if len(repair_user) <= MAX_USER_MESSAGE_CHARS:
+                        repair = self._model_output(
+                            manager, system=skim.prompt_template("skim-action-repair-v6"),
+                            user=repair_user, key=key, deadline=deadline)
+                        if repair is not None and repair.get("status") == "completed":
+                            actions = skim.repaired_actions(repair.get("response") or "", document, normalized)
+                            if actions:
+                                outcome["document"] = {**normalized, "actions": actions}
+            except Exception as exc:
+                _LOG.info("Skim action repair failed: %s", type(exc).__name__)
+        outcome["duration_ms"] = int((time.monotonic() - started) * 1000)
+        return outcome
 
-    def _wait(self, manager: Any, run_id: str) -> Optional[dict]:
-        deadline = time.monotonic() + SKIM_TIMEOUT_SECONDS + 30
+    def _model_output(self, manager: Any, *, system: str, user: str, key: Mapping[str, Any],
+                      deadline: float) -> Optional[dict]:
+        """One fresh tool-free call; always release its temporary run."""
+        if self._stop.is_set() or time.monotonic() >= deadline:
+            return None
+        envelope = manager.start(
+            prompt=user, label="Skim", cwd=tempfile.gettempdir(), topology={}, mode="ask",
+            model=key["model"] or None, thinking_level=key["thinking"] or None,
+            _assistant={"profile": SKIM_PROFILE, "skimSystem": system},
+        )
+        run_id = envelope["run"]["id"]
+        run = None
+        try:
+            run = self._wait(manager, run_id, deadline=deadline)
+            return run
+        finally:
+            if run is None or run.get("status") not in TERMINAL_STATUSES:
+                try:
+                    manager.cancel(run_id)
+                except AgentRunError:
+                    pass
+            try:
+                manager.delete(run_id)
+            except AgentRunError:
+                pass
+
+    def _wait(self, manager: Any, run_id: str, *, deadline: Optional[float] = None) -> Optional[dict]:
+        deadline = deadline if deadline is not None else time.monotonic() + INFERENCE_DEADLINE_SECONDS
         with manager._lock:
             thread = manager._threads.get(run_id)
-        if thread is not None:
-            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        # Stop and the shared deadline also apply while the subprocess is running.
+        while thread is not None and thread.is_alive() and not self._stop.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=min(0.1, remaining))
         while True:
             try:
                 with manager._lock:
@@ -454,13 +501,13 @@ class SkimService:
                 return None
             if run.get("status") in TERMINAL_STATUSES:
                 return run
-            if time.monotonic() > deadline or self._stop.is_set():
+            if time.monotonic() >= deadline or self._stop.is_set():
                 try:
                     manager.cancel(run_id)
                 except AgentRunError:
                     pass
                 return run
-            time.sleep(0.1)
+            time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
 
     # -- recovery and backfill ------------------------------------------------
 

@@ -187,6 +187,11 @@
 - New reviews from All machines start on the Settings **PR review host**, or on the open review's machine if no host is configured. Choosing a specific machine keeps creation there.
 - Mac-only; no companion update is needed. Existing `pr-review-v1` support is sufficient; demo mode and popped-out review windows are unchanged.
 
+## PR Review viewed undo
+
+- In PR Review → Files, ⌃Z undoes and ⌃⇧Z redoes your own Viewed toggles from the checkbox, ⌥V, or **Mark viewed / Mark unviewed**, in either direction. Undo saves and syncs like a manual toggle; comparison marks stay local. With Hide viewed on, undo restores and selects the file when it matches the other filters. Issue #162.
+- Each main or popped-out window has its own history of up to 100 changes, cleared on host, review, comparison, or base/head revision changes and not persisted across relaunch. Agent and walkthrough marks are excluded, and ⌘Z text undo is unchanged. Mac-only; no companion update is needed beyond existing `pr-review-v1` support.
+
 ## PR Review
 
 - The Files rail now shows viewed/unviewed progress (`3 of 10 viewed · 7 unviewed`) and a progress bar, labels viewed files with a checkmark and **Viewed** badge, and offers **Show viewed files** when Hide viewed hides a completed review. Counts cover all files in the current PR or comparison regardless of filters, in both main and popped-out windows. Mac-only; no companion update is needed beyond existing `pr-review-v1` support. Issue #151.

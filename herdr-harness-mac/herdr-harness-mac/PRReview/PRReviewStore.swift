@@ -54,6 +54,7 @@ final class PRReviewStore {
     private var comparisonLoadedIdentity: PRReviewDiffRequestIdentity?
     private var comparisonDiff: PRReviewDiff?
     private var comparisonViewed: [String: Set<String>] = [:]
+    private(set) var viewedHistory = PRReviewViewedHistory()
     @ObservationIgnored private var comparisonSeedRevision: (baseSHA: String, headSHA: String)?
     var diffStyle = "unified"
     var diffOverflow = "scroll"
@@ -191,6 +192,7 @@ final class PRReviewStore {
         comparisonLoadError = nil
         isLoadingComparison = false
         comparisonViewed = [:]
+        viewedHistory.removeAll()
         hasLoaded = false
         unsupported = false
         error = nil
@@ -226,6 +228,7 @@ final class PRReviewStore {
         comparisonLoadError = nil
         isLoadingComparison = false
         comparisonViewed = [:]
+        viewedHistory.removeAll()
         error = nil
         expandedDeletedPaths = []
         deletedDisclosureScope = nil
@@ -256,6 +259,7 @@ final class PRReviewStore {
         diffLoadError = nil
         diffLoadErrorIdentity = nil
         if machineChanged {
+            viewedHistory.removeAll()
             deletedDisclosureScope = nil
             resetDeletedContentDisclosure()
         }
@@ -596,6 +600,7 @@ final class PRReviewStore {
             comparisonSeedRevision = nil
             if seed.baseSHA != value.review.baseSHA || seed.headSHA != value.review.headSHA || !supportsComparisons {
                 comparisonSelection = .all
+                viewedHistory.removeAll()
                 selectedPath = nil
                 error = "The saved comparison is no longer available. Showing current PR changes."
             }
@@ -611,6 +616,7 @@ final class PRReviewStore {
             comparisonDiff = nil
             comparisonLoadedIdentity = nil
             comparisonViewed = [:]
+            viewedHistory.removeAll()
             highlight = nil
             visibleLines = nil
             scrollRequest = nil
@@ -627,6 +633,54 @@ final class PRReviewStore {
         }
         reconcileSettledUploads(with: value)
         guide.configure(store: self)
+    }
+
+    var canUndoViewed: Bool { viewedHistory.canUndo }
+    var canRedoViewed: Bool { viewedHistory.canRedo }
+
+    func setViewedRecordingUndo(paths: [String], viewed: Bool) async {
+        let requestedPaths = Set(paths)
+        let changes = comparisonFiles.filter { requestedPaths.contains($0.path) && $0.viewed != viewed }
+            .map { PRReviewViewedHistory.Change(path: $0.path, before: $0.viewed) }
+        if !changes.isEmpty {
+            viewedHistory.record(.init(changes: changes, after: viewed))
+        }
+        await setViewed(paths: paths, viewed: viewed)
+    }
+
+    func undoViewed() async {
+        guard let entry = viewedHistory.takeUndo() else { return }
+        await applyViewedHistory(entry, undo: true)
+    }
+
+    func redoViewed() async {
+        guard let entry = viewedHistory.takeRedo() else { return }
+        await applyViewedHistory(entry, undo: false)
+    }
+
+    private func applyViewedHistory(_ entry: PRReviewViewedHistory.Entry, undo: Bool) async {
+        let scope = operationScope(reviewID: selectedReviewID)
+        let comparison = comparisonSelection
+        let baseSHA = snapshot?.review.baseSHA
+        let headSHA = snapshot?.review.headSHA
+        func isCurrentScope() -> Bool {
+            isCurrentSelection(scope) && comparisonSelection == comparison
+                && snapshot?.review.baseSHA == baseSHA && snapshot?.review.headSHA == headSHA
+        }
+        let existingPaths = Set(comparisonFiles.map(\.path))
+        let changes = entry.changes.filter { existingPaths.contains($0.path) }
+        for viewed in [false, true] {
+            guard isCurrentScope() else { return }
+            let paths = changes.filter { (undo ? $0.before : entry.after) == viewed }.map(\.path)
+            if !paths.isEmpty {
+                await setViewed(paths: paths, viewed: viewed)
+            }
+        }
+        guard isCurrentScope(), entry.changes.count == 1,
+              let path = changes.first?.path,
+              orderedFiles.contains(where: { $0.path == path })
+        else { return }
+        selectedPath = path
     }
 
     func setViewed(paths: [String], viewed: Bool) async {
@@ -1518,6 +1572,9 @@ extension PRReviewStore {
     /// The revision and commit catalog still have to validate it before use.
     func restoreComparisonSelection(_ selection: GitComparisonSelection, baseSHA: String?, headSHA: String?) {
         guard snapshot == nil, selection != .all, let baseSHA, let headSHA else { return }
+        if comparisonSelection != selection {
+            viewedHistory.removeAll()
+        }
         comparisonSelection = selection
         comparisonSeedRevision = (baseSHA, headSHA)
     }
@@ -1599,6 +1656,7 @@ extension PRReviewStore {
         } else { selection = .init(mode: .range, startCommit: before, endCommit: after) }
         guard selection != comparisonSelection else { return }
         comparisonSelection = selection
+        viewedHistory.removeAll()
         comparisonDiff = nil
         diff = nil
         comparisonLoadError = nil
@@ -1637,6 +1695,7 @@ extension PRReviewStore {
                 }
                 if !selectionIsValid {
                     comparisonSelection = .all
+                    viewedHistory.removeAll()
                     selectedPath = nil
                     error = "The saved commits are no longer available. Showing current PR changes."
                     return

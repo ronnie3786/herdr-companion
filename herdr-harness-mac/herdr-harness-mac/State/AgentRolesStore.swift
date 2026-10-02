@@ -8,7 +8,7 @@ final class AgentRolesStore {
         case loading, loaded, needsUpdate, unavailable(String)
     }
 
-    let machines: [HerdrMachine]
+    private(set) var machines: [HerdrMachine]
     let catalog: any AgentRoleSkillCatalog
     private(set) var selectedMachineID: String?
     private(set) var overview: AgentRolesOverview?
@@ -17,38 +17,37 @@ final class AgentRolesStore {
     private(set) var errorMessage: String?
     private(set) var savedMessage: String?
     private(set) var hasConflict = false
+    private(set) var requiresConnectionReload = false
     var draft: AgentRole?
     var search = ""
     var sourceFilter = ""
 
-    private let clients: [String: any AgentRolesClient]
+    private var clients: [String: any AgentRolesClient]
+    private var configurations: [String: ServerConfiguration]
+    private var retainedMachine: HerdrMachine?
     private var baseline: AgentRole?
     private var baselineRevision = 0
     private var generation: UInt64 = 0
 
     convenience init(model: HerdrAppModel) {
-        var clients: [String: any AgentRolesClient] = [:]
-        if !model.isDemoMode {
-            for machine in model.machines {
-                guard let configuration = model.firstMateConfiguration(machineID: machine.id) else { continue }
-                clients[machine.id] = HerdrAPIClient(configuration: configuration)
-            }
-        }
-        self.init(machines: model.machines, clients: clients, catalog: AgentRoleLocalCatalog())
+        self.init(machines: [], clients: [:], catalog: AgentRoleLocalCatalog())
+        refreshConnections(model: model)
     }
 
     init(machines: [HerdrMachine], clients: [String: any AgentRolesClient],
-         catalog: any AgentRoleSkillCatalog, initiallySelectedMachineID: String? = nil) {
+         catalog: any AgentRoleSkillCatalog, initiallySelectedMachineID: String? = nil,
+         configurations: [String: ServerConfiguration] = [:]) {
         self.machines = machines
         self.clients = clients
+        self.configurations = configurations
         self.catalog = catalog
         selectedMachineID = machines.first(where: { $0.id == initiallySelectedMachineID })?.id ?? machines.first?.id
     }
 
-    var selectedMachine: HerdrMachine? { machines.first { $0.id == selectedMachineID } }
+    var selectedMachine: HerdrMachine? { machines.first { $0.id == selectedMachineID } ?? retainedMachine }
     var hasUnsavedChanges: Bool { draft != baseline }
     var isLoading: Bool { status == .loading }
-    var canEdit: Bool { status == .loaded && draft?.locked == false && !isSaving }
+    var canEdit: Bool { status == .loaded && draft?.locked == false && !isSaving && !requiresConnectionReload }
     var canSave: Bool {
         canEdit && hasUnsavedChanges && !hasConflict && !catalog.isLoading && validationMessage == nil
     }
@@ -104,13 +103,52 @@ final class AgentRolesStore {
     func sourceName(_ id: String) -> String { catalog.sources.first { $0.id == id }?.name ?? id }
     func missingSkillName(_ id: String) -> String { overview?.skills.first { $0.id == id }?.name ?? id }
 
+    /// Re-read saved credentials when entering the pane or explicitly reloading.
+    /// Comparisons stay in memory, without exposing connection URLs or tokens.
+    func refreshConnections(model: HerdrAppModel) {
+        var configurations: [String: ServerConfiguration] = [:]
+        var clients: [String: any AgentRolesClient] = [:]
+        for machine in model.machines {
+            guard let configuration = model.firstMateConfiguration(machineID: machine.id) else { continue }
+            configurations[machine.id] = configuration
+            clients[machine.id] = HerdrAPIClient(configuration: configuration)
+        }
+        refreshConnections(machines: model.machines, configurations: configurations, clients: clients)
+    }
+
+    func refreshConnections(machines: [HerdrMachine], configurations: [String: ServerConfiguration],
+                            clients: [String: any AgentRolesClient]) {
+        // The pane retries this after an in-flight save finishes.
+        guard !isSaving else { return }
+        let previousMachine = selectedMachine
+        let selectedID = selectedMachineID
+        let selectedExists = machines.contains { $0.id == selectedID }
+        let connectionChanged = selectedID.map {
+            self.configurations[$0] != configurations[$0] || (self.clients[$0] == nil) != (clients[$0] == nil)
+        } ?? false
+        self.machines = machines
+        self.configurations = configurations
+        self.clients = clients
+        guard !selectedExists || connectionChanged else { return }
+        generation &+= 1
+        if hasUnsavedChanges {
+            retainedMachine = previousMachine
+            requiresConnectionReload = true
+            status = .loaded
+            savedMessage = nil
+            errorMessage = "This machine's connection changed or was removed. Your edits still belong to the previous connection. Copy your edits, then discard and reload before saving to a new connection."
+        } else {
+            resetForCurrentConnection()
+        }
+    }
+
     func loadIfNeeded() async {
         guard overview == nil, !isSaving else { return }
         await load()
     }
 
     func load() async {
-        guard !isSaving, let machineID = selectedMachineID else { return }
+        guard !isSaving, !requiresConnectionReload, let machineID = selectedMachineID else { return }
         generation &+= 1
         let currentGeneration = generation
         status = .loading
@@ -134,8 +172,12 @@ final class AgentRolesStore {
     /// Navigation callers confirm any discard first. The store also refuses to
     /// discard implicitly, so keyboard or future navigation cannot lose edits.
     func selectMachine(_ id: String) async {
-        guard !isSaving, !hasUnsavedChanges, id != selectedMachineID,
+        guard !isSaving, !hasUnsavedChanges,
               machines.contains(where: { $0.id == id }) else { return }
+        if id == selectedMachineID {
+            await loadIfNeeded()
+            return
+        }
         generation &+= 1
         selectedMachineID = id
         overview = nil
@@ -144,12 +186,13 @@ final class AgentRolesStore {
     }
 
     func selectRole(_ id: String) {
-        guard !isSaving, !hasUnsavedChanges, let role = overview?.roles.first(where: { $0.id == id }) else { return }
+        guard !isSaving, !requiresConnectionReload, !hasUnsavedChanges,
+              let role = overview?.roles.first(where: { $0.id == id }) else { return }
         adopt(role)
     }
 
     func newRole() {
-        guard status == .loaded, !isSaving, !hasUnsavedChanges else { return }
+        guard status == .loaded, !requiresConnectionReload, !isSaving, !hasUnsavedChanges else { return }
         baseline = nil
         baselineRevision = overview?.revision ?? 0
         draft = .custom()
@@ -158,7 +201,20 @@ final class AgentRolesStore {
 
     func discard() {
         guard !isSaving else { return }
+        if requiresConnectionReload {
+            resetForCurrentConnection()
+            return
+        }
         adopt(overview?.roles.first { $0.id == draft?.id } ?? overview?.roles.first)
+    }
+
+    private func resetForCurrentConnection() {
+        if !machines.contains(where: { $0.id == selectedMachineID }) { selectedMachineID = machines.first?.id }
+        retainedMachine = nil
+        requiresConnectionReload = false
+        overview = nil
+        status = .loading
+        adopt(nil)
     }
 
     func configureSelection() {

@@ -62,6 +62,7 @@ ssh_user = "private-user"
                 self.assertEqual(entitlements["com.apple.developer.associated-domains"], ["applinks:app.example.test"])
                 if platform == "mac":
                     self.assertTrue(entitlements["com.apple.security.app-sandbox"])
+                    self.assertTrue(entitlements["com.apple.security.files.bookmarks.app-scope"])
                     self.assertNotIn("keychain-access-groups", entitlements)
                     self.assertIn("HERDR_MAC_KEYCHAIN_BACKEND = login", (project / "Local.xcconfig").read_text())
 

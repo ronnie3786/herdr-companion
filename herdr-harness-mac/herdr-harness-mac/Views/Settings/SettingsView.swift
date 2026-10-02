@@ -148,7 +148,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var settingsDetail: some View {
         if selectedPane == .agentRoles {
-            AgentRolesView(store: agentRoles)
+            AgentRolesView(store: agentRoles, refreshConnections: { agentRoles.refreshConnections(model: model) })
                 .background(HerdrBackground())
         } else if selectedPane == .agentProfiles {
             AgentProfilesView(model: model)

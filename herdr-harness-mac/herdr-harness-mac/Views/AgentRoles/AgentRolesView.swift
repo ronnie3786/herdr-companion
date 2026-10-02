@@ -8,6 +8,7 @@ struct AgentRolesView: View {
 
     @Bindable var store: AgentRolesStore
     var initialTab: AgentRoleEditor.Tab = .profile
+    var refreshConnections: () -> Void = {}
     @State private var pendingNavigation: Navigation?
     @State private var confirmsDiscard = false
     @State private var showsSources = false
@@ -17,7 +18,7 @@ struct AgentRolesView: View {
             AgentRolesHeader(store: store, selectMachine: { request(.machine($0)) },
                              reload: { request(.reload) }, showSources: { showsSources = true })
             Divider()
-            if store.machines.isEmpty {
+            if store.machines.isEmpty && store.draft == nil {
                 ContentUnavailableView("No machines yet", systemImage: "desktopcomputer",
                     description: Text("Add a machine in Settings › Machines to configure its First Mate roles."))
             } else {
@@ -62,9 +63,16 @@ struct AgentRolesView: View {
         .tint(HerdrTheme.accent)
         .accessibilityIdentifier("agent-roles-view")
         .task {
+            refreshConnections()
             async let roles: Void = store.loadIfNeeded()
             async let skills: Void = store.catalog.refresh()
             _ = await (roles, skills)
+        }
+        .onChange(of: store.isSaving) { _, saving in
+            if !saving {
+                refreshConnections()
+                Task { await store.loadIfNeeded() }
+            }
         }
         .sheet(isPresented: $showsSources) { AgentRoleSourcesSheet(catalog: store.catalog) }
         .confirmationDialog("Discard unsaved role edits?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
@@ -75,7 +83,10 @@ struct AgentRolesView: View {
         }
     }
 
-    private func retry() { Task { await store.load() } }
+    private func retry() {
+        refreshConnections()
+        Task { await store.load() }
+    }
 
     private func request(_ navigation: Navigation) {
         guard !store.isSaving else { return }
@@ -100,6 +111,7 @@ struct AgentRolesView: View {
         case let .machine(id): Task { await store.selectMachine(id) }
         case .newRole: store.newRole()
         case .reload:
+            refreshConnections()
             Task {
                 async let roles: Void = store.load()
                 async let skills: Void = store.catalog.refresh()

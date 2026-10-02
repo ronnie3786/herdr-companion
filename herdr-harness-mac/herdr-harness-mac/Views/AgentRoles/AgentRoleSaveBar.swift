@@ -25,7 +25,7 @@ struct AgentRoleSaveBar: View {
                     .foregroundStyle(HerdrTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
-                Button("Discard", action: store.discard)
+                Button("Discard", action: discard)
                     .disabled(!store.hasUnsavedChanges || store.isSaving)
                     .accessibilityIdentifier("agent-role-discard")
                 Button("Save", action: save)
@@ -41,6 +41,10 @@ struct AgentRoleSaveBar: View {
     }
 
     private func save() { Task { await store.save() } }
+    private func discard() {
+        store.discard()
+        Task { await store.loadIfNeeded() }
+    }
     private func copyEdits() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(store.unsavedEditsText, forType: .string)

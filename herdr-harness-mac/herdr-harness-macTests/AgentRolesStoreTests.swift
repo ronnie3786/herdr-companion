@@ -241,6 +241,68 @@ struct AgentRolesStoreTests {
         #expect(!store.canSave)
     }
 
+    @Test("A newly added machine becomes available without reopening Settings")
+    func addedConnection() async throws {
+        let store = AgentRolesStore(machines: [], clients: [:], catalog: AgentRoleTestCatalog())
+        let configuration = try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "sample"))
+        let client = AgentRoleTestClient()
+        store.refreshConnections(machines: AgentRoleTestFixtures.machines,
+            configurations: ["desktop": configuration], clients: ["desktop": client])
+        await store.loadIfNeeded()
+        #expect(store.selectedMachineID == "desktop")
+        #expect(store.status == .loaded)
+        #expect(store.draft?.id == "first_mate")
+    }
+
+    @Test("Fixing saved credentials replaces an unavailable connection on reload")
+    func fixedConnection() async throws {
+        let oldConfiguration = try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "old-sample"))
+        let newConfiguration = try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "new-sample"))
+        let oldClient = AgentRoleTestClient()
+        await oldClient.fail(with: .server(status: 401, message: "Invalid sample credential"))
+        let store = AgentRolesStore(machines: AgentRoleTestFixtures.machines, clients: ["desktop": oldClient],
+            catalog: AgentRoleTestCatalog(), configurations: ["desktop": oldConfiguration])
+        await store.load()
+        if case .unavailable = store.status {} else { Issue.record("Expected unavailable connection") }
+        store.refreshConnections(machines: AgentRoleTestFixtures.machines,
+            configurations: ["desktop": newConfiguration], clients: ["desktop": AgentRoleTestClient()])
+        await store.loadIfNeeded()
+        #expect(store.status == .loaded)
+        #expect(!store.requiresConnectionReload)
+    }
+
+    @Test("A replaced or removed execution connection preserves drafts and blocks cross-host saves", arguments: [false, true])
+    func changedConnectionPreservesDraft(removed: Bool) async throws {
+        let oldConfiguration = try #require(ServerConfiguration(urlString: "http://localhost:9092", token: "sample"))
+        let newConfiguration = try #require(ServerConfiguration(urlString: "http://localhost:9093", token: "sample"))
+        let oldClient = AgentRoleTestClient()
+        let newClient = AgentRoleTestClient(overview: AgentRoleTestFixtures.overview(machineID: "server-replacement"))
+        let store = AgentRolesStore(machines: AgentRoleTestFixtures.machines, clients: ["desktop": oldClient],
+            catalog: AgentRoleTestCatalog(), configurations: ["desktop": oldConfiguration])
+        await store.load()
+        store.draft?.systemPrompt = "Keep these private draft instructions."
+        let machineID = removed ? "laptop" : "desktop"
+        store.refreshConnections(machines: removed ? Array(AgentRoleTestFixtures.machines.suffix(1)) : AgentRoleTestFixtures.machines,
+            configurations: [machineID: newConfiguration], clients: [machineID: newClient])
+        await store.save()
+        await store.load()
+        #expect(store.requiresConnectionReload)
+        #expect(store.hasUnsavedChanges)
+        #expect(!store.canSave)
+        #expect(store.draft?.systemPrompt == "Keep these private draft instructions.")
+        #expect(store.overview?.machineId == "server-desktop")
+        #expect(store.unsavedEditsText.contains("Keep these private draft instructions."))
+        #expect(store.errorMessage != nil)
+        #expect(await oldClient.recordedMutations().isEmpty)
+        #expect(await newClient.recordedMutations().isEmpty)
+        store.discard()
+        await store.selectMachine(machineID)
+        #expect(store.status == .loaded)
+        #expect(store.overview?.machineId == "server-replacement")
+        #expect(!store.requiresConnectionReload)
+        #expect(!store.hasUnsavedChanges)
+    }
+
     private func makeStore(_ client: any AgentRolesClient, catalog: AgentRoleTestCatalog? = nil) -> AgentRolesStore {
         AgentRolesStore(machines: AgentRoleTestFixtures.machines, clients: ["desktop": client], catalog: catalog ?? AgentRoleTestCatalog())
     }

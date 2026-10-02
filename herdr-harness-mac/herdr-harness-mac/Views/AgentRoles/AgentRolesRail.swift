@@ -38,7 +38,7 @@ struct AgentRolesRail: View {
         .frame(width: 178)
         .frame(maxHeight: .infinity)
         .background(HerdrTheme.railBackground.opacity(0.6))
-        .disabled(store.isSaving)
+        .disabled(store.isSaving || store.requiresConnectionReload)
         .accessibilityLabel("Agent roles")
     }
 }

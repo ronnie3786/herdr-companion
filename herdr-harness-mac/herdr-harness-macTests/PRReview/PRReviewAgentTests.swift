@@ -31,8 +31,10 @@ struct PRReviewAgentSelectionTests {
 
     @Test("Legacy snapshots have no consolidation and new runs preserve profile identity")
     func decoding() throws {
-        let legacy = PRReviewDemo.snapshot()
+        let legacyJSON = #"{"ok":true,"review":{"id":"prr_legacy","status":"ready"},"runs":[{"id":"prun_legacy","review_id":"prr_legacy","skill_id":"comprehensive-pr-review","skill_title":"Comprehensive review","state":"finished"}]}"#
+        let legacy = try JSONDecoder().decode(PRReviewSnapshot.self, from: Data(legacyJSON.utf8))
         #expect(legacy.consolidation == nil)
+        #expect(legacy.runs.count == 1)
         #expect(legacy.runs.allSatisfy { $0.agentID == nil })
         let snapshot = PRReviewAgentDemo.snapshot()
         let roundTrip = try JSONDecoder().decode(PRReviewSnapshot.self, from: JSONEncoder().encode(snapshot))

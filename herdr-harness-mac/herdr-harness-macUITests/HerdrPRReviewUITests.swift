@@ -344,7 +344,9 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
         let deletedBadge = control("pr-review-file-deleted-0", in: main)
         XCTAssertTrue(deletedBadge.waitForExistence(timeout: 5),
                       "The file rail should label a deleted file with readable text")
-        XCTAssertEqual(deletedBadge.label, "Deleted file")
+        // StaticText uses AXValue for its spoken label on current macOS.
+        let deletedBadgeText = deletedBadge.label.isEmpty ? deletedBadge.value as? String : deletedBadge.label
+        XCTAssertEqual(deletedBadgeText, "Deleted file")
         deletedRow.click()
 
         XCTAssertTrue(headerPath(SyntheticReview.deletedSourcePath, in: main).waitForExistence(timeout: 5))

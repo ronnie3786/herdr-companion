@@ -211,6 +211,7 @@ struct PRReviewSidebarView: View {
         .padding(10)
         .background(selected ? HerdrTheme.selection : .clear,
                     in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .contentShape(.rect)
     }
 
     private func empty(_ text: String, image: String) -> some View {

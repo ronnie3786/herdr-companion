@@ -419,6 +419,9 @@ struct HerdrMacCommands: Commands {
             }
             .keyboardShortcut("8", modifiers: .command)
 
+            Button("Watchers") { shell.show(.watchers, model: model) }
+                .keyboardShortcut("9", modifiers: .command)
+
             Divider()
 
             // The only in-app way to start Pulse. The menu-bar extra is not

@@ -293,9 +293,27 @@ apns_environment = "development"
 
 [environment]
 # Escape hatch for any documented environment setting. Values are data, not shell.
+# Watchers is off unless exactly "1". Enable per machine after installing the
+# matching companion under a restart-enabled supervisor (see docs/watchers.md).
+# HERDR_WATCHERS_ENABLED = "1"
+# HERDR_WATCHERS_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# HERDR_WATCHERS_MAX_RUNS = "4"
+# HERDR_WATCHERS_SUPERVISED = "1" # Only after verifying launchd/systemd supervision.
+# HERDR_WATCHERS_BUILDER_MODEL = "provider/model"
 # Headless agent runs (including HUD chat) default to one hour; range 1–86400 seconds.
 # HERDR_HARNESS_AGENT_TIMEOUT_SECONDS = "7200"
 # YOUR_PROVIDER_API_KEY = { file = "~/.config/herdr-companion/secrets/provider-api-key" } # For skim_model.
 # HERDR_HARNESS_ACTIVE_WORK_STORE_PATH = "~/.local/share/herdr-companion/active-work.sqlite3"
 # GH_HOST = "github.com"
 # PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+# New companions also accept this optional table. Older companions reject it;
+# prefer the environment entries above while machines run mixed versions.
+# [watchers]
+# enabled = "1"
+# max_runs = 4
+# supervised = "1"
+# path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# builder_model = "provider/model"
+# store_path = "~/.local/share/herdr-companion/watchers.sqlite3"
+# root = "~/.local/share/herdr-companion/watchers"

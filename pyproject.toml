@@ -23,6 +23,7 @@ herdr-docs = "herdr_harness.agent_docs:main"
 herdr-profiles = "herdr_harness.profile_cli:main"
 herdr-first-mate = "herdr_harness.commands:first_mate"
 herdr-pr-review = "herdr_harness.commands:pr_review"
+herdr-watchers = "herdr_harness.commands:watchers"
 herdr-notes = "herdr_harness.commands:notes"
 herdr-hud-chats = "herdr_harness.commands:hud_chats"
 herdr-session-context = "herdr_harness.commands:session_context"
@@ -34,7 +35,7 @@ herdr-prune-runtimes = "herdr_commands.prune_companion_runtimes:main"
 herdr-demo = "herdr_commands.setup_herdr_demo:main"
 
 [tool.setuptools]
-packages = ["herdr_harness", "herdr_harness.code_factory", "herdr_commands"]
+packages = ["herdr_harness", "herdr_harness.code_factory", "herdr_harness.watchers", "herdr_harness.watchers.steps", "herdr_commands"]
 py-modules = ["herdr_dashboard"]
 include-package-data = true
 

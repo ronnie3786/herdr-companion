@@ -11,6 +11,9 @@ struct HerdrSidebarView: View {
     var openDashboard: (() -> Void)? = nil
     var openFirstMate: (() -> Void)? = nil
     var openPRReview: (() -> Void)? = nil
+    var openWatchers: (() -> Void)? = nil
+    var watchersUnreadCount = 0
+    var watchersSelected = false
     /// Features waiting on a human across every configured host. The Chat
     /// navigator badges First Mate with this count; zero keeps the entry plain.
     var firstMateAttentionCount: Int = 0
@@ -235,7 +238,7 @@ struct HerdrSidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader { header }
             recencyTabs
-            if openDashboard != nil || openFirstMate != nil || openPRReview != nil {
+            if openDashboard != nil || openFirstMate != nil || openPRReview != nil || openWatchers != nil {
                 VStack(spacing: 0) {
                     if let openDashboard {
                         SidebarNavRow(title: "Dashboard", systemImage: "square.grid.2x2", action: openDashboard)
@@ -251,6 +254,9 @@ struct HerdrSidebarView: View {
                     if let openPRReview {
                         PRReviewNavigationButton(readyCount: prReviewWalkthroughCount, action: openPRReview)
                             .accessibilityIdentifier("open-pr-review")
+                    }
+                    if let openWatchers {
+                        WatchersNavigationButton(unreadCount: watchersUnreadCount, selected: watchersSelected, action: openWatchers)
                     }
                 }
                 .padding(.horizontal, 6)

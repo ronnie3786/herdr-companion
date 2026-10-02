@@ -25,6 +25,7 @@ from .first_mate_read_models import feature_summary
 from .first_mate_verification import VERIFICATION_CAPABILITY
 from .workflow_policy import POLICY_VERSION
 from .pr_review_store import PRReviewError
+from .watchers.errors import WatchersError
 from .agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .issue_reports import IssueReportError
@@ -1049,6 +1050,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._json_response({"ok": False, "error": error, "generatedAt": utc_now()}, exc.status)
             except PRReviewError as exc:
                 self._error(exc.status, exc.code, str(exc))
+            except WatchersError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except IssueReportError as exc:
                 error: dict[str, Any] = {"code": exc.code, "message": str(exc)}
                 if exc.report_id:
@@ -2032,7 +2035,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             # segments starts with api, v1.
             tail = segments[2:]
             if method == "GET" and not tail:
-                return api_description()
+                description = api_description()
+                description["endpoints"]["watchersCapabilities"] = "/api/v1/watchers/capabilities"
+                if getattr(service, "watchers_enabled", False):
+                    description["capabilities"].append("watchers-v1")
+                    description["endpoints"]["watchers"] = "/api/v1/watchers"
+                    description["sseEvents"].extend(["watchers.updated", "watchers.run", "watchers.inbox", "watchers.builder"])
+                return description
+            if tail[:1] == ["watchers"]:
+                if self._authorization_scope != "main":
+                    return self._error(403, "watchers_scope_forbidden", "Watchers require full authentication")
+                from .watchers.api import route
+                return route(service, method, tail[1:], query, body)
             if tail[:1] in (["control"], ["discovery"], ["ui"]):
                 response = self._control_route(method, tail, query, body)
                 if response is None:
@@ -3496,7 +3510,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
         def do_OPTIONS(self) -> None:
             self.send_response(204)
             self.send_header("Content-Length", "0")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
             self.send_header(
                 "Access-Control-Allow-Headers",
                 "Authorization, Content-Type, Last-Event-ID, X-Herdr-Actor",

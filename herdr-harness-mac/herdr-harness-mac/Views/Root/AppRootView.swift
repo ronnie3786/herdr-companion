@@ -13,6 +13,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case workspace
     case activeWork
     case prReview
+    case watchers
     case firstMate
     case fleet
     case attention
@@ -68,6 +69,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .firstMate: "First Mate"
         case .activeWork: "Active Work"
         case .prReview: "PR Review"
+        case .watchers: "Watchers"
         case .fleet: "Fleet"
         case .attention: "Attention"
         case .activity: "Activity"
@@ -84,6 +86,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .firstMate: "sailboat"
         case .activeWork: "square.grid.2x2"
         case .prReview: "arrow.triangle.pull"
+        case .watchers: "eye"
         case .fleet: "desktopcomputer"
         case .attention: "bell"
         case .activity: "clock.arrow.circlepath"
@@ -106,6 +109,7 @@ final class HerdrShellState {
     /// out review or document window share download phases and window-lifetime
     /// cache protection, so no window can evict a file another is displaying.
     let prReviewDocumentResources: PRReviewDocumentResources
+    let watchers = WatchersStore()
     let prReview: PRReviewStore
     /// The main window's comment sheet presentation state. The saved records
     /// themselves live in the process-owned store in `HerdrAppModel`, shared
@@ -616,6 +620,8 @@ final class HerdrShellState {
             return .activeWork
         case .prReview:
             return .prReview
+        case .watchers:
+            return .watchers
         case .fleet:
             return .fleet
         case .attention:
@@ -640,6 +646,7 @@ final class HerdrShellState {
         case .firstMate: .firstMate
         case .activeWork: .activeWork
         case .prReview: .prReview
+        case .watchers: .watchers
         case .fleet: .fleet
         case .attention: .attention
         case .activity: .activity
@@ -750,6 +757,7 @@ final class HerdrShellState {
         case .prReview:
             if detailScope != .prReview { prReviewScope = .all }
             detailScope = .prReview
+        case .watchers: detailScope = .watchers
         case .fleet: detailScope = .fleet
         case .attention: detailScope = .attention
         case .activity: detailScope = .activity
@@ -761,7 +769,7 @@ final class HerdrShellState {
         switch destination {
         case let .pane(id), let .git(id): model.pane(id: id) != nil
         case let .workspace(id): model.workspace(id: id) != nil
-        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .fleet, .attention, .activity: true
+        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .watchers, .fleet, .attention, .activity: true
         }
     }
 
@@ -811,6 +819,7 @@ final class HerdrShellState {
         case .dashboard: return "dashboard"
         case .agentBoard: return "agent-board"
         case .prReview: return "pr-review"
+        case .watchers: return "watchers"
         case .firstMate: return "first-mate"
         case .fleet: return "fleet"
         case .attention: return "attention"
@@ -1062,6 +1071,10 @@ struct AppRootView: View {
     }
 
     private func openURL(_ url: URL) {
+        if url.scheme == "herdr", url.host == "watchers" {
+            shell.show(.watchers, model: model)
+            return
+        }
         if url.scheme == "herdr", url.host == "pr-review" {
             guard let request = PRReviewOpenRequest(url: url) else { externalPiError = "Invalid PR Review navigation link."; isShowingExternalPiError = true; return }
             if model.isDemoMode { model.leaveDemo() }

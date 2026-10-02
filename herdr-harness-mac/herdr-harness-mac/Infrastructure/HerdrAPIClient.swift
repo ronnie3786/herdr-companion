@@ -1853,6 +1853,7 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/content") { return 600 }
         if path.hasPrefix("/api/v1/pr-reviews/") && path.hasSuffix("/documents") && method == "POST" { return 90 }
         if path.hasPrefix("/api/v1/pr-reviews") { return 30 }
+        if path.hasPrefix("/api/v1/watchers") { return path.contains("/builder/") && method == "POST" ? 90 : 30 }
         if path == "/api/v1/health" || path == "/api/v1/network" || path == "/api/v1/config/machines" {
             return 8
         }
@@ -2077,6 +2078,7 @@ struct HerdrSSEParser {
         "snapshot.updated", "alert.created", "alert.updated", "alerts.read_state_changed",
         "stars.changed", "push.delivery", "ready", "stream.reset", "cleanup.run_updated",
         "result_artifact.created",
+        "watchers.updated", "watchers.run", "watchers.inbox", "watchers.builder",
         "pi.bridge.connection", "pi.session_start", "pi.session_shutdown", "pi.session_info_changed",
         "pi.session_tree", "pi.session_compact",
     ]
@@ -2200,5 +2202,14 @@ private struct FirstMateLeadMessageBody: Encodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case text, context
         case requestID = "request_id"
+    }
+}
+
+extension HerdrAPIClient: WatchersClient {
+    func watchersRequest(_ components: [String], method: String, body: [String: PiJSONValue]?, query: [URLQueryItem]) async throws -> [String: PiJSONValue] {
+        guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "_-".contains($0)) } }) else { throw APIError.invalidResponse }
+        let path = "/api/v1/watchers" + (components.isEmpty ? "" : "/" + components.joined(separator: "/"))
+        if method == "GET" { return try await request(path: path, query: query) }
+        return try await request(path: path, method: method, body: body ?? [:])
     }
 }

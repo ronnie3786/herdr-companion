@@ -1,6 +1,6 @@
-# macOS NEXT
+# macOS 0.99.0-beta.1
 
-Preview channel, build NEXT.
+Preview channel, build 150.
 
 Setting up Watchers no longer means editing a configuration file, and every Watchers window now uses the app's purple dusk glass.
 
@@ -10,4 +10,4 @@ Setting up Watchers no longer means editing a configuration file, and every Watc
 - **Create a watcher, restyled.** The builder follows the approved design: Runs on in the header, a chat with the agent on the left, and the live draft, avatar choice, **How it runs** and next runs on a darker pane at the right. The manual editor, past runs, script viewer and Watcher inbox use the same glass.
 - **Watcher inbox fixed.** It no longer reports errors for computers where Watchers is off. It shows read and unread results, newest first, with **Mark read**, **Mark all read** and **See the run**. When it's empty, it explains that script-only watchers, such as ones imported from Cronboard, report on their own.
 
-Turning Watchers on from the app needs companion **NEXT** on that computer. Install it separately; the Mac updater installs only the app. Older companions keep working, and the app shows how to turn Watchers on in their configuration instead.
+Turning Watchers on from the app needs companion **0.82.0b1** on that computer. Install it separately; the Mac updater installs only the app. Older companions keep working, and the app shows how to turn Watchers on in their configuration instead.

@@ -1,5 +1,9 @@
 # Next macOS update — unreleased
 
+## First Mate inspector
+
+- The First Mate inspector's **Overview** no longer has a **Verification** section. The companion still records and enforces gate verification exactly as before; the browser Overview, `herdr-first-mate get` and managed `fm_status` still show it. The iPhone/iPad inspector already dropped it in iOS 0.18.0 (47). Presentation only; no companion update is needed.
+
 ## First Mate HUD placement
 
 - First Mate's latest message opens right beside the face, above the collapsed feature-orb row when there is room. Near the screen's top, it opens past the row to keep the orbs clear.

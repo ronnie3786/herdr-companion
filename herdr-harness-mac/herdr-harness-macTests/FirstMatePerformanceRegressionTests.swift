@@ -5,26 +5,6 @@ import Testing
 @Suite("First Mate responsive navigation")
 @MainActor
 struct FirstMatePerformanceRegressionTests {
-    @Test("Fleet polls ignore assessment timestamps but publish changed verdicts")
-    func fleetVerificationTicks() async {
-        var feature = ChatFixtures.feature("f1")
-        feature.verification = FirstMateVerification(status: .partiallyVerified, computedAt: "2030-01-01T00:00:00Z")
-        let client = SyntheticChatFleetClient(features: [feature])
-        let index = FirstMateFleetIndex()
-        let lifecycle = index.activate(sources: [ChatFixtures.source("alpha", client: client)], connectionGeneration: 1)
-        await index.refresh(lifecycle: lifecycle)
-        let revision = index.contentRevision
-        feature.verification?.computedAt = "2030-01-01T00:00:10Z"
-        client.features = .success([feature])
-        await index.refresh(lifecycle: lifecycle)
-        #expect(index.contentRevision == revision)
-        feature.verification?.status = .failed
-        client.features = .success([feature])
-        await index.refresh(lifecycle: lifecycle)
-        #expect(index.contentRevision > revision)
-        #expect(index.hosts.first?.features.first?.verification?.status == .failed)
-    }
-
     @Test("Switching bypasses an uncancellable old response on the same or another host", arguments: [false, true])
     func switchWhileReading(otherHost: Bool) async throws {
         let client = SyntheticChatFleetClient(features: [ChatFixtures.feature("f1"), ChatFixtures.feature("f2")])

@@ -48,9 +48,6 @@ final class FirstMateStore {
 
     private(set) var features: [FirstMateFeature] = []
     private(set) var snapshots: [String: FirstMateSnapshot] = [:]
-    /// Ordering fences must advance even when an identical verdict does not
-    /// notify views. Otherwise a delayed green could overwrite a newer failure.
-    @ObservationIgnored private var latestVerifications: [String: FirstMateVerification] = [:]
     @ObservationIgnored private var capabilitiesCheckedAt: Date?
     @ObservationIgnored private var conversationRefreshID = UUID()
     private(set) var readViewsSupported = false
@@ -267,7 +264,6 @@ final class FirstMateStore {
         composerDrafts.discardAll()
         #endif
         runtimeHealth = nil
-        latestVerifications = [:]
         capabilitiesCheckedAt = nil
         conversationRefreshID = UUID()
         readViewsSupported = false
@@ -352,24 +348,12 @@ final class FirstMateStore {
         // older response must not replace freshly accepted local work.
         chatVersions[value.feature.id] = nil
         chatRequests[value.feature.id] = nil
-        var value = value
-        if let existing = snapshots[value.feature.id]?.feature ?? features.first(where: { $0.id == value.feature.id }) {
-            value.feature.verification = Self.retainedVerification(
-                incoming: value.feature.verification,
-                includesField: value.feature.includesVerification,
-                cached: latestVerifications[value.feature.id] ?? existing.verification,
-                incomingIsStale: Self.isStrictlyOlderTimestamp(value.feature.updatedAt, than: existing.updatedAt),
-                authoritative: value.hasDetails
-            )
-            value.feature.includesVerification = value.feature.includesVerification || existing.includesVerification
-        }
-        latestVerifications[value.feature.id] = value.feature.verification
         if let health = value.runtimeHealth, !FirstMatePollPresentation.sameHealth(health, runtimeHealth) { runtimeHealth = health }
         // An identical poll changes nothing on screen. Dictionary and array
         // element writes notify observers even when the value is unchanged.
         if value.hasDetails, let existing = snapshots[value.feature.id],
            FirstMatePollPresentation.sameSnapshot(existing, value),
-           value.feature.isLead || features.contains(where: { $0.id == value.feature.id && FirstMatePollPresentation.sameFeature($0, value.feature) }) {
+           value.feature.isLead || features.contains(value.feature) {
             reconcileOutgoingMessages(for: value.feature.id)
             return
         }
@@ -425,7 +409,7 @@ final class FirstMateStore {
             // The lead is a conversation above the features, never one of them.
             if leadFeatureID != acceptedFeature.id { leadFeatureID = acceptedFeature.id }
         } else if let index = features.firstIndex(where: { $0.id == value.feature.id }) {
-            if !FirstMatePollPresentation.sameFeature(features[index], acceptedFeature) { features[index] = acceptedFeature }
+            if features[index] != acceptedFeature { features[index] = acceptedFeature }
         } else { features.append(acceptedFeature) }
         lastUpdated = .now
         // Observation is presentation state, not part of the snapshot: a poll
@@ -550,8 +534,7 @@ final class FirstMateStore {
             guard list.ok else { throw APIError.invalidResponse }
             if !FirstMatePollPresentation.sameHealth(runtimeHealth, list.runtimeHealth) { runtimeHealth = list.runtimeHealth }
             let refreshedFeatures = list.features.map { feature in
-                guard var cached = snapshots[feature.id]?.feature ?? features.first(where: { $0.id == feature.id }) else { return feature }
-                cached.verification = latestVerifications[feature.id] ?? cached.verification
+                guard let cached = snapshots[feature.id]?.feature ?? features.first(where: { $0.id == feature.id }) else { return feature }
                 if cached.revision > feature.revision || cached.updatedAt > feature.updatedAt {
                     var retained = cached
                     if let usage = feature.usage { retained.usage = usage }
@@ -559,18 +542,9 @@ final class FirstMateStore {
                 }
                 var refreshed = feature
                 if refreshed.usage == nil { refreshed.usage = cached.usage }
-                refreshed.verification = Self.retainedVerification(
-                    incoming: refreshed.verification,
-                    includesField: refreshed.includesVerification,
-                    cached: cached.verification,
-                    incomingIsStale: Self.isStrictlyOlderTimestamp(refreshed.updatedAt, than: cached.updatedAt),
-                    authoritative: true
-                )
-                refreshed.includesVerification = refreshed.includesVerification || cached.includesVerification
                 return refreshed
             }
-            for feature in refreshedFeatures { latestVerifications[feature.id] = feature.verification }
-            if !FirstMatePollPresentation.sameFeatures(features, refreshedFeatures) { features = refreshedFeatures }
+            if features != refreshedFeatures { features = refreshedFeatures }
             reconcileSelection()
             if includeConversation, let id = selectedFeatureID {
                 // Pi telemetry is most of a long-running feature's events and no
@@ -2075,64 +2049,6 @@ final class FirstMateStore {
         guard let candidateDate = HerdrTimestamp.date(from: candidate),
               let existingDate = HerdrTimestamp.date(from: existing) else { return false }
         return candidateDate < existingDate
-    }
-
-    /// Conservative verification merge for partial acknowledgements and
-    /// delayed full snapshots.
-    ///
-    /// - A partial acknowledgement (mutation response) that omits the field
-    ///   inherits the cached assessment.
-    /// - An authoritative full snapshot that omits, nulls, or malforms the
-    ///   field reports unavailable evidence: the cached verdict is downgraded
-    ///   so an old green never remains current.
-    /// - An explicit empty assessment never erases retained evidence for a
-    ///   partial acknowledgement.
-    /// - A strictly older feature timestamp keeps the cached assessment.
-    /// - Otherwise the assessment with the newer feature revision and
-    ///   computation timestamp wins, so a delayed verified response cannot
-    ///   overwrite a newer partial or failed verdict.
-    private static func retainedVerification(
-        incoming: FirstMateVerification?,
-        includesField: Bool,
-        cached: FirstMateVerification?,
-        incomingIsStale: Bool,
-        authoritative: Bool
-    ) -> FirstMateVerification? {
-        if incomingIsStale { return cached }
-        guard let cached else { return includesField ? incoming : nil }
-        guard includesField, let incoming else {
-            // An omitted or malformed field is evidence of absence only in an
-            // authoritative full snapshot; a mutation acknowledgement merely
-            // did not carry the assessment.
-            return authoritative ? Self.unavailableVerification(previous: cached) : cached
-        }
-        if authoritative, incoming.status != .verified,
-           incoming.featureRevision == nil, incoming.computedAtDate == nil {
-            // A full response without usable ordering still withdraws green.
-            // Keep the last ordering fence so a delayed green cannot revive it.
-            var unavailable = incoming
-            unavailable.featureRevision = cached.featureRevision
-            unavailable.computedAt = cached.computedAt
-            return unavailable
-        }
-        if cached.status != .verified, incoming.status == .verified,
-           incoming.featureRevision == cached.featureRevision,
-           let cachedDate = cached.computedAtDate,
-           let incomingDate = incoming.computedAtDate,
-           incomingDate <= cachedDate {
-            return cached
-        }
-        return incoming.isAtLeastAsFresh(as: cached) ? incoming : cached
-    }
-
-    private static func unavailableVerification(previous: FirstMateVerification) -> FirstMateVerification {
-        FirstMateVerification(
-            status: .unavailable,
-            featureRevision: previous.featureRevision,
-            coverageReasons: ["The companion did not report structured suite evidence for this feature."],
-            evidencePresent: true,
-            computedAt: previous.computedAt
-        )
     }
 
     private func resetSessionPagination() {

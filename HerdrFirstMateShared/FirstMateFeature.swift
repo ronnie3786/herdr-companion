@@ -41,12 +41,6 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
     var usage: FirstMateUsage? = nil
     var modelSelection: FirstMateModelSelection? = nil
     var dashboardSummary: FirstMateDashboardSummary? = nil
-    /// The companion's scoped verification assessment. `nil` means no
-    /// structured evidence is available; it never means verified.
-    var verification: FirstMateVerification? = nil
-    /// Distinguishes a response that omitted `verification` (an older
-    /// companion) from one that explicitly reported an empty assessment.
-    var includesVerification = true
     /// "lead" for the machine's lead First Mate (`first-mate-lead-v1`), else a
     /// feature. Older companions omit it.
     var kind: String? = nil
@@ -70,7 +64,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
         case coordinatorContext = "coordinator_context"
         case usage, modelSelection = "model_selection"
         case dashboardSummary = "dashboard_summary"
-        case verification, kind
+        case kind
     }
     var isArchived: Bool { archivedAt != nil }
 
@@ -96,7 +90,6 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
             && lhs.usage == rhs.usage
             && lhs.modelSelection == rhs.modelSelection
             && lhs.dashboardSummary == rhs.dashboardSummary
-            && lhs.verification == rhs.verification
             && lhs.kind == rhs.kind
     }
 }
@@ -127,15 +120,5 @@ extension FirstMateFeature {
         modelSelection = try container.decodeIfPresent(FirstMateModelSelection.self, forKey: .modelSelection)
         dashboardSummary = try container.decodeIfPresent(FirstMateDashboardSummary.self, forKey: .dashboardSummary)
         kind = try? container.decodeIfPresent(String.self, forKey: .kind)
-        includesVerification = container.contains(.verification)
-        if let decoded = try? container.decodeIfPresent(FirstMateVerification.self, forKey: .verification) {
-            // An additive empty object is "reported but unavailable", not a
-            // verdict. Keep it decoded so the UI can explain the absence.
-            verification = decoded.isEmpty ? nil : decoded
-        } else {
-            // A malformed assessment degrades to unavailable instead of
-            // failing the whole feature payload.
-            verification = nil
-        }
     }
 }

@@ -442,7 +442,7 @@ final class FirstMateFleetIndex {
             a.usage = nil; b.usage = nil
             a.coordinatorContext = nil; b.coordinatorContext = nil
             if a.dashboardSummary?.activityAt != nil, b.dashboardSummary?.activityAt != nil { a.updatedAt = b.updatedAt }
-            return FirstMatePollPresentation.sameFeature(a, b)
+            return a == b
         }
     }
 

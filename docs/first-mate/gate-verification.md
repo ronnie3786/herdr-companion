@@ -134,7 +134,8 @@ assessment time. `tested_revisions` (also returned as `source_revisions`) comes
 only from the selected runs; current HEAD is never relabeled as a tested
 revision.
 
-Overview's Verification section renders the full assessment. Checkpoints and
+The browser Overview's Verification section renders the full assessment; the
+Mac and iPhone/iPad inspectors do not show it. Checkpoints and
 informal parks retain the same structured metadata without appending coverage
 inventories to the conversation. Concrete failures or limits that affect the
 requested outcome still belong in a concise reply. Exact legacy server-added
@@ -212,8 +213,8 @@ Covered by
 
 | Surface | What it shows |
 | --- | --- |
-| Mac and iOS First Mate **Overview** | A Verification section separate from workflow status: status, tested revision(s), the full package-qualified gate set with per-suite outcomes, and named missing, previously passing dropped, failing, and stale evidence. Long lists disclose their remainder instead of truncating. Offline cached evidence is badged **Last reported** and is never silently refreshed into green. |
-| Browser `/first-mate/` Overview | The same section, tones, disclosure, and last-reported badge. |
+| Browser `/first-mate/` Overview | A Verification section separate from workflow status: status, tested revision(s), the full package-qualified gate set with per-suite outcomes, and named missing, previously passing dropped, failing, and stale evidence. Long lists disclose their remainder instead of truncating. Offline cached evidence is badged **Last reported** and is never silently refreshed into green. |
+| Mac and iOS First Mate inspector | Nothing. The Verification section was removed from both native inspectors on 2026-10-01; use the browser Overview, the CLI, or `fm_status`. |
 | Checkpoint and park messages | The original concise reply, with the compact gate set retained in message metadata. Detailed coverage stays in Overview. |
 | Authenticated feature detail and CLI | `feature.verification` on summaries and detail; detail also returns `verification_runs` and `suite_inventories`; `herdr-first-mate get` passes them through unchanged. |
 | Managed `fm_status` | The scoped `verification` assessment and a bounded `verification_runs` list for the coordinator, worker, or advisor. |
@@ -223,8 +224,7 @@ Clients never recompute coverage. They decode the companion's assessment and
 present exactly the gate set, tested revision, and gaps it names. An unknown
 future status is retained verbatim and never treated as verified. A verified
 payload that omits its gate set or tested revision is structurally incomplete
-and renders **Verification unavailable**, not green, in both native and
-browser clients. An authoritative full response that reports unavailable or
+and renders **Verification unavailable**, not green, in the browser client. An authoritative full response that reports unavailable or
 malformed evidence downgrades cached current verification; only a genuinely
 partial acknowledgement may inherit an omitted field. Cached evidence is
 retained for offline last-reported display, never as current green.

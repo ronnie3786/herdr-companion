@@ -179,6 +179,53 @@ final class FirstMateIPadRenderTests: XCTestCase {
         }
     }
 
+    /// The iPad tab has no navigation container to install the app's dusk, so
+    /// over plain ink the workspace must still bring its own: the list column
+    /// shows indigo through its glass instead of the near-black it once did.
+    func testColumnsShareTheDuskWhenNothingBehindDrawsIt() async throws {
+        let model = await fixture(), fleet = model.firstMateFleet
+        model.selectedTab = .firstMate
+        XCTAssertTrue(fleet.open(FirstMateFeatureTarget(machineID: "demo1", featureID: "demo-receipts")))
+        let render = await IOSNativeRenderHarness().render(
+            FirstMateWorkspaceView(model: model, fleet: fleet)
+                .environment(\.horizontalSizeClass, .regular).frame(height: 1032)
+                // As under the app root's chrome, which marks the dusk installed
+                // though the tab's own surface never draws it.
+                .environment(\.herdrDuskInstalled, true),
+            width: 1376, dynamicType: .defaultSize, background: .ink)
+        XCTAssertTrue(render.drewHierarchy)
+        let list = try XCTUnwrap(render.element(identifier: "first-mate-sidebar-column"), render.measurementDiagnostics).frame
+        // A strip left of the unread dots, low in the column where the dusk is bluest.
+        let tint = try averageColor(render.image, in: CGRect(x: list.minX + 1, y: list.maxY - 320, width: 3, height: 300))
+        XCTAssertGreaterThan(tint.blue - tint.red, 8, "List column color \(tint)")
+        try save(render, "a2-ipad-landscape-1376-over-ink")
+    }
+
+    private func averageColor(_ image: UIImage, in rect: CGRect) throws -> (red: Double, green: Double, blue: Double) {
+        let cg = try XCTUnwrap(image.cgImage)
+        let scale = image.scale
+        let box = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
+            .integral.intersection(CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+        let crop = try XCTUnwrap(cg.cropping(to: box))
+        let width = crop.width, height = crop.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                          bytesPerRow: width * 4, space: space,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        XCTAssertTrue(drawn)
+        let count = Double(width * height)
+        var red = 0.0, green = 0.0, blue = 0.0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            red += Double(pixels[index]); green += Double(pixels[index + 1]); blue += Double(pixels[index + 2])
+        }
+        return (red / count, green / count, blue / count)
+    }
+
     /// Git, then ⋯, then the inspector/Info control on the far right.
     private func assertChatBarOrder(_ render: IOSNativeRenderHarness.HostedRender) throws {
         let git = try XCTUnwrap(render.element(identifier: "chat-git-control"), render.measurementDiagnostics).frame

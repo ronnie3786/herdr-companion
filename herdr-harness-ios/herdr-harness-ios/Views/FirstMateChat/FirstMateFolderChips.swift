@@ -8,18 +8,18 @@ struct FirstMateFolderChips: View {
 
     var body: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 ForEach(FirstMateListFolder.allCases) { option in
                     let count = rows.count { option.includes($0) }
                     let selected = option == folder
                     Button { folder = option } label: {
                         HStack(spacing: 5) {
-                            Text(option.title).herdrFont(.subheadline, weight: .semibold)
-                            Text("\(count)").herdrFont(.caption, weight: .semibold).monospacedDigit()
+                            Text(option.title).herdrFont(size: 13.5, weight: .semibold, relativeTo: .footnote)
+                            Text("\(count)").herdrFont(size: 12, relativeTo: .caption).monospacedDigit()
                                 .foregroundStyle(selected ? HerdrTheme.secondaryText : HerdrTheme.tertiaryText)
                         }
                         .foregroundStyle(selected ? HerdrTheme.primaryText : HerdrTheme.secondaryText)
-                        .padding(.horizontal, 10).frame(minHeight: 34)
+                        .padding(.horizontal, 10).frame(minHeight: 32)
                         .background(selected ? HerdrTheme.inkFill(0.15) : HerdrTheme.inkFill(0.05), in: .capsule)
                         .frame(minHeight: 44).contentShape(.rect)
                     }

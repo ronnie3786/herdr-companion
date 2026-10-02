@@ -309,7 +309,8 @@ and each tab keeps the Mac's structure. Overview opens with a Now card (the
 status word, "Step n of 6", the six steps as a bar, the feature's current line,
 and its machine and last update), then saved pull requests, Builds (Mobile App
 Hub builds and simulator checkpoints), the goal rendered as Markdown and cut to a
-few lines until **Show full brief**, usage, the current focus with its agents,
+few lines until **Show full brief**, Full task usage folded to one line of cost
+and tokens that opens its breakdown, the current focus with its agents,
 documents and simulator chips, the step's agents as plain rows, and the latest
 journal milestones. There is no Verification card. Agents groups crew rows under
 step disclosure rows; Documents lists "agent · step" rows; Workflow puts
@@ -332,6 +333,10 @@ portrait floats it over the chat as a glass sheet that you close, swipe away, or
 pin to dock beside the chat. The chat bar ends with Git, ⋯, and the inspector
 button on iPad, and with Git, ⋯, and Info on iPhone. The app's tab bar stays
 visible on iPad. The lead has only Overview, and older-host briefing remains explicit.
+All iPad columns share one dusk backdrop under the status bar and tab bar, each
+column's glass over it; the floating inspector carries its own. The iPad list
+header names the tab with its feature and needs-you counts and keeps search open
+as a field, and the chat title pill hugs the name with status, step and machine.
 
 Git opens full screen from the chat bar, or from a Workflow commit at that commit
 (the Mac opens the same view in its own window). It needs a companion advertising

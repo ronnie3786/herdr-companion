@@ -4,26 +4,52 @@ struct FirstMateConversationsBar: View {
     @Bindable var model: HerdrAppModel
     @Bindable var fleet: FirstMateMobileFleetStore
     @Binding var showsSearch: Bool
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// iPad names the list beside the host picker and keeps search open
+    /// under the bar, so the pill holds only New and More.
+    private var regular: Bool { horizontalSizeClass == .regular }
     #if DEBUG
     @State private var showsDiagnostics = false
     @State private var diagnostics = ""
     #endif
 
-    var body: some View {
-        HStack(spacing: 12) {
-            FirstMateMachinePicker(model: model, fleet: fleet)
+    /// "7 features · 3 need you", as the prototype's list header reads.
+    private var summary: String {
+        let features = FirstMateMobileListPresentation(fleet: fleet).rows.count
+        let needs = fleet.conversations.count { $0.hudStatus.needsYou }
+        let count = "\(features) \(features == 1 ? "feature" : "features")"
+        return needs == 0 ? count : "\(count) · \(needs) \(needs == 1 ? "needs" : "need") you"
+    }
 
-            Spacer(minLength: 0)
-            HStack(spacing: 0) {
-                Button {
-                    showsSearch.toggle()
-                    if !showsSearch { fleet.search = "" }
-                } label: {
-                    Label("Search conversations", systemImage: showsSearch ? "xmark" : "magnifyingglass")
-                        .labelStyle(.iconOnly).frame(width: 44, height: 44).contentShape(.rect)
+    var body: some View {
+        HStack(spacing: regular ? 8 : 12) {
+            FirstMateMachinePicker(model: model, fleet: fleet)
+            if regular {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("First Mates").herdrFont(.headline, weight: .bold).foregroundStyle(HerdrTheme.primaryText)
+                    Text(summary).herdrFont(size: 12.5, relativeTo: .caption).foregroundStyle(HerdrTheme.tertiaryText)
                 }
-                .accessibilityIdentifier("first-mate-chat-search-toggle")
-                .composerLayoutMeasurement(id: "conversation-search-control")
+                .lineLimit(1).minimumScaleFactor(0.9)
+                // Takes the row's slack itself: a spacer would add two more gaps.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("first-mate-list-title")
+            } else {
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 0) {
+                if !regular {
+                    Button {
+                        showsSearch.toggle()
+                        if !showsSearch { fleet.search = "" }
+                    } label: {
+                        Label("Search conversations", systemImage: showsSearch ? "xmark" : "magnifyingglass")
+                            .labelStyle(.iconOnly).frame(width: 44, height: 44).contentShape(.rect)
+                    }
+                    .accessibilityIdentifier("first-mate-chat-search-toggle")
+                    .composerLayoutMeasurement(id: "conversation-search-control")
+                }
                 Button {
                     model.beginAppNavigation()
                     fleet.beginCreating()

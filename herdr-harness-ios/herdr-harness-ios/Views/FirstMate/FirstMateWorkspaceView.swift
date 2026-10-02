@@ -42,6 +42,9 @@ struct FirstMateWorkspaceView: View {
                     regularColumns(FirstMateIPadLayout.resolve(size: size, inspectorOpen: inspectorOpen,
                                                                list: listPreference, pinned: inspectorPinned))
                 }
+                // The tab has no navigation container to install the app's
+                // dusk, so the columns share one here, under the bars too.
+                .background { FirstMateDuskFill().ignoresSafeArea() }
                 .toolbarVisibility(.visible, for: .tabBar)
             } else {
                 NavigationStack(path: $path) {
@@ -175,6 +178,14 @@ extension FirstMateWorkspaceView {
                 }
                 .frame(width: layout.leadingWidth)
                 .clipped()
+                // The column's glass sits outside the clip so it runs under
+                // the status bar and the home indicator like the chat's.
+                .environment(\.firstMateColumnGlassDrawn, true)
+                .background {
+                    HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground)
+                        .overlay(alignment: .trailing) { FirstMateColumnRule() }
+                        .ignoresSafeArea()
+                }
                 .composerLayoutMeasurement(id: "first-mate-sidebar-column")
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("first-mate-sidebar-column")
@@ -191,7 +202,7 @@ extension FirstMateWorkspaceView {
                 if layout.inspector == .docked {
                     inspectorPanel(layout)
                         .frame(width: layout.inspectorWidth)
-                        .herdrHairline(.leading)
+                        .overlay(alignment: .leading) { FirstMateColumnRule().ignoresSafeArea() }
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
@@ -204,6 +215,9 @@ extension FirstMateWorkspaceView {
                     .transition(.opacity)
                 inspectorPanel(layout)
                     .frame(width: layout.inspectorWidth)
+                    // Opaque dusk of its own: the floating sheet never shows
+                    // the dimmed chat through its glass.
+                    .background { FirstMateDuskFill() }
                     .clipShape(.rect(cornerRadius: 28, style: .continuous))
                     .overlay { RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(HerdrTheme.outline) }
                     .shadow(color: .black.opacity(0.45), radius: 40, x: -12, y: 20)
@@ -276,11 +290,32 @@ extension FirstMateWorkspaceView {
 }
 
 private extension View {
-    /// An empty iPad column keeps the dusk and pane glass instead of the
-    /// split view's plain black column.
+    /// An empty iPad column keeps the pane glass over the workspace's dusk.
     func herdrEmptyColumn() -> some View {
         frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane, drawsDusk: true).ignoresSafeArea() }
+            .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane).ignoresSafeArea() }
             .foregroundStyle(HerdrTheme.secondaryText)
     }
+}
+
+/// The app's dusk (or its opaque base with glass off), for surfaces no
+/// navigation container backs: the iPad columns and the floating inspector.
+private struct FirstMateDuskFill: View {
+    @Environment(\.herdrGlassActive) private var glass
+    var body: some View { HerdrAppBackdrop(active: glass).allowsHitTesting(false).accessibilityHidden(true) }
+}
+
+/// The hairline between iPad columns, full height under the bars.
+private struct FirstMateColumnRule: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+    var body: some View {
+        Rectangle().fill(HerdrTheme.rule(HerdrTheme.hairline, contrast: contrast)).frame(width: 1)
+            .allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
+extension EnvironmentValues {
+    /// True inside an iPad column that draws its own glass outside its clip,
+    /// so the list and rail inside it leave their background clear.
+    @Entry var firstMateColumnGlassDrawn = false
 }

@@ -8,6 +8,7 @@ struct FirstMateConversationRail: View {
     @Bindable var fleet: FirstMateMobileFleetStore
     let openFeature: (FirstMateFeatureTarget) -> Void
     let openLead: () -> Void
+    @Environment(\.firstMateColumnGlassDrawn) private var columnGlassDrawn
 
     private var leadUnread: Bool {
         fleet.leadChoice.current.map { fleet.chat.leadIsUnread(machineID: $0, fleet: fleet) } ?? false
@@ -57,7 +58,7 @@ struct FirstMateConversationRail: View {
             .accessibilityIdentifier("first-mate-rail-new-feature")
             .padding(.vertical, 10)
         }
-        .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground).ignoresSafeArea() }
+        .background { if !columnGlassDrawn { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground).ignoresSafeArea() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("first-mate-conversation-rail")
     }

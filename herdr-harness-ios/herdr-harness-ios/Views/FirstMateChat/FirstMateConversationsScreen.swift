@@ -11,6 +11,7 @@ struct FirstMateConversationsScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @SceneStorage("herdr.firstMate.folder") private var folder: FirstMateListFolder = .all
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.firstMateColumnGlassDrawn) private var columnGlassDrawn
     @State private var showsSearch = false
     @State private var archiveRequest: FirstMateMobileArchiveRequest?
     @State private var mutationFeedback = FirstMateListMutationFeedback()
@@ -32,6 +33,8 @@ struct FirstMateConversationsScreen: View {
                         needsYouCount: fleet.conversations.count { $0.hudStatus.needsYou },
                         orbSize: horizontalSizeClass == .regular ? 62 : verticalSizeClass == .compact ? 64 : 88,
                         columns: horizontalSizeClass == .regular ? 4 : nil,
+                        selectedTarget: horizontalSizeClass == .regular ? fleet.selectedTarget : nil,
+                        leadSelected: horizontalSizeClass == .regular && fleet.chat.selection == .lead,
                         openLead: openLead, openFeature: openFeature, openInfo: openInfo,
                         archive: presentArchive, canArchive: canArchive,
                         revealOverflow: { id in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo(id, anchor: .top) } })
@@ -95,7 +98,9 @@ struct FirstMateConversationsScreen: View {
             .safeAreaBar(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
                     FirstMateConversationsBar(model: model, fleet: fleet, showsSearch: $showsSearch)
-                    if showsSearch {
+                    if horizontalSizeClass == .regular {
+                        regularSearch
+                    } else if showsSearch {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass").foregroundStyle(HerdrTheme.iconTint).accessibilityHidden(true)
                             TextField("", text: $fleet.search, prompt: Text("Search conversations").foregroundStyle(HerdrTheme.tertiaryText))
@@ -119,7 +124,7 @@ struct FirstMateConversationsScreen: View {
                 }
             }
         }
-        .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground).ignoresSafeArea() }
+        .background { if !columnGlassDrawn { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground).ignoresSafeArea() } }
         .herdrFirstMateChrome()
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: showsSearch) { _, shown in searchFocused = shown }
@@ -170,6 +175,37 @@ struct FirstMateConversationsScreen: View {
         return !feature.isLead && model.firstMateCanControl(machineID: target.machineID) && store.archiveSupported
             && !store.isSending && !store.isSubmitting(featureID: target.featureID) && !fleet.isArchiving(target)
     }
+    /// iPad: search stays open under the header, a field rather than a
+    /// toggle, as in the prototype.
+    private var regularSearch: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .medium))
+                .foregroundStyle(HerdrTheme.tertiaryText).accessibilityHidden(true)
+            TextField("", text: $fleet.search, prompt: Text("Search").foregroundStyle(HerdrTheme.tertiaryText))
+                .herdrFont(.body).foregroundStyle(HerdrTheme.primaryText)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .submitLabel(.search)
+                .focused($searchFocused)
+                .accessibilityLabel("Search conversations")
+                .accessibilityIdentifier("first-mate-chat-search")
+            if !fleet.search.isEmpty {
+                Button { fleet.search = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(HerdrTheme.iconTint)
+                        .frame(width: 32, height: 40).contentShape(.rect)
+                }.buttonStyle(.herdrPlain).accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.leading, 12).padding(.trailing, 6).frame(height: 40)
+        .background(HerdrTheme.inkFill(0.06), in: .rect(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(searchFocused ? HerdrTheme.accent.opacity(0.65) : HerdrTheme.inkFill(0.08))
+        }
+        .contentShape(.rect).onTapGesture { searchFocused = true }
+        .padding(.horizontal, 16).padding(.bottom, 10)
+        .composerLayoutMeasurement(id: "conversation-search-field")
+    }
+
     private func presentArchive(_ target: FirstMateFeatureTarget) {
         guard canArchive(target) else { return }
         model.beginAppNavigation()

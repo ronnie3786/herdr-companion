@@ -118,25 +118,30 @@ struct FirstMateChatScreen: View {
         HStack(spacing: columns == nil ? 6 : 8) {
             leadingControl
             Button { showOverview() } label: {
-                HStack(spacing: 7) {
-                    FirstMateEmojiDisc(emoji: conversation?.emoji ?? "✦", size: 28)
+                HStack(spacing: columns == nil ? 7 : 10) {
+                    FirstMateEmojiDisc(emoji: conversation?.emoji ?? "✦", size: columns == nil ? 28 : 36)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(conversation?.name ?? snapshot?.feature.title ?? "First Mate")
-                            .herdrFont(.body, weight: .semibold).lineLimit(1)
-                        Text("\(FirstMateMobileTranscriptPolicy.statusWord(snapshot: snapshot, conversation: conversation)) · \(model.machineName(target.machineID))")
-                            .herdrFont(.caption).foregroundStyle(conversation.map { FirstMateChatStatusStyle.color(for: closed ? .done : $0.hudStatus) } ?? HerdrTheme.secondaryText).lineLimit(1)
+                        HStack(spacing: 6) {
+                            Text(conversation?.name ?? snapshot?.feature.title ?? "First Mate")
+                                .herdrFont(.body, weight: .semibold).lineLimit(1)
+                            // iPhone's bar also carries Git, ⋯ and Info, so the name keeps the chevron's room.
+                            if columns != nil {
+                                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
+                            }
+                        }
+                        titleSubtitle.lineLimit(1)
                     }
-                    Spacer(minLength: 0)
-                    // iPhone's bar also carries Git, ⋯ and Info, so the name keeps the chevron's room.
-                    if columns != nil {
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(HerdrTheme.iconTint)
-                    }
+                    // iPad: the pill hugs its name, as in the prototype; the
+                    // bar's spacer pushes Git, ⋯ and the inspector right.
+                    if columns == nil { Spacer(minLength: 0) }
                 }
-                .padding(.leading, 8).padding(.trailing, columns == nil ? 12 : 14).frame(minHeight: 44)
+                .padding(.leading, columns == nil ? 8 : 6).padding(.trailing, columns == nil ? 12 : 18)
+                .frame(minHeight: columns == nil ? 44 : 48)
                 .herdrControlGlass(in: .capsule)
             }
             .accessibilityIdentifier("first-mate-chat-title")
             .composerLayoutMeasurement(id: "chat-title-control")
+            if columns != nil { Spacer(minLength: 0) }
             if let inspectorContext {
                 Button { inspectorContext.openGit(FirstMateGitTarget(feature: target, featureTitle: inspectorContext.featureTitle)) } label: {
                     circle("arrow.triangle.branch")
@@ -170,6 +175,23 @@ struct FirstMateChatScreen: View {
             inspectorControl(label: "Feature info")
         }
         .buttonStyle(.plain).foregroundStyle(HerdrTheme.primaryText).padding(.horizontal, columns == nil ? 10 : 12).padding(.top, 2).padding(.bottom, 6)
+    }
+
+    /// The status word in its color, then (iPad) the step, then the machine.
+    private var titleSubtitle: some View {
+        let status = FirstMateMobileTranscriptPolicy.statusWord(snapshot: snapshot, conversation: conversation)
+        let color = conversation.map { FirstMateChatStatusStyle.color(for: closed ? .done : $0.hudStatus) } ?? HerdrTheme.secondaryText
+        let machine = model.machineName(target.machineID)
+        let step = columns == nil ? nil : conversation.flatMap(FirstMateNowCard.stepLine)
+        return Group {
+            if columns == nil {
+                Text("\(status) · \(machine)").foregroundStyle(color)
+            } else {
+                Text("\(Text(status).foregroundStyle(color)) · \(step.map { "\($0) · " } ?? "")\(machine)")
+                    .foregroundStyle(HerdrTheme.tertiaryText)
+            }
+        }
+        .herdrFont(.caption)
     }
 
     private var leadBar: some View {

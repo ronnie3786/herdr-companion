@@ -8,6 +8,9 @@ struct FirstMatePinnedStrip: View {
     /// iPad: a grid this many across that always fits the column (My First
     /// Mate, what needs you, then "+N"). Nil keeps the iPhone's sideways row.
     var columns: Int? = nil
+    /// iPad: the open conversation's orb gets the accent ring.
+    var selectedTarget: FirstMateFeatureTarget? = nil
+    var leadSelected = false
     let openLead: () -> Void
     let openFeature: (FirstMateFeatureTarget) -> Void
     let openInfo: (FirstMateFeatureTarget) -> Void
@@ -52,7 +55,7 @@ struct FirstMatePinnedStrip: View {
     private var leadAvatar: some View {
         FirstMatePinnedAvatar(name: "My First Mate", emoji: nil, size: orbSize, unread: leadUnread,
             tint: HerdrTheme.accent, caption: needsYouCount == 0 ? "Nothing needs you" : "\(needsYouCount) \(needsYouCount == 1 ? "needs" : "need") you",
-            identifier: "first-mate-chat-pinned-lead", compact: columns != nil, action: openLead)
+            identifier: "first-mate-chat-pinned-lead", compact: columns != nil, selected: leadSelected, action: openLead)
             .contextMenu { Button("Open overview", systemImage: "info.circle", action: openLead) }
     }
 
@@ -61,7 +64,7 @@ struct FirstMatePinnedStrip: View {
         return FirstMatePinnedAvatar(name: row.name, emoji: row.emoji, size: orbSize, unread: row.showsDot,
             tint: FirstMateChatStatusStyle.dotColor(for: row.hudStatus), caption: nil,
             identifier: "first-mate-chat-pinned-\(row.machineID)-\(row.featureID)", compact: columns != nil,
-            action: { openFeature(target) })
+            selected: !leadSelected && selectedTarget == target, action: { openFeature(target) })
             .accessibilityLabel("\(row.name), \(FirstMateChatStatusStyle.word(for: row))\(row.showsDot ? ", new message" : ""), \(row.machineName)")
             .contextMenu {
                 Button("Open info", systemImage: "info.circle") { openInfo(target) }
@@ -145,6 +148,7 @@ private struct FirstMatePinnedAvatar: View {
     let identifier: String
     /// Grid cells share the column's width and wrap names onto two lines.
     var compact = false
+    var selected = false
     let action: () -> Void
 
     var body: some View {
@@ -153,6 +157,11 @@ private struct FirstMatePinnedAvatar: View {
                 Group {
                     if let emoji { FirstMateEmojiDisc(emoji: emoji, size: size) }
                     else { FirstMateFaceOrb(size: size) }
+                }
+                .background {
+                    if selected {
+                        Circle().strokeBorder(HerdrTheme.accent, lineWidth: 2).padding(-4).accessibilityHidden(true)
+                    }
                 }
                 .overlay(alignment: .topTrailing) {
                     if unread {
@@ -176,6 +185,7 @@ private struct FirstMatePinnedAvatar: View {
         }
         .buttonStyle(.herdrPlain)
         .accessibilityLabel(name + (unread ? ", unread reply" : "") + (caption.map { ", " + $0 } ?? ""))
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier(identifier)
         .composerLayoutMeasurement(id: identifier, label: name)
     }

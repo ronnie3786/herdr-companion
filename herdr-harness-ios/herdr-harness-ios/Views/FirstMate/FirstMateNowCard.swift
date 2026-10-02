@@ -8,7 +8,10 @@ struct FirstMateNowCard: View {
     let machineName: String
 
     private var tint: Color { FirstMateChatStatusStyle.dotColor(for: conversation.hudStatus) }
-    private var stepLine: String? {
+    private var stepLine: String? { Self.stepLine(conversation) }
+
+    /// "Step 4 of 6, QA", also under the iPad chat bar's title.
+    static func stepLine(_ conversation: FirstMateConversation) -> String? {
         if conversation.hudStatus == .done { return "All steps done" }
         guard let index = conversation.stepIndex, FirstMateChatSteps.names.indices.contains(index) else { return nil }
         return "Step \(index + 1) of \(FirstMateChatSteps.names.count), \(FirstMateChatSteps.names[index])"

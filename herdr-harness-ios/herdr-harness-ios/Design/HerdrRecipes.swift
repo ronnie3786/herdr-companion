@@ -148,6 +148,8 @@ struct HerdrTabs<Value: Hashable>: View {
     let tabs: [Tab]
     var style: Style = .segments
     let accessibilityLabel: String
+    /// Underline tabs' gap; a panel that shares its bar with buttons tightens it.
+    var underlineSpacing: CGFloat = 16
     @Environment(\.dynamicTypeSize) private var dynamicType
 
     var body: some View {
@@ -166,7 +168,7 @@ struct HerdrTabs<Value: Hashable>: View {
     }
 
     private var strip: some View {
-        HStack(spacing: style == .underline ? 16 : 1) {
+        HStack(spacing: style == .underline ? underlineSpacing : 1) {
             ForEach(tabs) { tab in
                 let selected = selection == tab.value
                 Button { selection = tab.value } label: {

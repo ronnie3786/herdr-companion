@@ -33,7 +33,7 @@ struct FirstMateInspectorPanelButtons: View {
 
     var body: some View {
         if let controls, controls.isFloating || controls.isPinned {
-            HStack(spacing: 6) {
+            HStack(spacing: 2) {
                 if controls.canPin {
                     Button(action: controls.togglePin) {
                         Image(systemName: controls.isPinned ? "pin.fill" : "pin")

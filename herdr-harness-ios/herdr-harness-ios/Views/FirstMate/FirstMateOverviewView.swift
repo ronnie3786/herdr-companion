@@ -33,10 +33,7 @@ struct FirstMateOverviewView: View {
             goal
 
             VStack(alignment: .leading, spacing: 12) {
-                FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .herdrCard()
+                FirstMateUsageDisclosure(usage: snapshot.feature.usage)
 
                 if let visit = snapshot.currentVisit {
                     VStack(alignment: .leading, spacing: 0) {
@@ -136,6 +133,48 @@ struct FirstMateOverviewView: View {
                     .herdrFont(.footnote, weight: .medium).foregroundStyle(HerdrTheme.accent)
                     .frame(minHeight: 44).contentShape(.rect)
                     .accessibilityIdentifier("first-mate-overview-goal-toggle")
+            }
+        }
+    }
+}
+
+/// "Full task usage · $0.05 · 161,340 tokens" on one line, as in the
+/// prototype; the full breakdown opens under it.
+private struct FirstMateUsageDisclosure: View {
+    let usage: FirstMateUsage?
+    @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var summary: String {
+        guard let usage else { return "Unavailable" }
+        return "\(FirstMateUsageFormatting.compactCost(usage)) · \(FirstMateUsageFormatting.tokens(usage.totalTokens)) tokens"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { expanded.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(HerdrTheme.iconTint)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                    Text("Full task usage").herdrFont(.body, weight: .semibold).foregroundStyle(HerdrTheme.primaryText)
+                    Spacer(minLength: 8)
+                    Text(summary).herdrFont(.caption).monospacedDigit().foregroundStyle(HerdrTheme.secondaryText).lineLimit(1)
+                }
+                .frame(minHeight: 44).contentShape(.rect)
+            }
+            .buttonStyle(.herdrPlain)
+            .accessibilityLabel("Full task usage, \(summary)")
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(expanded ? "Hides the breakdown" : "Shows the breakdown")
+            .accessibilityIdentifier("first-mate-usage-toggle")
+            if expanded {
+                FirstMateUsageSummaryView(usage: usage, title: "Full task usage")
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .herdrCard()
+                    .transition(.opacity)
             }
         }
     }

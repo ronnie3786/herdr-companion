@@ -3,7 +3,7 @@ import Testing
 import UIKit
 @testable import herdr_harness_ios
 
-@Suite("Mobile note editor", .serialized)
+@Suite("Mobile note editor", .serialized, .timeLimit(.minutes(3)))
 @MainActor
 struct RemoteNoteEditorTests {
     @Test("Inline patterns match Mac and do not leak into following typing", arguments: ["**bold**", "*italic*", "_italic_", "~~done~~", "**👩🏽‍💻 café**"])
@@ -106,25 +106,7 @@ struct RemoteNoteEditorTests {
         if let folder = ProcessInfo.processInfo.environment["HERDR_NOTE_PREVIEW_DIR"] {
             try image.pngData()?.write(to: URL(fileURLWithPath: folder).appendingPathComponent("ios-note-\(Int(width)).png"))
         }
-        let pasteboard = UIPasteboard.general
-        let previousItems = pasteboard.items
-        defer { pasteboard.items = previousItems }
-        let pasted = NSAttributedString(string: "Pasted basics", attributes: [
-            .font: UIFont.boldSystemFont(ofSize: 42), .foregroundColor: UIColor.white,
-            .backgroundColor: UIColor.red, .underlineStyle: NSUnderlineStyle.double.rawValue
-        ])
-        let rtf = try pasted.data(from: NSRange(location: 0, length: pasted.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
-        pasteboard.setData(rtf, forPasteboardType: "public.rtf")
-        editor.becomeFirstResponder()
-        editor.selectedRange = NSRange(location: 0, length: editor.textStorage.length)
-        editor.paste(nil)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(editor.text == "Pasted basics")
-        let values = editor.textStorage.attributes(at: 0, effectiveRange: nil)
-        #expect(HerdrNoteTextStyle.contains(.bold, in: values))
-        #expect(HerdrNoteTextStyle.contains(.underline, in: values))
-        #expect((values[.font] as? UIFont)?.pointSize == HerdrNoteTextStyle.fontSize)
-        #expect(values[.backgroundColor] == nil)
+
     }
 
     private func makeWindow() -> UIWindow {

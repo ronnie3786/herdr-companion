@@ -8,10 +8,12 @@ struct AgentRoleEditor: View {
 
     @Bindable var store: AgentRolesStore
     @Binding var role: AgentRole
+    let showSources: () -> Void
     @State private var tab = Tab.profile
 
-    init(store: AgentRolesStore, role: Binding<AgentRole>, initialTab: Tab = .profile) {
+    init(store: AgentRolesStore, role: Binding<AgentRole>, initialTab: Tab = .profile, showSources: @escaping () -> Void = {}) {
         self.store = store
+        self.showSources = showSources
         _role = role
         _tab = State(initialValue: initialTab)
     }
@@ -23,7 +25,7 @@ struct AgentRoleEditor: View {
                     .herdrFont(.title2)
                     .foregroundStyle(HerdrTheme.accent)
                     .frame(width: 44, height: 44)
-                    .background(HerdrTheme.elevated, in: Circle())
+                    .background(HerdrTheme.firstMateAvatarFill, in: Circle())
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     TextField("Role name", text: $role.name)
@@ -35,17 +37,16 @@ struct AgentRoleEditor: View {
                         .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.secondaryText)
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                Picker("Role settings", selection: $tab) {
+                    ForEach(Tab.allCases) { tab in Text(tab.rawValue).tag(tab) }
+                }
+                .pickerStyle(.segmented)
+                .tint(HerdrTheme.controlAccent)
+                .labelsHidden()
+                .frame(width: 148)
             }
             .padding(18)
-            Picker("Role settings", selection: $tab) {
-                ForEach(Tab.allCases) { tab in Text(tab.rawValue).tag(tab) }
-            }
-            .pickerStyle(.segmented)
-            .tint(HerdrTheme.controlAccent)
-            .labelsHidden()
-            .padding(.horizontal, 18)
-            .padding(.bottom, 14)
             Divider()
             if role.locked {
                 ContentUnavailableView("Recovery stays restricted", systemImage: "lock.shield",
@@ -54,7 +55,7 @@ struct AgentRoleEditor: View {
             } else {
                 switch tab {
                 case .profile: AgentRoleProfileEditor(store: store, role: $role)
-                case .skills: AgentRoleSkillsView(store: store)
+                case .skills: AgentRoleSkillsView(store: store, showSources: showSources)
                 }
                 AgentRoleSaveBar(store: store)
             }

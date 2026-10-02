@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct AgentRoleSourcesSheet: View {
@@ -9,26 +8,31 @@ struct AgentRoleSourcesSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 Text("Skills from this Mac").herdrFont(.title2, weight: .semibold)
-                Text("Choose folders containing Pi skills. Saving a role copies its selected skill packages, including supporting files, to the computer where it runs.")
+                Text("Herdr finds the usual Agent, Codex, Claude, Dox Agent, Point-Free and Pi skill folders in your user account.")
                     .herdrFont(.callout)
                     .foregroundStyle(HerdrTheme.secondaryText)
-                Text("Folders and access permissions stay on this Mac. After changing local files, use Update Copies on the role's Skills tab to refresh its saved packages.")
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("macOS requires one-time access to each folder. Linked skills may point to another folder that needs its own access. Only the packages you select are copied when you save a role.")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    ForEach(catalog.issues) { issue in
+                        AgentRoleSkillIssueRow(issue: issue) { grant(issue.path) }
+                    }
                     ForEach(catalog.sources) { source in
                         let skillCount = catalog.skills.count { $0.source == source.id }
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 10) {
                                 Label(source.name, systemImage: source.available ? "folder" : "folder.badge.questionmark")
-                                    .herdrFont(.headline)
+                                    .herdrFont(.callout, weight: .semibold)
                                 Spacer()
-                                if !source.available {
-                                    Button("Grant Access…") { chooseFolder(replacing: source) }
+                                if !source.available && !catalog.issues.contains(where: { $0.path == source.path && $0.needsAccess }) {
+                                    Button("Choose folder…") { chooseFolder(replacing: source) }
                                 }
                                 Button("Remove folder", systemImage: "minus.circle") { remove(source) }
                                     .labelStyle(.iconOnly).buttonStyle(.borderless)
@@ -38,28 +42,53 @@ struct AgentRoleSourcesSheet: View {
                                 .foregroundStyle(HerdrTheme.secondaryText)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text(source.available
-                                ? "\(skillCount) \(skillCount == 1 ? "skill" : "skills")"
-                                : "Unavailable. Choose this folder to grant access, or add another folder.")
-                                .herdrFont(.caption)
-                                .foregroundStyle(source.available ? HerdrTheme.secondaryText : HerdrTheme.warning)
+                            if source.available {
+                                Text("\(skillCount) \(skillCount == 1 ? "skill" : "skills")")
+                                    .herdrFont(.caption)
+                                    .foregroundStyle(HerdrTheme.secondaryText)
+                            }
                         }
-                        .padding(12)
-                        .background(HerdrTheme.elevated.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(14)
+                        .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(HerdrTheme.outline))
                     }
-                    if catalog.sources.isEmpty {
-                        Text("No skill folders. Add a folder to browse its skills.")
+                    if !catalog.suggestedSources.isEmpty {
+                        Text("Common skill folders")
+                            .herdrFont(.callout, weight: .semibold)
+                            .padding(.top, 8)
+                        Text("Choose a folder you use to let macOS grant access. Folders that are not installed can be left alone.")
+                            .herdrFont(.caption)
                             .foregroundStyle(HerdrTheme.secondaryText)
+                        ForEach(catalog.suggestedSources) { source in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(source.name).herdrFont(.callout, weight: .medium)
+                                    Text(source.path).herdrFont(.caption, monospaced: true)
+                                        .foregroundStyle(HerdrTheme.secondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 4)
+                                Button("Allow access…") { grant(source.path) }
+                                    .fixedSize()
+                            }
+                            .padding(12)
+                            .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 10))
+                        }
+                    }
+                    if catalog.sources.isEmpty && catalog.issues.isEmpty && catalog.suggestedSources.isEmpty {
+                        ContentUnavailableView("Connect your skill folders", systemImage: "folder.badge.plus",
+                            description: Text("Choose one or more folders containing SKILL.md files. Their names, descriptions and supporting files stay together."))
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 10) {
-                TextField("Source label (optional)", text: $sourceName)
+                TextField("Folder label (optional)", text: $sourceName)
                     .textFieldStyle(.roundedBorder)
-                Button("Add Folder…", systemImage: "folder.badge.plus") { chooseFolder(replacing: nil) }
+                Button("Add folders…", systemImage: "folder.badge.plus") { chooseFolder(replacing: nil) }
             }
-            if let error = errorMessage ?? catalog.errorMessage {
-                Text(error).herdrFont(.caption).foregroundStyle(HerdrTheme.warning)
+            if let errorMessage {
+                Text(errorMessage).herdrFont(.caption).foregroundStyle(HerdrTheme.warning)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -72,32 +101,22 @@ struct AgentRoleSourcesSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 580, height: 540)
-        .background(HerdrBackground())
+        .frame(width: 600, height: 580)
+        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane, drawsDusk: true) }
         .foregroundStyle(HerdrTheme.primaryText)
-        .tint(HerdrTheme.accent)
+        .tint(HerdrTheme.controlAccent)
         .accessibilityIdentifier("agent-role-sources-sheet")
     }
 
     private func chooseFolder(replacing source: AgentRoleSkillSource?) {
-        let panel = NSOpenPanel()
-        panel.title = "Choose a skill folder"
-        panel.message = "Choose a folder containing SKILL.md files and their supporting resources."
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.showsHiddenFiles = true
-        panel.prompt = "Use Folder"
-        if let source { panel.directoryURL = URL(fileURLWithPath: source.path, isDirectory: true) }
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            do {
-                try catalog.addSource(url, name: source?.name ?? sourceName)
-                sourceName = ""
-                errorMessage = nil
-                Task { await catalog.refresh() }
-            } catch { errorMessage = error.localizedDescription }
+        AgentRoleFolderPicker.choose(catalog: catalog, path: source?.path, name: source?.name ?? sourceName) { error in
+            errorMessage = error
+            if error == nil { sourceName = "" }
         }
+    }
+
+    private func grant(_ path: String) {
+        AgentRoleFolderPicker.choose(catalog: catalog, path: path) { errorMessage = $0 }
     }
 
     private func remove(_ source: AgentRoleSkillSource) {

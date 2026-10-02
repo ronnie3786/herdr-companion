@@ -43,6 +43,8 @@ struct SettingsView: View {
     @State private var selectedPane: SettingsPane
     // Keep drafts alive when navigating to another Settings pane.
     @State private var agentRoles: AgentRolesStore
+    private let followsModelConnections: Bool
+    private let initialAgentRoleTab: AgentRoleEditor.Tab
 
     init(
         model: HerdrAppModel,
@@ -54,9 +56,12 @@ struct SettingsView: View {
         hudController: HerdrHudController,
         updates: HerdrUpdateController,
         agentControl: AgentControlController,
+        agentRoles: AgentRolesStore? = nil,
         initialPane: SettingsPane = .general,
+        initialAgentRoleTab: AgentRoleEditor.Tab = .profile,
         initialSmartRenameCatalogMachineID: String? = nil
     ) {
+        self.initialAgentRoleTab = initialAgentRoleTab
         self.model = model
         self.fontScale = fontScale
         self.cleanupSettings = cleanupSettings
@@ -67,11 +72,11 @@ struct SettingsView: View {
         self.updates = updates
         self.agentControl = agentControl
         _selectedPane = State(initialValue: initialPane)
-        _agentRoles = State(initialValue: AgentRolesStore(model: model))
+        _agentRoles = State(initialValue: agentRoles ?? AgentRolesStore(model: model))
+        followsModelConnections = agentRoles == nil
         _smartRenameCatalogMachineID = State(initialValue: initialSmartRenameCatalogMachineID)
     }
 
-    @State private var hoveredPane: SettingsPane?
     @AppStorage(HerdrAppearancePreferences.glassEnabledKey) private var glassEnabled = HerdrAppearancePreferences.defaultGlassEnabled
     @AppStorage(HerdrAppearancePreferences.hazeEnabledKey) private var hazeEnabled = HerdrAppearancePreferences.defaultHazeEnabled
     @AppStorage(HerdrAppearancePreferences.desktopTransparencyEnabledKey)
@@ -79,12 +84,28 @@ struct SettingsView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        HStack(spacing: 0) {
-            settingsRail
-                .herdrHairline(.trailing)
+        VStack(spacing: 0) {
+            HStack {
+                Text("Settings")
+                    .herdrFont(.callout, weight: .medium)
+                    .foregroundStyle(HerdrTheme.secondaryText)
+                Spacer()
+            }
+            .padding(.leading, HerdrWindowChrome.trafficLightInset)
+            .frame(height: HerdrWindowChrome.titleBarHeight)
+            .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground) }
+            .herdrHairline(.bottom)
 
-            settingsDetail
+            HStack(spacing: 0) {
+                SettingsSidebar(selection: $selectedPane)
+                settingsDetail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(alignment: .top) { HerdrHazeBand() }
+                    .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane) }
+                    .clipped()
+            }
         }
+        .modifier(HerdrMainWindowChromeModifier(revealsDesktop: true))
         .navigationTitle("Settings")
         .foregroundStyle(HerdrTheme.primaryText)
         .sheet(isPresented: $isPresentingMachines) {
@@ -105,62 +126,23 @@ struct SettingsView: View {
         }
     }
 
-    private var settingsRail: some View {
-        ScrollView {
-            VStack(spacing: 2) {
-                ForEach(SettingsPane.allCases) { pane in
-                    let selected = selectedPane == pane
-                    Button {
-                        selectedPane = pane
-                    } label: {
-                        // MonoCode's `.nav` row: 32pt, 13/500.
-                        HStack(spacing: 8) {
-                            Image(systemName: pane.systemImage)
-                                .herdrFont(size: 14)
-                                .foregroundStyle(HerdrTheme.iconTint)
-                                .frame(width: 18)
-                            Text(pane.title)
-                                .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
-                                .foregroundStyle(selected ? HerdrTheme.primaryText : HerdrTheme.secondaryText)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: HerdrTheme.ControlHeight.row, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .herdrRowBackground(selected: selected, hovered: hoveredPane == pane)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.herdrPlain)
-                    .onHover { hoveredPane = $0 ? pane : (hoveredPane == pane ? nil : hoveredPane) }
-                    .accessibilityLabel(pane.title)
-                    .accessibilityIdentifier(pane.accessibilityIdentifier)
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(6)
-        }
-        .frame(width: 215)
-        .frame(maxHeight: .infinity)
-        .background(HerdrTheme.railBackground)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("settings-sidebar")
-    }
-
     @ViewBuilder
     private var settingsDetail: some View {
         if selectedPane == .agentRoles {
-            AgentRolesView(store: agentRoles, refreshConnections: { agentRoles.refreshConnections(model: model) })
-                .background(HerdrBackground())
+            AgentRolesView(store: agentRoles, initialTab: initialAgentRoleTab, refreshConnections: {
+                if followsModelConnections { agentRoles.refreshConnections(model: model) }
+            })
         } else if selectedPane == .agentProfiles {
             AgentProfilesView(model: model)
-                .background(HerdrBackground())
         } else {
-            Form {
-                paneSections(for: selectedPane)
+            VStack(spacing: 0) {
+                SettingsPageHeader(pane: selectedPane)
+                Form {
+                    paneSections(for: selectedPane)
+                }
+                .formStyle(SettingsGlassFormStyle())
+                .herdrFont(size: HerdrTheme.TextSize.body)
             }
-            .formStyle(.grouped)
-            .herdrFont(size: HerdrTheme.TextSize.body)
-            .scrollContentBackground(.hidden)
-            .background(HerdrBackground())
         }
     }
 
@@ -547,7 +529,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings-text-size-preview")
         } header: {
             SettingsSectionHeader {
-                HerdrSectionLabel(title: "text size")
+                Label("Text size", systemImage: "textformat.size")
             }
         } footer: {
             SettingsSectionFooter {
@@ -579,7 +561,7 @@ struct SettingsView: View {
             SettingsSectionFooter {
                 Text(reduceTransparency
                      ? "Reduce Transparency is on in System Settings, so Herdr draws opaque surfaces."
-                     : "Glass adds a purple dusk to Herdr's surfaces. Desktop transparency softly blurs what's behind the First Mate window. Turn it off to keep the purple background opaque. Haze adds a brighter band behind the chat.")
+                     : "Glass adds a purple dusk to Herdr's surfaces. Desktop transparency softly blurs what's behind First Mate and Settings. Turn it off to keep the purple background opaque. Haze adds a soft glow behind the content.")
             }
         }
     }
@@ -1266,18 +1248,16 @@ enum SmartRenameSettingsPresentation {
     }
 }
 
-/// A Settings section header on MonoCode's ramp: 10/600 uppercase tertiary,
-/// with any icon at 11 in the icon tint.
+/// A readable section heading shared by every Settings pane.
 struct SettingsSectionHeader<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         content()
             .labelStyle(SettingsHeaderLabelStyle())
-            .herdrFont(size: HerdrTheme.TextSize.micro, weight: .semibold)
-            .textCase(.uppercase)
-            .tracking(0.6)
-            .foregroundStyle(HerdrTheme.tertiaryText)
+            .herdrFont(size: HerdrTheme.TextSize.reading, weight: .semibold)
+            .textCase(nil)
+            .foregroundStyle(HerdrTheme.primaryText)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -1286,8 +1266,8 @@ private struct SettingsHeaderLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 6) {
             configuration.icon
-                .herdrFont(size: HerdrTheme.TextSize.caption)
-                .foregroundStyle(HerdrTheme.iconTint)
+                .herdrFont(size: HerdrTheme.TextSize.body)
+                .foregroundStyle(HerdrTheme.accent)
             configuration.title
         }
     }

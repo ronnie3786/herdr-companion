@@ -165,7 +165,101 @@ struct AgentRoleSkillCatalogTests {
         #expect(bundles.count == 1)
         catalog.removeSource("agents")
         #expect(catalog.skills.isEmpty)
-        #expect(AgentRoleLocalCatalog(defaults: defaults, home: root).sources.map(\.id) == ["pi"])
+        let reopened = AgentRoleLocalCatalog(defaults: defaults, home: root)
+        await reopened.refresh()
+        #expect(reopened.sources.isEmpty)
+        #expect(reopened.skills.isEmpty)
+        #expect(reopened.issues.isEmpty)
         await #expect(throws: AgentRoleCatalogError.self) { try await catalog.bundles(for: [id]) }
     }
+
+    @MainActor
+    @Test("Common folders use the actual supplied user home and absent defaults are quiet")
+    func conventionalFolders() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        try writeSkill(home.appendingPathComponent(".codex/skills/example"), name: "synthetic-codex")
+        try writeSkill(home.appendingPathComponent(".config/dox-agent/skills/example"), name: "synthetic-agent")
+        let suite = "AgentRoleSkillCatalogTests-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let catalog = AgentRoleLocalCatalog(defaults: defaults, home: home)
+        await catalog.refresh()
+        #expect(Set(catalog.skills.map(\.name)) == ["synthetic-codex", "synthetic-agent"])
+        #expect(Set(catalog.sources.map(\.name)) == ["Codex", "Dox Agent"])
+        #expect(catalog.sources.allSatisfy { $0.path.hasPrefix(home.path) })
+        #expect(catalog.errorMessage == nil)
+        #expect(catalog.issues.isEmpty)
+    }
+
+    @Test("Unreadable linked skills identify and group their real target folder")
+    func linkedFolderPermissions() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceRoot = root.appendingPathComponent("selected")
+        let linkedRoot = root.appendingPathComponent("linked-skills")
+        try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        var manifests: [URL] = []
+        defer {
+            for file in manifests { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        }
+        for name in ["one", "two"] {
+            let package = linkedRoot.appendingPathComponent(name)
+            try writeSkill(package, name: name)
+            let file = package.appendingPathComponent("SKILL.md")
+            manifests.append(file)
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+            try FileManager.default.createSymbolicLink(at: sourceRoot.appendingPathComponent(name), withDestinationURL: package)
+        }
+        let result = AgentRoleCatalogScanner.scan([source(sourceRoot)])
+        #expect(result.skills.isEmpty)
+        let issue = try #require(result.issues.first)
+        #expect(result.issues.count == 1)
+        #expect(issue.kind == .linkedFolderAccess)
+        #expect(issue.path == linkedRoot.resolvingSymlinksInPath().path)
+        #expect(issue.skillNames == ["one", "two"])
+        #expect(issue.needsAccess)
+        for file in manifests { try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        let restored = AgentRoleCatalogScanner.scan([source(sourceRoot), source(linkedRoot, id: "linked")])
+        #expect(restored.skills.count == 2)
+        #expect(restored.issues.isEmpty)
+        #expect(try AgentRoleCatalogScanner.bundles(Array(restored.packages.values), sources: [source(sourceRoot), source(linkedRoot, id: "linked")]).count == 2)
+    }
+
+    @Test("Permission for an optional location is a suggestion, not a broken-source warning")
+    func optionalPermission() throws {
+        let root = try temporaryDirectory()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: root.path)
+        let automatic = AgentRoleCatalogSource(id: "codex", name: "Codex", path: root.path, automatic: true)
+        let suggested = AgentRoleCatalogScanner.scan([automatic])
+        #expect(suggested.issues.isEmpty)
+        #expect(suggested.suggestedSources.map(\.id) == ["codex"])
+        let explicit = AgentRoleCatalogScanner.scan([source(root)])
+        #expect(explicit.issues.first?.kind == .folderAccess)
+        #expect(explicit.suggestedSources.isEmpty)
+    }
+
+    @MainActor
+    @Test("A saved conventional folder gets a useful label without changing skill identity")
+    func savedSourceMigration() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let skills = root.appendingPathComponent(".config/dox-agent/skills")
+        try writeSkill(skills.appendingPathComponent("example"))
+        let suite = "AgentRoleSkillCatalogTests-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let saved = source(skills, id: "saved-source", name: "skills")
+        defaults.set(try JSONEncoder().encode([saved]), forKey: "agentRoles.localSkillSources.v1")
+        let previous = AgentRoleCatalogScanner.scan([saved])
+        let catalog = AgentRoleLocalCatalog(defaults: defaults, home: root)
+        await catalog.refresh()
+        #expect(catalog.sources.map(\.name) == ["Dox Agent"])
+        #expect(catalog.skills.map(\.id) == previous.skills.map(\.id))
+    }
+
 }

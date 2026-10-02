@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AgentRoleSkillsView: View {
     @Bindable var store: AgentRolesStore
+    var showSources: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,6 +13,7 @@ struct AgentRoleSkillsView: View {
                             .herdrFont(.callout, weight: .semibold)
                         Text("This role still uses the execution computer's existing Pi discovery. Configure a selection to allow only the skills you choose from this Mac.")
                             .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                         Button("Configure selection", action: store.configureSelection)
                             .disabled(!store.canEdit)
                             .accessibilityIdentifier("agent-role-configure-skills")
@@ -24,14 +26,11 @@ struct AgentRoleSkillsView: View {
                     HStack(spacing: 10) { searchField; sourceFilter }
                     VStack(alignment: .leading, spacing: 8) { searchField; sourceFilter }
                 }
-                if let warning = store.catalog.errorMessage {
+                if !store.catalog.issues.isEmpty {
+                    AgentRoleCatalogNotice(issues: store.catalog.issues, review: showSources)
+                } else if let warning = store.catalog.errorMessage {
                     Text(warning).herdrFont(.caption).foregroundStyle(HerdrTheme.warning)
-                        .lineLimit(3).help(warning)
-                }
-                if let warnings = store.overview?.warnings, !warnings.isEmpty {
-                    Text(warnings.joined(separator: "\n"))
-                        .herdrFont(.caption).foregroundStyle(HerdrTheme.warning)
-                        .lineLimit(3).help(warnings.joined(separator: "\n"))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(14)
@@ -58,18 +57,24 @@ struct AgentRoleSkillsView: View {
                                         .foregroundStyle(HerdrTheme.secondaryText)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.vertical, 8)
-                                        .background(HerdrTheme.railBackground)
+                                        .background { HerdrGlassBackground(level: 0.96) }
                                         .id(letter)
                                         .accessibilityAddTraits(.isHeader)
                                 }
                             }
                             if store.filteredSkills.isEmpty {
-                                ContentUnavailableView(
-                                    store.skills.isEmpty ? "No local skills yet" : "No matching skills",
-                                    systemImage: store.skills.isEmpty ? "folder" : "magnifyingglass",
-                                    description: Text(store.skills.isEmpty
-                                        ? "Use Skills from this Mac to choose a skill folder or grant access."
-                                        : "Try another search or source filter."))
+                                ContentUnavailableView {
+                                    Label(store.skills.isEmpty ? "Connect your skill folders" : "No matching skills",
+                                          systemImage: store.skills.isEmpty ? "folder.badge.plus" : "magnifyingglass")
+                                } description: {
+                                    Text(store.skills.isEmpty
+                                         ? "macOS needs one-time permission to read skills on this Mac. Your usual skill folders are ready to connect."
+                                         : "Try another search or source filter.")
+                                } actions: {
+                                    if store.skills.isEmpty {
+                                        Button("Connect folders…", action: showSources)
+                                    }
+                                }
                                     .padding(.vertical, 20)
                             }
                         }
@@ -118,7 +123,8 @@ struct AgentRoleSkillsView: View {
         .herdrFont(.callout)
         .padding(8)
         .frame(minWidth: 130)
-        .background(HerdrTheme.elevated, in: RoundedRectangle(cornerRadius: 7))
+        .background(HerdrTheme.fieldFill, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(HerdrTheme.outline))
     }
 
     private var sourceFilter: some View {

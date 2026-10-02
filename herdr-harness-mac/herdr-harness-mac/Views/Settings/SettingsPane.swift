@@ -27,6 +27,21 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         }
     }
 
+    var subtitle: String {
+        switch self {
+        case .general: "Make Herdr feel at home on your Mac."
+        case .machines: "Manage the computers connected to your workspace."
+        case .agents: "Choose models and instructions for your everyday agents."
+        case .agentRoles: "Shape how First Mate and its team work."
+        case .agentProfiles: "Give your agents a personality and context about you."
+        case .hud: "Keep your shortcuts and quick conversations close."
+        case .alerts: "Choose how Herdr gets your attention."
+        case .voice: "Set up speaking and listening."
+        case .privacy: "Manage what Herdr can see and control."
+        case .updates: "Keep this Mac app up to date."
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .general: "gearshape"

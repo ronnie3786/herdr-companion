@@ -7,11 +7,18 @@ protocol AgentRoleSkillCatalog: AnyObject {
     var sources: [AgentRoleSkillSource] { get }
     var skills: [AgentRoleSkill] { get }
     var errorMessage: String? { get }
+    var issues: [AgentRoleSkillIssue] { get }
+    var suggestedSources: [AgentRoleSkillSource] { get }
     var isLoading: Bool { get }
     func refresh() async
     func addSource(_ url: URL, name: String?) throws
     func removeSource(_ id: String)
     func bundles(for skillIDs: Set<String>) async throws -> [AgentRoleSkillBundle]
+}
+
+extension AgentRoleSkillCatalog {
+    var issues: [AgentRoleSkillIssue] { [] }
+    var suggestedSources: [AgentRoleSkillSource] { [] }
 }
 
 /// Local folders stay on this Mac. Only packages selected for a role are uploaded.
@@ -21,9 +28,12 @@ final class AgentRoleLocalCatalog: AgentRoleSkillCatalog {
     private(set) var sources: [AgentRoleSkillSource] = []
     private(set) var skills: [AgentRoleSkill] = []
     private(set) var errorMessage: String?
+    private(set) var issues: [AgentRoleSkillIssue] = []
+    private(set) var suggestedSources: [AgentRoleSkillSource] = []
     private(set) var isLoading = false
 
     private let defaults: UserDefaults
+    private let userHome: URL?
     private var records: [AgentRoleCatalogSource]
     private var packages: [String: AgentRoleCatalogPackage] = [:]
     private var generation = 0
@@ -31,17 +41,25 @@ final class AgentRoleLocalCatalog: AgentRoleSkillCatalog {
 
     init(defaults: UserDefaults = .standard, home: URL? = nil) {
         self.defaults = defaults
-        let home = home ?? URL(fileURLWithPath: NSHomeDirectoryForUser(NSUserName()) ?? NSHomeDirectory(), isDirectory: true)
+        let home = home ?? AgentRoleSkillLocations.userHome
+        userHome = home
+        let suggested = home.map(AgentRoleSkillLocations.defaults) ?? []
         if let data = defaults.data(forKey: Self.defaultsKey),
            let saved = try? JSONDecoder().decode([AgentRoleCatalogSource].self, from: data) {
-            records = saved
-        } else {
-            records = [
-                .init(id: "agents", name: "Agent skills", path: home.appendingPathComponent(".agents/skills").path),
-                .init(id: "pi", name: "Pi skills", path: home.appendingPathComponent(".pi/agent/skills").path),
-            ]
-        }
-        sources = records.map { $0.display(available: false) }
+            // Expand untouched legacy defaults, never re-add folders someone removed.
+            if saved.count == 2, Set(saved.map(\.id)) == ["agents", "pi"], saved.allSatisfy({ $0.bookmark == nil }) {
+                records = suggested
+            } else {
+                records = saved.map { source in
+                    var source = source
+                    if source.name == "skills" {
+                        source.name = AgentRoleSkillLocations.label(for: URL(fileURLWithPath: source.path), home: home)
+                    }
+                    return source
+                }
+            }
+        } else { records = suggested }
+        sources = records.filter { !$0.isAutomatic }.map { $0.display(available: false) }
     }
 
     func refresh() async {
@@ -56,6 +74,8 @@ final class AgentRoleLocalCatalog: AgentRoleSkillCatalog {
         sources = result.sources
         skills = result.skills
         packages = result.packages
+        issues = result.issues
+        suggestedSources = result.suggestedSources
         errorMessage = result.warnings.isEmpty ? nil : result.warnings.joined(separator: "\n")
         isLoading = false
     }
@@ -70,7 +90,8 @@ final class AgentRoleLocalCatalog: AgentRoleSkillCatalog {
         let existing = existingIndex.map { records[$0] }
         let record = AgentRoleCatalogSource(
             id: existing?.id ?? "source-" + UUID().uuidString.lowercased(),
-            name: label.flatMap { $0.isEmpty ? nil : $0 } ?? existing?.name ?? normalized.lastPathComponent,
+            name: label.flatMap { $0.isEmpty ? nil : $0 } ?? existing?.name
+                ?? AgentRoleSkillLocations.label(for: normalized, home: userHome),
             path: normalized.path, bookmark: bookmark)
         if let existingIndex { records[existingIndex] = record }
         else {
@@ -102,41 +123,61 @@ final class AgentRoleLocalCatalog: AgentRoleSkillCatalog {
         if let data = try? JSONEncoder().encode(records) { defaults.set(data, forKey: Self.defaultsKey) }
         generation += 1
         isLoading = false
-        sources = records.map { record in
+        let visibleIDs = Set(sources.map(\.id))
+        sources = records.filter { !$0.isAutomatic || visibleIDs.contains($0.id) }.map { record in
             sources.first(where: { $0.id == record.id }) ?? record.display(available: false)
         }
         let ids = Set(records.map(\.id))
         packages = packages.filter { ids.contains($0.value.sourceID) }
         skills = skills.filter { packages[$0.id] != nil }
+        issues = []
+        suggestedSources = suggestedSources.filter { ids.contains($0.id) }
+        errorMessage = nil
     }
 }
 
 struct AgentRoleCatalogError: LocalizedError {
     let message: String
-    init(_ message: String) { self.message = message }
+    let issueKind: AgentRoleSkillIssue.Kind?
+    init(_ message: String, issueKind: AgentRoleSkillIssue.Kind? = nil) {
+        self.message = message
+        self.issueKind = issueKind
+    }
     var errorDescription: String? { message }
 }
 
 struct AgentRoleCatalogSource: Codable, Sendable {
     let id: String
-    let name: String
+    var name: String
     let path: String
     var bookmark: Data? = nil
+    var automatic: Bool? = nil
+
+    var isAutomatic: Bool { automatic ?? (bookmark == nil && ["agents", "pi"].contains(id)) }
 
     func display(available: Bool) -> AgentRoleSkillSource {
         .init(id: id, name: name, path: path, available: available)
     }
 
-    func withAccess<T>(_ body: (URL) throws -> T) throws -> T {
+    func accessURL() throws -> URL {
         let url: URL
         if let bookmark {
             var stale = false
-            url = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI],
-                          relativeTo: nil, bookmarkDataIsStale: &stale)
-            if stale { throw AgentRoleCatalogError("Choose the \(name) folder again to renew access.") }
+            do {
+                url = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI],
+                              relativeTo: nil, bookmarkDataIsStale: &stale)
+            } catch {
+                throw AgentRoleCatalogError("Choose the \(name) folder again to renew access.", issueKind: .folderAccess)
+            }
+            if stale { throw AgentRoleCatalogError("Choose the \(name) folder again to renew access.", issueKind: .folderAccess) }
         } else {
             url = URL(fileURLWithPath: path, isDirectory: true)
         }
+        return url
+    }
+
+    func withAccess<T>(_ body: (URL) throws -> T) throws -> T {
+        let url = try accessURL()
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         return try body(url)
@@ -155,7 +196,16 @@ struct AgentRoleCatalogScan: Sendable {
     var sources: [AgentRoleSkillSource] = []
     var skills: [AgentRoleSkill] = []
     var packages: [String: AgentRoleCatalogPackage] = [:]
-    var warnings: [String] = []
+    var issues: [AgentRoleSkillIssue] = []
+    var suggestedSources: [AgentRoleSkillSource] = []
+    var warnings: [String] { issues.map { $0.title + ". " + $0.message } }
+
+    mutating func record(_ issue: AgentRoleSkillIssue) {
+        if let index = issues.firstIndex(where: { $0.id == issue.id || ($0.needsAccess && issue.needsAccess && $0.path == issue.path) }) {
+            issues[index].skillNames.formUnion(issue.skillNames)
+            if issue.kind == .linkedFolderAccess { issues[index].kind = .linkedFolderAccess }
+        } else { issues.append(issue) }
+    }
 }
 
 /// Synchronous filesystem work, called only from a utility task by the observable store.
@@ -166,6 +216,19 @@ enum AgentRoleCatalogScanner {
     private static let maxDirectories = 10_000
 
     static func scan(_ sources: [AgentRoleCatalogSource]) -> AgentRoleCatalogScan {
+        withGrantedFolders(sources) { scanAccessibleFolders(sources) }
+    }
+
+    /// Keep all granted roots open together. A selected source may link into a
+    /// second granted root, during both discovery and package collection.
+    private static func withGrantedFolders<T>(_ sources: [AgentRoleCatalogSource], _ body: () throws -> T) rethrows -> T {
+        let opened = sources.compactMap { try? $0.accessURL() }
+            .filter { $0.startAccessingSecurityScopedResource() }
+        defer { opened.forEach { $0.stopAccessingSecurityScopedResource() } }
+        return try body()
+    }
+
+    private static func scanAccessibleFolders(_ sources: [AgentRoleCatalogSource]) -> AgentRoleCatalogScan {
         var result = AgentRoleCatalogScan()
         var knownFiles = Set<String>()
         for source in sources {
@@ -181,12 +244,20 @@ enum AgentRoleCatalogScanner {
                                  remaining: &remaining, knownFiles: &knownFiles, result: &result)
                 }
             } catch {
+                // A missing conventional folder is normal, not a warning.
+                if source.isAutomatic {
+                    if !AgentRoleSkillIssue.isMissingError(error) {
+                        result.suggestedSources.append(source.display(available: false))
+                    }
+                    continue
+                }
                 if !result.sources.contains(where: { $0.id == source.id }) {
                     result.sources.append(source.display(available: false))
                 }
-                let detail = (error as? AgentRoleCatalogError)?.message
-                    ?? "\(source.name) is unavailable. Choose that folder to grant access."
-                result.warnings.append(detail)
+                let kind: AgentRoleSkillIssue.Kind = (error as? AgentRoleCatalogError)?.issueKind
+                    ?? (AgentRoleSkillIssue.isPermissionError(error) ? .folderAccess : .missingFolder)
+                result.record(.init(kind: kind, sourceName: source.name, path: source.path,
+                                    detail: (error as? AgentRoleCatalogError)?.message))
             }
         }
         result.skills.sort { ($0.name.localizedStandardCompare($1.name) == .orderedAscending) }
@@ -197,7 +268,7 @@ enum AgentRoleCatalogScanner {
                                  depth: Int, visited: inout Set<String>, remaining: inout Int,
                                  knownFiles: inout Set<String>, result: inout AgentRoleCatalogScan) throws {
         guard depth <= 12, remaining > 0 else {
-            throw AgentRoleCatalogError("\(source.name) exceeds the scan limit. Choose a smaller skill folder.")
+            throw AgentRoleCatalogError("\(source.name) exceeds the scan limit. Choose a smaller skill folder.", issueKind: .scanLimit)
         }
         let resolved = directory.resolvingSymlinksInPath().standardizedFileURL
         guard visited.insert(resolved.path).inserted else { return }
@@ -210,7 +281,9 @@ enum AgentRoleCatalogScanner {
             do {
                 let content = try readFile(canonicalFile, maximum: maxFileBytes)
                 guard let text = String(data: content, encoding: .utf8),
-                      let metadata = metadata(text, fallbackName: directory.lastPathComponent) else { return }
+                      let metadata = metadata(text, fallbackName: directory.lastPathComponent) else {
+                    throw AgentRoleCatalogError("SKILL.md needs UTF-8 text and a frontmatter description.")
+                }
                 knownFiles.insert(canonicalFile.path)
                 let relativeFile = relative.isEmpty ? "SKILL.md" : relative + "/SKILL.md"
                 let digest = SHA256.hash(data: Data((source.id + "/" + relativeFile).utf8))
@@ -223,7 +296,13 @@ enum AgentRoleCatalogScanner {
                 result.packages[skill.id] = .init(skill: skill, sourceID: source.id,
                                                   relativeDirectory: relative, resolvedDirectory: resolved)
             } catch {
-                result.warnings.append("A skill in \(source.name) could not be read. Refresh after checking folder access.")
+                let linked = resolved != directory.standardizedFileURL
+                let permission = AgentRoleSkillIssue.isPermissionError(error)
+                let folder = linked ? resolved.deletingLastPathComponent() : directory
+                result.record(.init(kind: permission ? (linked ? .linkedFolderAccess : .folderAccess) : .unreadableSkill,
+                                    sourceName: source.name, path: permission ? folder.path : canonicalFile.path,
+                                    skillNames: [directory.lastPathComponent],
+                                    detail: (error as? AgentRoleCatalogError)?.message))
             }
             return
         }
@@ -231,17 +310,28 @@ enum AgentRoleCatalogScanner {
         let children = try FileManager.default.contentsOfDirectory(at: resolved, includingPropertiesForKeys: [.isDirectoryKey],
                                                                    options: [.skipsHiddenFiles])
         for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where !excluded(child.lastPathComponent) {
-            guard (try? child.resolvingSymlinksInPath().resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
-            let childRelative = relative.isEmpty ? child.lastPathComponent : relative + "/" + child.lastPathComponent
-            try discover(child, relative: childRelative, source: source, depth: depth + 1, visited: &visited,
-                         remaining: &remaining, knownFiles: &knownFiles, result: &result)
+            let canonical = child.resolvingSymlinksInPath().standardizedFileURL
+            do {
+                guard try canonical.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else { continue }
+                let childRelative = relative.isEmpty ? child.lastPathComponent : relative + "/" + child.lastPathComponent
+                try discover(child, relative: childRelative, source: source, depth: depth + 1, visited: &visited,
+                             remaining: &remaining, knownFiles: &knownFiles, result: &result)
+            } catch {
+                if (error as? AgentRoleCatalogError)?.issueKind == .scanLimit { throw error }
+                let linked = canonical != child.standardizedFileURL
+                let permission = AgentRoleSkillIssue.isPermissionError(error)
+                result.record(.init(kind: permission ? (linked ? .linkedFolderAccess : .folderAccess) : .unreadableSkill,
+                                    sourceName: source.name,
+                                    path: linked && permission ? canonical.deletingLastPathComponent().path : child.path,
+                                    skillNames: [child.lastPathComponent]))
+            }
         }
     }
 
     static func bundles(_ packages: [AgentRoleCatalogPackage], sources: [AgentRoleCatalogSource]) throws -> [AgentRoleSkillBundle] {
         var fileCount = 0
         var byteCount = 0
-        return try packages.map { package in
+        return try withGrantedFolders(sources) { try packages.map { package in
             guard let source = sources.first(where: { $0.id == package.sourceID }) else {
                 throw AgentRoleCatalogError("A selected skill folder was removed. Refresh the catalog before saving.")
             }
@@ -262,6 +352,7 @@ enum AgentRoleCatalogScanner {
                 return .init(id: package.skill.id, name: package.skill.name, description: package.skill.description,
                              source: package.skill.source, files: files)
             }
+        }
         }
     }
 

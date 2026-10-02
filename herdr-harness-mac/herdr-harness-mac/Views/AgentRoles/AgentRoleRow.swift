@@ -12,7 +12,7 @@ struct AgentRoleRow: View {
                     .herdrFont(.body)
                     .foregroundStyle(selected ? HerdrTheme.accent : HerdrTheme.secondaryText)
                     .frame(width: 30, height: 30)
-                    .background(HerdrTheme.elevated, in: Circle())
+                    .background(HerdrTheme.firstMateAvatarFill.opacity(selected ? 0.9 : 0.4), in: Circle())
                     .overlay(Circle().strokeBorder(selected ? HerdrTheme.accent.opacity(0.8) : .clear))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -25,7 +25,8 @@ struct AgentRoleRow: View {
             }
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? HerdrTheme.elevated : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(selected ? HerdrTheme.accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? HerdrTheme.accent.opacity(0.18) : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.herdrPlain)

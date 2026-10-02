@@ -721,6 +721,25 @@ class FirstMateReliabilityTests(unittest.TestCase):
         self.assertEqual(controller.coordinator_interval, 60)
         self.assertGreater(controller.next_sweep, time.time()+3500)
 
+    def test_coordinator_waiting_on_human_is_not_kickstarted(self):
+        feature, assignment, job = self.worker()
+        self.store.record_outcome(assignment['id'], 1, assignment['native_session_id'], 1, 'success', 'Plan complete', 'outcome')
+        for message in self.store.pending_messages(feature['id']):
+            claim = self.store.claim_message(feature['id'], 'drain-owner')
+            self.store.notify_human(feature['id'], claim['id'], 'drain-owner',
+                                    'The plan needs your approve or edit decision.', 'notice-' + claim['id'])
+            self.store.finish_message(claim['id'], 'drain-owner')
+        _write_json(self.runtime._job_dir(job)/'finalized.json', {'at':'test'})
+        controller = self.runtime.reliability
+        controller.next_sweep = time.time() + 3600
+        with patch.object(self.runtime, '_launch'):
+            controller.tick(self.runtime._jobs(), now=time.time())
+            controller.tick(self.runtime._jobs(), now=time.time()+1)
+        self.assertEqual(self.store.pending_messages(feature['id']), [])
+        events = [e['type'] for e in self.store.snapshot(feature['id'])['events']]
+        self.assertNotIn('reliability.coordinator_kickstarted', events)
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'running')
+
     def test_backup_reuse_and_symlink_capture_do_not_read_outside_worktree(self):
         feature, assignment, job = self.isolated()
         outside = self.root / 'outside.txt'

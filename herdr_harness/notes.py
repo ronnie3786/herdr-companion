@@ -154,7 +154,8 @@ class NotesStore:
                 yield
                 self._db.execute("COMMIT")
             except BaseException:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def _revision(self) -> int:

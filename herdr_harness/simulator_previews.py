@@ -436,7 +436,8 @@ class SimulatorPreviews:
             try:
                 yield db
             except BaseException:
-                db.execute("ROLLBACK")
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
                 raise
             db.execute("COMMIT")
 

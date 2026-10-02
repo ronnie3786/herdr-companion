@@ -126,7 +126,10 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        HerdrPerfDiagnostics.start()
+        // A test host's stalls are test load, not app hangs; keep them out of the user's hang log.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            HerdrPerfDiagnostics.start()
+        }
         VoiceRecordingPolicy.removeStaleTemporaryRecordings()
         IssueReportComposer.removeStaleTemporaryDirectories()
         UNUserNotificationCenter.current().delegate = self

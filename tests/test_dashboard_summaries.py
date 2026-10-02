@@ -1,5 +1,6 @@
 """Dashboard summaries are small, cached, and explicit about stale data."""
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -160,6 +161,16 @@ class PRDashboardCacheTests(unittest.TestCase):
         self.assertEqual(original["revision"], refreshed["revision"])
         self.assertEqual(original["updated_at"], refreshed["updated_at"])
         self.assertEqual(len(self.calls), 3)
+
+    def test_unwritable_store_ends_the_batch_without_raising(self):
+        full = sqlite3.OperationalError("database or disk is full")
+        for failed in (False, True):
+            self.failed = failed
+            with patch.object(self.store, "save_viewer_review", side_effect=full) as save:
+                self.runtime._refresh_review_statuses([self.review, self.review])
+            # One failed write ends the batch; the next scheduled refresh retries.
+            self.assertEqual(save.call_count, 2 if not failed else 1)
+        self.assertEqual(self.changed, [])
 
     def test_invalid_github_data_preserves_unknown_and_records_failed_attempt(self):
         self.bad_data = True

@@ -33,6 +33,56 @@ struct PRReviewRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Viewed history shortcuts are exactly Control-Z and Control-Shift-Z")
+    func viewedHistoryShortcuts() {
+        #expect(PRReviewViewedHistoryShortcut.undoKey == KeyEquivalent("z"))
+        #expect(PRReviewViewedHistoryShortcut.undoModifiers == .control)
+        #expect(PRReviewViewedHistoryShortcut.redoKey == KeyEquivalent("z"))
+        #expect(PRReviewViewedHistoryShortcut.redoModifiers == [.control, .shift])
+    }
+
+    @Test("Undo restores the rendered row and checkbox viewed state", arguments: [false, true])
+    func rendersRestoredViewedState(viewed: Bool) async throws {
+        let restoreAccessibility = enableAccessibility()
+        defer { restoreAccessibility() }
+        let store = demoStore()
+        let file = try #require(store.comparisonFiles.first { $0.viewed == viewed })
+        store.selectedPath = file.path
+        let initialProgress = store.viewedProgress
+
+        await store.setViewedRecordingUndo(paths: [file.path], viewed: !viewed)
+        #expect(store.canUndoViewed)
+        await store.undoViewed()
+        #expect(store.viewedProgress == initialProgress)
+        #expect(store.canRedoViewed)
+        #expect(store.selectedPath == file.path)
+
+        let size = CGSize(width: 1240, height: 820)
+        let result = try await HerdrRenderHarness.render(
+            "pr-review-undo-\(viewed ? "viewed" : "unviewed").png",
+            size: size
+        ) {
+            PRReviewContainerView(store: store, canControl: true)
+        }
+        result.expectSubstantial()
+
+        let mounted = mount(PRReviewContainerView(store: store, canControl: true), size: size)
+        defer { mounted.window.close() }
+        await settle(mounted)
+        let index = try #require(store.orderedFiles.firstIndex { $0.path == file.path })
+        let elements = accessibilityDescendants(mounted.hosting)
+        let row = try #require(elements.first { $0.accessibilityIdentifier() == "pr-review-file-\(index)" })
+        let expectedValue = PRReviewViewedProgress.rowAccessibilityValue(viewed: viewed)
+        #expect(expectedValue == (viewed ? "Viewed" : "Not viewed"))
+        #expect(row.accessibilityValueDescription() == expectedValue)
+        let toggle = try #require(elements.first { $0.accessibilityIdentifier() == "pr-review-viewed-\(index)" })
+        #expect(toggle.accessibilityLabel() == "Viewed")
+        #expect((toggle.accessibilityValue() as? NSNumber)?.boolValue == viewed)
+        #expect(!elements.contains {
+            $0.accessibilityLabel() == "Undo Viewed Change" || $0.accessibilityLabel() == "Redo Viewed Change"
+        })
+    }
+
     @Test("Viewed progress stays mounted in normal and compact filtered rails", arguments: [CGFloat(820), 420])
     func viewedProgressInFilesRail(height: CGFloat) async throws {
         let restoreAccessibility = enableAccessibility()

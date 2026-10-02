@@ -52,6 +52,22 @@ struct PRReviewFilesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background {
+            Button("Undo Viewed Change") { Task { await store.undoViewed() } }
+                .keyboardShortcut(PRReviewViewedHistoryShortcut.undoKey, modifiers: PRReviewViewedHistoryShortcut.undoModifiers)
+                .disabled(!store.canUndoViewed)
+                .buttonStyle(.plain)
+                .frame(width: 0, height: 0)
+                .clipped()
+                .accessibilityHidden(true)
+            Button("Redo Viewed Change") { Task { await store.redoViewed() } }
+                .keyboardShortcut(PRReviewViewedHistoryShortcut.redoKey, modifiers: PRReviewViewedHistoryShortcut.redoModifiers)
+                .disabled(!store.canRedoViewed)
+                .buttonStyle(.plain)
+                .frame(width: 0, height: 0)
+                .clipped()
+                .accessibilityHidden(true)
+        }
         .task(id: store.comparisonLoadIdentity) { await store.loadComparison() }
         .onAppear { selectFirstFileIfNeeded() }
         .onChange(of: store.orderedFiles.map(\.path)) { _, _ in selectFirstFileIfNeeded() }
@@ -69,7 +85,7 @@ struct PRReviewFilesView: View {
             guard press.modifiers.contains(.option), let path = store.selectedPath,
                   let file = store.orderedFiles.first(where: { $0.path == path })
             else { return .ignored }
-            Task { await store.setViewed(paths: [path], viewed: !file.viewed) }
+            Task { await store.setViewedRecordingUndo(paths: [path], viewed: !file.viewed) }
             return .handled
         }
     }
@@ -114,7 +130,7 @@ struct PRReviewFilesView: View {
                                                     guided: store.viewMode == .guided) {
                                         store.selectedPath = file.path
                                     } setViewed: { viewed in
-                                        Task { await store.setViewed(paths: [file.path], viewed: viewed) }
+                                        Task { await store.setViewedRecordingUndo(paths: [file.path], viewed: viewed) }
                                     }
                                     .id(file.path)
                                 }
@@ -249,6 +265,13 @@ struct PRReviewFilesView: View {
         }
         .accessibilityIdentifier("pr-review-files-state")
     }
+}
+
+enum PRReviewViewedHistoryShortcut {
+    static let undoKey: KeyEquivalent = "z"
+    static let undoModifiers: EventModifiers = .control
+    static let redoKey: KeyEquivalent = "z"
+    static let redoModifiers: EventModifiers = [.control, .shift]
 }
 
 enum PRReviewFilesLayout {
@@ -632,9 +655,10 @@ struct PRReviewDiffView: View {
                     Button("Next") { store.selectedPath = store.nextFile()?.path }
                         .keyboardShortcut(.downArrow, modifiers: .option)
                     Button(file.viewed ? "Mark unviewed" : "Mark viewed") {
-                        Task { await store.setViewed(paths: [file.path], viewed: !file.viewed) }
+                        Task { await store.setViewedRecordingUndo(paths: [file.path], viewed: !file.viewed) }
                     }
                     .keyboardShortcut("v", modifiers: .option)
+                    .help("Toggle viewed (⌥V). Undo with ⌃Z, redo with ⌃⇧Z.")
                     Button("GitHub", action: openFullDiff)
                 }
             }

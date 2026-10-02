@@ -100,9 +100,18 @@ status. You can still finish a run manually from Agents.
 **Files.** Files carry an AI impact (High, Medium, Low, or unranked). A short **Why** explanation above the diff describes what deserves attention or why the change is routine, in both GitHub and Guided order. Missing explanations are called out rather than inventing a safety claim; use **Rank files** to generate them. The filter controls stay at the top even when no files match.
 Filter to one impact at a time, hide viewed files, search, and switch between GitHub order and
 the **Guided** order, which lists files in the order the AI suggests for building a mental model
-and explains each position above the diff. ⌥↑ and ⌥↓ move between files; ⌥V or the checkbox
-marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-runs the ranking;
-`herdr-pr-review set-rankings` lets an agent supply its own.
+and explains each position above the diff. ⌥↑ and ⌥↓ move between files; ⌥V, the checkbox,
+or **Mark viewed / Mark unviewed** toggles a file's viewed state (also on GitHub when syncing
+is enabled). While Files is shown, ⌃Z undoes and ⌃⇧Z redoes your own Viewed toggles, in both
+directions. Undo and redo save and sync like a manual toggle; commit and range comparison
+marks stay local to that comparison. Each main or popped-out window keeps its own in-memory
+history of up to 100 changes, cleared when the host, review, comparison, or base/head revision
+changes and never persisted across relaunch. A new toggle after undo clears redo; empty history
+does nothing. Agent-control and walkthrough low-impact marks are not recorded. With **Hide viewed**
+on, undoing a single-file mark brings the file back and selects it if the other filters allow it.
+⌘Z text undo in the filter, Ask AI, and comment fields is unchanged. This is Mac-only and needs
+no companion update beyond existing `pr-review-v1` support.
+**Rank files** re-runs the ranking; `herdr-pr-review set-rankings` lets an agent supply its own.
 The file rail keeps a progress summary (`3 of 10 viewed · 7 unviewed`) and a progress bar
 above the filters, and viewed rows show a checkmark with a textual **Viewed** badge.
 Counts cover all changed files in the current PR or selected comparison, regardless of

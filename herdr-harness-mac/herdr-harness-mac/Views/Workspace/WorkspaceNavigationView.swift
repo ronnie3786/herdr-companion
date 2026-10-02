@@ -173,10 +173,23 @@ struct WorkspaceNavigationView: View {
                                 back: { shell.show(.session, model: model) },
                                 openFeature: shell.openFirstMateFeatureFromFleet,
                                 createFeature: shell.createFirstMateFeature,
-                                refresh: { Task { await shell.firstMateFleet.refresh() } }
+                                refresh: { Task { await shell.firstMateFleet.refresh() } },
+                                startSession: { shell.showFirstMateStart() },
+                                manageProjects: shell.showFirstMateProjects,
+                                surface: shell.firstMateSurface
                             )
                         } else {
-                            FirstMateSidebarView(store: shell.firstMate, back: { shell.show(.session, model: model) }, canControl: firstMateCanControl, leaveDemo: model.leaveDemo)
+                            FirstMateSidebarView(
+                                store: shell.firstMate, back: { shell.show(.session, model: model) },
+                                canControl: firstMateCanControl, leaveDemo: model.leaveDemo,
+                                startSession: { shell.showFirstMateStart(preferredMachineID: firstMateDetailMachineID) },
+                                manageProjects: shell.showFirstMateProjects,
+                                openFeature: { featureID in
+                                    shell.firstMate.select(featureID)
+                                    shell.firstMateSurface = .workspace
+                                },
+                                surface: shell.firstMateSurface
+                            )
                         }
                     }
                 } else if shell.detailScope == .prReview {
@@ -437,6 +450,15 @@ struct WorkspaceNavigationView: View {
         // Fleet observation and store reconciliation belong to the process
         // (`FirstMateFleetDriver`, started from `AppRootView`), so the badge,
         // the Dock, and the chat window keep updating after this window closes.
+        .task(id: FirstMateFleetRoster.current(model: model).identity) {
+            guard !FirstMateFleetDriver.isHostedByTests else { return }
+            let roster = FirstMateFleetRoster.current(model: model)
+            let demo = roster.isDemo
+            let sources = roster.sources { HerdrAPIClient(configuration: $0) }
+            await shell.firstMateProjects.observe(sources: sources, demo: demo, validateConnection: { connection in
+                model.isDemoMode == demo && (demo || model.firstMateConfiguration(machineID: connection.machineID) == connection.configuration)
+            })
+        }
         .task(id: PRReviewConnectionIdentity(configuration: prReviewConfiguration, generation: model.connectionGeneration, isDemo: model.isDemoMode, machineRevision: prReviewMachineID?.hashValue ?? model.prReviewMachineRevision)) {
             shell.attachPRReviewCommentStore(model.prReviewComments)
             shell.configurePRReviewIfNeeded(configuration: prReviewConfiguration, machineID: prReviewMachineID, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
@@ -751,6 +773,7 @@ struct WorkspaceNavigationView: View {
            request.id != shell.firstMateAppliedRequestID,
            firstMateConnectionIsReady,
            request.serverURL == firstMateConfiguration?.baseURL.absoluteString {
+            shell.firstMateSurface = .workspace
             // A deeplink can race the connection task. Refreshing here is safe:
             // the connection task also applies the still-pending request after
             // its own configure/refresh completes.
@@ -795,7 +818,7 @@ struct WorkspaceNavigationView: View {
            machineID == firstMateDetailMachineID,
            firstMateConnectionIsReady,
            firstMateCanControl {
-            shell.firstMate.isCreating = true
+            shell.showFirstMateStart(preferredMachineID: machineID)
             shell.pendingFirstMateCreateMachineID = nil
         }
     }
@@ -855,6 +878,22 @@ struct WorkspaceNavigationView: View {
                 )
             }
         case .firstMate:
+            switch shell.firstMateSurface {
+            case .newSession:
+                FirstMateStartSessionView(
+                    model: shell.firstMateStart, index: shell.firstMateProjects,
+                    manageProjects: shell.showFirstMateProjects,
+                    started: { session in
+                        if shell.openStartedFirstMateSession(session, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode) {
+                            Task { await shell.firstMateFleet.refresh() }
+                        }
+                    }
+                )
+            case .projects:
+                FirstMateProjectsView(index: shell.firstMateProjects, manualSetup: { shell.showFirstMateStart(mode: .manual) }) { selection in
+                    shell.showFirstMateStart(project: selection)
+                }
+            case .workspace:
             FirstMateWorkspaceView(
                 model: model,
                 store: shell.firstMate,
@@ -865,11 +904,13 @@ struct WorkspaceNavigationView: View {
                 configuration: firstMateGitConfiguration,
                 configurationRevision: firstMateGitOwnerMachineID.map { model.machineConfigurationRevision(for: $0) } ?? 0,
                 owningMachineName: resolvedFirstMateScope == .all ? activeFirstMateMachine?.name : nil,
-                allowsDirectCreate: resolvedFirstMateScope != .all,
+                allowsDirectCreate: true,
                 popOutGit: { openWindow(id: HerdrWindowID.firstMateGit, value: $0) },
-                popOutChat: firstMateChatWindowEnabled ? { openFirstMateChatWindow() } : nil
+                popOutChat: firstMateChatWindowEnabled ? { openFirstMateChatWindow() } : nil,
+                startSession: { shell.showFirstMateStart(preferredMachineID: firstMateDetailMachineID) }
             )
             .environment(\.firstMateMarkRead, markFirstMateRead)
+            }
         case .watchers:
             WatchersView(store: shell.watchers)
         case .prReview:

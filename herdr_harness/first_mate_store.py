@@ -21,6 +21,7 @@ from typing import Any, Callable, Mapping
 
 from . import first_mate_fleet as fleet_format
 from . import skim as skim_format
+from .directory_browser import canonical_directory
 from .first_mate_links import (
     LinkValidationError,
     normalize_link,
@@ -246,6 +247,9 @@ FEEDBACK_CATEGORY_LABEL_LIMIT = 80
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fm_schema(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fm_projects(
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, cwd TEXT NOT NULL, revision INTEGER NOT NULL,
+ archived_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS fm_features(
  id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL, cwd TEXT NOT NULL,
  status TEXT NOT NULL, current_visit_id TEXT, revision INTEGER NOT NULL,
@@ -513,6 +517,13 @@ class FirstMateStore:
         self._db.execute("CREATE TABLE IF NOT EXISTS fm_message_context(message_id TEXT PRIMARY KEY REFERENCES fm_messages(id), "
                          "context_json TEXT NOT NULL, created_at TEXT NOT NULL)")
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(16,?)", (_now(),))
+        with self._transaction():
+            columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_features)")}
+            for name, definition in (("project_id", "TEXT"), ("project_name", "TEXT"),
+                                     ("project_revision", "INTEGER")):
+                if name not in columns:
+                    self._db.execute(f"ALTER TABLE fm_features ADD COLUMN {name} {definition}")
+            self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(19,?)", (_now(),))
         self._seed_feedback_categories()
         self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(7,?)", (_now(),))
 
@@ -798,13 +809,100 @@ class FirstMateStore:
             )
         return message
 
+    @staticmethod
+    def _project_name(value: Any) -> str:
+        name = _text(value, "name", 160)
+        if any(ord(character) < 32 or ord(character) == 127 or character in "\u2028\u2029" for character in name):
+            raise FirstMateError("Project name must be single-line text", code="invalid_request", status=400)
+        try:
+            name.encode("utf-8")
+        except UnicodeError:
+            raise FirstMateError("Project name must be valid Unicode text", code="invalid_request", status=400) from None
+        return name.strip()
+
+    @staticmethod
+    def _project_revision(project: dict, expected: Any) -> None:
+        if type(expected) is not int or expected < 1:
+            raise FirstMateError("Invalid expected project revision", code="invalid_request", status=400)
+        if expected != project["revision"]:
+            raise FirstMateError("This project changed. Reload it before continuing.", code="stale_project_revision")
+
+    def list_projects(self, scope: str = "active") -> list[dict]:
+        if scope not in {"active", "archived", "all"}:
+            raise FirstMateError("Invalid project scope", code="invalid_request", status=400)
+        condition = {"active": "WHERE archived_at IS NULL", "archived": "WHERE archived_at IS NOT NULL", "all": ""}[scope]
+        with self._lock:
+            return [self._decode(row) for row in self._db.execute(
+                f"SELECT * FROM fm_projects {condition} ORDER BY name COLLATE NOCASE,id")]
+
+    def create_project(self, payload: Mapping[str, Any], *, home: Path | None = None) -> dict:
+        body = dict(payload)
+        if set(body) != {"name", "cwd", "request_id"}:
+            raise FirstMateError("Project must contain name, cwd, and request_id", code="invalid_request", status=400)
+        name = self._project_name(body["name"])
+        with self._transaction():
+            cached = self._receipt("create_project", body["request_id"], body)
+            if cached is not None:
+                return cached
+            cwd = str(canonical_directory(body["cwd"], home=home))
+            identity, now = _id("fmp"), _now()
+            self._db.execute("INSERT INTO fm_projects(id,name,cwd,revision,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                             (identity, name, cwd, 1, now, now))
+            return self._save_receipt("create_project", body["request_id"], body, self._one("fm_projects", identity))
+
+    def update_project(self, project_id: str, payload: Mapping[str, Any], *, home: Path | None = None) -> dict:
+        body = dict(payload)
+        if set(body) != {"name", "cwd", "expected_revision", "request_id"}:
+            raise FirstMateError("Project edit must contain name, cwd, expected_revision, and request_id",
+                                 code="invalid_request", status=400)
+        name = self._project_name(body["name"])
+        with self._transaction():
+            scope = "update_project:" + project_id
+            cached = self._receipt(scope, body["request_id"], body)
+            if cached is not None:
+                return cached
+            project = self._one("fm_projects", project_id)
+            self._project_revision(project, body["expected_revision"])
+            if project["archived_at"] is not None:
+                raise FirstMateError("Restore this project before editing it.", code="project_archived")
+            cwd = str(canonical_directory(body["cwd"], home=home))
+            self._db.execute("UPDATE fm_projects SET name=?,cwd=?,revision=revision+1,updated_at=? WHERE id=?",
+                             (name, cwd, _now(), project_id))
+            return self._save_receipt(scope, body["request_id"], body, self._one("fm_projects", project_id))
+
+    def archive_project(self, project_id: str, payload: Mapping[str, Any]) -> dict:
+        body = dict(payload)
+        if set(body) != {"archived", "expected_revision", "request_id"} or type(body.get("archived")) is not bool:
+            raise FirstMateError("Project archive must contain archived, expected_revision, and request_id",
+                                 code="invalid_request", status=400)
+        with self._transaction():
+            scope = "archive_project:" + project_id
+            cached = self._receipt(scope, body["request_id"], body)
+            if cached is not None:
+                return cached
+            project = self._one("fm_projects", project_id)
+            self._project_revision(project, body["expected_revision"])
+            now = _now()
+            if body["archived"] != (project["archived_at"] is not None):
+                self._db.execute("UPDATE fm_projects SET archived_at=?,revision=revision+1,updated_at=? WHERE id=?",
+                                 (now if body["archived"] else None, now, project_id))
+            return self._save_receipt(scope, body["request_id"], body, self._one("fm_projects", project_id))
+
     def create_feature(self, payload: Mapping[str, Any]) -> dict:
         body = dict(payload)
         title = _text(body.get("title"), "title", 300)
         goal = _text(body.get("goal"), "goal")
-        cwd = _text(body.get("cwd"), "cwd", 4096)
-        if not Path(cwd).is_absolute():
-            raise FirstMateError("cwd must be absolute", code="invalid_request", status=400)
+        project_id = None
+        if "project_id" in body:
+            if "cwd" in body:
+                raise FirstMateError("Choose a project or a manual directory, not both", code="invalid_request", status=400)
+            project_id = _text(body["project_id"], "project_id", 128)
+        else:
+            if "expected_project_revision" in body:
+                raise FirstMateError("Project revision requires a project", code="invalid_request", status=400)
+            cwd = _text(body.get("cwd"), "cwd", 4096)
+            if not Path(cwd).is_absolute():
+                raise FirstMateError("cwd must be absolute", code="invalid_request", status=400)
         if body.get("work_item_id") is not None:
             _text(body["work_item_id"], "work_item_id", 200)
         request_id = body.get("request_id")
@@ -812,9 +910,20 @@ class FirstMateStore:
             cached = self._receipt("create_feature", request_id, body)
             if cached is not None:
                 return cached
+            project = None
+            if project_id is not None:
+                project = self._one("fm_projects", project_id)
+                self._project_revision(project, body.get("expected_project_revision"))
+                if project["archived_at"] is not None:
+                    raise FirstMateError("This project is archived. Restore it or choose another project.", code="project_archived")
+                cwd = str(canonical_directory(project["cwd"]))
+                if cwd != project["cwd"]:
+                    raise FirstMateError("The project folder now resolves somewhere else. Edit the project before starting.",
+                                         code="project_directory_changed")
             feature_id, now = _id("fmf"), _now()
-            self._db.execute("INSERT INTO fm_features(id,title,goal,cwd,status,revision,work_item_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                             (feature_id, title, goal, cwd, "ready", 1, body.get("work_item_id"), now, now))
+            self._db.execute("INSERT INTO fm_features(id,title,goal,cwd,status,revision,work_item_id,created_at,updated_at,project_id,project_name,project_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (feature_id, title, goal, cwd, "ready", 1, body.get("work_item_id"), now, now,
+                              project_id, project["name"] if project else None, project["revision"] if project else None))
             message = self._message(feature_id, "user", goal, metadata={"initial": True})
             self._event(feature_id, "feature.created", "Feature created", {"message_id": message["id"]})
             return self._save_receipt("create_feature", request_id, body, self._one("fm_features", feature_id))

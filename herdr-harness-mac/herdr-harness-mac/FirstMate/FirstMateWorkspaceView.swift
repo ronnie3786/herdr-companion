@@ -34,6 +34,7 @@ struct FirstMateWorkspaceView: View {
     /// "Open in window": the First Mate chat window on this feature. Nil hides
     /// the button (the chat window preview is off).
     var popOutChat: (() -> Void)?
+    var startSession: (() -> Void)?
 
     @State private var mode = FirstMateWorkspaceMode.chat
     @State private var selectedGitWorkspaceID: String?
@@ -122,10 +123,12 @@ struct FirstMateWorkspaceView: View {
                     } description: {
                         Text(store.error ?? "Start with a ticket or an idea. Keep the plan, independent agents, and evidence in one conversation.")
                     } actions: {
-                        if !store.unsupported, allowsDirectCreate {
-                            Button("New feature") { store.isCreating = true }
+                        if allowsDirectCreate, startSession != nil || !store.unsupported {
+                            Button("New session") {
+                                if let startSession { startSession() } else { store.isCreating = true }
+                            }
                                 .herdrProminentButton()
-                                .disabled(!canControl)
+                                .disabled(startSession == nil && !canControl)
                         }
                         Button("Refresh") { Task { await store.refresh() } }
                     }
@@ -155,7 +158,15 @@ struct FirstMateWorkspaceView: View {
             }
             selectedGitTargetIdentity = target
         }
-        .sheet(isPresented: $store.isCreating) { FirstMateCreateSheet(store: store) }
+        .sheet(isPresented: Binding(get: { startSession == nil && store.isCreating }, set: { store.isCreating = $0 })) {
+            FirstMateCreateSheet(store: store)
+        }
+        .onChange(of: store.isCreating, initial: true) { _, creating in
+            if creating, let startSession {
+                store.isCreating = false
+                startSession()
+            }
+        }
         .sheet(item: $store.resourcePresentation, onDismiss: store.closeResource) { _ in
             if let resource = store.openedResource {
                 FirstMateResourceSheet(store: store, resource: resource)

@@ -144,7 +144,8 @@ enum FirstMateDemo {
             missingCostRecords: 0, sessionCount: 0, knownCostSessions: 0, models: [], updatedAt: timestamp
         )
         return .init(feature: feature, messages: [
-            .init(id: "\(id)-welcome", featureID: id, role: "assistant", text: "What outcome would you like to work toward? Tell me your constraints and I will help shape a plan.", status: "delivered", createdAt: timestamp)
+            .init(id: "\(id)-initial", featureID: id, role: "user", text: goal, status: "delivered", createdAt: timestamp),
+            .init(id: "\(id)-welcome", featureID: id, role: "assistant", text: "Your starting prompt is ready. This is a synthetic demo, so no agent work runs. Connect a companion to begin a live session.", status: "delivered", createdAt: timestamp)
         ])
     }
 

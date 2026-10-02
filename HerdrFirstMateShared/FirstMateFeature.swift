@@ -41,6 +41,11 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
     var usage: FirstMateUsage? = nil
     var modelSelection: FirstMateModelSelection? = nil
     var dashboardSummary: FirstMateDashboardSummary? = nil
+    /// Project identity and display name at creation. `cwd` remains this
+    /// feature's own working-folder snapshot when the saved project changes.
+    var projectID: String? = nil
+    var projectName: String? = nil
+    var projectRevision: Int? = nil
     /// "lead" for the machine's lead First Mate (`first-mate-lead-v1`), else a
     /// feature. Older companions omit it.
     var kind: String? = nil
@@ -65,6 +70,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
         case usage, modelSelection = "model_selection"
         case dashboardSummary = "dashboard_summary"
         case kind
+        case projectID = "project_id", projectName = "project_name", projectRevision = "project_revision"
     }
     var isArchived: Bool { archivedAt != nil }
 
@@ -91,6 +97,9 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
             && lhs.modelSelection == rhs.modelSelection
             && lhs.dashboardSummary == rhs.dashboardSummary
             && lhs.kind == rhs.kind
+            && lhs.projectID == rhs.projectID
+            && lhs.projectName == rhs.projectName
+            && lhs.projectRevision == rhs.projectRevision
     }
 }
 
@@ -107,6 +116,9 @@ extension FirstMateFeature {
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
         workItemID = try container.decodeIfPresent(String.self, forKey: .workItemID)
+        projectID = try container.decodeIfPresent(String.self, forKey: .projectID)
+        projectName = try container.decodeIfPresent(String.self, forKey: .projectName)
+        projectRevision = try container.decodeIfPresent(Int.self, forKey: .projectRevision)
         archivedAt = try container.decodeIfPresent(String.self, forKey: .archivedAt)
         archiveReason = try container.decodeIfPresent(String.self, forKey: .archiveReason)
         coordinatorModel = try container.decodeIfPresent(String.self, forKey: .coordinatorModel)

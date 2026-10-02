@@ -93,6 +93,7 @@ final class FirstMateStore {
     /// The lead First Mate's feature ID once it has been opened. Its snapshot
     /// lives in ``snapshots`` like a feature's, but it is never in ``features``.
     private(set) var leadFeatureID: String?
+    private(set) var projectsSupported = false
     private(set) var controlAvailable = false
     // Response feedback is companion data that deliberately stays outside
     // FirstMateSnapshot and composer state. Caches are scoped to this client
@@ -247,6 +248,7 @@ final class FirstMateStore {
         linksSupported = demo
         leadSupported = demo && (demoFeatures ?? []).contains { $0.feature.isLead }
         leadFeatureID = nil
+        projectsSupported = demo
         isSavingLink = false
         linkMutationError = nil
         pendingLinkSaves = [:]
@@ -434,6 +436,7 @@ final class FirstMateStore {
             : .unknown
         linksSupported = capabilities.ok && capabilities.supportsLinks
         leadSupported = capabilities.ok && capabilities.supportsLead
+        projectsSupported = capabilities.ok && capabilities.supportsProjects
     }
 
     /// Opens the lead First Mate: creates it on the companion on first use,
@@ -747,7 +750,64 @@ final class FirstMateStore {
             receive(value)
             select(value.feature.id)
             await refresh()
+            return capturedGeneration == generation
+        } catch {
+            guard capturedGeneration == generation else { return false }
+            record(error)
+            return false
+        }
+    }
+
+    /// Submits the project's saved revision in one request. The server owns
+    /// folder resolution and records the goal as the initial user message.
+    func create(
+        title: String,
+        goal: String,
+        project: FirstMateProject,
+        requestID: String,
+        expectedContext: OperationContext? = nil
+    ) async -> Bool {
+        if let expectedContext, expectedContext != operationContext { return false }
+        guard !isSending else { return false }
+        guard !project.isArchived else {
+            error = "Restore this project before starting a session."
+            return false
+        }
+        guard projectsSupported else {
+            error = "This companion needs saved project support before starting this session."
+            return false
+        }
+        let capturedGeneration = generation
+        isSending = true
+        defer { if capturedGeneration == generation { isSending = false } }
+        if isDemo {
+            var value = FirstMateDemo.newFeature(title: title, goal: goal, cwd: project.cwd)
+            value.feature.projectID = project.id
+            value.feature.projectName = project.name
+            value.feature.projectRevision = project.revision
+            receive(value)
+            select(value.feature.id)
+            error = nil
             return true
+        }
+        guard let client else {
+            error = "Connect to a companion server to start a session."
+            return false
+        }
+        do {
+            let value = try await client.createFirstMateFeature(
+                title: title, goal: goal, projectID: project.id,
+                expectedProjectRevision: project.revision, requestID: requestID
+            )
+            guard capturedGeneration == generation else { return false }
+            guard value.ok, !value.feature.id.isEmpty,
+                  value.feature.projectID == project.id,
+                  value.feature.projectRevision == project.revision else { throw APIError.invalidResponse }
+            receive(value)
+            select(value.feature.id)
+            error = nil
+            await refresh()
+            return capturedGeneration == generation
         } catch {
             guard capturedGeneration == generation else { return false }
             record(error)

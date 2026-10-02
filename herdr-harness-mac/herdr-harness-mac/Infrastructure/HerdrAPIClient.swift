@@ -309,6 +309,64 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         ])
     }
 
+    func createFirstMateFeature(
+        title: String, goal: String, projectID: String,
+        expectedProjectRevision: Int, requestID: String
+    ) async throws -> FirstMateSnapshot {
+        try await request(
+            path: "/api/v1/first-mate/features", method: "POST",
+            body: FirstMateProjectFeatureRequest(
+                title: title, goal: goal, projectID: projectID,
+                expectedProjectRevision: expectedProjectRevision, requestID: requestID
+            )
+        )
+    }
+
+    func fetchFirstMateProjects(scope: FirstMateFeatureScope = .active) async throws -> FirstMateProjectList {
+        try await request(
+            path: "/api/v1/first-mate/projects",
+            query: [URLQueryItem(name: "scope", value: scope.rawValue)]
+        )
+    }
+
+    func createFirstMateProject(name: String, cwd: String, requestID: String) async throws -> FirstMateProjectResponse {
+        try await request(
+            path: "/api/v1/first-mate/projects", method: "POST",
+            body: FirstMateProjectCreateRequest(name: name, cwd: cwd, requestID: requestID)
+        )
+    }
+
+    func updateFirstMateProject(
+        id: String, name: String, cwd: String, expectedRevision: Int, requestID: String
+    ) async throws -> FirstMateProjectResponse {
+        try await request(
+            path: firstMatePath("projects", id: id), method: "PATCH",
+            body: FirstMateProjectUpdateRequest(
+                name: name, cwd: cwd, expectedRevision: expectedRevision, requestID: requestID
+            )
+        )
+    }
+
+    func setFirstMateProjectArchived(
+        id: String, archived: Bool, expectedRevision: Int, requestID: String
+    ) async throws -> FirstMateProjectResponse {
+        try await request(
+            path: firstMatePath("projects", id: id) + "/archive", method: "POST",
+            body: FirstMateProjectArchiveRequest(
+                archived: archived, expectedRevision: expectedRevision, requestID: requestID
+            )
+        )
+    }
+
+    func fetchDirectories(
+        path: String?, showHidden: Bool, cursor: String?
+    ) async throws -> FirstMateDirectoryList {
+        var query = [URLQueryItem(name: "show_hidden", value: showHidden ? "true" : "false")]
+        if let path { query.append(URLQueryItem(name: "path", value: path)) }
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await request(path: "/api/v1/directories", query: query)
+    }
+
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot {
         try await request(path: firstMatePath("features", id: featureID) + "/messages", method: "POST", body: [
             "text": text, "request_id": requestID,

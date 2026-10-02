@@ -22,6 +22,7 @@ from . import simulator_previews, websocket_relay
 from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .first_mate_read_models import feature_summary
+from .directory_browser import DIRECTORY_CAPABILITY, DirectoryBrowserError, browse_directories
 from .first_mate_verification import VERIFICATION_CAPABILITY
 from .workflow_policy import POLICY_VERSION
 from .pr_review_store import PRReviewError
@@ -455,6 +456,8 @@ def api_description() -> dict:
         "capabilities": [
             "pane-retirement-v1",
             "first-mate-v1",
+            "first-mate-projects-v1",
+            DIRECTORY_CAPABILITY,
             "first-mate-usage-v1",
             "first-mate-archive-v1",
             "first-mate-attachments-v1",
@@ -501,6 +504,8 @@ def api_description() -> dict:
             "discovery": "/api/v1/discovery",
             "uiClients": "/api/v1/ui/clients",
             "firstMate": "/api/v1/first-mate/features",
+            "firstMateProjects": "/api/v1/first-mate/projects",
+            "directories": "/api/v1/directories",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
             "firstMateAttachment": "/api/v1/first-mate/features/{featureId}/attachments",
             "firstMateFeedbackCategories": "/api/v1/first-mate/feedback-categories",
@@ -597,6 +602,9 @@ def api_description() -> dict:
             "customScheme": "herdr://pane/{paneId}",
         },
         "mutations": [
+            "POST /api/v1/first-mate/projects",
+            "PATCH /api/v1/first-mate/projects/{projectId}",
+            "POST /api/v1/first-mate/projects/{projectId}/archive",
             "POST /api/v1/agent-profiles",
             "POST /api/v1/agent-roles",
             "POST /api/v1/notes|notes/import",
@@ -1051,6 +1059,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 if exc.details:
                     error["details"] = exc.details
                 self._json_response({"ok": False, "error": error, "generatedAt": utc_now()}, exc.status)
+            except DirectoryBrowserError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except PRReviewError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except WatchersError as exc:
@@ -1256,7 +1266,42 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             stream.run(self.connection, self.rfile)
             return None
 
+        def _require_project_auth(self) -> None:
+            # Unlike legacy manual session APIs, filesystem discovery and saved
+            # projects are never available through unauthenticated dev mode.
+            if not configured_token:
+                raise HTTPValidationError("Configure the companion API token before using projects or browsing folders",
+                                          code="api_token_required", status=503)
+            if self._authorization_scope != "main":
+                raise HTTPValidationError("A valid bearer token is required", code="unauthorized", status=401)
+
+        def _project_server_id(self) -> str:
+            control_store = getattr(service, "control_store", None)
+            server_id = getattr(control_store, "server_id", None)
+            if not isinstance(server_id, str) or not server_id:
+                raise HTTPValidationError("The companion identity is unavailable. Reconnect and try again.",
+                                          code="server_identity_unavailable", status=503)
+            return server_id
+
         def _first_mate_route(self, method: str, tail: list[str], query: dict, body: dict):
+            if tail[:1] == ["projects"]:
+                self._require_project_auth()
+                store = service.first_mate_store
+                if tail == ["projects"] and method == "GET":
+                    if set(query) - {"scope"} or any(len(values) != 1 for values in query.values()):
+                        raise HTTPValidationError("Invalid project list query")
+                    scope = query.get("scope", ["active"])[0]
+                    return {"ok": True, "server_id": self._project_server_id(), "projects": store.list_projects(scope)}
+                if query:
+                    raise HTTPValidationError("Project mutations do not accept query parameters")
+                home = Path(service.environ.get("HOME") or Path.home())
+                if tail == ["projects"] and method == "POST":
+                    return {"ok": True, "project": store.create_project(body, home=home)}, 201
+                if len(tail) == 2 and method == "PATCH":
+                    return {"ok": True, "project": store.update_project(_string(tail[1], "project_id", maximum=128), body, home=home)}
+                if len(tail) == 3 and tail[2] == "archive" and method == "POST":
+                    return {"ok": True, "project": store.archive_project(_string(tail[1], "project_id", maximum=128), body)}
+                raise HTTPValidationError("Project endpoint not found", code="not_found", status=404)
             store = service.first_mate_store
             runtime = service.first_mate
             feature_view = runtime.feature if hasattr(runtime, "feature") else store.get_feature
@@ -1266,6 +1311,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if method == "GET" and tail == ["capabilities"]:
                 return {"ok": True, "capabilities": [
                     "first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1",
+                    "first-mate-projects-v1", DIRECTORY_CAPABILITY,
                     "first-mate-archive-v1", "first-mate-attachments-v1",
                     "first-mate-context-v1", "first-mate-safe-model-settings-v1",
                     "first-mate-git-v1", "first-mate-runtime-health-v1", "first-mate-reliability-v1",
@@ -1284,7 +1330,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-lenient-verification-recording-v1", POLICY_VERSION,
                     simulator_previews.CAPABILITY,
                 ], **runtime.capabilities(),
-                    **({"skim": service.skims.capabilities()} if hasattr(service, "skims") else {})}
+                    **({"skim": service.skims.capabilities()} if hasattr(service, "skims") else {}),
+                    **({"server_id": self._project_server_id()} if hasattr(service, "control_store") else {})}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
             if tail == ["feedback-categories"]:
@@ -1359,11 +1406,16 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         features = [feature_summary(feature) for feature in features]
                     return {"ok": True, "features": features, "runtime_health": runtime.health()}
                 if method == "POST":
-                    if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id"}:
+                    if set(body) - {"title", "goal", "cwd", "request_id", "work_item_id", "project_id", "expected_project_revision"}:
                         raise HTTPValidationError("Feature contains an unsupported field")
-                    cwd = _string(body.get("cwd"), "cwd", maximum=4096)
-                    if not Path(cwd).is_absolute() or not Path(cwd).is_dir():
-                        raise HTTPValidationError("Choose an existing absolute project directory", code="first_mate_directory_invalid")
+                    if "project_id" in body:
+                        self._require_project_auth()
+                        # The store checks the original request receipt before
+                        # revalidating a project or its current filesystem state.
+                    else:
+                        cwd = _string(body.get("cwd"), "cwd", maximum=4096)
+                        if not Path(cwd).is_absolute() or not Path(cwd).is_dir():
+                            raise HTTPValidationError("Choose an existing absolute project directory", code="first_mate_directory_invalid")
                     feature = store.create_feature(body)
                     service.first_mate_changed(feature["id"])
                     return {"ok": True, "feature": feature_view(feature["id"])}, 201
@@ -2098,6 +2150,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return self._error(403, "watchers_scope_forbidden", "Watchers require full authentication")
                 from .watchers.api import route
                 return route(service, method, tail[1:], query, body)
+            if tail == ["directories"]:
+                self._require_project_auth()
+                if method != "GET":
+                    raise HTTPValidationError("Directory endpoint is read-only", code="method_not_allowed", status=405)
+                if set(query) - {"path", "show_hidden", "cursor"} or any(len(values) != 1 for values in query.values()):
+                    raise HTTPValidationError("Invalid directory query")
+                return browse_directories(
+                    query.get("path", [None])[0], home=Path(service.environ.get("HOME") or Path.home()),
+                    show_hidden=_query_bool(query, "show_hidden"), cursor=query.get("cursor", [None])[0])
             if tail[:1] in (["control"], ["discovery"], ["ui"]):
                 response = self._control_route(method, tail, query, body)
                 if response is None:

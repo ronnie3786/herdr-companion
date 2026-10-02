@@ -105,6 +105,9 @@ final class HerdrShellState {
     let agentBoard = AgentBoardState()
     private(set) var firstMate = FirstMateStore()
     let firstMateFleet = FirstMateFleetIndex()
+    let firstMateProjects = FirstMateProjectIndex()
+    let firstMateStart = FirstMateStartSessionModel()
+    var firstMateSurface = FirstMateSurface.workspace
     /// One cache coordinator per app process: the main rail and every popped
     /// out review or document window share download phases and window-lifetime
     /// cache protection, so no window can evict a file another is displaying.
@@ -341,6 +344,7 @@ final class HerdrShellState {
     }
 
     func selectFirstMateScope(_ scope: FirstMateMachineScope) {
+        firstMateSurface = .workspace
         firstMateOpenRequest = nil
         pendingFirstMateControlTarget = nil
         pendingFirstMateCreateMachineID = nil
@@ -349,6 +353,7 @@ final class HerdrShellState {
     }
 
     func openFirstMateFeatureFromFleet(machineID: String, featureID: String) {
+        firstMateSurface = .workspace
         firstMateOpenRequest = nil
         pendingFirstMateCreateMachineID = nil
         firstMateScope = .all
@@ -362,6 +367,44 @@ final class HerdrShellState {
         firstMateScope = .all
         firstMateMachineID = machineID
         pendingFirstMateCreateMachineID = machineID
+        firstMateStart.prepare(preferredMachineID: machineID)
+        firstMateSurface = .newSession
+    }
+
+    func showFirstMateStart(project: FirstMateProjectSelection? = nil, preferredMachineID: String? = nil, mode: FirstMateStartMode? = nil) {
+        firstMateOpenRequest = nil
+        pendingFirstMateControlTarget = nil
+        pendingFirstMateCreateMachineID = nil
+        firstMateStart.prepare(preferredMachineID: preferredMachineID)
+        if let mode, !firstMateStart.isSending { firstMateStart.mode = mode }
+        if let project { firstMateStart.chooseProject(project) }
+        firstMateSurface = .newSession
+    }
+
+    func showFirstMateProjects() {
+        firstMateOpenRequest = nil
+        pendingFirstMateControlTarget = nil
+        pendingFirstMateCreateMachineID = nil
+        firstMateSurface = .projects
+    }
+
+    @discardableResult
+    func openStartedFirstMateSession(_ session: FirstMateStartedSession, connectionGeneration: Int, isDemo: Bool) -> Bool {
+        guard firstMateProjects.isCurrent(session.connection), firstMateProjects.isDemo == isDemo else { return false }
+        let connection = session.connection
+        firstMateMachineID = connection.machineID
+        firstMateScope = .all
+        firstMateOpenRequest = nil
+        pendingFirstMateControlTarget = nil
+        pendingFirstMateCreateMachineID = nil
+        configureFirstMateIfNeeded(machineID: connection.machineID,
+                                   configuration: isDemo ? nil : connection.configuration,
+                                   connectionGeneration: connectionGeneration, isDemo: isDemo,
+                                   client: connection.client)
+        firstMate.receive(session.snapshot)
+        firstMate.select(session.snapshot.feature.id)
+        firstMateSurface = .workspace
+        return true
     }
 
     private func resetFirstMateCacheIfNeeded(connectionGeneration: Int, isDemo: Bool) {
@@ -556,6 +599,7 @@ final class HerdrShellState {
         inspector: FirstMateInspector,
         model: HerdrAppModel
     ) {
+        firstMateSurface = .workspace
         firstMateOpenRequest = nil
         pendingFirstMateCreateMachineID = nil
         firstMateScope = .machine(machineID)

@@ -5,6 +5,10 @@ struct FirstMateSidebarView: View {
     let back: () -> Void
     let canControl: Bool
     var leaveDemo: () -> Void = {}
+    var startSession: (() -> Void)?
+    var manageProjects: (() -> Void)?
+    var openFeature: ((String) -> Void)?
+    var surface = FirstMateSurface.workspace
     @Environment(\.colorScheme) private var scheme
     @State private var archiveCandidate: FirstMateFeature? = nil
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
@@ -17,6 +21,12 @@ struct FirstMateSidebarView: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     SidebarNavRow(title: "All sessions", systemImage: "chevron.left", action: back)
                         .accessibilityIdentifier("first-mate-back")
+                    if let manageProjects {
+                        SidebarNavRow(title: "Projects", systemImage: "folder", tint: surface == .projects ? palette.accent : palette.secondaryText, action: manageProjects)
+                            .herdrRowBackground(selected: surface == .projects, hovered: false)
+                            .accessibilityAddTraits(surface == .projects ? .isSelected : [])
+                            .accessibilityIdentifier("first-mate-projects-navigation")
+                    }
                     if let warning = store.runtimeHealth?.warning {
                         Label("Execution needs attention", systemImage: "exclamationmark.triangle.fill")
                             .herdrFont(size: HerdrTheme.TextSize.small, weight: .medium)
@@ -44,10 +54,12 @@ struct FirstMateSidebarView: View {
         .herdrPaneBackground(palette.sidebar)
         .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
         .herdrRailHeaderActions {
-            Button("New feature", systemImage: "plus") { store.isCreating = true }
+            Button("New session", systemImage: "plus") {
+                if let startSession { startSession() } else { store.isCreating = true }
+            }
                 .buttonStyle(HerdrIconButtonStyle(tint: palette.iconTint))
-                .disabled(!canControl)
-                .help("New feature")
+                .disabled(startSession == nil && !canControl)
+                .help("New First Mate session")
                 .accessibilityIdentifier("first-mate-new-feature")
         }
         .sheet(item: $archiveCandidate) { feature in
@@ -111,17 +123,19 @@ struct FirstMateSidebarView: View {
 
     private func featureRow(_ feature: FirstMateFeature) -> some View {
         HStack(spacing: 2) {
-            Button { store.select(feature.id) } label: {
+            Button {
+                if let openFeature { openFeature(feature.id) } else { store.select(feature.id) }
+            } label: {
                 FirstMateFeatureCard(
                     title: feature.title,
                     detail: [feature.workItemID ?? "Idea", FirstMateUsageFormatting.compactCost(feature.usage)].joined(separator: " · "),
                     status: store.executionDisplayStatus(for: feature),
                     symbol: feature.isArchived ? "archivebox" : "square.3.layers.3d",
-                    isSelected: store.selectedFeatureID == feature.id
+                    isSelected: surface == .workspace && store.selectedFeatureID == feature.id
                 )
             }
             .accessibilityLabel("\(feature.title), \(feature.workItemID ?? "Idea"), status \(store.executionDisplayStatus(for: feature).replacingOccurrences(of: "_", with: " ")), \(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
-            .accessibilityAddTraits(store.selectedFeatureID == feature.id ? .isSelected : [])
+            .accessibilityAddTraits(surface == .workspace && store.selectedFeatureID == feature.id ? .isSelected : [])
             .help("\(feature.title)\n\(FirstMateUsageFormatting.taskAccessibilityDescription(feature.usage))")
             .buttonStyle(.herdrPlain)
             .accessibilityIdentifier("first-mate-feature-\(feature.id)")

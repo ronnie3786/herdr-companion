@@ -32,6 +32,21 @@ struct FirstMateOverviewView: View {
                 .padding(.top, 4)
                 .accessibilityAddTraits(.isHeader)
             FirstMateOverviewGoalView(source: snapshot.feature.goal)
+            if let projectName = snapshot.feature.projectName {
+                VStack(alignment: .leading, spacing: 6) {
+                    HerdrMicroLabel(text: "Project")
+                    Label(projectName, systemImage: "folder")
+                        .herdrFont(size: HerdrTheme.TextSize.body, weight: .medium)
+                    Text(snapshot.feature.cwd)
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(palette.secondaryText)
+                        .textSelection(.enabled)
+                        .help("This session keeps the folder chosen when it started.")
+                }
+                .padding(12)
+                .herdrCard()
+                .accessibilityIdentifier("first-mate-session-project")
+            }
             FirstMateUsageSummaryView(usage: snapshot.feature.usage, title: "Full task usage")
                 .padding(12)
                 .herdrCard()

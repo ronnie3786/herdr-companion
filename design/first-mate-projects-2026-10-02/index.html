@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Herdr · Projects & First Mate</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="prototype-bar"><span><strong>Herdr design study</strong><span class="bar-detail"> / Projects & First Mate</span></span><span class="prototype-actions"><span>Interactive demo · sample data</span><button id="theme-toggle" aria-label="Switch to light appearance">Light</button><button id="reset-demo">Reset demo</button></span></div>
+  <div class="app-window">
+    <aside class="sidebar">
+      <div class="window-controls" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand"><span class="herdr-mark" aria-hidden="true"><i></i><i></i><i></i></span>Herdr</div>
+      <div class="sidebar-nav"><button class="nav-row selected" data-view="new"><span data-icon="sail"></span>First Mate<span class="shortcut">⌘ 2</span></button><button class="nav-row" data-view="projects"><span data-icon="folder"></span>Projects<span class="count" id="project-count"></span></button></div>
+      <div class="section-label">Sessions<button class="icon-button" data-view="new" aria-label="New session" data-icon="plus"></button></div>
+      <div id="session-list" class="session-list"></div>
+      <div class="sidebar-bottom"><span class="status-dot"></span><span>2 machines connected</span><span data-icon="computer"></span></div>
+    </aside>
+    <main>
+      <header class="titlebar"><div id="view-title">New First Mate session</div><div class="titlebar-right"><span class="quiet" id="view-meta">All machines</span><button class="icon-button" data-view="projects" aria-label="Manage projects" data-icon="folder"></button></div></header>
+      <section id="new-view" class="view">
+        <div class="new-session">
+          <div class="sail-emblem" data-icon="sail"></div>
+          <h1>What are we working on?</h1>
+          <p class="intro">Give your First Mate a place to work and a starting point.</p>
+          <div class="segmented" aria-label="Session setup"><button id="project-mode" aria-pressed="true">Use a project</button><button id="manual-mode" aria-pressed="false">Manual setup</button></div>
+          <div id="project-setup" class="setup">
+            <div class="field-heading"><label id="project-label">Project</label><button class="text-button" id="new-project-inline"><span data-icon="plus"></span>New project</button></div>
+            <div class="project-picker-wrap">
+              <button id="project-picker" class="project-picker" aria-labelledby="project-label project-selected-label" aria-expanded="false"><span class="project-symbol" data-icon="folder"></span><span class="grow" id="project-selected-label"></span><span data-icon="chevrons"></span></button>
+              <div id="project-options" class="project-options" hidden></div>
+            </div>
+            <div id="project-context" class="project-context"></div>
+          </div>
+          <div id="manual-setup" class="setup" hidden>
+            <div class="two-fields"><div><label for="manual-title">Session name</label><input id="manual-title" placeholder="e.g. Improve search suggestions"></div><div><label for="manual-machine">Machine</label><select id="manual-machine"></select></div></div>
+            <label for="manual-path">Folder on this machine</label><div class="input-action"><input id="manual-path" placeholder="/Users/developer/projects/ios-app"><button id="manual-browse">Browse…</button></div>
+            <p class="field-note">One session here. Save a project when you want to use this folder again.</p>
+          </div>
+          <div class="prompt-box"><label for="prompt">Starting prompt</label><textarea id="prompt" placeholder="Start with a ticket, an idea, or something you want to fix…"></textarea><div class="prompt-footer"><span>⌘ Return to start</span><button class="primary" id="start-session">Start session<span data-icon="arrow-up"></span></button></div></div>
+          <div id="start-error" class="notice error" role="alert" hidden></div>
+          <p class="handoff-note"><span data-icon="sail"></span>A Second Mate starts this session with your prompt in the selected folder.</p>
+          <div class="prompt-examples"><span>Try a starting point</span><button data-prompt="Investigate APP-204, where search suggestions disappear after switching tabs. Read the ticket and propose a plan before making changes.">Work on a ticket</button><button data-prompt="Explore how we can add saved searches. Look at the current implementation and propose a small first version.">Explore an idea</button><button data-prompt="Review the search flow for bugs and missing tests. Start by tracing the existing code, then tell me what you find.">Review the code</button></div>
+        </div>
+      </section>
+      <section id="projects-view" class="view" hidden><div class="projects-page"><div class="page-heading"><div><h1>Projects</h1><p class="intro">A familiar place to start your next session.</p></div><button class="primary" id="new-project-list"><span data-icon="plus"></span>New project</button></div><div class="table-heading"><span>Project / folder</span><span>Machine</span><span></span></div><div id="projects-list"></div><div class="project-footnote"><span data-icon="folder"></span><p>One machine. One folder. As many sessions as you need.<br><span class="quiet">Projects keep their location. Each session gets its own conversation.</span></p></div></div></section>
+      <section id="session-view" class="view" hidden><div class="session-page"><div class="session-location" id="session-location"></div><h1 id="session-title"></h1><div class="conversation"><div class="user-heading">You<span>Just now</span></div><div class="user-message" id="sent-prompt"></div><div class="coordinator-heading"><span class="avatar" data-icon="sail"></span><div><strong>Second Mate</strong><span>Feature lead</span></div></div><div class="handoff-status"><span class="status-dot"></span><strong>Prompt handed to the coordinator</strong><p>This is the end of the prototype. In the app, your coordinator would begin here in the selected folder.</p></div><button class="secondary" data-view="new"><span data-icon="plus"></span>Start another session</button></div></div></section>
+    </main>
+  </div>
+  <footer class="study-footer"><span>October 2026 concept</span><span>Try creating a project, browsing a machine, then starting a session.</span><a href="research.html">Implementation notes<span data-icon="arrow-right"></span></a></footer>
+  <dialog id="project-dialog" aria-labelledby="project-dialog-title"><form id="project-form"><div class="dialog-heading"><span class="dialog-icon" data-icon="folder"></span><div><h2 id="project-dialog-title">New project</h2><p>Choose where your First Mate will work.</p></div><button type="button" class="icon-button close" data-close="project-dialog" aria-label="Close new project" data-icon="x"></button></div><div class="dialog-body"><label for="project-name">Project name</label><input id="project-name" required maxlength="80" placeholder="e.g. iOS App" autocomplete="off"><label for="project-machine">Machine</label><select id="project-machine" required></select><p class="field-note" id="machine-hint">Choose from the machines connected to Herdr.</p><label for="project-folder">Project folder</label><div class="input-action"><input id="project-folder" placeholder="Choose a folder on this machine" readonly required><button type="button" id="project-browse">Browse…</button></div><p class="field-note">This folder is where new sessions will start.</p><div id="project-error" class="notice error" role="alert" hidden></div></div><div class="dialog-footer"><button type="button" class="secondary" data-close="project-dialog">Cancel</button><button type="submit" class="primary" id="save-project" disabled>Create project</button></div></form></dialog>
+  <dialog id="folder-dialog" class="folder-dialog" aria-labelledby="folder-title"><div class="folder-header"><div><h2 id="folder-title">Choose a project folder</h2><p id="folder-machine-label"></p></div><button class="icon-button close" data-close="folder-dialog" aria-label="Close folder browser" data-icon="x"></button></div><div class="folder-toolbar"><button id="folder-up" class="icon-button" aria-label="Parent folder" data-icon="arrow-up"></button><form id="path-form"><label class="sr-only" for="browse-path">Go to folder</label><input id="browse-path" spellcheck="false"><button type="submit">Go</button></form></div><div class="folder-body"><nav class="folder-favorites" aria-label="Folder shortcuts"><span>Places</span><button id="home-folder"><span data-icon="home"></span>Home</button><button id="projects-folder"><span data-icon="folder"></span>Projects</button><div class="browse-hint">Folders on the selected machine</div></nav><div class="folder-main"><div class="folder-filter"><span id="folder-name">Projects</span><label class="hidden-toggle"><input type="checkbox" id="show-hidden">Hidden folders</label></div><div id="folder-rows"></div><div id="folder-error" class="folder-error" role="alert" hidden></div></div></div><div class="folder-selection"><span data-icon="folder"></span><span id="folder-selection-path"></span></div><div class="dialog-footer"><span id="folder-item-count" class="quiet"></span><span class="grow"></span><button class="secondary" data-close="folder-dialog">Cancel</button><button class="primary" id="choose-folder">Use this folder</button></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

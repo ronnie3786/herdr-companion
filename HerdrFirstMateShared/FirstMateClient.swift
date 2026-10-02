@@ -12,6 +12,12 @@ protocol FirstMateClient: Sendable {
     /// advertises `first-mate-journal-events-v1`.
     func fetchFirstMateFeature(_ id: String, journalEventsOnly: Bool) async throws -> FirstMateSnapshot
     func createFirstMateFeature(title: String, goal: String, cwd: String, requestID: String) async throws -> FirstMateSnapshot
+    func createFirstMateFeature(title: String, goal: String, projectID: String, expectedProjectRevision: Int, requestID: String) async throws -> FirstMateSnapshot
+    func fetchFirstMateProjects(scope: FirstMateFeatureScope) async throws -> FirstMateProjectList
+    func createFirstMateProject(name: String, cwd: String, requestID: String) async throws -> FirstMateProjectResponse
+    func updateFirstMateProject(id: String, name: String, cwd: String, expectedRevision: Int, requestID: String) async throws -> FirstMateProjectResponse
+    func setFirstMateProjectArchived(id: String, archived: Bool, expectedRevision: Int, requestID: String) async throws -> FirstMateProjectResponse
+    func fetchDirectories(path: String?, showHidden: Bool, cursor: String?) async throws -> FirstMateDirectoryList
     func sendFirstMateMessage(featureID: String, text: String, requestID: String) async throws -> FirstMateSnapshot
     func uploadFirstMateAttachment(featureID: String, fileURL: URL, contentType: String) async throws -> AttachmentUploadResponse
     func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse
@@ -144,6 +150,7 @@ struct FirstMateFeatureList: Decodable, Sendable {
 struct FirstMateCapabilities: Decodable, Sendable {
     var ok: Bool
     var capabilities: [String]
+    var serverID: String? = nil
     var supportsReadViews: Bool { capabilities.contains("first-mate-read-views-v1") }
     var supportsArchive: Bool { capabilities.contains("first-mate-archive-v1") }
     var supportsAttachments: Bool { capabilities.contains("first-mate-attachments-v1") }
@@ -155,6 +162,13 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var supportsFleet: Bool { capabilities.contains("first-mate-fleet-v1") }
     var supportsLead: Bool { capabilities.contains("first-mate-lead-v1") }
     var supportsLeadPeers: Bool { capabilities.contains("first-mate-lead-peers-v1") }
+    var supportsProjects: Bool { capabilities.contains("first-mate-projects-v1") }
+    var supportsDirectoryBrowser: Bool { capabilities.contains("directory-browser-v1") }
+
+    enum CodingKeys: String, CodingKey {
+        case ok, capabilities
+        case serverID = "server_id"
+    }
 }
 
 /// A link save or visibility response: the affected link plus the same full
@@ -304,6 +318,27 @@ extension FirstMateClient {
         .init(snapshot: try await fetchFirstMateFeature(id, journalEventsOnly: true))
     }
 
+    func fetchFirstMateProjects() async throws -> FirstMateProjectList {
+        try await fetchFirstMateProjects(scope: .active)
+    }
+    func fetchFirstMateProjects(scope: FirstMateFeatureScope) async throws -> FirstMateProjectList {
+        throw APIError.server(status: 501, message: "This companion does not support saved projects.")
+    }
+    func createFirstMateProject(name: String, cwd: String, requestID: String) async throws -> FirstMateProjectResponse {
+        throw APIError.server(status: 501, message: "This companion does not support saved projects.")
+    }
+    func updateFirstMateProject(id: String, name: String, cwd: String, expectedRevision: Int, requestID: String) async throws -> FirstMateProjectResponse {
+        throw APIError.server(status: 501, message: "This companion does not support saved projects.")
+    }
+    func setFirstMateProjectArchived(id: String, archived: Bool, expectedRevision: Int, requestID: String) async throws -> FirstMateProjectResponse {
+        throw APIError.server(status: 501, message: "This companion does not support saved projects.")
+    }
+    func fetchDirectories(path: String?, showHidden: Bool, cursor: String?) async throws -> FirstMateDirectoryList {
+        throw APIError.server(status: 501, message: "This companion does not support browsing folders.")
+    }
+    func createFirstMateFeature(title: String, goal: String, projectID: String, expectedProjectRevision: Int, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.server(status: 501, message: "This companion does not support saved projects.")
+    }
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
         .init(ok: true, capabilities: [])
     }

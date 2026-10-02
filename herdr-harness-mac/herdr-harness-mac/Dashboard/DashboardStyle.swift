@@ -231,37 +231,17 @@ struct DashboardIconButton: View {
     }
 }
 
-/// Where a new First Mate feature can be created, shared by both screens.
+/// Opens the shared project/manual session form from either dashboard.
 struct DashboardCreateFeatureMenu<Label: View>: View {
     let model: HerdrAppModel
     let shell: HerdrShellState
     @ViewBuilder let label: () -> Label
 
-    private var machines: [HerdrMachine] {
-        model.machines.filter { model.firstMateConfiguration(machineID: $0.id) != nil }
-    }
-
     var body: some View {
-        if model.isDemoMode {
-            Button { create("demo") } label: { label() }
-        } else if machines.count == 1, let machine = machines.first {
-            Button { create(machine.id) } label: { label() }
-                .disabled(!model.canControl(machineID: machine.id))
-                .help("Start a First Mate feature on \(machine.name)")
-        } else {
-            Menu {
-                ForEach(machines) { machine in
-                    Button(machine.name) { create(machine.id) }
-                        .disabled(!model.canControl(machineID: machine.id))
-                }
-                if machines.isEmpty { Text("Connect a machine in Settings → Machines") }
-            } label: { label() }
-                .piChipMenu()
-        }
-    }
-
-    private func create(_ machineID: String) {
-        shell.createFirstMateFeature(on: machineID)
-        shell.show(.firstMate, model: model)
+        Button {
+            shell.showFirstMateStart()
+            shell.show(.firstMate, model: model)
+        } label: { label() }
+        .help("Start a new First Mate session")
     }
 }

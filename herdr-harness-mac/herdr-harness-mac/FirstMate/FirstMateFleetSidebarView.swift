@@ -11,6 +11,9 @@ struct FirstMateFleetSidebarView: View {
     let createFeature: (String) -> Void
     let refresh: () -> Void
     @State private var archiveCandidate: FirstMateFleetIndex.ArchiveTarget?
+    var startSession: (() -> Void)?
+    var manageProjects: (() -> Void)?
+    var surface = FirstMateSurface.workspace
     @Environment(\.colorScheme) private var scheme
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
@@ -23,6 +26,12 @@ struct FirstMateFleetSidebarView: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     SidebarNavRow(title: "All sessions", systemImage: "chevron.left", action: back)
                         .accessibilityIdentifier("first-mate-back")
+                    if let manageProjects {
+                        SidebarNavRow(title: "Projects", systemImage: "folder", tint: surface == .projects ? palette.accent : palette.secondaryText, action: manageProjects)
+                            .herdrRowBackground(selected: surface == .projects, hovered: false)
+                            .accessibilityAddTraits(surface == .projects ? .isSelected : [])
+                            .accessibilityIdentifier("first-mate-projects-navigation")
+                    }
                     let total = index.filteredHosts.reduce(0) { $0 + $1.features.count }
                     FirstMateSidebarSection(title: "All machines", count: total,
                                             countLabel: "\(total) feature\(total == 1 ? "" : "s")")
@@ -64,7 +73,7 @@ struct FirstMateFleetSidebarView: View {
                                 .padding(.vertical, 4)
                         }
                         ForEach(host.features) { feature in
-                            let isSelected = selectedMachineID == host.machineID && selectedFeatureID == feature.id
+                            let isSelected = surface == .workspace && selectedMachineID == host.machineID && selectedFeatureID == feature.id
                             Button { openFeature(host.machineID, feature.id) } label: {
                                 FirstMateFeatureCard(
                                     title: feature.title,
@@ -112,6 +121,12 @@ struct FirstMateFleetSidebarView: View {
         .herdrPaneBackground(palette.sidebar)
         .foregroundStyle(palette.text, palette.secondaryText, palette.tertiaryText)
         .herdrRailHeaderActions {
+            if let startSession {
+                Button("New session", systemImage: "plus", action: startSession)
+                    .buttonStyle(HerdrIconButtonStyle(tint: palette.iconTint))
+                    .help("New First Mate session")
+                    .accessibilityIdentifier("first-mate-new-feature")
+            } else {
             Menu {
                 ForEach(createMachines) { machine in
                     Button(machine.name) { createFeature(machine.id) }
@@ -124,6 +139,7 @@ struct FirstMateFleetSidebarView: View {
             .help("New feature")
             .accessibilityLabel("New feature")
             .accessibilityIdentifier("first-mate-new-feature")
+            }
             Button("Refresh all machines", systemImage: "arrow.clockwise", action: refresh)
                 .buttonStyle(HerdrIconButtonStyle(tint: palette.iconTint))
                 .help("Refresh all machines")

@@ -82,6 +82,7 @@ struct FirstMateStartSessionView: View {
             ForEach(FirstMateStartMode.allCases) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented).frame(maxWidth: 265)
+        .tint(HerdrTheme.controlAccent)
         .labelsHidden()
         .accessibilityLabel("Session setup")
         .accessibilityIdentifier("first-mate-start-mode")

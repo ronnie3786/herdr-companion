@@ -3,7 +3,7 @@
 This package adds First Mate Agent Roles: private revisioned role settings,
 optional role prompts, when-to-use guidance, delegation controls, custom roles,
 and strict per-role skill selections. The authenticated `agent-roles-v1` API lets
-Mac **0.83.0-beta.1** copy selected local skill packages to the execution computer.
+Mac **0.84.0-beta.1** copy selected local skill packages to the execution computer.
 
 The matching Pi extension filters the advertised skill catalog. Strict roles
 require Pi supporting the controls verified with **0.87.1**; unsupported versions

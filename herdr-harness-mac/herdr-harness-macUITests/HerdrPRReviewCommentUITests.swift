@@ -360,8 +360,9 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         let cards = sheet.groups.matching(NSPredicate(format: "identifier BEGINSWITH %@", "pr-review-thread-"))
         let deadline = Date().addingTimeInterval(5)
         repeat {
-            if let card = cards.allElementsBoundByIndex.first(where: { $0.discussionText(containing: fragment).exists }) {
-                return card
+            for identifier in cards.allElementsBoundByIndex.map(\.identifier) {
+                let card = sheet.groups.matching(identifier: identifier).firstMatch
+                if card.discussionText(containing: fragment).exists { return card }
             }
             Thread.sleep(forTimeInterval: 0.1)
         } while Date() < deadline
@@ -380,7 +381,10 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
             XCTFail("The thread should expose \(titlePrefix)")
             return
         }
-        disclosure.click()
+        // AppKit includes a leading inset in the disclosure's AX frame. The
+        // visible arrow sits 28 points in, before the noninteractive label.
+        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .withOffset(CGVector(dx: 28, dy: 0)).click()
     }
 
     @MainActor

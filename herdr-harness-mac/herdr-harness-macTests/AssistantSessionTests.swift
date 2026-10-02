@@ -49,7 +49,9 @@ struct AssistantSessionTests {
         #expect(decoded.context.items[0].text == "  exact\ntext")
         #expect(decoded.profile == "contextual-question-v1")
         #expect(decoded.thinkingLevel == nil)
-        #expect(decoded.parentSessionId == nil)
+        let encoded = String(decoding: data, as: UTF8.self)
+        #expect(!encoded.contains("parentSessionId"))
+        #expect(!encoded.contains("responseBriefLength"))
     }
 
     @Test("PR review profile carries its review scope")

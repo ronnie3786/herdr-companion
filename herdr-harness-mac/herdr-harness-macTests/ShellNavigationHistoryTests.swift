@@ -5,30 +5,24 @@ import Testing
 @Suite("Shell navigation history", .serialized)
 @MainActor
 struct ShellNavigationHistoryTests {
-    @Test("Git only earns a picker segment when the pane on screen has a repo")
-    func gitSegmentFollowsRepoAvailability() {
-        let withGit = HerdrDetailScope.pickerCases(includingGit: true)
-        let withoutGit = HerdrDetailScope.pickerCases(includingGit: false)
-
-        #expect(withGit.contains(.git))
-        #expect(!withoutGit.contains(.git))
-        // Right of chat, as asked: Session is the chat-bubble segment.
-        #expect(withGit.firstIndex(of: .git) == 1)
-        #expect(withGit.first == .session)
-        #expect(withoutGit == withGit.filter { $0 != .git })
+    @Test("The title bar's ⋯ menu offers Chat, Active Work, Fleet, and Activity")
+    func shellMenuDestinations() {
+        #expect(HerdrDetailScope.menuDestinations == [.session, .activeWork, .fleet, .activity])
+        #expect(HerdrDetailScope.session.label == "Chat")
+        // Git is a pane mode in the chat's own menu, not a destination.
+        #expect(!HerdrDetailScope.menuDestinations.contains(.git))
     }
 
     @Test("Only the publishing pane may retract the mode the toolbar reads")
     func paneModeOwnershipSurvivesAPaneSwitch() {
         let model = HerdrAppModel(arguments: ["HerdrTests", "-HerdrDemoMode"])
-        model.notePaneDetailMode(.git, gitIsAvailable: true, for: "m1|a")
+        model.notePaneDetailMode(.git, for: "m1|a")
         // Switching panes mounts the replacement before the outgoing view
         // disappears, so the stale clear must be ignored.
-        model.notePaneDetailMode(.chat, gitIsAvailable: false, for: "m1|b")
+        model.notePaneDetailMode(.chat, for: "m1|b")
         model.clearPaneDetailMode(for: "m1|a")
 
         #expect(model.currentPaneDetailMode == .chat)
-        #expect(!model.currentPaneGitIsAvailable)
 
         model.clearPaneDetailMode(for: "m1|b")
         #expect(model.currentPaneDetailMode == nil)
@@ -40,22 +34,22 @@ struct ShellNavigationHistoryTests {
         let shell = HerdrShellState()
         shell.detailScope = .git
 
-        // With no pane selected it degrades exactly like `.session` does rather
-        // than rendering an empty Git surface.
-        #expect(shell.resolvedScope(for: model) != .git)
+        // With no pane selected it shows the chat placeholder rather than an
+        // empty Git surface.
+        #expect(shell.resolvedScope(for: model) == .session)
     }
 
-    @Test("Opening a pane, a workspace, and Active Work records three visits")
+    @Test("Opening a pane, Fleet, and Active Work records three visits")
     func openingDestinationsRecordsTrail() throws {
-        try withModel { model, shell, firstPane, _, firstWorkspace, _ in
+        try withModel { model, shell, firstPane, _, _, _ in
 
             shell.openPane(id: firstPane.id, model: model)
-            shell.showWorkspace(id: firstWorkspace.id, model: model)
+            shell.show(.fleet, model: model)
             shell.show(.activeWork, model: model)
 
             #expect(shell.canGoBack)
             #expect(shell.goBack(model: model))
-            #expect(shell.detailScope == .workspace)
+            #expect(shell.detailScope == .fleet)
             #expect(shell.goBack(model: model))
             #expect(shell.detailScope == .session)
             #expect(model.selectedPaneID == firstPane.id)
@@ -107,29 +101,23 @@ struct ShellNavigationHistoryTests {
         }
     }
 
-    @Test("A scope change with no selected pane records the resolved destination")
-    func panelessSessionRecordsResolvedDestination() throws {
+    @Test("Chat with no selected pane is a placeholder and records nothing")
+    func panelessSessionRecordsNothing() throws {
         try withModel { model, shell, _, _, firstWorkspace, _ in
             model.selectedWorkspaceID = firstWorkspace.id
             model.selectedPaneID = nil
 
             shell.show(.session, model: model)
 
-            #expect(shell.history.current == .workspace(firstWorkspace.id))
-            #expect(shell.history.current != nil)
+            #expect(shell.resolvedScope(for: model) == .session)
+            #expect(shell.currentDestination(for: model) == nil)
+            #expect(shell.history.current == nil)
         }
     }
 
-    @Test("Fleet is a detail-picker segment and records navigation")
-    func fleetIsADetailPickerSegmentAndRecordsNavigation() throws {
-        #expect(HerdrDetailScope.pickerCases.contains(.fleet))
-        #expect(HerdrDetailScope.pickerSelection(for: .fleet) == .fleet)
-        #expect(HerdrDetailScope.pickerSelection(for: .attention) == .attention)
-        #expect(
-            HerdrDetailScope.pickerCases == HerdrDetailScope.allCases.filter {
-                $0 != .firstMate && $0 != .prReview && $0 != .watchers && $0 != .dashboard && $0 != .agentBoard
-            }
-        )
+    @Test("Fleet is a ⋯ menu destination and records navigation")
+    func fleetIsAMenuDestinationAndRecordsNavigation() throws {
+        #expect(HerdrDetailScope.menuDestinations.contains(.fleet))
 
         try withModel { model, shell, firstPane, _, _, _ in
             shell.openPane(id: firstPane.id, model: model)
@@ -144,9 +132,9 @@ struct ShellNavigationHistoryTests {
         }
     }
 
-    @Test("PR Review has no picker segment but still records navigation")
+    @Test("PR Review is not a ⋯ menu destination but still records navigation")
     func prReviewUsesNavigatorAndRecordsNavigation() throws {
-        #expect(HerdrDetailScope.pickerSelection(for: .prReview) == nil)
+        #expect(!HerdrDetailScope.menuDestinations.contains(.prReview))
 
         try withModel { model, shell, firstPane, _, _, _ in
             shell.openPane(id: firstPane.id, model: model)
@@ -159,8 +147,7 @@ struct ShellNavigationHistoryTests {
 
     @Test("Watchers uses the sidebar and restores its navigation history")
     func watchersUsesSidebarAndRecordsNavigation() throws {
-        #expect(!HerdrDetailScope.pickerCases.contains(.watchers))
-        #expect(HerdrDetailScope.pickerSelection(for: .watchers) == nil)
+        #expect(!HerdrDetailScope.menuDestinations.contains(.watchers))
 
         try withModel { model, shell, firstPane, _, _, _ in
             shell.openPane(id: firstPane.id, model: model)
@@ -180,9 +167,9 @@ struct ShellNavigationHistoryTests {
 
     @Test("Back restores the pane and the detail scope together")
     func backRestoresPaneAndScope() throws {
-        try withModel { model, shell, firstPane, _, firstWorkspace, _ in
+        try withModel { model, shell, firstPane, _, _, _ in
             shell.openPane(id: firstPane.id, model: model)
-            shell.showWorkspace(id: firstWorkspace.id, model: model)
+            shell.show(.activity, model: model)
 
             #expect(shell.goBack(model: model))
             #expect(shell.detailScope == .session)
@@ -267,7 +254,7 @@ struct ShellNavigationHistoryTests {
             shell.openPane(id: secondPane.id, model: model)
             #expect(shell.goBack(model: model))
 
-            shell.show(.attention, model: model)
+            shell.show(.fleet, model: model)
 
             #expect(!shell.canGoForward)
         }

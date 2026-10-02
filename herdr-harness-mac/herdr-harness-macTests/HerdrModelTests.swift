@@ -70,7 +70,7 @@ struct HerdrModelTests {
     }
 
     @MainActor
-    @Test("Sidebar navigation persists collapsed sections and opens workspaces")
+    @Test("Sidebar navigation persists collapsed sections")
     func sidebarNavigation() {
         let suiteName = "HerdrModelTests.sidebarNavigation.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
@@ -90,19 +90,6 @@ struct HerdrModelTests {
         #expect(model.collapsedSidebarTabIDs.contains("demo1|w1:t1"))
         model.toggleSidebarTabSection("demo1|w1:t1")
         #expect(!model.collapsedSidebarTabIDs.contains("demo1|w1:t1"))
-
-        model.openWorkspace(id: "demo1|w1")
-        let selectedWorkspaceID = model.selectedWorkspaceID
-        let selectedPaneID = model.selectedPaneID
-        let workspacePath = model.workspacePath
-        #expect(selectedWorkspaceID == "demo1|w1")
-        #expect(selectedPaneID == model.workspace(id: "demo1|w1")?.sortedPanes.first?.id)
-        #expect(workspacePath == [.workspace("demo1|w1")])
-
-        model.openWorkspace(id: "does-not-exist")
-        #expect(model.selectedWorkspaceID == selectedWorkspaceID)
-        #expect(model.selectedPaneID == selectedPaneID)
-        #expect(model.workspacePath == workspacePath)
     }
 
     @Test("Universal and custom-scheme links resolve pane IDs")

@@ -2,50 +2,30 @@ import AppKit
 import SwiftUI
 
 /// Which view the detail column is showing. The Mac shell has no tab bar, so
-/// this is what replaced `AppTab` for the two non-settings destinations plus
-/// the workspace overview that only iPad ever showed as a middle column.
+/// this is what replaced `AppTab`.
 enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case dashboard
     case agentBoard
     case session
     /// Git shares the mounted pane with Chat, but is a distinct history stop.
     case git
-    case workspace
     case activeWork
     case prReview
     case watchers
     case firstMate
     case fleet
-    case attention
     case activity
 
     var id: String { rawValue }
 
-    /// Destinations represented by the central segmented picker.
-    ///
-    /// First Mate and PR Review have dedicated rails reached from the navigator.
-    static let pickerCases: [HerdrDetailScope] = [
+    /// The destinations in the title bar's ⋯ menu (`HerdrShellMenuSections`).
+    /// Dashboard, First Mate, PR Review and Watchers have their own buttons.
+    static let menuDestinations: [HerdrDetailScope] = [
         .session,
-        .git,
-        .workspace,
         .activeWork,
         .fleet,
-        .attention,
         .activity,
     ]
-
-    /// The segments actually rendered. Git only earns a segment when the pane
-    /// on screen has a repository, mirroring how the old header button came and
-    /// went with `gitIsAvailable`.
-    static func pickerCases(includingGit: Bool) -> [HerdrDetailScope] {
-        includingGit ? pickerCases : pickerCases.filter { $0 != .git }
-    }
-
-    /// Returns a scope only when the central picker has a matching segment.
-    /// Dedicated toolbar destinations intentionally resolve to no selection.
-    static func pickerSelection(for scope: HerdrDetailScope) -> HerdrDetailScope? {
-        pickerCases.contains(scope) ? scope : nil
-    }
 
     /// Dashboard and Agent view: overview screens that start without the sidebar.
     var isHome: Bool { self == .dashboard || self == .agentBoard }
@@ -63,15 +43,13 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .dashboard: "Dashboard"
         case .agentBoard: "Agent view"
-        case .session: "Session"
+        case .session: "Chat"
         case .git: "Git"
-        case .workspace: "Workspace"
         case .firstMate: "First Mate"
         case .activeWork: "Active Work"
         case .prReview: "PR Review"
         case .watchers: "Watchers"
         case .fleet: "Fleet"
-        case .attention: "Attention"
         case .activity: "Activity"
         }
     }
@@ -82,13 +60,11 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .agentBoard: "rectangle.split.3x1"
         case .session: "bubble.left"
         case .git: "arrow.triangle.branch"
-        case .workspace: "rectangle.3.group"
         case .firstMate: "sailboat"
         case .activeWork: "square.grid.2x2"
         case .prReview: "arrow.triangle.pull"
         case .watchers: "eye"
         case .fleet: "desktopcomputer"
-        case .attention: "bell"
         case .activity: "clock.arrow.circlepath"
         }
     }
@@ -145,7 +121,6 @@ final class HerdrShellState {
     private(set) var agentControlPaneMode: PaneDetailMode?
     private var agentControlPaneID: String?
     private var agentControlSelectionPaneID: String?
-    private(set) var highlightedOverviewTabID: String?
     var agentControlWindow: AgentControlWindow = .main
     var piSessionSummaryRequest: PiSessionSummaryRequest?
     var pendingFirstMateControlTarget: (machineID: String, featureID: String, inspector: FirstMateInspector)?
@@ -192,8 +167,8 @@ final class HerdrShellState {
     ///
     /// Persisted to UserDefaults (`NavigationHistoryPersistenceStore`, key
     /// `herdr.navigation.history`) so Back/Forward survive an app restart. Pane
-    /// and workspace ids are machine-scoped and the fleet is re-fetched on every
-    /// launch, so most restored entries are dead the instant the app relaunches;
+    /// ids are machine-scoped and the fleet is re-fetched on every launch, so
+    /// most restored entries are dead the instant the app relaunches;
     /// `goBack`/`goForward` already skip dead destinations at traversal time via
     /// `isAlive`, and `pruneHistory(for:)` sweeps both stacks once the fleet has
     /// actually loaded. See the early return there for why it must NOT sweep
@@ -532,15 +507,13 @@ final class HerdrShellState {
     ///
     /// Routing has to be an explicit *intent*, not something inferred from
     /// `selectedPaneID` changing: clicking the pane you are already on (from
-    /// the attention deck, the sidebar, or the workspace overview) assigns the
-    /// same ID, so a change observer would never fire and the click would be
-    /// dead.
+    /// the sidebar or the activity feed) assigns the same ID, so a change
+    /// observer would never fire and the click would be dead.
     func showSession() {
         agentControlPaneMode = nil
         agentControlPaneID = nil
         agentControlSelectionPaneID = nil
         detailScope = .session
-        highlightedOverviewTabID = nil
         paneModeFocusRequest &+= 1
     }
 
@@ -569,28 +542,6 @@ final class HerdrShellState {
     func presentAgent(prompt: String? = nil) {
         agentInitialPrompt = prompt
         isAgentPresented = true
-    }
-
-    /// Show a workspace's tab/pane overview — what iOS navigated to when you
-    /// opened a workspace rather than one of its panes.
-    func showWorkspace(id: String, model: HerdrAppModel) {
-        showWorkspace(id: id, highlightedTabID: nil, model: model)
-    }
-
-    func showWorkspace(id: String, highlightedTabID: String?, model: HerdrAppModel) {
-        guard let workspace = model.workspace(id: id),
-              highlightedTabID == nil || workspace.tabs.contains(where: { $0.id == highlightedTabID })
-        else { return }
-        model.selectedWorkspaceID = id
-        agentControlPaneMode = nil
-        agentControlPaneID = nil
-        agentControlSelectionPaneID = nil
-        // Deliberately clears the pane: selecting one would bounce the detail
-        // back to `.session` through the pane observer below.
-        model.selectedPaneID = nil
-        highlightedOverviewTabID = highlightedTabID
-        detailScope = .workspace
-        recordVisit(for: model)
     }
 
     func showFirstMate(
@@ -629,7 +580,7 @@ final class HerdrShellState {
         preferences.set(visibility != .detailOnly, forKey: home ? "herdr.shell.sidebar.home" : "herdr.shell.sidebar.screens")
     }
 
-    /// Scope-only destinations (Active Work, Fleet, Attention, and Activity).
+    /// Scope-only destinations (Active Work, Fleet, and Activity).
     func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
         if scope == .prReview, detailScope != .prReview { prReviewScope = .all }
         if scope == .git {
@@ -645,19 +596,12 @@ final class HerdrShellState {
         recordVisit(for: model)
     }
 
-    /// The scope actually rendered: `.session` falls back to the workspace
-    /// overview when no pane is selected, and to the attention deck when
-    /// nothing is selected at all.
+    /// The scope actually rendered: Git is a sub-mode of the mounted session.
     func resolvedScope(for model: HerdrAppModel) -> HerdrDetailScope {
         switch detailScope {
         case .dashboard: return .dashboard
         case .agentBoard: return .agentBoard
-        case .session, .git:
-            if model.pane(id: model.selectedPaneID) != nil { return .session }
-            if model.workspace(id: model.selectedWorkspaceID) != nil { return .workspace }
-            return .attention
-        case .workspace:
-            return model.workspace(id: model.selectedWorkspaceID) != nil ? .workspace : .attention
+        case .session, .git: return .session
         case .firstMate:
             return .firstMate
         case .activeWork:
@@ -668,31 +612,24 @@ final class HerdrShellState {
             return .watchers
         case .fleet:
             return .fleet
-        case .attention:
-            return .attention
         case .activity:
             return .activity
         }
     }
 
-    /// The destination currently on screen. Reads `resolvedScope(for:)` rather
-    /// than the raw `detailScope` so a `.session` with no pane is recorded as
-    /// the workspace overview or the attention deck the user is actually
-    /// looking at — the same reason the toolbar picker reads resolved
-    /// (`WorkspaceNavigationView.scopeSelection`).
+    /// The destination currently on screen. A session with no pane selected
+    /// records nothing.
     func currentDestination(for model: HerdrAppModel) -> HerdrDestination? {
         switch resolvedScope(for: model) {
         case .session, .git:
-            model.selectedPaneID.map { detailScope == .git ? .git($0) : .pane($0) }
+            model.pane(id: model.selectedPaneID).map { detailScope == .git ? .git($0.id) : .pane($0.id) }
         case .dashboard: .dashboard
         case .agentBoard: .agentBoard
-        case .workspace: model.selectedWorkspaceID.map(HerdrDestination.workspace)
         case .firstMate: .firstMate
         case .activeWork: .activeWork
         case .prReview: .prReview
         case .watchers: .watchers
         case .fleet: .fleet
-        case .attention: .attention
         case .activity: .activity
         }
     }
@@ -720,7 +657,6 @@ final class HerdrShellState {
         agentControlPaneMode = mode
         agentControlPaneID = paneID
         agentControlSelectionPaneID = paneID
-        highlightedOverviewTabID = nil
         detailScope = mode == .git ? .git : .session
         paneModeFocusRequest &+= 1
         model.openPane(id: paneID)
@@ -789,11 +725,6 @@ final class HerdrShellState {
             agentControlPaneID = id
             model.openPane(id: id)
             detailScope = .git
-        case let .workspace(id):
-            agentControlPaneMode = nil
-            model.selectedWorkspaceID = id
-            model.selectedPaneID = nil      // mirrors showWorkspace(id:model:)
-            detailScope = .workspace
         case .dashboard: detailScope = .dashboard
         case .agentBoard: detailScope = .agentBoard
         case .firstMate: detailScope = .firstMate
@@ -803,7 +734,6 @@ final class HerdrShellState {
             detailScope = .prReview
         case .watchers: detailScope = .watchers
         case .fleet: detailScope = .fleet
-        case .attention: detailScope = .attention
         case .activity: detailScope = .activity
         }
         mutateHistory { $0.setCurrent(destination) }     // bypasses record() deliberately, see NavigationHistory
@@ -812,15 +742,14 @@ final class HerdrShellState {
     private func isAlive(_ destination: HerdrDestination, model: HerdrAppModel) -> Bool {
         switch destination {
         case let .pane(id), let .git(id): model.pane(id: id) != nil
-        case let .workspace(id): model.workspace(id: id) != nil
-        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .watchers, .fleet, .attention, .activity: true
+        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .watchers, .fleet, .activity: true
         }
     }
 
     func pruneHistory(for model: HerdrAppModel) {
         // A restored stack must survive the pre-load window: right after
         // relaunch the fleet hasn't been fetched yet, `model.workspaces` is
-        // still empty, and every restored pane/workspace destination would look
+        // still empty, and every restored pane destination would look
         // dead to `isAlive`; a sweep here would wipe the stack this feature
         // exists to restore before the user ever gets a chance to use it.
         // goBack/goForward already filter dead destinations at traversal time,
@@ -858,7 +787,6 @@ final class HerdrShellState {
         switch resolvedScope(for: model) {
         case .session, .git:
             return model.currentPaneDetailMode?.rawValue ?? "session"
-        case .workspace: return "workspace"
         case .activeWork: return "active-work"
         case .dashboard: return "dashboard"
         case .agentBoard: return "agent-board"
@@ -866,7 +794,6 @@ final class HerdrShellState {
         case .watchers: return "watchers"
         case .firstMate: return "first-mate"
         case .fleet: return "fleet"
-        case .attention: return "attention"
         case .activity: return "activity"
         }
     }

@@ -75,8 +75,6 @@ final class HerdrAppModel {
     /// main window and every popped-out review window. Demo mode and ordinary
     /// test processes never touch the operator's real comment storage.
     let prReviewComments: PRReviewCommentStore
-    let responseBriefs: ResponseBriefCoordinator
-    @ObservationIgnored private let responseBriefNetworkIsolated: Bool
     var selectedPaneID: String?
     var workspacePath: [WorkspaceRoute] = []
     var isSidebarPresented = false
@@ -104,13 +102,11 @@ final class HerdrAppModel {
     /// Like drafts, these live only for this app run and contain no transcript.
     private(set) var stagedConversationReferences: [String: [ConversationContextReference]] = [:]
     let promptHistory: PromptHistoryStore
-    /// What the mounted pane session is showing, published so the window
-    /// toolbar's scope picker can render and select a Git segment. The mode
-    /// itself still belongs to whichever `PaneSessionView` is mounted — this is
-    /// a read-only mirror, the same one-way shape as the `.herdrFocusPaneMode`
-    /// commands that drive it.
+    /// What the mounted pane session is showing, published for the agent
+    /// control receiver's state. The mode itself still belongs to whichever
+    /// `PaneSessionView` is mounted — this is a read-only mirror, the same
+    /// one-way shape as the `.herdrFocusPaneMode` commands that drive it.
     private(set) var currentPaneDetailMode: PaneDetailMode?
-    private(set) var currentPaneGitIsAvailable = false
     @ObservationIgnored private var currentPaneDetailModeOwner: String?
     /// The pane ⇧⌘K last asked the sidebar to show, and a token that makes each
     /// ask distinct.
@@ -345,9 +341,10 @@ final class HerdrAppModel {
         self.userDefaults = userDefaults
         sidebarRecency = SidebarRecency.load(from: userDefaults)
         let forcedDemo = arguments.contains("-HerdrDemoMode")
-        let isolateResponseBriefs = forcedDemo
-            || Self.isRunningTests
-            || arguments.contains("-HerdrUITestServerURL")
+        // Demo, test, and UI-test processes never touch the operator's files.
+        if !(forcedDemo || Self.isRunningTests || arguments.contains("-HerdrUITestServerURL")) {
+            RetiredFeatureData.purge(defaults: userDefaults)
+        }
         #if DEBUG
         // Demo and UI-test processes may opt into a real file under a temporary
         // path so a relaunch acceptance run can prove persistence. The argument
@@ -377,11 +374,6 @@ final class HerdrAppModel {
                     || userDefaults.bool(forKey: "herdr.demoMode")
                     || arguments.contains("-HerdrUITestServerURL")
                     || Self.isRunningTests)
-        )
-        responseBriefNetworkIsolated = isolateResponseBriefs
-        responseBriefs = ResponseBriefCoordinator(
-            defaults: userDefaults,
-            persistence: ResponseBriefPersistence(inMemory: isolateResponseBriefs)
         )
         chatTabColors = ChatTabColorStore(defaults: userDefaults)
         chatTabColorPublisher = ChatTabColorPublisher(
@@ -3080,75 +3072,6 @@ final class HerdrAppModel {
         activityFeedError = failures.isEmpty ? nil : failures.joined(separator: "\n")
     }
 
-    var responseBriefNetworkingEnabled: Bool {
-        !isDemoMode && !responseBriefNetworkIsolated
-    }
-
-    func responseBriefTransport() -> ResponseBriefTransport {
-        guard responseBriefNetworkingEnabled else {
-            return ResponseBriefTransport(
-                capabilities: { _ in throw ResponseBriefCoordinatorError.networkingDisabled },
-                models: { _ in throw ResponseBriefCoordinatorError.networkingDisabled },
-                fetchSnapshot: { _ in throw ResponseBriefCoordinatorError.networkingDisabled },
-                start: { _, _ in throw ResponseBriefCoordinatorError.networkingDisabled },
-                fetch: { _, _ in throw ResponseBriefCoordinatorError.networkingDisabled },
-                cancel: { _, _ in throw ResponseBriefCoordinatorError.networkingDisabled }
-            )
-        }
-        return ResponseBriefTransport(
-            capabilities: { [weak self] machineID in
-                guard let self, let client = self.client(forMachine: machineID) else {
-                    throw APIError.noActiveConnection(machineID: machineID)
-                }
-                return try await client.assistantCapabilities()
-            },
-            models: { [weak self] machineID in
-                guard let self else { throw APIError.invalidResponse }
-                return try await self.fetchAgentModels(machineID: machineID)
-            },
-            fetchSnapshot: { [weak self] chat in
-                guard let self,
-                      let pane = self.pane(id: MachineScopedID.compose(machineID: chat.machineID, rawID: chat.paneID))
-                else { throw APIError.invalidResponse }
-                return try await self.fetchPiConversationSnapshot(for: pane)
-            },
-            start: { [weak self] machineID, request in
-                guard let self, let client = self.client(forMachine: machineID) else {
-                    throw APIError.noActiveConnection(machineID: machineID)
-                }
-                return try await client.startAssistant(request).run
-            },
-            fetch: { [weak self] machineID, runID in
-                guard let self, let client = self.client(forMachine: machineID) else {
-                    throw APIError.noActiveConnection(machineID: machineID)
-                }
-                return try await client.fetchHeadlessAgent(id: runID).run
-            },
-            cancel: { [weak self] machineID, runID in
-                guard let self, let client = self.client(forMachine: machineID) else {
-                    throw APIError.noActiveConnection(machineID: machineID)
-                }
-                return try await client.cancelHeadlessAgent(id: runID).run
-            }
-        )
-    }
-
-    func observeResponseBrief(store: PiConversationStore, pane: HerdrPane) async {
-        guard responseBriefNetworkingEnabled, let sessionID = store.sessionID else { return }
-        let sources = ResponseBriefSource.completedSources(
-            turns: store.turns,
-            machineID: pane.machineID,
-            paneID: pane.paneID,
-            sessionID: sessionID
-        )
-        await responseBriefs.observeSources(sources, transport: responseBriefTransport())
-    }
-
-    func runResponseBriefPolling() async {
-        guard responseBriefNetworkingEnabled else { return }
-        await responseBriefs.runPolling(transport: responseBriefTransport())
-    }
-
     func presentContextualAssistant(machineID preferredMachineID: String? = nil, note: HerdrNote? = nil) {
         let selectedPane = selectedPaneID.flatMap { pane(id: $0) }
         guard let machineID = preferredMachineID ?? selectedPane?.machineID ?? machines.first?.id else {
@@ -4076,12 +3999,11 @@ final class HerdrAppModel {
         }
     }
 
-    func notePaneDetailMode(_ mode: PaneDetailMode, gitIsAvailable: Bool, for paneID: String) {
+    func notePaneDetailMode(_ mode: PaneDetailMode, for paneID: String) {
         currentPaneDetailModeOwner = paneID
-        // Observation notifies on write, not change, and the always-mounted
-        // toolbar observes both — only assign when something actually moved.
+        // Observation notifies on write, not change — only assign when the
+        // mode actually moved.
         if currentPaneDetailMode != mode { currentPaneDetailMode = mode }
-        if currentPaneGitIsAvailable != gitIsAvailable { currentPaneGitIsAvailable = gitIsAvailable }
     }
 
     /// Only the pane that published the mode may retract it. Switching panes
@@ -4091,7 +4013,6 @@ final class HerdrAppModel {
         guard currentPaneDetailModeOwner == paneID else { return }
         currentPaneDetailModeOwner = nil
         currentPaneDetailMode = nil
-        currentPaneGitIsAvailable = false
     }
 
     /// Narrow presentation acknowledgement for the native receiver. Selection
@@ -4136,16 +4057,6 @@ final class HerdrAppModel {
               let stored = try? JSONDecoder().decode([String: HudChipDismissal].self, from: data)
         else { return [:] }
         return HerdrHudSessionChips.capped(stored, limit: maxPersistedHudChipDismissals)
-    }
-
-    func openWorkspace(id: String) {
-        noteUserInteraction()
-        guard let workspace = workspace(id: id) else { return }
-        isSidebarPresented = false
-        selectedTab = .workspaces
-        selectedWorkspaceID = id
-        selectedPaneID = workspace.sortedPanes.first?.id
-        workspacePath = [.workspace(id)]
     }
 
     func open(url: URL) {

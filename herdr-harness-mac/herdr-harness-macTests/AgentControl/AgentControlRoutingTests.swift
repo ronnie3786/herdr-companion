@@ -136,7 +136,7 @@ struct AgentControlRoutingTests {
         let oldRevision = fixture.controller.currentState().revision
         fixture.shell.show(.activity, model: fixture.model)
         fixture.controller.stateDidChange()
-        var request = command(action: "ui.segment", parameters: ["segment": .string("attention")])
+        var request = command(action: "ui.segment", parameters: ["segment": .string("fleet")])
         request.expectedRevision = oldRevision
 
         await #expect(throws: AgentControlCommandError.self) {
@@ -182,7 +182,7 @@ struct AgentControlRoutingTests {
             serverMapping: ["srv_demo": first.machineID]
         )
         fixture.shell.openPane(id: first.id, model: fixture.model)
-        fixture.model.notePaneDetailMode(.chat, gitIsAvailable: true, for: first.id)
+        fixture.model.notePaneDetailMode(.chat, for: first.id)
         #expect(fixture.shell.agentControlPaneMode == nil)
         #expect(fixture.model.isPresentingPane(id: first.id, mode: .chat))
 
@@ -191,14 +191,14 @@ struct AgentControlRoutingTests {
             serverMapping: ["srv_demo": first.machineID]
         )
         fixture.shell.openPane(id: second.id, model: fixture.model)
-        fixture.model.notePaneDetailMode(.chat, gitIsAvailable: true, for: second.id)
+        fixture.model.notePaneDetailMode(.chat, for: second.id)
         #expect(fixture.shell.agentControlPaneMode == nil)
         #expect(fixture.model.selectedPaneID == second.id)
 
         #expect(fixture.shell.goBack(model: fixture.model))
-        fixture.model.notePaneDetailMode(.terminal, gitIsAvailable: true, for: first.id)
+        fixture.model.notePaneDetailMode(.terminal, for: first.id)
         #expect(fixture.shell.goForward(model: fixture.model))
-        fixture.model.notePaneDetailMode(.chat, gitIsAvailable: true, for: second.id)
+        fixture.model.notePaneDetailMode(.chat, for: second.id)
         #expect(fixture.model.selectedPaneID == second.id)
         #expect(fixture.model.currentPaneDetailMode == .chat)
     }
@@ -512,30 +512,47 @@ struct AgentControlRoutingTests {
         )
     }
 
-    @Test("Opening a tab shows and highlights its overview without choosing a pane")
-    func exactTabOverview() async throws {
+    @Test("Workspace and tab targets are not openable and leave the window alone")
+    func workspaceAndTabTargetsAreNotOpenable() async throws {
         let fixture = makeFixture()
         let workspace = try #require(fixture.model.workspaces.first)
         let tab = try #require(workspace.tabs.first)
-        let target = AgentControlTarget(
-            kind: "tab",
-            serverId: "srv_demo",
-            machineId: workspace.machineID,
-            workspaceId: workspace.workspaceID,
-            tabId: tab.tabID,
-            generation: fixture.model.connectionGeneration
-        )
+        fixture.shell.show(.activity, model: fixture.model)
+        let targets = [
+            AgentControlTarget(
+                kind: "workspace",
+                serverId: "srv_demo",
+                machineId: workspace.machineID,
+                workspaceId: workspace.workspaceID,
+                generation: fixture.model.connectionGeneration
+            ),
+            AgentControlTarget(
+                kind: "tab",
+                serverId: "srv_demo",
+                machineId: workspace.machineID,
+                workspaceId: workspace.workspaceID,
+                tabId: tab.tabID,
+                generation: fixture.model.connectionGeneration
+            ),
+        ]
 
-        _ = try await fixture.controller.executeForTesting(
-            command(action: "ui.open", target: target),
-            serverMapping: ["srv_demo": workspace.machineID]
-        )
-        #expect(fixture.shell.detailScope == .workspace)
-        #expect(fixture.model.selectedWorkspaceID == workspace.id)
-        #expect(fixture.model.selectedPaneID == nil)
-        #expect(fixture.shell.highlightedOverviewTabID == tab.id)
-        #expect(fixture.controller.currentState().selection?.kind == "tab")
-        #expect(fixture.controller.currentState().selection?.tabId == tab.tabID)
+        for target in targets {
+            await #expect(throws: AgentControlCommandError.self) {
+                try await fixture.controller.executeForTesting(
+                    command(action: "ui.open", target: target),
+                    serverMapping: ["srv_demo": workspace.machineID]
+                )
+            }
+        }
+        for segment in ["workspace", "attention"] {
+            await #expect(throws: AgentControlCommandError.self) {
+                try await fixture.controller.executeForTesting(
+                    command(action: "ui.segment", parameters: ["segment": .string(segment)]),
+                    serverMapping: [:]
+                )
+            }
+        }
+        #expect(fixture.shell.detailScope == .activity)
     }
 
     @Test("Exact pane switches retain each pane's unsent draft")
@@ -708,7 +725,7 @@ struct AgentControlRoutingTests {
             presentationWaiter: { expectation, model, shell in
                 switch expectation {
                 case let .pane(id, mode):
-                    model.notePaneDetailMode(mode, gitIsAvailable: true, for: id)
+                    model.notePaneDetailMode(mode, for: id)
                     shell.agentControlPaneModeDidApply(mode, paneID: id)
                     return model.isPresentingPane(id: id, mode: mode)
                 }
@@ -737,7 +754,7 @@ struct AgentControlRoutingTests {
             presentationWaiter: { expectation, model, shell in
                 switch expectation {
                 case let .pane(id, mode):
-                    model.notePaneDetailMode(mode, gitIsAvailable: true, for: id)
+                    model.notePaneDetailMode(mode, for: id)
                     shell.agentControlPaneModeDidApply(mode, paneID: id)
                     return model.isPresentingPane(id: id, mode: mode)
                 }

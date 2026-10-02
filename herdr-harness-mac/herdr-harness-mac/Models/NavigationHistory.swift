@@ -3,15 +3,16 @@ import Foundation
 /// One place the detail column can be, addressed by identity rather than by
 /// the (`detailScope`, `selectedPaneID`) pair the shell actually stores.
 ///
-/// `.session` with no pane is deliberately absent: `resolvedScope(for:)`
-/// degrades that to the workspace overview or the attention deck, so it is
-/// not a place the user was ever standing and must never enter the history.
+/// `.session` with no pane is deliberately absent: it is an empty
+/// placeholder, not a place the user was ever standing, and must never enter
+/// the history.
 ///
 /// Git is remembered separately from the pane's primary Chat/Terminal segment.
+/// Snapshots from older builds may still hold the retired `workspace` and
+/// `attention` kinds; they decode to nil and drop out (`destination`).
 enum HerdrDestination: Hashable, Sendable {
     case pane(String)        // scoped pane id — MachineScopedID.compose
     case git(String)
-    case workspace(String)   // scoped workspace id
     case dashboard
     case agentBoard
     case activeWork
@@ -19,7 +20,6 @@ enum HerdrDestination: Hashable, Sendable {
     case watchers
     case firstMate
     case fleet
-    case attention
     case activity
 }
 
@@ -121,10 +121,6 @@ extension HerdrDestinationRecord {
             guard !id.isEmpty else { return nil }
             kind = "git"
             self.id = id
-        case let .workspace(id):
-            guard !id.isEmpty else { return nil }
-            kind = "workspace"
-            self.id = id
         case .dashboard:
             kind = "dashboard"
             id = nil
@@ -146,9 +142,6 @@ extension HerdrDestinationRecord {
         case .fleet:
             kind = "fleet"
             id = nil
-        case .attention:
-            kind = "attention"
-            id = nil
         case .activity:
             kind = "activity"
             id = nil
@@ -163,9 +156,6 @@ extension HerdrDestinationRecord {
         case "git":
             guard let id, !id.isEmpty else { return nil }
             return .git(id)
-        case "workspace":
-            guard let id, !id.isEmpty else { return nil }
-            return .workspace(id)
         case "dashboard": return .dashboard
         case "agentBoard": return .agentBoard
         case "firstMate": return .firstMate
@@ -173,7 +163,6 @@ extension HerdrDestinationRecord {
         case "prReview": return .prReview
         case "watchers": return .watchers
         case "fleet": return .fleet
-        case "attention": return .attention
         case "activity": return .activity
         default: return nil
         }

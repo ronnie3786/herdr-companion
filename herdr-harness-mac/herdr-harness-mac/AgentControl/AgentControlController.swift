@@ -655,32 +655,25 @@ final class AgentControlController {
                 return try await openFirstMate(target, shell: shell, model: model, command: command, context: context)
             }
             guard command.parameters["inspector"] == nil else { throw AgentControlCommandError.invalid("Only First Mate targets accept inspector.") }
-            let resolved = try resolve(target, model: model)
+            let pane = try resolvePane(target, model: model)
             let view = command.parameters["view"]?.stringValue
             let panePresentation = try await open(
-                resolved,
+                pane,
                 view: view,
                 shell: shell,
                 model: model,
                 context: context
             )
-            if let panePresentation {
-                guard await presentationWaiter(panePresentation, model, shell) else {
-                    throw AgentControlCommandError.unavailable("The requested pane mode was not presented before the bounded deadline.")
-                }
-                try validateConnectionContext(context)
+            guard await presentationWaiter(panePresentation, model, shell) else {
+                throw AgentControlCommandError.unavailable("The requested pane mode was not presented before the bounded deadline.")
             }
+            try validateConnectionContext(context)
             stateDidChange()
             var result: [String: PiJSONValue] = [
                 "presentation": .string("main"),
                 "segment": .string(state().segment),
             ]
-            if target.kind == "tab", let tabID = target.tabId {
-                result["mode"] = .string("tab-overview")
-                result["tabId"] = .string(tabID)
-            } else if target.kind == "workspace" {
-                result["mode"] = .string("workspace-overview")
-            } else if let view {
+            if let view {
                 result["mode"] = .string(view)
             }
             return .completed(result)
@@ -773,9 +766,10 @@ final class AgentControlController {
         case "ui.reveal":
             guard let target = command.target else { throw AgentControlCommandError.invalid("ui.reveal requires a pane target.") }
             try await refreshForTarget(target, model: model, context: context)
-            guard case let .pane(pane) = try resolve(target, model: model) else {
+            guard target.kind == "pane" else {
                 throw AgentControlCommandError.invalid("ui.reveal requires a pane target.")
             }
+            let pane = try resolvePane(target, model: model)
             guard model.revealPaneInSidebar(id: pane.id) else { throw AgentControlCommandError.notFound("The pane is no longer available.") }
             showMainWindow(); stateDidChange(); return .completed()
         case "ui.settings":
@@ -861,12 +855,6 @@ final class AgentControlController {
         }
     }
 
-    private enum ResolvedTarget {
-        case pane(HerdrPane)
-        case workspace(HerdrWorkspace)
-        case tab(HerdrWorkspace, HerdrTab)
-    }
-
     private func machineIDs(for target: AgentControlTarget) throws -> Set<String> {
         guard let serverID = target.serverId,
               let model,
@@ -890,7 +878,9 @@ final class AgentControlController {
         return machineID
     }
 
-    private func resolve(_ target: AgentControlTarget?, model: HerdrAppModel) throws -> ResolvedTarget {
+    /// The exact live pane a target names. Workspace and tab targets are not
+    /// openable: the Mac has no workspace overview to show them in.
+    private func resolvePane(_ target: AgentControlTarget?, model: HerdrAppModel) throws -> HerdrPane {
         guard let target else { throw AgentControlCommandError.stale("The target is missing.") }
         let machineIDs = try machineIDs(for: target)
         let controllable = machineIDs.filter { model.isDemoMode || model.canControl(machineID: $0) }
@@ -916,31 +906,7 @@ final class AgentControlController {
             } else if target.sessionId != nil {
                 throw AgentControlCommandError.stale("The requested Pi session is no longer attached.")
             }
-            return .pane(pane)
-        case "workspace":
-            guard let rawID = target.workspaceId else { throw AgentControlCommandError.invalid("The workspace target is incomplete.") }
-            let matches = model.workspaces.filter { controllable.contains($0.machineID) && $0.workspaceID == rawID }
-            guard matches.count == 1, let workspace = matches.first else {
-                throw matches.isEmpty
-                    ? AgentControlCommandError.notFound("The exact workspace is no longer available.")
-                    : AgentControlCommandError.stale("The workspace target is ambiguous across configured aliases.")
-            }
-            return .workspace(workspace)
-        case "tab":
-            guard let workspaceID = target.workspaceId, let tabID = target.tabId else {
-                throw AgentControlCommandError.invalid("The tab target is incomplete.")
-            }
-            let matches = model.workspaces.compactMap { workspace -> (HerdrWorkspace, HerdrTab)? in
-                guard controllable.contains(workspace.machineID), workspace.workspaceID == workspaceID,
-                      let tab = workspace.tabs.first(where: { $0.tabID == tabID }) else { return nil }
-                return (workspace, tab)
-            }
-            guard matches.count == 1, let match = matches.first else {
-                throw matches.isEmpty
-                    ? AgentControlCommandError.notFound("The exact tab is no longer available in that workspace.")
-                    : AgentControlCommandError.stale("The tab target is ambiguous across configured aliases.")
-            }
-            return .tab(match.0, match.1)
+            return pane
         default:
             throw AgentControlCommandError.invalid("Unsupported target kind.")
         }
@@ -953,10 +919,10 @@ final class AgentControlController {
     ) async throws -> HerdrPane {
         guard let target else { throw AgentControlCommandError.invalid("This action requires a pane target.") }
         try await refreshForTarget(target, model: model, context: context)
-        guard case let .pane(pane) = try resolve(target, model: model) else {
+        guard target.kind == "pane" else {
             throw AgentControlCommandError.invalid("This action requires a pane target.")
         }
-        return pane
+        return try resolvePane(target, model: model)
     }
 
     private func refreshForTarget(
@@ -990,39 +956,26 @@ final class AgentControlController {
     }
 
     private func open(
-        _ resolved: ResolvedTarget,
+        _ pane: HerdrPane,
         view: String?,
         shell: HerdrShellState,
         model: HerdrAppModel,
         context: ExecutionContext
-    ) async throws -> AgentControlPresentationExpectation? {
-        switch resolved {
-        case let .pane(pane):
-            let requestedMode = try paneMode(view, pane: pane, model: model)
-            if requestedMode == .git {
-                let status = try await model.fetchGitStatus(for: pane)
-                try validateExecutionContext(context)
-                guard PaneGitProbePolicy.availability(
-                    after: .status(ok: status.ok, rootPath: status.cwd),
-                    preserving: .checking
-                ) == .available else {
-                    throw AgentControlCommandError.unavailable("Git is not available for this pane.")
-                }
+    ) async throws -> AgentControlPresentationExpectation {
+        let requestedMode = try paneMode(view, pane: pane, model: model)
+        if requestedMode == .git {
+            let status = try await model.fetchGitStatus(for: pane)
+            try validateExecutionContext(context)
+            guard PaneGitProbePolicy.availability(
+                after: .status(ok: status.ok, rootPath: status.cwd),
+                preserving: .checking
+            ) == .available else {
+                throw AgentControlCommandError.unavailable("Git is not available for this pane.")
             }
-            showMainWindow()
-            shell.openPane(id: pane.id, mode: requestedMode, model: model)
-            return .pane(id: pane.id, mode: requestedMode)
-        case let .workspace(workspace):
-            guard view == nil else { throw AgentControlCommandError.invalid("Workspace targets do not accept a pane view.") }
-            showMainWindow()
-            shell.showWorkspace(id: workspace.id, highlightedTabID: nil, model: model)
-            return nil
-        case let .tab(workspace, tab):
-            guard view == nil else { throw AgentControlCommandError.invalid("Tab targets do not accept a pane view.") }
-            showMainWindow()
-            shell.showWorkspace(id: workspace.id, highlightedTabID: tab.id, model: model)
-            return nil
         }
+        showMainWindow()
+        shell.openPane(id: pane.id, mode: requestedMode, model: model)
+        return .pane(id: pane.id, mode: requestedMode)
     }
 
     private func paneMode(_ value: String?, pane: HerdrPane, model: HerdrAppModel) throws -> PaneDetailMode {
@@ -1069,17 +1022,11 @@ final class AgentControlController {
             showMainWindow()
             shell.openPane(id: pane.id, mode: mode, model: model)
             return .pane(id: pane.id, mode: mode)
-        case "workspace":
-            guard let workspace = model.workspace(id: model.selectedWorkspaceID) ?? model.pane(id: model.selectedPaneID).flatMap(model.workspace(containing:))
-            else { throw AgentControlCommandError.unavailable("No workspace is selected.") }
-            showMainWindow()
-            shell.showWorkspace(id: workspace.id, highlightedTabID: nil, model: model)
         case "active-work": showMainWindow(); shell.show(.activeWork, model: model)
         case "pr-review": showMainWindow(); shell.show(.prReview, model: model)
         case "watchers": showMainWindow(); shell.show(.watchers, model: model)
         case "first-mate": showMainWindow(); shell.show(.firstMate, model: model)
         case "fleet": showMainWindow(); shell.show(.fleet, model: model)
-        case "attention": showMainWindow(); shell.show(.attention, model: model)
         case "activity": showMainWindow(); shell.show(.activity, model: model)
         default: throw AgentControlCommandError.invalid("Unsupported segment.")
         }
@@ -1127,7 +1074,7 @@ final class AgentControlController {
                 throw AgentControlCommandError.notFound("The history pane is no longer available.")
             }
             return .pane(id: id, mode: .git)
-        case .dashboard, .agentBoard, .workspace, .firstMate, .activeWork, .prReview, .watchers, .fleet, .attention, .activity:
+        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .watchers, .fleet, .activity:
             return nil
         }
     }
@@ -1448,20 +1395,6 @@ final class AgentControlController {
            let reviewID = shell.prReview.selectedReviewID,
            let serverID = serverID(for: machineID) {
             return AgentControlTarget(kind: "pr-review", serverId: serverID, machineId: machineID, featureId: reviewID)
-        }
-        if segment == "workspace", let workspace = model.workspace(id: model.selectedWorkspaceID),
-           let serverID = serverID(for: workspace.machineID) {
-            if let tabID = shell.highlightedOverviewTabID {
-                return AgentControlTarget(
-                    kind: "tab", serverId: serverID, machineId: workspace.machineID,
-                    workspaceId: workspace.workspaceID,
-                    tabId: MachineScopedID.split(tabID)?.rawID ?? tabID
-                )
-            }
-            return AgentControlTarget(
-                kind: "workspace", serverId: serverID, machineId: workspace.machineID,
-                workspaceId: workspace.workspaceID
-            )
         }
         if ["chat", "terminal", "git", "skills"].contains(segment),
            let pane = model.pane(id: model.selectedPaneID),

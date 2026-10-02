@@ -24,7 +24,7 @@ struct ChatTabColorRenderTests {
         let store = try await HerdrRenderFixtures.populatedPiStore()
         let image = try await HerdrRenderHarness.render("chat-tab-colors-recents.png", size: CGSize(width: 1180, height: 900)) {
             HStack(spacing: 0) {
-                HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+                HerdrSidebarView(model: model, openPane: { _ in })
                     .frame(width: 300)
                 VStack(spacing: 0) {
                     PaneSessionHeader(model: model, pane: pane, store: store)

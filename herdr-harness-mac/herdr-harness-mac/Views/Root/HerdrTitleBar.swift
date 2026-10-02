@@ -3,10 +3,13 @@ import SwiftUI
 
 /// What a detail view puts in the main window's 40pt title bar: its title
 /// (and status) on the leading side and its own actions on the trailing side.
-/// The shell adds navigation, the scope picker and the global items.
+/// The shell adds navigation, the ⋯ menu and the global items.
 struct HerdrTitleBarItems {
     var leading: AnyView?
     var trailing: AnyView?
+    /// The trailing items include a ⋯ menu that ends with the shell's
+    /// sections (`HerdrShellMenuSections`), so the shell adds no menu of its own.
+    var hostsShellMenu = false
 }
 
 struct HerdrTitleBarItemsKey: PreferenceKey {
@@ -20,12 +23,17 @@ struct HerdrTitleBarItemsKey: PreferenceKey {
 extension View {
     /// Contributes this screen's title and actions to the window title bar.
     func herdrTitleBar<Leading: View, Trailing: View>(
+        hostsShellMenu: Bool = false,
         @ViewBuilder leading: () -> Leading,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
         preference(
             key: HerdrTitleBarItemsKey.self,
-            value: HerdrTitleBarItems(leading: AnyView(leading()), trailing: AnyView(trailing()))
+            value: HerdrTitleBarItems(
+                leading: AnyView(leading()),
+                trailing: AnyView(trailing()),
+                hostsShellMenu: hostsShellMenu
+            )
         )
     }
 

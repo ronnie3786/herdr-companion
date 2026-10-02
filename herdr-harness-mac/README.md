@@ -7,8 +7,25 @@ keyboard input to terminals, menu-bar fleet pulse, and system keyboard shortcuts
 
 The shell is the deliberate difference. iOS's workspace *switcher* screen — status filter chips
 (all / needs you / active), the inline top-2 attention strip, and the git-worktree sibling rails —
-has no Mac counterpart: the always-visible sidebar and the Attention scope (⌘1) replace it, and
-those three affordances are dropped rather than reproduced.
+has no Mac counterpart: the always-visible sidebar, the Dashboard's Focus mode and Herd Pulse
+replace it. The Mac also has no attention deck or workspace overview screen; iOS keeps both.
+
+## Title bar
+
+A chat's title bar shows its status dot, editable title, star, agent, status and last activity.
+Everything else is in one **⋯** menu at the trailing edge, beside Herd Pulse and the connection
+pill:
+
+- **View:** Chat, Terminal, Git (when the pane is in a repository) and Skills.
+- **Chat:** **Prompt History…** and **Summarize Session…** (Pi chats).
+- **Pi session**, **Focus and control** (Focus on Mac, Focus on Mac + Zoom, Interrupt) and
+  **Pane** actions, then **Close pane** last.
+- **Go to:** Active Work, Fleet and Activity, plus **Ask Agent…** for a one-off question.
+
+Screens without a chat (Dashboard, Agent view, Fleet, Active Work, Activity, First Mate, PR
+Review, Watchers) get the same **⋯** menu with just **Go to** and **Ask Agent…**. The View menu
+keeps its shortcuts: Focus Chat (⌘2), Focus Terminal (⌘3), Activity Feed (⌘5), Active Work (⌘6),
+Fleet (⌘7), PR Review (⌘8) and Watchers (⌘9).
 
 Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party dependencies · macOS 26.
 
@@ -43,7 +60,7 @@ See [Dashboard behavior and companion compatibility](../docs/macos-dashboard.md)
 - **Models:** Every shared model menu puts favorites first. Use the current model's star action or Manage Favorites. Short names are consistent while provider identities remain distinct.
 - **Code-block paste:** Use Paste code or Command-Shift-V while either prompt editor is focused to append fenced clipboard text at the end, without replacing the current selection. Existing clipboard fences are enclosed safely. Both button and shortcut use native undo, move the caret to the end, and avoid the HUD crash and button no-op from 0.8.0.
 - **Unread results:** Extra sessions in `+N` do not create an unread orb badge. Links and results remain attached to their session bubble. Reading that session clears its result indicators and preserves the inline chat cards.
-- **Prompt history:** Click Prompt History in a pane's header to search, copy, or reuse earlier submissions. Reuse edits the draft; it does not send automatically. The local archive survives restarts and transcript compaction and is scoped to the machine and pane.
+- **Prompt history:** Choose **Prompt History…** in a chat's **⋯** menu to search, copy, or reuse earlier submissions. Reuse edits the draft; it does not send automatically. The local archive survives restarts and transcript compaction and is scoped to the machine and pane.
 - **Notes:** Unopened notes stay compact. Click a note to edit it, scroll to older notes, or use New note in the compact stack or orb menu. File → New Note (Shift-Command-N) also works with the HUD hidden. The hover region follows visible content more closely.
 - **Chat identity:** Click the title above a chat to edit it. Right-click its sidebar row, HUD session bubble, or header to copy the workspace pane ID.
 - **Delayed iOS alerts:** The harness waits a minute before pushing an unread agent alert, cancels read or superseded alerts, and retries failed device deliveries without repeating successful ones. Requires configured APNs and the updated harness; configure `[push]` in the private TOML on each companion that owns sessions. Local Mac banners do not establish APNs delivery.
@@ -92,10 +109,11 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
   a voice note** opens the same recorder sheet with its record, preview, attach, and
   explicit Transcribe actions. Recordings are mono 16 kHz WAV, transcribed by your
   private Parakeet endpoint with on-device Speech as fallback.
-- **Attention deck** — blocked and done agents rise to the top; alerts sync read-state with the
-  server; local notifications deep-link straight into the pane (`herdr://pane/{id}` works too).
-- **Workspace overview** — fleet summary, pane topology radar built from Herdr's real split
-  geometry, git status/diffs, skills, project file search, Jira tickets, attachments.
+- **Alerts** — blocked and done agents are flagged in the sidebar and Herd Pulse; alerts sync
+  read-state with the server; local notifications deep-link straight into the pane
+  (`herdr://pane/{id}` works too).
+- **Per-pane tools** — Git status and diffs, skills, project file search, Jira tickets and
+  attachments, from a chat's **⋯** menu and composer.
 - **Herd Pulse in the menu bar** — the iOS Live Activity becomes a menu-bar extra whose top-level
   aggregate remains privacy-safe (counts only, never names), plus a clickable list of sessions
   needing attention. Session titles show by default and can be redacted in Settings for screen

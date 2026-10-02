@@ -32,10 +32,10 @@ final class PiInteractionResponder {
 /// lifecycle (SSE frames + 850 ms snapshot poll arbitrated by
 /// `TerminalRefreshPolicy`).
 ///
-/// Mac differences from iOS: `PaneSessionHeader` is mounted for real (there is
-/// no per-pane navigation bar to carry the title), the tab-bar/size-class
-/// chrome is gone, and the terminal is a focusable keyboard surface — see
-/// `TerminalKeyboardRouter`. The follow loop is no longer gated on
+/// Mac differences from iOS: the title and the pane's ⋯ menu go to the window
+/// title bar (there is no per-pane navigation bar to carry them), the
+/// tab-bar/size-class chrome is gone, and the terminal is a focusable keyboard
+/// surface — see `TerminalKeyboardRouter`. The follow loop is no longer gated on
 /// `scenePhase`: a Mac window that is behind another app is still a window the
 /// user is watching, and tearing the stream down every time it loses key status
 /// would make it flap.
@@ -77,7 +77,6 @@ struct PaneSessionView: View {
     @State private var composerFocusRequest = 0
     @State private var gitAvailability: PaneGitAvailability = .checking
     @State private var piSessionSummaryRequest: PiSessionSummaryRequest?
-    @State private var briefPresentation = ResponseBriefPresentation()
 
     var body: some View {
         ZStack {
@@ -99,40 +98,10 @@ struct PaneSessionView: View {
                 paneID: pane.id
             )
         }
-        .herdrTitleBar {
+        .herdrTitleBar(hostsShellMenu: true) {
             PaneSessionTitle(model: model, pane: currentPane, store: piConversationStore)
         } trailing: {
-            HStack(spacing: 2) {
-                PaneSessionActions(
-                    model: model,
-                    pane: currentPane,
-                    showsPiSessionSummary: summaryRequest != nil,
-                    summarizePiSession: presentPiSessionSummary,
-                    briefPresentation: selectedMode == .chat && currentPane.supportsPiSemanticChat ? briefPresentation : nil
-                )
-                if selectedMode == .git {
-                    Button("Open Git in New Window", systemImage: "rectangle.on.rectangle") {
-                        openGitWindow()
-                    }
-                    .buttonStyle(HerdrIconButtonStyle())
-                    .help("Open Git in a separate window")
-                    .accessibilityIdentifier("pane-git-open-window")
-                }
-                PaneActionsMenu(
-                    model: model,
-                    pane: currentPane,
-                    selectedMode: modeSelection,
-                    gitIsAvailable: gitIsAvailable,
-                    isPiCompacting: piConversationStore.isCompacting,
-                    isStartingNewPiChat: piConversationStore.isStartingNewSession || piConversationStore.hasUnconfirmedNewSession,
-                    startNewPiChat: {
-                        Task { await piConversationStore.startNewSession(model: model, pane: currentPane) }
-                    }
-                )
-            }
-            // The title bar outlives this view; keying its controls by pane
-            // drops a rename or close confirmation left open for another pane.
-            .id(currentPane.id)
+            titleBarActions
         }
         .task(id: followTaskID) {
             guard !currentPane.reservedShell else { return }
@@ -176,7 +145,7 @@ struct PaneSessionView: View {
                 focus(mode: preferredMode)
                 // A repeat request for the already-visible mode does not fire
                 // selectedMode's onChange, so publish the actual owner/mode here too.
-                model.notePaneDetailMode(selectedMode, gitIsAvailable: gitIsAvailable, for: pane.id)
+                model.notePaneDetailMode(selectedMode, for: pane.id)
                 if selectedMode == preferredMode { modeApplied?(selectedMode) }
             }
         }
@@ -213,11 +182,8 @@ struct PaneSessionView: View {
             }
         }
         .onChange(of: selectedMode, initial: true) { _, mode in
-            model.notePaneDetailMode(mode, gitIsAvailable: gitIsAvailable, for: pane.id)
+            model.notePaneDetailMode(mode, for: pane.id)
             modeApplied?(mode)
-        }
-        .onChange(of: gitIsAvailable, initial: true) { _, available in
-            model.notePaneDetailMode(selectedMode, gitIsAvailable: available, for: pane.id)
         }
         .onDisappear {
             model.clearPaneDetailMode(for: pane.id)
@@ -240,6 +206,44 @@ struct PaneSessionView: View {
 
     private var currentPane: HerdrPane {
         model.pane(id: pane.id) ?? pane
+    }
+
+    /// The title bar's trailing items: Git's pop-out while Git is showing, and
+    /// the pane's ⋯ menu, which ends with the shell's destinations.
+    private var titleBarActions: some View {
+        HStack(spacing: 2) {
+            if selectedMode == .git {
+                Button("Open Git in New Window", systemImage: "rectangle.on.rectangle") {
+                    openGitWindow()
+                }
+                .buttonStyle(HerdrIconButtonStyle())
+                .help("Open Git in a separate window")
+                .accessibilityIdentifier("pane-git-open-window")
+            }
+            PaneActionsMenu(
+                model: model,
+                pane: currentPane,
+                selectedMode: modeSelection,
+                gitIsAvailable: gitIsAvailable,
+                isPiCompacting: piConversationStore.isCompacting,
+                isStartingNewPiChat: piConversationStore.isStartingNewSession || piConversationStore.hasUnconfirmedNewSession,
+                startNewPiChat: startNewPiChat,
+                summarizeSession: summarizeSession
+            )
+        }
+        // The title bar outlives this view; keying its controls by pane
+        // drops a rename or close confirmation left open for another pane.
+        .id(currentPane.id)
+    }
+
+    private func startNewPiChat() {
+        Task { await piConversationStore.startNewSession(model: model, pane: currentPane) }
+    }
+
+    /// Nil when the pane has no Pi session to summarize.
+    private var summarizeSession: (() -> Void)? {
+        guard summaryRequest != nil else { return nil }
+        return presentPiSessionSummary
     }
 
     /// `PaneSessionView` is mounted with `.id(pane.id)`, so switching chats
@@ -279,8 +283,7 @@ struct PaneSessionView: View {
                     focusRequest: composerFocusRequest,
                     interactionResponder: piInteractionResponder,
                     modelFavorites: modelFavorites,
-                    quotes: $composerQuotes,
-                    briefPresentation: briefPresentation
+                    quotes: $composerQuotes
                 )
                     .equatable()
                     .transition(.opacity)

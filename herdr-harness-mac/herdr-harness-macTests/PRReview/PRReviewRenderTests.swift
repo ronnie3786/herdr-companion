@@ -33,6 +33,135 @@ struct PRReviewRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Viewed progress stays mounted in normal and compact filtered rails", arguments: [CGFloat(820), 420])
+    func viewedProgressInFilesRail(height: CGFloat) async throws {
+        let restoreAccessibility = enableAccessibility()
+        defer { restoreAccessibility() }
+        let store = demoStore()
+        let mounted = mount(PRReviewFilesView(store: store), size: CGSize(width: 1240, height: height))
+        defer { mounted.window.close() }
+        await settle(mounted)
+
+        let initialProgress = store.viewedProgress
+        let progress = try #require(accessibilityDescendants(mounted.hosting).first {
+            $0.accessibilityIdentifier() == "pr-review-viewed-progress"
+        })
+        #expect(progress.accessibilityLabel() == initialProgress.accessibilityLabel)
+        // macOS exposes the bar's numeric fraction as AXValue and the supplied
+        // spoken summary as AXValueDescription.
+        #expect(progress.accessibilityValueDescription() == initialProgress.accessibilityValue)
+        #expect((progress.accessibilityValue() as? NSNumber)?.doubleValue == initialProgress.fraction)
+
+        let unviewedFile = try #require(store.comparisonFiles.first { !$0.viewed })
+        await store.setViewed(paths: [unviewedFile.path], viewed: true)
+        await settle(mounted)
+        let updatedProgress = store.viewedProgress
+        #expect(updatedProgress.unviewed == initialProgress.unviewed - 1)
+        #expect(accessibilityDescendants(mounted.hosting).contains {
+            $0.accessibilityIdentifier() == "pr-review-viewed-progress"
+                && $0.accessibilityValueDescription() == updatedProgress.accessibilityValue
+        })
+
+        store.impactFilter = .high
+        store.hideViewed = true
+        store.search = "no-synthetic-file-matches"
+        await settle(mounted)
+        #expect(store.orderedFiles.isEmpty)
+        #expect(store.viewedProgress == updatedProgress)
+        let filteredElements = accessibilityDescendants(mounted.hosting)
+        #expect(filteredElements.contains {
+            $0.accessibilityIdentifier() == "pr-review-viewed-progress"
+                && $0.accessibilityValueDescription() == updatedProgress.accessibilityValue
+        })
+        #expect(filteredElements.contains { $0.accessibilityIdentifier() == "pr-review-no-filter-matches" })
+        #expect(!filteredElements.contains { $0.accessibilityIdentifier() == "pr-review-all-viewed" })
+    }
+
+    @Test("Only viewed rows mount a textual badge and both rows announce their state")
+    func viewedFileRows() async throws {
+        let restoreAccessibility = enableAccessibility()
+        defer { restoreAccessibility() }
+        var unviewed = try #require(PRReviewDemo.snapshot().files.first)
+        unviewed.viewed = false
+        var viewed = unviewed
+        viewed.viewed = true
+        var unviewedToggleValue: Bool?
+        var viewedToggleValue: Bool?
+        var selectedRows: [Int] = []
+        let unviewedRow = PRReviewFileRow(file: unviewed, index: 0, selected: false, guided: false,
+                                        select: { selectedRows.append(0) }, setViewed: { unviewedToggleValue = $0 })
+        let viewedRow = PRReviewFileRow(file: viewed, index: 1, selected: false, guided: false,
+                                      select: { selectedRows.append(1) }, setViewed: { viewedToggleValue = $0 })
+
+        // SwiftUI draws the badge without an NSView and hides it from AX to
+        // avoid repeating the row value. Its intrinsic width still proves that
+        // only the viewed row mounts the fixed-size checkmark/text capsule.
+        let unviewedWidth = NSHostingView(rootView: unviewedRow.fixedSize()).fittingSize.width
+        let viewedWidth = NSHostingView(rootView: viewedRow.fixedSize()).fittingSize.width
+        #expect(viewedWidth > unviewedWidth + 30)
+
+        let mounted = mount(VStack { unviewedRow; viewedRow }, size: CGSize(width: 820, height: 180))
+        defer { mounted.window.close() }
+        await settle(mounted)
+        let elements = accessibilityDescendants(mounted.hosting)
+        #expect(elements.contains {
+            $0.accessibilityIdentifier() == "pr-review-file-0"
+                && $0.accessibilityValueDescription() == "Not viewed"
+        })
+        #expect(elements.contains {
+            $0.accessibilityIdentifier() == "pr-review-file-1"
+                && $0.accessibilityValueDescription() == "Viewed"
+        })
+        for index in 0...1 {
+            let toggle = try #require(elements.first { $0.accessibilityIdentifier() == "pr-review-viewed-\(index)" })
+            #expect(toggle.accessibilityLabel() == "Viewed")
+            #expect(toggle.accessibilityPerformPress())
+        }
+        #expect(unviewedToggleValue == true)
+        #expect(viewedToggleValue == false)
+        #expect(selectedRows.isEmpty, "Toggling viewed must not invoke the row selection action")
+    }
+
+    @Test("All-viewed state offers an action that restores the file list")
+    func allViewedFilesState() async throws {
+        let restoreAccessibility = enableAccessibility()
+        defer { restoreAccessibility() }
+        let store = demoStore()
+        await store.setViewed(paths: store.comparisonFiles.map(\.path), viewed: true)
+        let allPaths = store.orderedFiles.map(\.path)
+        #expect(!allPaths.isEmpty)
+        store.hideViewed = true
+        #expect(store.orderedFiles.isEmpty)
+        #expect(store.viewedProgress.isComplete)
+
+        let mounted = mount(PRReviewFilesView(store: store), size: CGSize(width: 1240, height: 820))
+        defer { mounted.window.close() }
+        await settle(mounted)
+        let elements = accessibilityDescendants(mounted.hosting)
+        #expect(elements.contains { $0.accessibilityIdentifier() == "pr-review-all-viewed" })
+        #expect(!elements.contains { $0.accessibilityIdentifier() == "pr-review-no-filter-matches" })
+        #expect(elements.contains {
+            $0.accessibilityIdentifier() == "pr-review-viewed-progress"
+                && $0.accessibilityValueDescription() == store.viewedProgress.accessibilityValue
+        })
+        let showViewed = try #require(elements.first {
+            $0.accessibilityRole() == .button && $0.accessibilityLabel() == PRReviewViewedProgress.showViewedLabel
+        })
+        #expect(showViewed.accessibilityPerformPress())
+        await settle(mounted)
+        #expect(!store.hideViewed)
+        #expect(store.orderedFiles.map(\.path) == allPaths)
+        #expect(!accessibilityDescendants(mounted.hosting).contains {
+            $0.accessibilityIdentifier() == "pr-review-all-viewed"
+        })
+
+        store.search = "no-synthetic-file-matches"
+        await settle(mounted)
+        let filteredElements = accessibilityDescendants(mounted.hosting)
+        #expect(filteredElements.contains { $0.accessibilityIdentifier() == "pr-review-no-filter-matches" })
+        #expect(!filteredElements.contains { $0.accessibilityIdentifier() == "pr-review-all-viewed" })
+    }
+
     @Test("Completed missing diff renders for visual review")
     func rendersCompletedMissingDiff() async throws {
         let configuration = try #require(ServerConfiguration(
@@ -460,6 +589,8 @@ struct PRReviewRenderTests {
         arguments: [CGSize(width: 1180, height: 820), CGSize(width: 720, height: 520)]
     )
     func poppedOutWindowSizing(size: CGSize) async throws {
+        let restoreAccessibility = enableAccessibility()
+        defer { restoreAccessibility() }
         let environment = try poppedOutEnvironment()
         let target = PRReviewWindowTarget(machineID: "demo", reviewID: PRReviewDemo.reviewID)
 
@@ -499,6 +630,10 @@ struct PRReviewRenderTests {
         #expect(codeViewportRect.height > size.height * 0.5)
         #expect(split.frame.height > size.height * 0.55)
         #expect(textView.renderedPlainText.contains("struct SeedCatalog {}"))
+
+        #expect(accessibilityDescendants(hosting).contains {
+            $0.accessibilityIdentifier() == "pr-review-viewed-progress"
+        }, "Popped-out windows share the Files rail's viewed progress")
 
         let segmentedControls = descendants(hosting).compactMap { $0 as? NSSegmentedControl }
         #expect(
@@ -575,6 +710,74 @@ struct PRReviewRenderTests {
 
     private func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)
+    }
+
+    private typealias MountedView = (hosting: NSView, window: NSWindow)
+
+    private func mount(_ view: some View, size: CGSize) -> MountedView {
+        let hosting = NSHostingView(rootView:
+            view.frame(width: size.width, height: size.height).environment(\.colorScheme, .dark)
+        )
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.alphaValue = 0
+        window.orderFrontRegardless()
+        return (hosting, window)
+    }
+
+    private func settle(_ mounted: MountedView) async {
+        for _ in 0..<8 {
+            mounted.hosting.layoutSubtreeIfNeeded()
+            mounted.window.displayIfNeeded()
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    /// SwiftUI builds its AX tree on demand. Opt this test host in without
+    /// requiring VoiceOver or system-wide Accessibility permissions, and restore
+    /// the previous setting after each test. AppKit exposes this application
+    /// attribute only through its informal accessibility API.
+    private func enableAccessibility() -> () -> Void {
+        let application = NSApplication.shared
+        let attribute = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = application.accessibilityAttributeValue(attribute) ?? false
+        application.accessibilitySetValue(true, forAttribute: attribute)
+        return { application.accessibilitySetValue(previous, forAttribute: attribute) }
+    }
+
+    /// SwiftUI's AccessibilityNode implements AX selectors without adopting the
+    /// full NSAccessibilityProtocol. Use optional Objective-C dispatch for these
+    /// nodes as well as native views; no private SwiftUI API is needed.
+    private struct AccessibilityElement {
+        let object: AnyObject
+        func accessibilityIdentifier() -> String? { object.accessibilityIdentifier?() }
+        func accessibilityLabel() -> String? { object.accessibilityLabel?() }
+        func accessibilityValue() -> Any? {
+            // AnyObject's overloaded accessibilityValue selector can select a
+            // String-returning signature and misbridge numeric checkbox/bar
+            // values. KVC preserves the public AX getter's actual value type.
+            guard let object = object as? NSObject,
+                  object.responds(to: #selector(NSView.accessibilityValue)) else { return nil }
+            return object.value(forKey: "accessibilityValue")
+        }
+        func accessibilityValueDescription() -> String? { object.accessibilityValueDescription?() }
+        func accessibilityRole() -> NSAccessibility.Role? { object.accessibilityRole?() }
+        func accessibilityPerformPress() -> Bool { object.accessibilityPerformPress?() ?? false }
+    }
+
+    /// Traverse the view and accessibility hierarchies, deduplicating nodes.
+    private func accessibilityDescendants(_ view: NSView) -> [AccessibilityElement] {
+        var visited = Set<ObjectIdentifier>()
+        func collect(_ object: AnyObject) -> [AccessibilityElement] {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return [] }
+            return [AccessibilityElement(object: object)] + (object.accessibilityChildren?() ?? []).flatMap {
+                collect($0 as AnyObject)
+            }
+        }
+        return descendants(view).flatMap { collect($0) }
     }
 
     /// The height SwiftUI needs for `view` at its given width, measured off

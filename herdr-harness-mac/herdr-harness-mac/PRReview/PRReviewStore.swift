@@ -33,7 +33,7 @@ struct PRReviewDeletedDisclosureScope: Equatable {
 @MainActor
 @Observable
 final class PRReviewStore {
-    let guide = PRReviewGuideSession()
+    let guide: PRReviewGuideSession
     var guideClient: (any PRReviewGuideClient)? { client as? any PRReviewGuideClient }
     var guideConnectionGeneration: Int { generation }
     private var client: (any PRReviewClient)?
@@ -156,9 +156,11 @@ final class PRReviewStore {
 
     init(
         documentCache: PRReviewDocumentCache = PRReviewDocumentCache(),
-        documentResources: PRReviewDocumentResources? = nil
+        documentResources: PRReviewDocumentResources? = nil,
+        guide: PRReviewGuideSession = PRReviewGuideSession()
     ) {
         self.documentResources = documentResources ?? PRReviewDocumentResources(cache: documentCache)
+        self.guide = guide
     }
 
     /// A new host must discard every server-specific selection before a late response arrives.

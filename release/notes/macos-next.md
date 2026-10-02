@@ -165,6 +165,14 @@
 - The `chat.tab-color` agent action is disabled in the relay catalog and the Mac receiver; manual assignment, removal, and label editing are unchanged.
 - Requires a companion advertising `chat-tab-colors-v1` plus the matching installed CLIs. The signed Mac feed installs only the app, so update server packages and CLIs separately; an older companion reports an explicit unsupported result instead of an empty match. See `docs/chat-tab-colors.md` for setup, commands, and limits.
 
+## PR Review on all machines
+
+- The PR Review host menu now puts **All machines** first and selects it by default each time you open PR Review, including when returning after choosing a specific host.
+- Active and Archived combine every paired, configured machine's reviews in one list, with each row labelled by its machine. Search also matches machine names; pick a machine to narrow the list.
+- An unreachable machine or one without PR Review support shows its own notice without hiding the other machines' reviews. Opening, archiving, refreshing and popping out a row stay on that row's machine, even when review IDs or PR numbers match.
+- New reviews from All machines start on the Settings **PR review host**, or on the open review's machine if no host is configured. Choosing a specific machine keeps creation there.
+- Mac-only; no companion update is needed. Existing `pr-review-v1` support is sufficient; demo mode and popped-out review windows are unchanged.
+
 ## PR Review
 
 - The Files rail now shows viewed/unviewed progress (`3 of 10 viewed · 7 unviewed`) and a progress bar, labels viewed files with a checkmark and **Viewed** badge, and offers **Show viewed files** when Hide viewed hides a completed review. Counts cover all files in the current PR or comparison regardless of filters, in both main and popped-out windows. Mac-only; no companion update is needed beyond existing `pr-review-v1` support. Issue #151.

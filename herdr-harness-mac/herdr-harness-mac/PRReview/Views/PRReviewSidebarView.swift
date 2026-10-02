@@ -8,11 +8,23 @@ struct PRReviewSidebarView: View {
     var openURL: (URL) -> Void = { _ in }
     var setCreating: (Bool) -> Void = { _ in }
     var popOut: ((PRReviewWindowTarget) -> Void)?
+    var fleet: PRReviewFleetIndex? = nil
+    var openFleetReview: ((PRReviewWindowTarget) -> Void)? = nil
+    var archiveFleetReview: ((PRReviewWindowTarget, Bool) -> Void)? = nil
+    var refreshFleetReview: ((PRReviewWindowTarget) -> Void)? = nil
     @State private var pastedURL = ""
     @State private var validationError: String?
 
     private var reviews: [PRReviewSummary] {
         store.showArchived ? store.archivedReviews : store.reviews
+    }
+
+    var newReviewHelp: String {
+        canControl ? "Start a pull request review" : "Choose a PR review host in Settings → Machines or pick a machine"
+    }
+
+    static func walkthroughAccessibilityIdentifier(reviewID: String, rowID: String? = nil) -> String {
+        "pr-review-walkthrough-\(rowID ?? reviewID)"
     }
 
     var body: some View {
@@ -30,7 +42,7 @@ struct PRReviewSidebarView: View {
                 Button("New review", systemImage: "plus", action: presentStartSheet)
                     .labelStyle(.iconOnly)
                     .disabled(!canControl)
-                    .help("Start a pull request review")
+                    .help(newReviewHelp)
                     .accessibilityIdentifier("pr-review-new")
             }
 
@@ -59,7 +71,30 @@ struct PRReviewSidebarView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    if store.unconfigured {
+                    if let fleet {
+                        ForEach(fleet.notices) { notice in
+                            Label("\(notice.machineName): \(notice.message)", systemImage: "exclamationmark.triangle")
+                                .herdrFont(.caption)
+                                .foregroundStyle(HerdrTheme.alert)
+                                .padding(10)
+                                .accessibilityIdentifier("pr-review-host-notice-\(notice.machineID)")
+                        }
+                        let entries = filteredFleetReviews(fleet)
+                        if fleet.sourceCount == 0 {
+                            empty("Pair a machine in Settings → Machines", image: "gearshape")
+                        } else if entries.isEmpty, !fleet.hasLoaded {
+                            ProgressView("Loading reviews…")
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, HerdrTheme.pagePadding)
+                                .accessibilityIdentifier("pr-review-fleet-loading")
+                        } else if entries.isEmpty {
+                            empty(store.showArchived ? "No archived reviews" : "No active reviews", image: "arrow.triangle.pull")
+                        } else {
+                            ForEach(entries) { entry in
+                                fleetReviewRow(entry)
+                            }
+                        }
+                    } else if store.unconfigured {
                         empty("Choose the PR review host in Settings → Machines", image: "gearshape")
                     } else if store.unsupported {
                         empty(store.error ?? "Update the companion to a version with pr-review-v1", image: "exclamationmark.triangle")
@@ -88,32 +123,44 @@ struct PRReviewSidebarView: View {
         }
     }
 
+    private func filteredFleetReviews(_ fleet: PRReviewFleetIndex) -> [PRReviewFleetEntry] {
+        let entries = store.showArchived ? fleet.archived : fleet.active
+        guard !store.search.isEmpty else { return entries }
+        return entries.filter {
+            $0.review.title.localizedCaseInsensitiveContains(store.search)
+                || $0.review.owner.localizedCaseInsensitiveContains(store.search)
+                || $0.review.repo.localizedCaseInsensitiveContains(store.search)
+                || $0.machineName.localizedCaseInsensitiveContains(store.search)
+        }
+    }
+
+    private func fleetReviewRow(_ entry: PRReviewFleetEntry) -> some View {
+        let review = entry.review
+        let selected = entry.machineID == store.currentMachineID && review.id == store.selectedReviewID
+        return Button { openFleetReview?(entry.id) } label: {
+            reviewLabel(review, selected: selected, machineName: entry.machineName, rowID: entry.id.id)
+        }
+        .buttonStyle(.herdrPlain)
+        .accessibilityIdentifier("pr-review-review-\(entry.id.id)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .contextMenu {
+            if let popOut, review.archivedAt == nil {
+                let target = PRReviewWindowTarget(machineID: entry.machineID, reviewID: review.id)
+                Button("Pop Out into Window") { popOut(target) }
+                    .accessibilityIdentifier(target.popOutActionAccessibilityIdentifier)
+            }
+            Button("Open on GitHub") { if let url = URL(string: review.url) { openURL(url) } }
+            Button("Copy link") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(review.url, forType: .string) }
+            Button("Refresh") { refreshFleetReview?(entry.id) }
+            Button(review.archivedAt == nil ? "Archive" : "Unarchive") {
+                archiveFleetReview?(entry.id, review.archivedAt == nil)
+            }
+        }
+    }
+
     private func reviewRow(_ review: PRReviewSummary) -> some View {
         Button { store.select(review.id) } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(review.title)
-                    .herdrFont(.subheadline, weight: .semibold)
-                    .lineLimit(1)
-                HStack(spacing: 4) {
-                    Text("\(review.owner)/\(review.repo) #\(review.number)")
-                    Text("·")
-                    Text(review.status.rawValue.capitalized)
-                    Text("·")
-                    Text("\(review.runningRuns) running")
-                }
-                .herdrFont(.caption)
-                .foregroundStyle(HerdrTheme.mist)
-                if let walkthrough = PRReviewWalkthroughRowStatus(review.walkthrough) {
-                    Label(walkthrough.text, systemImage: walkthrough.systemImage)
-                        .herdrFont(.caption, weight: walkthrough.isNew ? .semibold : .regular)
-                        .foregroundStyle(walkthrough.failed ? HerdrTheme.alert : walkthrough.isNew ? HerdrTheme.accent : HerdrTheme.mist)
-                        .accessibilityIdentifier("pr-review-walkthrough-\(review.id)")
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(store.selectedReviewID == review.id ? HerdrTheme.selection : .clear,
-                        in: .rect(cornerRadius: HerdrTheme.compactRadius))
+            reviewLabel(review, selected: store.selectedReviewID == review.id)
         }
         .buttonStyle(.herdrPlain)
         .accessibilityIdentifier("pr-review-review-\(review.id)")
@@ -132,6 +179,38 @@ struct PRReviewSidebarView: View {
                 Task { await store.archive(review.archivedAt == nil) }
             }
         }
+    }
+
+    private func reviewLabel(_ review: PRReviewSummary, selected: Bool, machineName: String? = nil, rowID: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(review.title)
+                .herdrFont(.subheadline, weight: .semibold)
+                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text("\(review.owner)/\(review.repo) #\(review.number)")
+                Text("·")
+                Text(review.status.rawValue.capitalized)
+                Text("·")
+                Text("\(review.runningRuns) running")
+            }
+            .herdrFont(.caption)
+            .foregroundStyle(HerdrTheme.mist)
+            if let machineName {
+                Label(machineName, systemImage: "desktopcomputer")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.mist)
+            }
+            if let walkthrough = PRReviewWalkthroughRowStatus(review.walkthrough) {
+                Label(walkthrough.text, systemImage: walkthrough.systemImage)
+                    .herdrFont(.caption, weight: walkthrough.isNew ? .semibold : .regular)
+                    .foregroundStyle(walkthrough.failed ? HerdrTheme.alert : walkthrough.isNew ? HerdrTheme.accent : HerdrTheme.mist)
+                    .accessibilityIdentifier(Self.walkthroughAccessibilityIdentifier(reviewID: review.id, rowID: rowID))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(selected ? HerdrTheme.selection : .clear,
+                    in: .rect(cornerRadius: HerdrTheme.compactRadius))
     }
 
     private func empty(_ text: String, image: String) -> some View {

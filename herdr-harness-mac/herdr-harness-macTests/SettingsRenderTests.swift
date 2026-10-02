@@ -107,6 +107,84 @@ struct SettingsRenderTests {
         #expect(detail.mean < 100, "Detail mean luminance was \(detail.mean)")
     }
 
+    @Test("Settings top bar shows the dusk glass and blends into the sidebar")
+    func rendersDuskGlassTopBar() async throws {
+        let suiteName = "SettingsRenderTests.topBar.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: HerdrAppearancePreferences.hazeEnabledKey)
+        defaults.set(false, forKey: HerdrAppearancePreferences.desktopTransparencyEnabledKey)
+
+        let model = HerdrRenderFixtures.demoModel()
+        let fontScale = HerdrFontScaleStore(defaults: defaults)
+        let size = CGSize(width: 920, height: 680)
+        var topBars: [(red: Double, green: Double, blue: Double)] = []
+
+        for glassEnabled in [true, false] {
+            defaults.set(glassEnabled, forKey: HerdrAppearancePreferences.glassEnabledKey)
+            let result = try await HerdrRenderHarness.render(
+                "settings-top-bar-glass-\(glassEnabled ? "on" : "off").png",
+                size: size
+            ) {
+                SettingsView(
+                    model: model,
+                    fontScale: fontScale,
+                    cleanupSettings: CleanupSettingsStore(defaults: defaults),
+                    agentSettings: AgentModelSettingsStore(defaults: defaults),
+                    promptSettings: HerdrPromptSettingsStore(defaults: defaults),
+                    modelFavorites: ModelFavoritesStore(userDefaults: defaults),
+                    hudController: HerdrHudController(userDefaults: defaults),
+                    updates: HerdrUpdateController(defaults: defaults),
+                    agentControl: AgentControlController(
+                        defaults: defaults,
+                        secretStorage: TestAgentControlSecretStorage()
+                    ),
+                    agentRoles: AgentRoleTestFixtures.settingsStore(),
+                    initialPane: .general
+                )
+                .defaultAppStorage(defaults)
+                .environment(\.herdrFontScale, fontScale.scale)
+                .background(HerdrTheme.ink)
+                .foregroundStyle(HerdrTheme.text)
+                .preferredColorScheme(.dark)
+                .tint(HerdrTheme.accent)
+            }
+
+            result.expectSubstantial()
+            let bitmap = try #require(NSBitmapImageRep(data: Data(contentsOf: result.url)))
+            let scale = Double(bitmap.pixelsHigh) / Double(size.height)
+            let topBar = meanRGB(
+                in: bitmap,
+                columns: Int(Double(bitmap.pixelsWide) * 0.30)..<Int(Double(bitmap.pixelsWide) * 0.95),
+                rows: 0..<Int(40 * scale)
+            )
+            topBars.append(topBar)
+
+            if glassEnabled {
+                let sidebar = meanRGB(
+                    in: bitmap,
+                    columns: 0..<Int(12 * scale),
+                    rows: Int(48 * scale)..<Int(140 * scale)
+                )
+                #expect(abs(topBar.red - sidebar.red) <= 18,
+                        "Glass top bar red \(topBar.red) did not blend into sidebar \(sidebar.red)")
+                #expect(abs(topBar.green - sidebar.green) <= 18,
+                        "Glass top bar green \(topBar.green) did not blend into sidebar \(sidebar.green)")
+                #expect(abs(topBar.blue - sidebar.blue) <= 18,
+                        "Glass top bar blue \(topBar.blue) did not blend into sidebar \(sidebar.blue)")
+            } else {
+                let luminance = 0.2126 * topBar.red + 0.7152 * topBar.green + 0.0722 * topBar.blue
+                #expect(luminance < 100, "Glass-off top bar luminance was \(luminance)")
+            }
+        }
+
+        let glassOn = topBars[0]
+        let glassOff = topBars[1]
+        #expect(glassOn.blue - glassOn.green >= glassOff.blue - glassOff.green + 3,
+                "Top bar violet bias was \(glassOn.blue - glassOn.green) with Glass on and \(glassOff.blue - glassOff.green) with Glass off")
+    }
+
     @Test("Each settings pane renders distinct content")
     func rendersDistinctPaneContent() async throws {
         var digests = Set<Data>()
@@ -418,6 +496,33 @@ struct SettingsRenderTests {
             .tint(HerdrTheme.accent)
         }
         return AgentsPaneRender(result: result, settings: agentSettings)
+    }
+
+    private func meanRGB(
+        in bitmap: NSBitmapImageRep,
+        columns: Range<Int>,
+        rows: Range<Int>
+    ) -> (red: Double, green: Double, blue: Double) {
+        var red = 0.0
+        var green = 0.0
+        var blue = 0.0
+        var sampleCount = 0
+
+        for y in stride(from: rows.lowerBound, to: rows.upperBound, by: 4) {
+            for x in stride(from: columns.lowerBound, to: columns.upperBound, by: 4) {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    continue
+                }
+                red += color.redComponent * 255
+                green += color.greenComponent * 255
+                blue += color.blueComponent * 255
+                sampleCount += 1
+            }
+        }
+
+        #expect(sampleCount > 0)
+        let count = Double(max(sampleCount, 1))
+        return (red / count, green / count, blue / count)
     }
 
     private func luminanceStatistics(

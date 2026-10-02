@@ -251,12 +251,14 @@ struct HerdrHarnessMacApp: App {
                 updates: updates,
                 agentControl: agentControl
             )
+                .containerBackground(.clear, for: .window)
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 920, idealWidth: 1120, minHeight: 680, idealHeight: 800)
                 .foregroundStyle(HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(HerdrTheme.accent)
         }
+        .windowStyle(.hiddenTitleBar)
 
         // Herd Pulse: the menu-bar replacement for the iOS Live Activity.
         HerdPulseMenuBar.scene(pulse: herdPulse, model: model, shell: shell, hudController: hudController)

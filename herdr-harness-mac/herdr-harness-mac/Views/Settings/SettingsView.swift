@@ -106,6 +106,9 @@ struct SettingsView: View {
             }
         }
         .modifier(HerdrMainWindowChromeModifier(revealsDesktop: true))
+        // Our 40pt bar ends in a hairline; the system's toolbar blur under the title bar would grey and smear it.
+        .scrollEdgeEffectHidden()
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .navigationTitle("Settings")
         .foregroundStyle(HerdrTheme.primaryText)
         .sheet(isPresented: $isPresentingMachines) {

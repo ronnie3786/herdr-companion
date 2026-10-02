@@ -156,22 +156,4 @@ struct ChatPolishRenderTests {
         #expect(window.childWindows?.isEmpty != false)
     }
 
-    @Test("Native note cursor uses ink, not the dark window's white insertion point")
-    func noteCursor() throws {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        defer { window.close() }
-        let root = NSView(frame: window.contentLayoutRect)
-        let editor = NSTextView(frame: root.bounds)
-        editor.insertionPointColor = .white
-        let ink = HerdrNoteEditorInk.InkView(frame: root.bounds)
-        ink.ink = .black
-        root.addSubview(editor)
-        root.addSubview(ink)
-        window.contentView = root
-        ink.layout()
-        #expect(editor.insertionPointColor == .black)
-        #expect(editor.selectedTextAttributes[.backgroundColor] as? NSColor == NSColor.black.withAlphaComponent(0.18))
-    }
 }

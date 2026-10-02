@@ -8,6 +8,8 @@ protocol PRReviewClient: Sendable {
     func refreshPRReviewStatuses(requestID: String) async throws
     func prReviews(scope: String) async throws -> [PRReviewSummary]
     func createPRReview(url: String, skillIDs: [String], requestID: String) async throws -> PRReviewSnapshot
+    func createPRReview(url: String, agentIDs: [String], requestID: String) async throws -> PRReviewSnapshot
+    func createPRReviewAgentRuns(id: String, agentIDs: [String], requestID: String) async throws -> [PRReviewRun]
     func prReview(id: String) async throws -> PRReviewSnapshot
     func refreshPRReview(id: String, requestID: String) async throws -> PRReviewSnapshot
     func archivePRReview(id: String, archived: Bool, requestID: String) async throws -> PRReviewSnapshot
@@ -99,6 +101,14 @@ enum PRReviewDocumentPayload: Sendable {
 
 // Older clients can still load reviews without the optional dashboard endpoint.
 extension PRReviewClient {
+    func createPRReview(url: String, agentIDs: [String], requestID: String) async throws -> PRReviewSnapshot {
+        throw APIError.server(status: 404, message: "Update the companion to run PR Review Agents.")
+    }
+
+    func createPRReviewAgentRuns(id: String, agentIDs: [String], requestID: String) async throws -> [PRReviewRun] {
+        throw APIError.server(status: 404, message: "Update the companion to run PR Review Agents.")
+    }
+
     func refreshPRReviewStatuses(requestID: String) async throws {
         throw APIError.server(status: 404, message: "Update the companion to refresh GitHub review states.")
     }

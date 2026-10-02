@@ -112,6 +112,12 @@ ENVIRONMENT_FIELDS = {
         "max_running_previews": "HERDR_SIMPORTAL_MAX_RUNNING_PREVIEWS",
         "store_path": "HERDR_SIMPORTAL_STORE_PATH", "server_id": "HERDR_SIMPORTAL_SERVER_ID",
     },
+    "watchers": {
+        "enabled": "HERDR_WATCHERS_ENABLED", "path": "HERDR_WATCHERS_PATH",
+        "max_runs": "HERDR_WATCHERS_MAX_RUNS", "supervised": "HERDR_WATCHERS_SUPERVISED",
+        "builder_model": "HERDR_WATCHERS_BUILDER_MODEL",
+        "store_path": "HERDR_HARNESS_WATCHERS_STORE_PATH", "root": "HERDR_HARNESS_WATCHERS_ROOT",
+    },
     "pr_review": {
         "workspace_label": "HERDR_PR_REVIEW_WORKSPACE_LABEL", "workspace_root": "HERDR_PR_REVIEW_WORKSPACE_ROOT",
         "checkout_root": "HERDR_PR_REVIEW_CHECKOUT_ROOT", "store_path": "HERDR_HARNESS_PR_REVIEW_STORE_PATH",
@@ -339,7 +345,7 @@ def load_configuration(
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
             raise ConfigurationError("Herdr configuration could not be read as valid TOML") from None
-        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "simportal", "pr_review", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
+        allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "simportal", "pr_review", "watchers", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
         if set(data) - allowed_sections:
             raise ConfigurationError("Unrecognized top-level configuration section; use the Herdr cluster configuration sample")
         if data.get("version", 1) != 1:
@@ -367,7 +373,7 @@ def load_configuration(
                 value = {"file": values[key + "_file"]}
             if value is not None:
                 resolved[name] = _scalar(value, f"{section}.{key}", root, environment)
-                if key.endswith(("_path", "_dir", "_root")) or key in {"checkout", "socket_path", "review_assessor"}:
+                if key.endswith(("_path", "_dir", "_root")) or key in {"checkout", "socket_path", "review_assessor"} or (section == "watchers" and key == "root"):
                     raw_path = resolved[name]
                     if raw_path:
                         if raw_path == "~" or raw_path.startswith("~/"):
@@ -449,6 +455,7 @@ def load_configuration(
             "PI_STORE_PATH": "pi-semantic.sqlite3", "ACTIVE_WORK_STORE_PATH": "active-work.sqlite3",
             "FIRST_MATE_STORE_PATH": "first-mate.sqlite3", "FIRST_MATE_RUNS_ROOT": "first-mate-runs",
             "PR_REVIEW_STORE_PATH": "pr-review.sqlite3", "PR_REVIEW_RUNS_ROOT": "pr-review-runs",
+            "WATCHERS_STORE_PATH": "watchers.sqlite3", "WATCHERS_ROOT": "watchers",
             "CLEANUP_RUNS_ROOT": "cleanup/runs", "AGENT_RUNS_ROOT": "agent-runs",
             "ATTACHMENTS_DIR": "uploads", "NOTES_STORE_PATH": "notes.sqlite3",
             "PANE_SEEN_STORE_PATH": "pane-first-seen.json", "SESSION_LABEL_STORE_PATH": "session-labels.json",

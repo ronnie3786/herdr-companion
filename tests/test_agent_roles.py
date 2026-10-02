@@ -56,7 +56,7 @@ class AgentRolesTests(unittest.TestCase):
         self.assertTrue(all(not r["systemPrompt"] for r in value["roles"]))
         for role in value["roles"]:
             self.assertEqual(role["builtin"], True)
-            if role["id"] != "recovery_advisor":
+            if role["purpose"] == "worker" and role["id"] != "recovery_advisor":
                 self.assertIsNone(role["skillIds"])
                 self.assertIsNone(self.store.snapshot(role["id"])["skillPaths"])
         self.assertEqual(os.stat(self.root / "state/roles.sqlite3").st_mode & 0o777, 0o600)

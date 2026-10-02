@@ -281,7 +281,7 @@ class FirstMateUsageParserTests(unittest.TestCase):
         self.accountant.session_usage(path, "native-read-error")
         with path.open("ab") as handle:
             handle.write(b"\n")
-        with mock.patch.object(Path, "open", side_effect=OSError("synthetic read failure")):
+        with mock.patch.object(self.accountant, "_open_source", side_effect=OSError("synthetic read failure")):
             result = self.accountant.public_summary(
                 self.accountant.session_usage(path, "native-read-error"))
         self.assertEqual((result["cost_usd"], result["status"]), (3.0, "partial"))
@@ -306,6 +306,11 @@ class FirstMateUsageInventoryTests(unittest.TestCase):
         self.store = FirstMateStore(self.root / "first-mate.sqlite3")
         self.addCleanup(self.store.close)
         self.runtime = FirstMateRuntime(self.store, environ={"PATH": ""}, runtime_root=self.root / "runtime")
+        # These tests exercise accounting mathematics synchronously. Production
+        # nonblocking behavior is covered by test_first_mate_usage_background.
+        self.runtime.usage.account = self.runtime.usage._engine.account
+        self.runtime.usage.session_usage = self.runtime.usage._engine.session_usage
+        self.addCleanup(self.runtime.stop)
         self.feature = self.store.create_feature({
             "title": "Synthetic task", "goal": "Account for managed work",
             "cwd": str(self.cwd), "request_id": "feature"})
@@ -559,8 +564,8 @@ class FirstMateUsageInventoryTests(unittest.TestCase):
             "PATH": "", "HERDR_FIRST_MATE_USAGE_ENABLED": "false",
         }, runtime_root=self.runtime.root)
         before = Path(job["session_file"]).read_bytes()
-        with mock.patch.object(runtime.usage, "_parse", side_effect=AssertionError("usage scan")), \
-             mock.patch.object(runtime.usage, "_safe_path", side_effect=AssertionError("usage path scan")):
+        with mock.patch.object(runtime.usage._engine, "_parse", side_effect=AssertionError("usage scan")), \
+             mock.patch.object(runtime.usage._engine, "_safe_path", side_effect=AssertionError("usage path scan")):
             listed = runtime.list_features()[0]
             self.assertEqual(listed["usage"]["status"], "unavailable")
             self.assertIsNone(listed["usage"]["cost_usd"])

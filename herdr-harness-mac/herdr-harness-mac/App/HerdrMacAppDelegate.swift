@@ -171,6 +171,10 @@ final class HerdrMacAppDelegate: NSObject, NSApplicationDelegate, UNUserNotifica
         didReceive response: UNNotificationResponse
     ) async {
         let userInfo = response.notification.request.content.userInfo
+        if let route = (userInfo[WatchersNotification.routeKey] as? String).flatMap(URL.init(string:)), route.scheme == "herdr", route.host == "watchers" {
+            await MainActor.run { Self.openOwnURL(route) }
+            return
+        }
         if let route = (userInfo[PRReviewWalkthroughNotification.routeKey] as? String).flatMap(URL.init(string:)),
            route.scheme == "herdr", route.host == "pr-review" {
             await MainActor.run { Self.openOwnURL(route) }

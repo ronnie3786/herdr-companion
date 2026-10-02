@@ -16,6 +16,7 @@ enum HerdrDestination: Hashable, Sendable {
     case agentBoard
     case activeWork
     case prReview
+    case watchers
     case firstMate
     case fleet
     case attention
@@ -139,6 +140,9 @@ extension HerdrDestinationRecord {
         case .prReview:
             kind = "prReview"
             id = nil
+        case .watchers:
+            kind = "watchers"
+            id = nil
         case .fleet:
             kind = "fleet"
             id = nil
@@ -167,6 +171,7 @@ extension HerdrDestinationRecord {
         case "firstMate": return .firstMate
         case "activeWork": return .activeWork
         case "prReview": return .prReview
+        case "watchers": return .watchers
         case "fleet": return .fleet
         case "attention": return .attention
         case "activity": return .activity

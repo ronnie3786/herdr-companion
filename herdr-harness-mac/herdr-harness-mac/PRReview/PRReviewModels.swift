@@ -529,6 +529,17 @@ struct PRReviewRun: Codable, Equatable, Identifiable, Sendable {
     var createdAt: String?
     var startedAt: String?
     var finishedAt: String?
+    var agentID: String? = nil
+    var agentName: String? = nil
+    var agentAvatar: String? = nil
+    var kind: String? = nil
+    var reviewGeneration: Int? = nil
+    var baseSHA: String? = nil
+    var headSHA: String? = nil
+
+    var displayName: String { agentName ?? skillTitle }
+    var isConsolidator: Bool { kind == "consolidator" }
+    var isActive: Bool { state == .queued || state == .running }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -547,6 +558,9 @@ struct PRReviewRun: Codable, Equatable, Identifiable, Sendable {
         case createdAt = "created_at"
         case startedAt = "started_at"
         case finishedAt = "finished_at"
+        case agentID = "agent_id", agentName = "agent_name", agentAvatar = "agent_avatar"
+        case kind, reviewGeneration = "review_generation"
+        case baseSHA = "base_sha", headSHA = "head_sha"
     }
 }
 
@@ -623,6 +637,7 @@ struct PRReviewSnapshot: Codable, Equatable, Sendable {
     var runs: [PRReviewRun]
     var documents: [PRReviewDocument]
     var events: [PRReviewEvent]
+    var consolidation: PRReviewConsolidation? = nil
 
     enum CodingKeys: String, CodingKey {
         case ok
@@ -632,6 +647,7 @@ struct PRReviewSnapshot: Codable, Equatable, Sendable {
         case runs
         case documents
         case events
+        case consolidation
     }
 
     init(from decoder: Decoder) throws {
@@ -643,6 +659,7 @@ struct PRReviewSnapshot: Codable, Equatable, Sendable {
         runs = try container.decodeIfPresent([PRReviewRun].self, forKey: .runs) ?? []
         documents = try container.decodeIfPresent([PRReviewDocument].self, forKey: .documents) ?? []
         events = try container.decodeIfPresent([PRReviewEvent].self, forKey: .events) ?? []
+        consolidation = try container.decodeIfPresent(PRReviewConsolidation.self, forKey: .consolidation)
     }
 }
 
@@ -669,6 +686,9 @@ struct PRReviewCapabilities: Codable, Equatable, Sendable {
     var workspaceLabel: String?
     var autoRank: Bool?
     var syncViewedToGitHub: Bool?
+    var agents: [AgentRole]? = nil
+
+    var supportsAgents: Bool { capabilities.contains("pr-review-agents-v1") }
 
     var supportsV1: Bool {
         capabilities.contains("pr-review-v1")
@@ -687,6 +707,7 @@ struct PRReviewCapabilities: Codable, Equatable, Sendable {
         case workspaceLabel = "workspace_label"
         case autoRank = "auto_rank"
         case syncViewedToGitHub = "sync_viewed_to_github"
+        case agents
     }
 
     init(from decoder: Decoder) throws {
@@ -703,6 +724,7 @@ struct PRReviewCapabilities: Codable, Equatable, Sendable {
         workspaceLabel = try container.decodeIfPresent(String.self, forKey: .workspaceLabel)
         autoRank = try container.decodeIfPresent(Bool.self, forKey: .autoRank)
         syncViewedToGitHub = try container.decodeIfPresent(Bool.self, forKey: .syncViewedToGitHub)
+        agents = try container.decodeIfPresent([AgentRole].self, forKey: .agents)
     }
 }
 

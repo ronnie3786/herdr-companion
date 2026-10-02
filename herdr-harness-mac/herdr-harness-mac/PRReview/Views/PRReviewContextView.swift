@@ -58,7 +58,7 @@ struct PRReviewContextView: View {
             }
             .padding(HerdrTheme.pagePadding)
         }
-        .background(HerdrTheme.graphite)
+        .herdrPaneBackground()
         .sheet(isPresented: $isPresentingLinkSheet) {
             addLinkSheet
         }
@@ -129,7 +129,7 @@ struct PRReviewContextView: View {
         .padding(HerdrTheme.pagePadding)
         .frame(width: 440)
         .foregroundStyle(HerdrTheme.text)
-        .background(HerdrTheme.graphite)
+        .herdrPaneBackground()
         .accessibilityIdentifier("pr-review-add-link-sheet")
     }
 
@@ -244,7 +244,7 @@ private struct PRReviewDocumentRow: View {
     private var originCaption: String {
         if let runID = document.runID,
            let run = store.snapshot?.runs.first(where: { $0.id == runID }) {
-            return run.skillTitle
+            return run.displayName
         }
         switch document.origin.lowercased() {
         case "user", "manual": return "Added by you"

@@ -42,6 +42,7 @@ query the advertised action and capability catalogs.
 - `herdr-hud-chats`: saved HUD history discovery (`list`, `search`, `show`);
 - `herdr-session-context`: projected prior conversation by exact identity;
 - `herdr-pr-review`: PR Review resources and native navigation;
+- `herdr-watchers`: scheduled routine drafts, smart chips, assets, scripts, schedule previews, past runs and the separate Watcher inbox. Read `herdr-docs read watchers`, inspect capabilities and ask about unclear requirements. Activation is the person's step;
 - `herdr-config`: configuration checks and selected-machine execution setup;
 - `herdr-code-factory`: an optional, explicitly configured issue-to-PR/release
   pipeline. It does nothing merely because the CLI is installed. Enabling it,

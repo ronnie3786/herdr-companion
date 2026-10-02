@@ -9,7 +9,10 @@ import hashlib
 import json
 import math
 import os
+import stat as stat_module
 import threading
+from collections import OrderedDict
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -143,18 +146,102 @@ def aggregate_usage(summaries: Iterable[dict], *, updated_at: str) -> dict:
 class FirstMateUsage:
     """Stream saved JSONL with stat caching and aggregate managed inventory."""
 
-    def __init__(self, sessions_root: str | Path, *, enabled: bool = True):
+    def __init__(self, sessions_root: str | Path, *, enabled: bool = True,
+                 stop_event: threading.Event | None = None, max_cached_sources: int = 4096):
         self.sessions_root = Path(sessions_root).expanduser().resolve()
         self.enabled = enabled
+        self._stop_event = stop_event
+        self._max_cached_sources = max(1, max_cached_sources)
         self._lock = threading.RLock()
-        # One current stat version per source identity; old versions are replaced.
-        self._cache: dict[tuple[str, str | None], tuple[tuple[int, int, int, int], dict]] = {}
-        self._last_good: dict[tuple[str, str | None], dict] = {}
+        # Retain one current version per source, with a bounded LRU for both
+        # current and last-good values. This is a disposable display cache.
+        self._cache: OrderedDict[tuple[str, str | None], tuple[tuple[int, ...], dict]] = OrderedDict()
+        self._last_good: OrderedDict[tuple[str, str | None], dict] = OrderedDict()
+
+    def _check_cancelled(self) -> None:
+        if self._stop_event is not None and self._stop_event.is_set():
+            raise InterruptedError("First Mate usage refresh stopped")
+
+    @staticmethod
+    def _signature(value: os.stat_result) -> tuple[int, ...]:
+        # ctime also detects same-size rewrites whose writer restores mtime.
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+    @staticmethod
+    def _unavailable(state: str, updated_at: str | None = None) -> dict:
+        result = _empty_summary(updated_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+        result.update(_source_state=state, _session_id=None, _identity_valid=False)
+        return result
+
+    def _remember(self, cache: OrderedDict, key: tuple[str, str | None], value: Any) -> None:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > self._max_cached_sources:
+            cache.popitem(last=False)
 
     def _safe_path(self, value: str | Path) -> Path:
         path = Path(value).expanduser().resolve()
         path.relative_to(self.sessions_root)
         return path
+
+    @contextmanager
+    def _open_source(self, path: Path):
+        """Open a regular source beneath the root without a symlink/FIFO race."""
+        parts = path.relative_to(self.sessions_root).parts
+        if not parts:
+            raise OSError("session source is not a regular file")
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory = os.open(self.sessions_root, directory_flags)
+        descriptor = None
+        try:
+            for part in parts[:-1]:
+                child = os.open(part, directory_flags, dir_fd=directory)
+                os.close(directory)
+                directory = child
+            descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                 dir_fd=directory)
+            if not stat_module.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OSError("session source is not a regular file")
+            with os.fdopen(descriptor, "rb") as handle:
+                descriptor = None  # fdopen owns the descriptor, including on failure.
+                yield handle
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            os.close(directory)
+
+    def discover_session_id(self, session_file: str | Path, expected: str | None = None) -> str | None:
+        """Read only a strict first header, independently of optional accounting.
+
+        This closes the started-but-unbound dispatch gap without scanning its
+        transcript. Callers must still validate current ownership before opening.
+        """
+        self._check_cancelled()
+        try:
+            path = self._safe_path(session_file)
+            before = path.stat()
+            if not stat_module.S_ISREG(before.st_mode):
+                return None
+            signature = self._signature(before)
+            with self._open_source(path) as handle:
+                opened = os.fstat(handle.fileno())
+                if not stat_module.S_ISREG(opened.st_mode) or self._signature(opened) != signature:
+                    return None
+                line = handle.readline(MAX_RECORD + 1)
+                self._check_cancelled()
+                if (len(line) > MAX_RECORD or not line.endswith(b"\n")
+                        or self._signature(os.fstat(handle.fileno())) != signature):
+                    return None
+            if self._safe_path(session_file) != path or self._signature(path.stat()) != signature:
+                return None
+            entry = json.loads(line)
+            identity = entry.get("id") if isinstance(entry, dict) and entry.get("type") == "session" else None
+            return identity if (isinstance(identity, str) and identity
+                                and (expected is None or identity == expected)) else None
+        except InterruptedError:
+            raise
+        except (OSError, RuntimeError, ValueError, UnicodeError):
+            return None
 
     @staticmethod
     def _stale(summary: dict) -> dict:
@@ -165,62 +252,79 @@ class FirstMateUsage:
         return result
 
     def session_usage(self, session_file: str | Path, expected_session_id: str | None = None) -> dict:
-        """Return whole-file usage. Complete JSONL records are streamed once per stat."""
+        """Synchronous engine for the background owner, never a request cache.
+
+        Serialize cache misses so another caller cannot duplicate a scan or
+        publish an older parse after a newer one. The runtime's projection cache
+        has its own lock and never waits for this lock.
+        """
         if not self.enabled:
             # Operational circuit breaker: keep saved-session identities and
             # conversations available without scanning their full usage history.
-            result = _empty_summary(datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-            result["_source_state"] = "disabled"
-            return result
-        lexical = str(Path(session_file).expanduser())
-        last_key = (lexical, expected_session_id)
+            return self._unavailable("disabled")
+        self._check_cancelled()
+        with self._lock:
+            self._check_cancelled()
+            return self._session_usage(session_file, expected_session_id)
+
+    def _session_usage(self, session_file: str | Path, expected_session_id: str | None) -> dict:
+        # A lexical key lets a definitive rejection evict the exact previous
+        # claim, including a symlink that now points outside the managed root.
+        cache_key = (os.path.abspath(os.path.expanduser(str(session_file))), expected_session_id)
+
+        def reject(state: str, updated_at: str | None = None) -> dict:
+            self._cache.pop(cache_key, None)
+            self._last_good.pop(cache_key, None)
+            return self._unavailable(state, updated_at)
+
+        def unavailable(state: str, updated_at: str | None = None) -> dict:
+            # A transient failure must be retried even if its stat is unchanged.
+            self._cache.pop(cache_key, None)
+            previous = self._last_good.get(cache_key)
+            if previous is not None:
+                self._last_good.move_to_end(cache_key)
+                return self._stale(previous)
+            return self._unavailable(state, updated_at)
+
         try:
             path = self._safe_path(session_file)
         except ValueError:
-            # A path that now escapes the managed root is a definitive rejection,
-            # never a reason to reuse a formerly cached identity.
-            result = _empty_summary(datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-            result["_source_state"] = "path_escape"
-            return result
+            return reject("path_escape")
         except (OSError, RuntimeError):
-            path = None
-        if path is not None:
-            lexical = str(path)
-            last_key = (lexical, expected_session_id)
+            return unavailable("unreadable")
         try:
-            if path is None:
-                raise OSError("session path is temporarily unavailable")
             stat = path.stat()
-            if not path.is_file():
-                raise OSError("not a regular file")
-            signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            if not stat_module.S_ISREG(stat.st_mode):
+                return reject("not_regular")
+            signature = self._signature(stat)
         except OSError:
-            with self._lock:
-                previous = self._last_good.get(last_key)
-            if previous is not None:
-                return self._stale(previous)
-            result = _empty_summary(datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-            result["_source_state"] = "unreadable"
-            return result
+            return unavailable("unreadable")
 
-        cache_key = (lexical, expected_session_id)
-        with self._lock:
-            cached = self._cache.get(cache_key)
-            if cached is not None and cached[0] == signature:
-                return cached[1]
+        cached = self._cache.get(cache_key)
+        if cached is not None and cached[0] == signature:
+            self._cache.move_to_end(cache_key)
+            return cached[1]
         parsed = self._parse(path, expected_session_id, _iso_from_ns(stat.st_mtime_ns))
-        with self._lock:
-            previous = self._last_good.get(last_key)
-            state = parsed.get("_source_state")
-            if state in {"unreadable", "truncated_header"} and previous is not None:
-                parsed = self._stale(previous)
-            elif state == "identity_mismatch":
-                # Do not resurrect the former identity if this mismatched source
-                # subsequently disappears or becomes unreadable.
-                self._last_good.pop(last_key, None)
-            elif parsed.get("_identity_valid") and parsed.get("cost_usd") is not None:
-                self._last_good[last_key] = parsed
-            self._cache[cache_key] = (signature, parsed)
+        self._check_cancelled()
+        state = parsed.get("_source_state")
+        if state in {"identity_mismatch", "malformed_header", "missing_header", "not_regular"}:
+            reject(str(state))
+            self._remember(self._cache, cache_key, (signature, parsed))
+            return parsed
+        if state in {"unreadable", "truncated_header", "source_changed"}:
+            return unavailable(str(state), parsed.get("updated_at"))
+        try:
+            if self._safe_path(session_file) != path:
+                return reject("source_changed")
+            if self._signature(path.stat()) != signature or parsed.pop("_source_signature", None) != signature:
+                return unavailable("source_changed", parsed.get("updated_at"))
+        except ValueError:
+            return reject("path_escape")
+        except (OSError, RuntimeError):
+            return unavailable("unreadable", parsed.get("updated_at"))
+        if parsed.get("_identity_valid") and parsed.get("cost_usd") is not None:
+            self._remember(self._last_good, cache_key, parsed)
+        self._remember(self._cache, cache_key, (signature, parsed))
         return parsed
 
     def _parse(self, path: Path, expected_session_id: str | None, updated_at: str) -> dict:
@@ -251,9 +355,26 @@ class FirstMateUsage:
             return True
 
         try:
-            with path.open("rb") as handle:
+            with self._open_source(path) as handle:
+                opened = os.fstat(handle.fileno())
+                if not stat_module.S_ISREG(opened.st_mode):
+                    return self._unavailable("not_regular", updated_at)
+                opened_signature = self._signature(opened)
+                remaining = opened.st_size
+
+                def read_chunk() -> bytes:
+                    nonlocal remaining
+                    self._check_cancelled()
+                    # A pass ends at its original boundary, even if a writer is
+                    # continuously appending faster than this reader proceeds.
+                    if remaining <= 0:
+                        return b""
+                    value = handle.readline(min(MAX_RECORD + 1, remaining))
+                    remaining -= len(value)
+                    return value
+
                 while True:
-                    line = handle.readline(MAX_RECORD + 1)
+                    line = read_chunk()
                     if not line:
                         break
                     if len(line) > MAX_RECORD:
@@ -262,7 +383,7 @@ class FirstMateUsage:
                             return summary
                         gaps = True
                         while line and not line.endswith(b"\n"):
-                            line = handle.readline(MAX_RECORD + 1)
+                            line = read_chunk()
                         continue
                     if not line.endswith(b"\n"):
                         if not header_seen:
@@ -410,6 +531,11 @@ class FirstMateUsage:
                     if not valid_record:
                         gaps = True
                         model_row["complete"] = False
+                if self._signature(os.fstat(handle.fileno())) != opened_signature:
+                    return self._unavailable("source_changed", updated_at)
+                summary["_source_signature"] = opened_signature
+        except InterruptedError:
+            raise
         except OSError:
             unavailable = _empty_summary(updated_at)
             unavailable.update(_session_id=None, _identity_valid=False, _source_state="unreadable")
@@ -445,7 +571,7 @@ class FirstMateUsage:
         return {key: value for key, value in summary.items() if not key.startswith("_")}
 
     def account(self, *, feature_id: str, assignments: list[dict], ledger_sessions: list[dict],
-                jobs: list[dict], jobs_root: Path, updated_at: str) -> dict:
+                jobs: list[dict], jobs_root: Path, updated_at: str, discover_unbound: bool = False) -> dict:
         """Account one feature from its complete ledger and managed job inventory."""
         assignment_by_id = {assignment["id"]: assignment for assignment in assignments}
         jobs_by_id = {job.get("id"): job for job in jobs if job.get("id")}
@@ -480,23 +606,29 @@ class FirstMateUsage:
         # A stored native ID always remains authoritative and is validated later.
         discovered_job_ids: dict[str, str] = {}
         for job in eligible_jobs:
+            self._check_cancelled()
             if job.get("native_session_id") or not job.get("session_file"):
                 continue
             if not (jobs_root / str(job.get("id")) / "started.json").exists():
                 continue
-            parsed = self.session_usage(job["session_file"])
-            if parsed.get("_identity_valid") and parsed.get("_session_id"):
-                discovered_job_ids[str(job.get("id"))] = parsed["_session_id"]
+            # Header discovery is independent of optional accounting. Explicit
+            # metadata-only callers can retain access across the bind crash gap.
+            native_id = (self.discover_session_id(job["session_file"])
+                         if self.enabled or discover_unbound else None)
+            if native_id:
+                discovered_job_ids[str(job.get("id"))] = native_id
 
         path_features: dict[str, set[str]] = {}
         native_features: dict[str, set[str]] = {}
         for row in ledger_sessions:
+            self._check_cancelled()
             path = canonical_path(row.get("session_file"))
             if path and row.get("feature_id"):
                 path_features.setdefault(path, set()).add(row["feature_id"])
             if row.get("native_session_id") and row.get("feature_id"):
                 native_features.setdefault(row["native_session_id"], set()).add(row["feature_id"])
         for job in eligible_jobs:
+            self._check_cancelled()
             path = canonical_path(job.get("session_file"))
             if path and job.get("feature_id"):
                 path_features.setdefault(path, set()).add(job["feature_id"])
@@ -531,6 +663,7 @@ class FirstMateUsage:
         accounted: dict[str, dict] = {}
         anonymous = 0
         for source in sources.values():
+            self._check_cancelled()
             expected_ids = source["expected_ids"]
             expected = next(iter(expected_ids)) if len(expected_ids) == 1 else None
             cross_feature = (len(path_features.get(source["path"], set())) > 1

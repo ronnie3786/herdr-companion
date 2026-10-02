@@ -222,6 +222,8 @@ class HerdrService:
         self._skims = None
         self._pr_review_store = pr_review_store
         self._pr_review_runtime = pr_review_runtime
+        self._watchers_runtime = None
+        self._watchers_builder = None
         self._owns_pr_review_store = pr_review_store is None
         self._owns_first_mate_store = first_mate_store is None
         self._control_store = control_store
@@ -545,10 +547,14 @@ class HerdrService:
             self.skims.start()
         if self._pr_review_execution_enabled:
             self.pr_review.start()
+        if self.watchers_enabled:
+            self.watchers.start()
         if self._quick_voice_recovery_enabled:
             self.quick_voice.recover()
 
     def stop(self) -> None:
+        if self._watchers_runtime is not None:
+            self._watchers_runtime.stop()
         if self._skims is not None:
             self._skims.stop()
         if self._first_mate_notifications is not None:
@@ -665,6 +671,38 @@ class HerdrService:
         if self._first_mate_execution_enabled:
             self.first_mate.wake()
         self.broker.publish("first_mate.updated", {"feature_id": feature_id, "generatedAt": utc_now()})
+
+    @property
+    def watchers_enabled(self) -> bool:
+        return self.environ.get("HERDR_WATCHERS_ENABLED") == "1"
+
+    @property
+    def watchers_machine(self) -> dict:
+        identifier = self.environ.get("HERDR_MACHINE") or "local"
+        return {"id": identifier, "name": self.environ.get("HERDR_MACHINE_NAME") or identifier}
+
+    @property
+    def watchers(self):
+        from .watchers.errors import WatchersError
+        from .watchers.store import WatchersStore
+        from .watchers.runtime import WatchersRuntime
+        if not self.watchers_enabled:
+            raise WatchersError("watchers_disabled", "Set HERDR_WATCHERS_ENABLED=1 on this companion to use Watchers.", 503)
+        with self._lock:
+            if self._watchers_runtime is None:
+                state = Path(self.environ.get("HERDR_STATE_DIR") or Path(self.environ.get("HOME") or Path.home()) / ".local/share/herdr-companion")
+                root = Path(self.environ.get("HERDR_HARNESS_WATCHERS_ROOT") or state / "watchers")
+                store = WatchersStore(self.environ.get("HERDR_HARNESS_WATCHERS_STORE_PATH") or state / "watchers.sqlite3", root, self.watchers_machine)
+                self._watchers_runtime = WatchersRuntime(store, self.environ, broker=self.broker)
+            return self._watchers_runtime
+
+    @property
+    def watchers_builder(self):
+        from .watchers.builder import WatchersBuilder
+        with self._lock:
+            if self._watchers_builder is None:
+                self._watchers_builder = WatchersBuilder(self)
+            return self._watchers_builder
 
     @property
     def pr_review_store(self) -> PRReviewStore:
@@ -2078,6 +2116,7 @@ class HerdrService:
                 "generatedAt": generated_at,
             },
             "alerts": {"unread": self.alerts.unread_count()},
+            "scheduler": self._watchers_runtime.status() if self._watchers_runtime is not None else {"running": False, "last_tick_at": None, "next_fire_at": None},
             "generatedAt": utc_now(),
         }
 

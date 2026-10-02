@@ -8,15 +8,19 @@ struct AgentRoleRow: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 9) {
-                Image(systemName: role.locked ? "lock.shield" : "person.fill")
-                    .herdrFont(.body)
-                    .foregroundStyle(selected ? HerdrTheme.accent : HerdrTheme.secondaryText)
-                    .frame(width: 30, height: 30)
-                    .background(HerdrTheme.firstMateAvatarFill.opacity(selected ? 0.9 : 0.4), in: Circle())
-                    .overlay(Circle().strokeBorder(selected ? HerdrTheme.accent.opacity(0.8) : .clear))
-                    .accessibilityHidden(true)
+                if role.isPRReview {
+                    AgentRoleAvatarView(avatar: role.avatar, size: 30, selected: selected)
+                } else {
+                    Image(systemName: role.locked ? "lock.shield" : "person.fill")
+                        .herdrFont(.body)
+                        .foregroundStyle(selected ? HerdrTheme.accent : HerdrTheme.secondaryText)
+                        .frame(width: 30, height: 30)
+                        .background(HerdrTheme.firstMateAvatarFill.opacity(selected ? 0.9 : 0.4), in: Circle())
+                        .overlay(Circle().strokeBorder(selected ? HerdrTheme.accent.opacity(0.8) : .clear))
+                        .accessibilityHidden(true)
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(role.name).herdrFont(.callout, weight: .medium).lineLimit(2)
+                    Text(role.name).herdrFont(.callout, weight: .medium).lineLimit(1).help(role.name)
                     Text(role.locked ? "System" : role.skillIds.map { "\($0.count) \($0.count == 1 ? "skill" : "skills")" } ?? "Automatic skills")
                         .herdrFont(.caption2)
                         .foregroundStyle(HerdrTheme.secondaryText)

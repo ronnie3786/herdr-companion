@@ -14,7 +14,7 @@ enum PRReviewDemo {
         value.review.deletions = value.files.reduce(0) { $0 + $1.deletions }
         value.review.viewerReview = .init(state: "pending", pendingCommentCount: 3, needsUser: true, isOwnPR: false, updatedAt: HerdrTimestamp.string(from: .now))
         value.review.skillRuns = value.runs.map { .init(skillID: $0.skillID, title: $0.skillTitle, state: $0.state.rawValue, updatedAt: $0.finishedAt ?? $0.startedAt) }
-        return value
+        return PRReviewAgentDemo.decorating(value)
     }
 
     /// Review-aware lookup used by the demo store and popped-out windows:

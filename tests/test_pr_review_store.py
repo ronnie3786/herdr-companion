@@ -69,7 +69,7 @@ class PRReviewStoreTests(unittest.TestCase):
         self.assertEqual(archived["revision"], revision + 2)
         second = self.store.create_review(self.body("new-after-archive"))
         self.assertNotEqual(second["id"], first["id"])
-        self.assertEqual(set(self.store.snapshot(second["id"])), {"review", "files", "skills", "runs", "documents", "events"})
+        self.assertEqual(set(self.store.snapshot(second["id"])), {"review", "files", "skills", "runs", "documents", "events", "consolidation"})
 
     def test_custom_skill_validation_and_disabling(self):
         with self.assertRaises(PRReviewError) as raised:

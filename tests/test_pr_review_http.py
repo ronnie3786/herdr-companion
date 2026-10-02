@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 from herdr_harness.pr_review_runtime import PRReviewDocumentContent, parse_pr_url
 from herdr_harness.pr_review_store import PRReviewError, PRReviewStore
+from herdr_harness.agent_roles import AgentRoles, PR_REVIEW_BUILTIN_ID
+from herdr_harness.pr_review_agents import _agent_ids
 from herdr_harness.server import make_handler
 
 
@@ -25,14 +27,22 @@ class FakeRuntime:
         self.guide = SimpleNamespace(walkthroughs=store.walkthroughs, mark_seen=store.mark_walkthrough_seen)
 
     def capabilities(self):
-        return {"available": True, "gh_available": True, "runner": "synthetic", "runner_available": True, "pi_available": True, "workspace_label": "PR Reviews", "auto_rank": False, "sync_viewed_to_github": True, "reason": None}
+        return {"available": True, "gh_available": True, "runner": "synthetic", "runner_available": True, "pi_available": True, "workspace_label": "PR Reviews", "auto_rank": False, "sync_viewed_to_github": True, "reason": None, "agents": self.roles.review_catalog()}
 
-    def create_review(self, url, request_id, skill_ids, actor):
+    def create_review(self, url, request_id, skill_ids, actor, *, agent_ids=None):
+        if agent_ids is not None:
+            _agent_ids(agent_ids, allow_empty=True)
         parsed = parse_pr_url(url)
         review = self.store.create_review({**parsed, "request_id": request_id})
         self.store.update_review(review["id"], status="ready", checkout_path=str(self.root))
         self.store.upsert_files(review["id"], [{"path": "Sources/Garden.py", "status": "modified", "additions": 2, "deletions": 1}])
+        if agent_ids:
+            self.start_agent_runs(review["id"], agent_ids, request_id, actor)
         return self.store.get_review(review["id"], True)
+
+    def start_agent_runs(self, review_id, ids, request_id, actor=""):
+        _agent_ids(ids)
+        return self.store.queue_agent_runs(review_id, [self.roles.snapshot(rid) for rid in ids], request_id, actor)
 
     def refresh_review(self, review_id, request_id):
         self.refreshes.append((review_id, request_id))
@@ -106,10 +116,43 @@ class FakeRuntime:
 
 
 class PRReviewHTTPTests(unittest.TestCase):
+    def test_saved_agents_create_and_batch_runs_are_additive_and_authenticated(self):
+        _, capabilities, _ = self.request("/api/v1/pr-reviews/capabilities")
+        self.assertIn("pr-review-agents-v1", capabilities["capabilities"])
+        self.assertEqual(capabilities["agents"][0]["id"], PR_REVIEW_BUILTIN_ID)
+        path = "/api/v1/pr-reviews"
+        body = {"url": "https://github.com/example-owner/garden/pull/42", "request_id": "agent-create", "agent_ids": [PR_REVIEW_BUILTIN_ID]}
+        status, created, _ = self.request(path, body, method="POST")
+        self.assertEqual(status, 201)
+        review_id = created["review"]["id"]
+        self.assertEqual(created["consolidation"]["state"], "waiting")
+        self.assertEqual(created["runs"][0]["agent_id"], PR_REVIEW_BUILTIN_ID)
+        self.assertIsNone(created["consolidation"]["head_sha"])
+        _, snapshot, _ = self.request(path + "/" + review_id)
+        self.assertEqual(snapshot["consolidation"]["state"], "waiting")
+        self.assertEqual(snapshot["runs"][0]["agent_id"], PR_REVIEW_BUILTIN_ID)
+        self.assertEqual(snapshot["runs"][0]["kind"], "reviewer")
+        self.assertEqual(self.request(path, {**body, "skill_ids": []}, method="POST")[0], 400)
+        self.assertEqual(self.request(path, {**body, "agent_ids": "invalid"}, method="POST")[0], 400)
+        run_path = path + "/" + review_id + "/runs"
+        self.store.update_run(review_id, snapshot["runs"][0]["id"], state="failed")
+        status, batch, _ = self.request(run_path, {"agent_ids": [PR_REVIEW_BUILTIN_ID], "request_id": "agent-batch"}, method="POST")
+        self.assertEqual(status, 202)
+        self.assertEqual(len(batch["runs"]), 1)
+        self.store.update_run(review_id, batch["runs"][0]["id"], state="failed")
+        status, single, _ = self.request(run_path, {"agent_id": PR_REVIEW_BUILTIN_ID, "request_id": "agent-single"}, method="POST")
+        self.assertEqual(status, 202)
+        self.assertEqual(single["run"]["agent_id"], PR_REVIEW_BUILTIN_ID)
+        for invalid in ({"agent_ids": []}, {"agent_ids": [PR_REVIEW_BUILTIN_ID] * 2}, {"agent_id": PR_REVIEW_BUILTIN_ID, "skill_id": "comprehensive-pr-review"}):
+            self.assertEqual(self.request(run_path, {**invalid, "request_id": "invalid"}, method="POST")[0], 400)
+        self.assertEqual(self.request(run_path, {"agent_ids": [PR_REVIEW_BUILTIN_ID], "request_id": "unauthorized"}, token="synthetic-ingest-token", method="POST")[0], 401)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = PRReviewStore(Path(self.temp.name) / "reviews.sqlite3")
         runtime = FakeRuntime(self.store, self.temp.name)
+        self.roles = AgentRoles(environ={})
+        runtime.roles = self.roles
         self.service = SimpleNamespace(
             environ={"HERDR_HARNESS_API_TOKEN": "synthetic-main-token", "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": "synthetic-ingest-token"},
             pr_review_store=self.store,
@@ -126,6 +169,7 @@ class PRReviewHTTPTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
         self.store.close()
+        self.roles.close()
         self.temp.cleanup()
 
     def request(self, path, body=None, token="synthetic-main-token", method=None):

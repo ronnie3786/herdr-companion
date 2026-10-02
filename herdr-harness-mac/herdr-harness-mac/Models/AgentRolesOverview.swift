@@ -11,6 +11,9 @@ struct AgentRolesOverview: Codable, Equatable, Sendable {
     let warnings: [String]
     /// Per-role copy health is separate from the host's optional discovery folders.
     var missingRoleSkills: [String: [String]]? = nil
+    var capabilities: [String]? = nil
+
+    var supportsPRReviewAgents: Bool { capabilities?.contains("pr-review-agents-v1") == true }
 
     func validated() throws -> Self {
         guard ok, capability == "agent-roles-v1", revision >= 0,

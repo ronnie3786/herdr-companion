@@ -1,4 +1,18 @@
-# Next macOS update — unreleased
+# Next macOS update, unreleased
+
+## Watchers
+
+- Open **Watchers** below **PR Review** in the sidebar, or press **Command-9**.
+  Original avatars and smart-chip descriptions sit in a responsive card grid
+  using Herdr's purple Glass and Haze appearance.
+- See what is on watch, working, resting or needs you, with real step progress,
+  the next routine to wake, past runs, logs and a separate Watcher inbox.
+- **New watcher** opens a focused agent chat with a live draft and **How it runs**
+  preview. Review scripts and next fires, or use the manual editor, before
+  clicking **Create watcher**. Machines retain their own schedules and state.
+- Requires the matching companion with Watchers enabled. The Mac updater does
+  not install the companion or migrate Cronboard. Older and offline hosts show
+  their availability instead of accepting changes they cannot apply.
 
 ## First Mate inspector
 
@@ -172,6 +186,11 @@
 - An unreachable machine or one without PR Review support shows its own notice without hiding the other machines' reviews. Opening, archiving, refreshing and popping out a row stay on that row's machine, even when review IDs or PR numbers match.
 - New reviews from All machines start on the Settings **PR review host**, or on the open review's machine if no host is configured. Choosing a specific machine keeps creation there.
 - Mac-only; no companion update is needed. Existing `pr-review-v1` support is sufficient; demo mode and popped-out review windows are unchanged.
+
+## PR Review viewed undo
+
+- In PR Review → Files, ⌃Z undoes and ⌃⇧Z redoes your own Viewed toggles from the checkbox, ⌥V, or **Mark viewed / Mark unviewed**, in either direction. Undo saves and syncs like a manual toggle; comparison marks stay local. With Hide viewed on, undo restores and selects the file when it matches the other filters. Issue #162.
+- Each main or popped-out window has its own history of up to 100 changes, cleared on host, review, comparison, or base/head revision changes and not persisted across relaunch. Agent and walkthrough marks are excluded, and ⌘Z text undo is unchanged. Mac-only; no companion update is needed beyond existing `pr-review-v1` support.
 
 ## PR Review
 

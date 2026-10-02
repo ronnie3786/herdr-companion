@@ -221,6 +221,9 @@ struct WorkspaceNavigationView: View {
                         openDashboard: { shell.goHome(model: model) },
                         openFirstMate: { shell.show(.firstMate, model: model) },
                         openPRReview: { shell.show(.prReview, model: model) },
+                        openWatchers: { shell.show(.watchers, model: model) },
+                        watchersUnreadCount: shell.watchers.unreadCount,
+                        watchersSelected: shell.detailScope == .watchers,
                         firstMateAttentionCount: firstMateAttentionCount,
                         prReviewWalkthroughCount: shell.prReview.walkthroughAttentionCount,
                         showsHeader: false
@@ -397,6 +400,19 @@ struct WorkspaceNavigationView: View {
 
     var body: some View {
         navigationContent
+        .task(id: prReviewFleetConnectionIdentity) {
+            let sources = model.machines.compactMap { machine -> WatchersSource? in
+                guard let configuration = model.prReviewConfiguration(machineID: machine.id) else { return nil }
+                return WatchersSource(machineID: machine.id, machineName: machine.name, client: HerdrAPIClient(configuration: configuration))
+            }
+            shell.watchers.configure(sources, identity: prReviewFleetConnectionIdentity, demo: model.isDemoMode)
+            if model.isDemoMode, ProcessInfo.processInfo.arguments.contains("-HerdrWatchersDemo") { shell.show(.watchers, model: model) }
+            while !Task.isCancelled {
+                await shell.watchers.refresh()
+                do { try await Task.sleep(for: shell.watchers.pollingInterval) } catch { return }
+            }
+        }
+        .task(id: model.watchersRefreshTick) { await shell.watchers.refresh() }
         .task(id: firstMateDetailConnectionIdentity) {
             // Connection changes own store configuration. The process-owned
             // guard also makes this safe when closing and recreating the main
@@ -853,6 +869,8 @@ struct WorkspaceNavigationView: View {
                 popOutChat: firstMateChatWindowEnabled ? { openFirstMateChatWindow() } : nil
             )
             .environment(\.firstMateMarkRead, markFirstMateRead)
+        case .watchers:
+            WatchersView(store: shell.watchers)
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,
@@ -1022,7 +1040,7 @@ struct WorkspaceNavigationView: View {
 
     private var showsScopePicker: Bool {
         switch shell.detailScope {
-        case .dashboard, .agentBoard, .firstMate, .prReview: false
+        case .dashboard, .agentBoard, .firstMate, .prReview, .watchers: false
         default: true
         }
     }
@@ -1037,6 +1055,11 @@ struct WorkspaceNavigationView: View {
                 .lineLimit(1)
         case .firstMate:
             Label("First Mate", systemImage: "sailboat")
+                .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
+                .foregroundStyle(chromeTitle)
+                .lineLimit(1)
+        case .watchers:
+            Label("Watchers", systemImage: "eye")
                 .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                 .foregroundStyle(chromeTitle)
                 .lineLimit(1)

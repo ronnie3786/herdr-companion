@@ -25,6 +25,7 @@ from .first_mate_read_models import feature_summary
 from .first_mate_verification import VERIFICATION_CAPABILITY
 from .workflow_policy import POLICY_VERSION
 from .pr_review_store import PRReviewError
+from .watchers.errors import WatchersError
 from .agent_runs import ISSUE_REPORT_DRAFT_PROFILE, SMART_RENAME_PROFILE, AgentRunError, MAX_ATTACHMENTS, MODEL_PATTERN, THINKING_LEVELS
 from .alerts import utc_now
 from .issue_reports import IssueReportError
@@ -474,6 +475,7 @@ def api_description() -> dict:
             "first-mate-lenient-verification-recording-v1", POLICY_VERSION,
             simulator_previews.CAPABILITY,
             "pr-review-v1",
+            "pr-review-agents-v1",
             "pr-review-guide-v1",
             "pr-review-walkthroughs-v1",
             "pr-review-context-v2",
@@ -1049,6 +1051,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._json_response({"ok": False, "error": error, "generatedAt": utc_now()}, exc.status)
             except PRReviewError as exc:
                 self._error(exc.status, exc.code, str(exc))
+            except WatchersError as exc:
+                self._error(exc.status, exc.code, str(exc))
             except IssueReportError as exc:
                 error: dict[str, Any] = {"code": exc.code, "message": str(exc)}
                 if exc.report_id:
@@ -1621,7 +1625,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             store = service.pr_review_store
             runtime = service.pr_review
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-walkthroughs-v1", "pr-review-comparison-v1", "git-comparison-v1"], **runtime.capabilities(), "skills": store.skills()}
+                details = runtime.capabilities()
+                if self._authorization_scope != "main":
+                    details.pop("agents", None)
+                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-agents-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-walkthroughs-v1", "pr-review-comparison-v1", "git-comparison-v1"], **details, "skills": store.skills()}
             if method == "POST" and tail == ["review-status", "refresh"]:
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Review status refresh contains an unsupported field")
@@ -1646,9 +1653,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("scope is invalid")
                     return {"ok": True, "reviews": store.list_reviews(scope)}
                 if method == "POST":
-                    if set(body) - {"url", "request_id", "skill_ids", "actor"}:
+                    if set(body) - {"url", "request_id", "skill_ids", "agent_ids", "actor"}:
                         raise HTTPValidationError("Review contains an unsupported field")
-                    review = runtime.create_review(_string(body.get("url"), "url", maximum=4096), _string(body.get("request_id"), "request_id", maximum=200), body.get("skill_ids") or [], body.get("actor") or "")
+                    options = {}
+                    if "agent_ids" in body:
+                        if self._authorization_scope != "main":
+                            raise HTTPValidationError("Saved review agents require full authentication", code="review_agents_scope_forbidden", status=403)
+                        if "skill_ids" in body:
+                            raise HTTPValidationError("Choose agent_ids or skill_ids")
+                        options["agent_ids"] = body["agent_ids"]
+                    review = runtime.create_review(_string(body.get("url"), "url", maximum=4096), _string(body.get("request_id"), "request_id", maximum=200), body.get("skill_ids") or [], body.get("actor") or "", **options)
+                    if "agent_ids" in body:
+                        return {"ok": True, **store.snapshot(review["id"])}, 201
                     return {"ok": True, "review": review}, 201
                 raise HTTPValidationError("PR Review endpoint not found", code="not_found", status=404)
             review_id = _identifier(tail[0], "review_id")
@@ -1699,8 +1715,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if rest == ["findings"] and method == "GET":
                 return {"ok": True, **runtime.findings_for_path(review_id, _string((query.get("path") or [None])[0], "path", maximum=4096))}
             if rest == ["runs"] and method == "POST":
-                if set(body) - {"skill_id", "request_id", "actor"}:
+                if set(body) - {"skill_id", "agent_id", "agent_ids", "request_id", "actor"}:
                     raise HTTPValidationError("Run contains an unsupported field")
+                selectors = {"skill_id", "agent_id", "agent_ids"}.intersection(body)
+                if len(selectors) != 1:
+                    raise HTTPValidationError("Choose exactly one of skill_id, agent_id, or agent_ids")
+                if selectors != {"skill_id"}:
+                    if self._authorization_scope != "main":
+                        raise HTTPValidationError("Saved review agents require full authentication", code="review_agents_scope_forbidden", status=403)
+                    ids = body["agent_ids"] if "agent_ids" in body else [_identifier(body["agent_id"], "agent_id")]
+                    runs = runtime.start_agent_runs(review_id, ids, _string(body.get("request_id"), "request_id", maximum=200), body.get("actor") or "")
+                    return {"ok": True, **({"runs": runs} if "agent_ids" in body else {"run": runs[0]})}, 202
                 run = runtime.start_run(review_id, _identifier(body.get("skill_id"), "skill_id"), _string(body.get("request_id"), "request_id", maximum=200), body.get("actor") or "")
                 return {"ok": True, "run": run}, 202
             if len(rest) >= 2 and rest[0] == "runs":
@@ -2032,7 +2057,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             # segments starts with api, v1.
             tail = segments[2:]
             if method == "GET" and not tail:
-                return api_description()
+                description = api_description()
+                description["endpoints"]["watchersCapabilities"] = "/api/v1/watchers/capabilities"
+                if getattr(service, "watchers_enabled", False):
+                    description["capabilities"].append("watchers-v1")
+                    description["endpoints"]["watchers"] = "/api/v1/watchers"
+                    description["sseEvents"].extend(["watchers.updated", "watchers.run", "watchers.inbox", "watchers.builder"])
+                return description
+            if tail[:1] == ["watchers"]:
+                if self._authorization_scope != "main":
+                    return self._error(403, "watchers_scope_forbidden", "Watchers require full authentication")
+                from .watchers.api import route
+                return route(service, method, tail[1:], query, body)
             if tail[:1] in (["control"], ["discovery"], ["ui"]):
                 response = self._control_route(method, tail, query, body)
                 if response is None:
@@ -3496,7 +3532,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
         def do_OPTIONS(self) -> None:
             self.send_response(204)
             self.send_header("Content-Length", "0")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
             self.send_header(
                 "Access-Control-Allow-Headers",
                 "Authorization, Content-Type, Last-Event-ID, X-Herdr-Actor",

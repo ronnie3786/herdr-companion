@@ -49,3 +49,16 @@ def first_mate():
 
 def pr_review():
     return _run("herdr_pr_review_cli")
+
+
+def watchers():
+    # Watchers resolves remote credentials through control_cli.machine_client,
+    # so retain --machine and --config instead of consuming them in _run.
+    from importlib import import_module
+    try:
+        command = import_module("herdr_commands.herdr_watchers_cli")
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"herdr_commands", "herdr_commands.herdr_watchers_cli"}:
+            raise
+        command = import_module("scripts.herdr_watchers_cli")
+    return command.main()

@@ -160,6 +160,8 @@ class PRReviewRuntime:
         self._last_review_status_refresh = 0.0
         from .pr_review_guide import ReviewGuideService
         self.guide = ReviewGuideService(self)
+        from .pr_review_agents import PRReviewAgents
+        self.agents = PRReviewAgents(self)
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -318,7 +320,7 @@ class PRReviewRuntime:
             reason = "The configured PR review runner is unsupported"
         elif not runner_bin:
             reason = "The configured PR review runner is not installed"
-        return {"available": bool(gh_bin and runner_bin and runner in {"pi", "claude"}), "gh_available": bool(gh_bin), "runner": runner, "runner_available": bool(runner_bin), "pi_available": bool(pi_bin), "workspace_label": self.workspace_label, "checkout_root": str(self.checkout_root), "auto_rank": _enabled(self.environ, "HERDR_PR_REVIEW_AUTO_RANK", True), "sync_viewed_to_github": _enabled(self.environ, "HERDR_PR_REVIEW_SYNC_VIEWED", True), "reason": reason}
+        return {"available": bool(gh_bin and runner_bin and runner in {"pi", "claude"}), "gh_available": bool(gh_bin), "runner": runner, "runner_available": bool(runner_bin), "pi_available": bool(pi_bin), "workspace_label": self.workspace_label, "checkout_root": str(self.checkout_root), "auto_rank": _enabled(self.environ, "HERDR_PR_REVIEW_AUTO_RANK", True), "sync_viewed_to_github": _enabled(self.environ, "HERDR_PR_REVIEW_SYNC_VIEWED", True), "reason": reason, "agents": self.agents.catalog()}
 
     def _review_dir(self, review_id: str) -> Path:
         return self.runs_root / "reviews" / review_id
@@ -342,15 +344,36 @@ class PRReviewRuntime:
                 path.rename(quarantine)
                 return quarantine
 
-    def create_review(self, url: str, request_id: str, skill_ids: list[str] | None = None, actor: str = "") -> dict[str, Any]:
-        review = self.store.create_review(parse_pr_url(url) | {"request_id": request_id})
+    def create_review(self, url: str, request_id: str, skill_ids: list[str] | None = None, actor: str = "", *, agent_ids: list[str] | None = None) -> dict[str, Any]:
+        payload = parse_pr_url(url) | {"request_id": request_id}
+        if agent_ids is not None:
+            from .pr_review_agents import _agent_ids
+            _agent_ids(agent_ids, allow_empty=True)
+            if skill_ids:
+                raise PRReviewError("Choose saved agents or legacy skills in one request", code="invalid_request", status=400)
+            agent_payload = {"url": payload["url"], "agent_ids": agent_ids, "actor": actor}
+            retained = self.store.receipt("create-agent-review", request_id, agent_payload)
+            if retained is not None:
+                return self.store.get_review(retained["id"], True)
+            # Validate all new selections before creating a partial review.
+            if self.store.receipt("create_review", request_id, payload) is None:
+                self.agents.snapshots(agent_ids)
+        review = self.store.create_review(payload)
+        if agent_ids:
+            self.agents.queue(review["id"], agent_ids, request_id, actor, preparing=True)
         for skill_id in skill_ids or []:
             if review["status"] == "ready":
                 self.start_run(review["id"], skill_id, f"{request_id}:{skill_id}", actor)
             elif not any(run["skill_id"] == skill_id for run in self.store.runs_for_review(review["id"])):
                 self.store.queue_run(review["id"], skill_id, f"{request_id}:{skill_id}", actor)
         self._schedule_preparation(review["id"])
+        if agent_ids is not None:
+            self.store.save_receipt("create-agent-review", request_id, agent_payload, {"id": review["id"]})
+            return self.store.get_review(review["id"], True)
         return review
+
+    def start_agent_runs(self, review_id: str, agent_ids: list[str], request_id: str, actor: str = "") -> list[dict[str, Any]]:
+        return self.agents.queue(review_id, agent_ids, request_id, actor)
 
     def _schedule_preparation(self, review_id: str) -> None:
         with self._lock:
@@ -643,6 +666,9 @@ class PRReviewRuntime:
     def _launch_existing_run(self, review_id: str, run_id: str) -> None:
         review = self.store.get_review(review_id, True)
         run = self.store.run(review_id, run_id)
+        if run.get("kind") in {"reviewer", "consolidator"}:
+            self.agents.schedule(review_id, run_id)
+            return
         if run["state"] != "queued" or run.get("started_at") is not None:
             return
         skill = self.store.skill(run["skill_id"])
@@ -807,6 +833,8 @@ class PRReviewRuntime:
         for review in self.store.list_reviews("active"):
             changed = False
             for run in self.store.runs_for_review(review["id"]):
+                if run.get("kind") in {"reviewer", "consolidator"}:
+                    continue
                 if run["state"] != "running":
                     continue
                 if heavy:
@@ -837,6 +865,7 @@ class PRReviewRuntime:
                         changed = True
             if changed:
                 self._changed(review["id"])
+        self.agents.reconcile()
 
     def finish_run(self, review_id: str, run_id: str, state: str, note: str, request_id: str) -> dict[str, Any]:
         scope = f"finish:{review_id}:{run_id}"
@@ -847,6 +876,8 @@ class PRReviewRuntime:
         if state not in {"finished", "failed"}:
             raise PRReviewError("Invalid run state", code="invalid_request", status=400)
         run = self.store.run(review_id, run_id)
+        if run.get("kind") in {"reviewer", "consolidator"}:
+            raise PRReviewError("Saved reviewers finish from their managed session. Rerun a failed reviewer from Agents.", code="managed_review_run")
         if run["state"] not in {"queued", "running"}:
             raise PRReviewError("Run is not running", code="run_not_running")
         review = self.store.get_review(review_id, True)
@@ -1008,6 +1039,8 @@ class PRReviewRuntime:
 
     def run_output(self, review_id: str, run_id: str, lines: int = 200) -> dict[str, Any]:
         run = self.store.run(review_id, run_id)
+        if run.get("kind") in {"reviewer", "consolidator"}:
+            return self.agents.output(run, lines)
         if run.get("pane_id"):
             try:
                 response = self.service.read_pane(str(run["pane_id"]), lines=lines)

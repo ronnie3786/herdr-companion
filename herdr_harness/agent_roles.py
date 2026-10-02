@@ -18,6 +18,11 @@ from .first_mate_routing import DELEGATION_PROFILES
 from .agent_role_skills import install_bundle, validate_bundles
 
 CAPABILITY = "agent-roles-v1"
+PR_REVIEW_CAPABILITY = "pr-review-agents-v1"
+PR_REVIEW_BUILTIN_ID = "pr-review-comprehensive"
+PR_REVIEW_PROMPT = ("Perform an adversarial code review of this pull request. Focus on actionable correctness, regression, "
+                    "and missing-test issues. Verify each finding against the code and explain its impact.\n\nPull request: {url}")
+ROLE_AVATARS = frozenset({"review", "code", "architecture", "quality", "design", "security", "data", "concurrency"})
 MAX_SKILLS = 2000
 MAX_SCAN_ENTRIES = 10000
 MAX_SCAN_DEPTH = 8
@@ -35,7 +40,7 @@ _BUILTINS = (
     ("research_scout", "Research Scout", "Research a focused question and return evidence.", "research_scout"),
     ("recovery_advisor", "Recovery Advisor", "Advise on recovery with restricted tools and no skills.", "execution"),
 )
-BUILTIN_IDS = frozenset(item[0] for item in _BUILTINS)
+BUILTIN_IDS = frozenset(item[0] for item in _BUILTINS) | {PR_REVIEW_BUILTIN_ID}
 
 
 class AgentRoleError(ValueError):
@@ -68,12 +73,17 @@ def _role_id(value):
 
 
 def _seed_roles():
-    return {rid: {"id": rid, "name": name, "builtin": True,
+    roles = {rid: {"id": rid, "name": name, "builtin": True,
                   "locked": rid == "recovery_advisor", "whenToUse": description,
                   "systemPrompt": "", "modelProfile": profile,
                   "allowDelegation": rid != "recovery_advisor",
-                  "skillIds": [] if rid == "recovery_advisor" else None}
+                  "skillIds": [] if rid == "recovery_advisor" else None,
+                  "purpose": "worker", "reviewPrompt": "", "group": "", "avatar": "review"}
             for rid, name, description, profile in _BUILTINS}
+    roles[PR_REVIEW_BUILTIN_ID] = {"id": PR_REVIEW_BUILTIN_ID, "name": "Comprehensive", "builtin": True,
+        "locked": False, "whenToUse": "", "systemPrompt": "", "modelProfile": "default", "allowDelegation": False,
+        "skillIds": [], "purpose": "pr_review", "reviewPrompt": "", "group": "", "avatar": "review"}
+    return roles
 
 
 def _metadata(raw, fallback):
@@ -249,7 +259,14 @@ class AgentRoles:
             self._temporary.cleanup()
 
     def _state(self):
-        return json.loads(self._db.execute("SELECT payload FROM agent_roles WHERE id=1").fetchone()[0])
+        state = json.loads(self._db.execute("SELECT payload FROM agent_roles WHERE id=1").fetchone()[0])
+        # Additive migration: old clients keep their worker identities and their
+        # revision. The first mutation persists these defaulted fields.
+        state["roles"].setdefault(PR_REVIEW_BUILTIN_ID, _seed_roles()[PR_REVIEW_BUILTIN_ID])
+        for role in state["roles"].values():
+            for key, value in {"purpose": "worker", "reviewPrompt": "", "group": "", "avatar": "review"}.items():
+                role.setdefault(key, value)
+        return state
 
     def _catalog(self, state):
         catalog = skill_catalog(self.sources)
@@ -285,7 +302,7 @@ class AgentRoles:
     def overview(self):
         with self._lock:
             state = self._state()
-        return {"ok": True, "capability": CAPABILITY, "machineId": self.machine_id,
+        return {"ok": True, "capability": CAPABILITY, "capabilities": [PR_REVIEW_CAPABILITY], "machineId": self.machine_id,
                 "revision": state["revision"], "roles": list(state["roles"].values()),
                 **self._catalog(state)}
 
@@ -314,16 +331,26 @@ class AgentRoles:
         with self._lock:
             roles = self._state()["roles"].values()
         return [{key: role[key] for key in ("id", "name", "whenToUse", "modelProfile")}
-                for role in roles if role["id"] not in {"first_mate", "second_mate", "recovery_advisor"}]
+                for role in roles if role["purpose"] == "worker" and role["id"] not in {"first_mate", "second_mate", "recovery_advisor"}]
+
+    def review_catalog(self):
+        with self._lock:
+            return [role for role in self._state()["roles"].values() if role["purpose"] == "pr_review"]
 
     def _validate_role(self, value, old, catalog):
         if not isinstance(value, dict):
             raise AgentRoleError("role must be an object")
-        fields = {"id", "name", "builtin", "locked", "whenToUse", "systemPrompt", "modelProfile", "allowDelegation", "skillIds"}
+        fields = {"id", "name", "builtin", "locked", "whenToUse", "systemPrompt", "modelProfile", "allowDelegation", "skillIds",
+                  "purpose", "reviewPrompt", "group", "avatar"}
         if set(value) - fields:
             raise AgentRoleError("role contains unsupported fields")
         rid = _role_id(value.get("id"))
         builtin = rid in BUILTIN_IDS
+        purpose = value.get("purpose", old.get("purpose", "worker") if old else "worker")
+        if not isinstance(purpose, str) or purpose not in {"worker", "pr_review"} or (old and purpose != old["purpose"]):
+            raise AgentRoleError("Role purpose must be worker or pr_review and cannot change after creation")
+        if builtin and purpose != ("pr_review" if rid == PR_REVIEW_BUILTIN_ID else "worker"):
+            raise AgentRoleError("Built-in roles retain their purpose")
         if old and old["locked"]:
             raise AgentRoleError("Recovery Advisor is managed by the system and cannot be edited", code="agent_role_locked", status=403)
         if (value.get("builtin", builtin) is not builtin or value.get("locked", False) is not False):
@@ -334,14 +361,27 @@ class AgentRoles:
         when = _text(value.get("whenToUse", ""), "whenToUse", 4096)
         prompt = _text(value.get("systemPrompt", ""), "systemPrompt", MAX_PROMPT_BYTES)
         profile = value.get("modelProfile")
-        if not isinstance(profile, str) or profile not in DELEGATION_PROFILES:
+        if purpose == "pr_review" and profile != "default":
+            raise AgentRoleError("PR reviewers use the execution computer's default model")
+        if purpose == "worker" and (not isinstance(profile, str) or profile not in DELEGATION_PROFILES):
             raise AgentRoleError("modelProfile must be planning, execution, architect, or research_scout")
-        if builtin and profile != next(item[3] for item in _BUILTINS if item[0] == rid):
+        if builtin and purpose == "worker" and profile != next(item[3] for item in _BUILTINS if item[0] == rid):
             raise AgentRoleError("Built-in roles retain their configured model profile")
         delegation = value.get("allowDelegation", False if not old else old["allowDelegation"])
         if type(delegation) is not bool:
             raise AgentRoleError("allowDelegation must be a boolean")
+        if purpose == "pr_review" and delegation:
+            raise AgentRoleError("PR reviewers cannot delegate")
+        review_prompt = _text(value.get("reviewPrompt", old.get("reviewPrompt", "") if old else ""), "reviewPrompt", MAX_PROMPT_BYTES)
+        group = _text(value.get("group", old.get("group", "") if old else ""), "group", 120).strip()
+        if any(char in group for char in "\n\r\t"):
+            raise AgentRoleError("Group must be a single line")
+        avatar = value.get("avatar", old.get("avatar", "review") if old else "review")
+        if not isinstance(avatar, str) or avatar not in ROLE_AVATARS:
+            raise AgentRoleError("Unknown agent avatar")
         skills = value.get("skillIds", [] if not old else old["skillIds"])
+        if purpose == "pr_review" and skills is None:
+            raise AgentRoleError("PR reviewers require an explicit skill selection")
         if skills is not None:
             if (not isinstance(skills, list) or len(skills) > MAX_SKILLS
                     or any(not isinstance(sid, str) or not re.fullmatch(r"skill[_-][0-9a-f]{64}", sid) for sid in skills)):
@@ -351,7 +391,8 @@ class AgentRoles:
             if any(sid not in catalog and sid not in retained for sid in skills):
                 raise AgentRoleError("A selected skill is unavailable. Refresh the catalog before adding it.")
         return {"id": rid, "name": name, "builtin": builtin, "locked": False, "whenToUse": when,
-                "systemPrompt": prompt, "modelProfile": profile, "allowDelegation": delegation, "skillIds": skills}
+                "systemPrompt": prompt, "modelProfile": profile, "allowDelegation": delegation, "skillIds": skills,
+                "purpose": purpose, "reviewPrompt": review_prompt, "group": group, "avatar": avatar}
 
     def mutate(self, body):
         if not isinstance(body, dict):

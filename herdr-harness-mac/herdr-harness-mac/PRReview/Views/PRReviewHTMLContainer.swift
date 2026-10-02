@@ -7,9 +7,10 @@ struct PRReviewHTMLContainer: NSViewRepresentable {
     let document: PRReviewHTMLDocument
     @Binding var phase: PaneGitWebLoadPhase
     let openExternal: (URL) -> Void
+    var openDocument: (String) -> Void = { _ in }
 
     func makeCoordinator() -> PRReviewHTMLNavigationDelegate {
-        PRReviewHTMLNavigationDelegate(phase: $phase, openExternal: openExternal)
+        PRReviewHTMLNavigationDelegate(phase: $phase, openExternal: openExternal, openDocument: openDocument)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -63,11 +64,13 @@ struct PRReviewHTMLContainer: NSViewRepresentable {
 final class PRReviewHTMLNavigationDelegate: NSObject, WKNavigationDelegate {
     private var phase: Binding<PaneGitWebLoadPhase>
     private let openExternal: (URL) -> Void
+    private let openDocument: (String) -> Void
     private(set) var loadedDocument: PRReviewHTMLDocument?
 
-    init(phase: Binding<PaneGitWebLoadPhase>, openExternal: @escaping (URL) -> Void) {
+    init(phase: Binding<PaneGitWebLoadPhase>, openExternal: @escaping (URL) -> Void, openDocument: @escaping (String) -> Void = { _ in }) {
         self.phase = phase
         self.openExternal = openExternal
+        self.openDocument = openDocument
     }
 
     func load(_ document: PRReviewHTMLDocument, in webView: WKWebView) {
@@ -80,6 +83,10 @@ final class PRReviewHTMLNavigationDelegate: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
         if loadedDocument?.allows(url) == true { return .allow }
+        if action.navigationType == .linkActivated, let id = PRReviewHTMLDocument.linkedDocumentID(url) {
+            openDocument(id)
+            return .cancel
+        }
         if action.navigationType == .linkActivated,
            let scheme = url.scheme?.lowercased(),
            ["http", "https"].contains(scheme) {

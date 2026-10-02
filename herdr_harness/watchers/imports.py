@@ -15,7 +15,18 @@ from .assets import INSTRUMENTS
 
 
 def cronboard_entries(payload, *, confirmed=False, now=None, environ=None):
-    jobs = payload.get("jobs") if isinstance(payload, dict) else payload
+    if isinstance(payload, dict):
+        if "ok" in payload and payload["ok"] is not True:
+            raise WatchersError("invalid_import", "Cronboard export did not report success.")
+        if "data" in payload:
+            if payload.get("ok") is not True or not isinstance(payload["data"], dict):
+                raise WatchersError("invalid_import", "Cronboard export requires a successful data object.")
+            payload = payload["data"]
+        if payload.get("externalJobs"):
+            raise WatchersError("invalid_import", "External crontab entries need separate review and cannot be imported automatically.")
+        jobs = payload.get("jobs")
+    else:
+        jobs = payload
     if not isinstance(jobs, list) or not jobs or len(jobs) > 200:
         raise WatchersError("invalid_import", "Cronboard import requires 1 to 200 jobs.")
     entries, previews, seen = [], [], set()

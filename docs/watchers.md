@@ -175,6 +175,9 @@ Runtime pruning skips any installed runtime still hosting a live watcher runner.
 Export all jobs on the machine where they run using
 `cronboard list --all --json`. Keep this file private. Never copy it into source,
 tests or screenshots. Review every interpreter, script path and external effect.
+The importer accepts Cronboard's successful `data.jobs` JSON envelope, a legacy
+top-level `jobs` object, or a job array. Failed exports and external crontab entries
+are rejected for separate review rather than silently importing a partial set.
 
 ```sh
 herdr-watchers import --cronboard-json /private/path/cronboard.json --dry-run --machine example

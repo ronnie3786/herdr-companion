@@ -49,6 +49,36 @@ class WatchersImportsTests(unittest.TestCase):
         values = self.store.batch_create(entries, request_id="draft-import")
         self.assertTrue(all(value["state"] == "draft" and "activated_by" not in value for value in values))
 
+    def test_cli_export_envelope_previews_then_imports_all_jobs(self):
+        payload = {"ok": True, "schemaVersion": 1, "data": {"jobs": jobs(), "externalJobs": []}}
+        with patch("subprocess.Popen", side_effect=AssertionError("import ran a job")):
+            preview_result = route(self.service, "POST", ["import"], {}, {
+                "request_id": "envelope-preview", "source": "cronboard", "jobs": payload, "dry_run": True,
+            })
+            self.assertFalse(preview_result["executed"])
+            self.assertEqual(self.store.list(), [])
+            result, status = route(self.service, "POST", ["import"], {}, {
+                "request_id": "envelope-import", "source": "cronboard", "jobs": payload, "confirmed_by": "user",
+            })
+        self.assertEqual(status, 201)
+        self.assertEqual(len(result["watchers"]), 10)
+        self.assertEqual([value["state"] for value in result["watchers"]], ["paused"] * 8 + ["draft"] * 2)
+        self.assertEqual(self.store.runs(source="cronboard"), [])
+
+    def test_failed_malformed_or_external_exports_never_import(self):
+        for payload in (
+            {"ok": False, "data": {"jobs": jobs()}},
+            {"ok": False, "jobs": jobs()},
+            {"ok": True, "data": []},
+            {"data": {"jobs": jobs()}},
+            {"ok": True, "data": {"jobs": jobs(), "externalJobs": [{"line": "synthetic external entry"}]}},
+        ):
+            with self.subTest(payload_keys=list(payload)), self.assertRaises(WatchersError):
+                route(self.service, "POST", ["import"], {}, {
+                    "request_id": "rejected-envelope", "source": "cronboard", "jobs": payload, "confirmed_by": "user",
+                })
+            self.assertEqual(self.store.list(), [])
+
     def test_preview_checks_parity_and_never_executes_or_creates(self):
         now = datetime(2026, 10, 2, 12, tzinfo=timezone.utc)
         with patch("subprocess.Popen", side_effect=AssertionError("preview ran a job")):

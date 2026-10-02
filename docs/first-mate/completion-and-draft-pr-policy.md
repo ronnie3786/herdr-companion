@@ -40,10 +40,12 @@ relay without its original direction cannot confer readiness permission. These
 instructions are independent of pinned personality snapshots and are injected
 on each newly started or resumed dispatch and each extension-controlled turn.
 
-Code Factory enforces draft creation in its GitHub command and parks after its
-normal internal review and CI checks. Its dedicated operator action checks the
-exact reviewed PR/head after the human marks that PR ready in GitHub. Generic
-Retry never grants readiness. See [Code Factory](../code-factory.md).
+Code Factory, the Herdr app's own autofix pipeline, is separate from First Mate.
+It creates draft PRs and marks one ready only immediately before merging the exact
+head that passed Verify and its internal review; the `herdr-autofix` label is the
+operator's authorization for that pipeline. `require_ready_approval = true` makes
+it park each reviewed draft for an explicit operator action instead. See
+[Code Factory](../code-factory.md).
 
 For ordinary Pi shell and GitHub tools this is an operating instruction, not a
 credential sandbox. A process that retains unrestricted GitHub write credentials

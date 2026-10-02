@@ -202,6 +202,7 @@ class CodeFactorySettings:
     dashboard_token: str = ""
     dashboard_link: str = ""
     release_enabled: bool = True
+    require_ready_approval: bool = False
     release_channel: str = "preview"
     comment_on_issues: bool = True
     base_branch: str = "main"
@@ -270,6 +271,7 @@ class CodeFactorySettings:
             dashboard_token=_string(environ, "DASHBOARD_TOKEN", cls.dashboard_token, maximum=4096),
             dashboard_link=_dashboard_link(environ),
             release_enabled=_boolean(environ, "RELEASE_ENABLED", cls.release_enabled),
+            require_ready_approval=_boolean(environ, "REQUIRE_READY_APPROVAL", cls.require_ready_approval),
             release_channel=_choice(environ, "RELEASE_CHANNEL", cls.release_channel, RELEASE_CHANNELS),
             comment_on_issues=_boolean(environ, "COMMENT_ON_ISSUES", cls.comment_on_issues),
             base_branch=_branch(environ, "BASE_BRANCH", cls.base_branch),
@@ -323,6 +325,7 @@ class CodeFactorySettings:
             "reviewer_model": self.reviewer_model,
             "reviewer_thinking": self.reviewer_thinking,
             "release_enabled": self.release_enabled,
+            "require_ready_approval": self.require_ready_approval,
             "release_channel": self.release_channel,
             "max_review_rounds": self.max_review_rounds,
             "max_ci_failures": self.max_ci_failures,

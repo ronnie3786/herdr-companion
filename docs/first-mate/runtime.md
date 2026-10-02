@@ -455,7 +455,11 @@ configuration, safety rules, and limits](reliability.md).
 
 Reconciliation is ordinary code. Every ten seconds the watchdog checks activity,
 repeated tool patterns, repetitive generated text and progress deadlines. It does
-not invoke a model for unchanged healthy work. Suspicious work receives an
+not invoke a model for unchanged healthy work. A worker waiting on its own tool,
+such as a long build or test run, emits no Pi events; while the Pi process is alive
+and that tool started less than 45 minutes ago, quiet is not a stall. The scheduler
+appends a host load sample (`load-samples.jsonl`, about once a minute, rotated near
+2 MB) and reports `load_average` in runtime health and watchdog events. Suspicious work receives an
 independent read-only advisor assessment. Advice can continue, steer, request a
 handoff or pause. Subsequent observations can trigger another assessment, with a
 cooldown and a new observation cursor.

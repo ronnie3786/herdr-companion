@@ -137,6 +137,11 @@ LEAD_STEP_NAMES = ("Plan", "Build", "Review", "QA", "PR", "Merge")
 HANDOFF_GRACE_SECONDS = 180
 HANDOFF_ACTIVE_SECONDS = 60
 HANDOFF_MAX_SECONDS = 900
+# A worker waiting on its own build or test command emits no Pi events, so
+# the watchdog treats a still-running tool as activity up to this ceiling.
+TOOL_RUN_ALLOWANCE_SECONDS = 2700
+LOAD_SAMPLE_SECONDS = 60
+LOAD_SAMPLE_MAX_BYTES = 2_000_000
 LEAD_TOOLS = frozenset({"fm_fleet", "fm_feature_status", "fm_read_document", "fm_relay",
                         "fm_mark_read", "fm_create_feature"})
 
@@ -498,6 +503,40 @@ def _checkpoint_conversation(messages: list[dict]) -> list[dict]:
             for message in messages[-30:]]
 
 
+def _load_average() -> list[float] | None:
+    try:
+        return [round(value, 2) for value in os.getloadavg()]
+    except OSError:
+        return None
+
+
+def _track_running_tool(status: dict, event: Mapping[str, Any]) -> None:
+    """Keep the runner's open tool executions, with start times, in status."""
+    kind = event.get("type")
+    call = event.get("toolCallId")
+    running = status.setdefault("running_tools", {})
+    if kind == "tool_execution_start" and isinstance(call, str) and call:
+        running[call] = {"name": str(event.get("toolName") or "tool")[:80], "started_epoch": time.time()}
+    elif kind == "tool_execution_end" and isinstance(call, str):
+        running.pop(call, None)
+    elif kind == "agent_end":
+        running.clear()
+
+
+def _tool_still_running(state: Mapping[str, Any], now: float) -> bool:
+    """True while the live Pi process has a tool open within its allowance."""
+    running = state.get("running_tools")
+    pid = state.get("pi_pid")
+    if not isinstance(running, Mapping) or not running or not isinstance(pid, int):
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    starts = [float(item.get("started_epoch") or 0) for item in running.values() if isinstance(item, Mapping)]
+    return bool(starts) and now - min(starts) < TOOL_RUN_ALLOWANCE_SECONDS
+
+
 def _bounded_agent_data(value: Any, *, text_limit: int = 2400, depth: int = 0) -> Any:
     """Context is a reference index, never a recursively embedded work archive."""
     if isinstance(value, str):
@@ -836,6 +875,7 @@ class FirstMateRuntime:
         self._health_lock = threading.Lock()
         self._last_progress = time.monotonic()
         self._last_success_at: str | None = None
+        self._last_load_sample = float("-inf")
         self._last_error_kind: str | None = None
         self._error_serial = 0
         self._consecutive_failures = 0
@@ -880,7 +920,20 @@ class FirstMateRuntime:
                     "error_kind": self._last_error_kind,
                     "consecutive_failures": self._consecutive_failures,
                     "guardian_alive": bool(self._guardian and self._guardian.is_alive()),
-                    "scheduler_restarts": sum(time.monotonic() - at < 3600 for at in self._guardian_restarts), **self.reliability.health()}
+                    "scheduler_restarts": sum(time.monotonic() - at < 3600 for at in self._guardian_restarts),
+                    "load_average": _load_average(), "cpu_count": os.cpu_count(), **self.reliability.health()}
+
+    def _record_load_sample(self, workers: int) -> None:
+        """Append one bounded host-load sample so spikes can be matched to work."""
+        path = self.root / "load-samples.jsonl"
+        try:
+            if path.exists() and path.stat().st_size > LOAD_SAMPLE_MAX_BYTES:
+                os.replace(path, path.with_suffix(".jsonl.1"))
+            with path.open("a", encoding="utf-8") as output:
+                output.write(json.dumps({"at": utc_now(), "load_average": _load_average(),
+                                         "cpu_count": os.cpu_count(), "workers": workers}) + "\n")
+        except OSError:
+            pass  # Observability only; never fail a scheduler pass.
 
     def _record_runtime_error(self, exc: Exception, path: Path) -> None:
         kind = {errno.ENOSPC: "storage_full", errno.EDQUOT: "storage_full",
@@ -2614,6 +2667,9 @@ class FirstMateRuntime:
             if time.monotonic() - self._last_watch >= 10:
                 self._watch([job for job in jobs if job["feature_id"] not in failed_features])
                 self._last_watch = time.monotonic()
+            if time.monotonic() - self._last_load_sample >= LOAD_SAMPLE_SECONDS:
+                self._last_load_sample = time.monotonic()
+                self._record_load_sample(worker_count)
             if not self.capabilities()["available"]:
                 return
             # Archiving is presentation-only. Detached work for an archived
@@ -4157,11 +4213,14 @@ class FirstMateRuntime:
                       if e.get("type") == "message_update" and e.get("assistantMessageEvent", {}).get("type") == "text_delta"]
             repeated_text = len(deltas) >= 20 and len(set(deltas[-20:])) <= 3
             idle = time.time() - max(float(state.get("last_event_epoch", time.time())), job.get("last_assessment_epoch", 0)) > self.stall_seconds
+            if idle and _tool_still_running(state, time.time()):
+                idle = False
             if not repetition and not repeated_text and not idle:
                 continue
             reason = "Repeated tool calls without a changed pattern" if repetition else ("Repetitive generated text suggests a model loop" if repeated_text else "No observable Pi activity within the watchdog interval")
             round_number = int(job.get("advisor_round", 0)) + 1
-            self._event(job["feature_id"], "watchdog.suspicion", reason, {"job_id": job["id"], "round": round_number}, f"watch:{job['id']}:{round_number}")
+            self._event(job["feature_id"], "watchdog.suspicion", reason, {"job_id": job["id"], "round": round_number,
+                        "load_average": _load_average()}, f"watch:{job['id']}:{round_number}")
             feature = self.store.get_feature(job["feature_id"])
             advisor = self._new_job(feature, kind="advisor", claim={"id": f"advisor:{job['id']}:{round_number}"}, parent_job=job,
                                     prompt="Assignment:\n" + job["prompt"] + "\nWatchdog signal: " + reason
@@ -4491,6 +4550,7 @@ def _run_detached(directory: Path, locks: ExitStack) -> int:
                                 status["error"] = message.get("errorMessage", "Model error")
                         if event.get("type") == "agent_end":
                             ended.set()
+                        _track_running_tool(status, event)
                         # Coalesce status writes; full events are retained above.
                         if event.get("type") in {"response", "message_end", "agent_end", "tool_execution_start", "tool_execution_end"}:
                             _write_json(directory / "status.json", status)

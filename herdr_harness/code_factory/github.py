@@ -339,6 +339,17 @@ class GitHubClient:
             raise _failed("gh pr create did not leave the new pull request in draft state")
         return {"number": payload["number"], "url": str(payload.get("url") or ""), "isDraft": True}
 
+    def mark_ready(self, number: int) -> dict[str, Any]:
+        """Mark a draft pull request ready for review; a ready one is unchanged."""
+        pr_number = _number(number)
+        current = self.pull_request(pr_number)
+        if current.get("isDraft") is True:
+            self._run(["pr", "ready", str(pr_number), "--repo", self.repository])
+            current = self.pull_request(pr_number)
+            if current.get("isDraft") is not False:
+                raise _failed(f"gh pr ready did not mark pull request #{pr_number} ready")
+        return current
+
     def find_pull_request(self, head_branch: str) -> dict[str, Any] | None:
         payload = self._json([
             "pr", "list", "--repo", self.repository, "--head", _branch(head_branch, "head"),

@@ -1,8 +1,8 @@
 # Code Factory: from an in-app report to a signed release
 
 Code Factory turns a bug report or feature request filed from the Mac app into a
-GitHub issue, a planned and implemented draft pull request, an Opus code review, an
-explicit human readiness decision, a squash merge, and a signed macOS preview release. It is an
+GitHub issue, a planned and implemented draft pull request, an Opus code review, a
+squash merge, and a signed macOS preview release. It is an
 operator-run daemon plus a Tailscale-reachable dashboard. Nothing in it replaces the
 authentication, privacy, signing, or CI gates already described in
 [docs/macos-releases.md](macos-releases.md) and [AGENTS.md](../AGENTS.md).
@@ -120,17 +120,17 @@ This is an experimental personal automation. Read the safety section before enab
    plus a bounded log tail (up to 16,000 characters total). Implementers and revisers
    run cheap focused checks and targeted builds for compiler failures before committing;
    the authoritative full Verify matrix still runs on the exact candidate.
-10. **Human readiness, merge, and cleanup.** After Verify and Opus approve the exact head,
-    the daemon parks the issue once as `awaiting_pr_ready_authorization`. It does not mark
-    the PR ready, merge it, notify repeatedly, spend a failure or revision budget, or start
-    another model session while parked. Inspect the draft and, when you explicitly want it
-    to proceed, use GitHub's **Ready for review** action and then choose **Approve ready PR**
-    in the Code Factory dashboard. That action verifies the recorded PR number and reviewed
-    head, requires that this policy previously observed it as a draft, confirms GitHub now
-    reports it ready, and records a scoped operator receipt. **Retry** is not readiness
-    approval. A ready PR inherited from an older run has no draft provenance or receipt and
-    is parked as soon as it is discovered, before Code Factory pushes to, reviews,
-    authorizes, or merges it.
+10. **Readiness, merge, and cleanup.** The PR stays a draft through implementation,
+    CI, and review. After Verify and Opus approve the exact head, the daemon marks that
+    PR ready (`gh pr ready`), records a receipt for the reviewed head with source
+    `trigger_label`, and merges it. The `herdr-autofix` label is the operator's
+    authorization for the whole pipeline. Set `require_ready_approval = true` to park
+    each reviewed draft as `awaiting_pr_ready_authorization` instead: inspect it, use
+    GitHub's **Ready for review**, then choose **Approve ready PR** in the dashboard.
+    That action verifies the recorded PR number and reviewed head, requires that the PR
+    was observed as a draft, and records a scoped operator receipt; **Retry** is not
+    readiness approval. In that mode a ready PR inherited from an older run is parked
+    before Code Factory pushes to, reviews, authorizes, or merges it.
 
     After that receipt, immediately before merge the daemon asks GitHub whether the
     branch conflicts with the base, requesting both `mergeable` and `mergeStateStatus`
@@ -306,8 +306,8 @@ machine's tailnet address. Either way it shows:
 
 Actions: **Retry** a blocked or failed issue at its current stage. A retry blocked on a
 human question first refreshes the GitHub issue snapshot and returns to fresh planning; if the
-refresh fails, the issue stays blocked. The readiness boundary replaces Retry with
-**Approve ready PR**. Use it only after you personally inspect the draft and explicitly
+refresh fails, the issue stays blocked. With `require_ready_approval = true`, the
+readiness boundary replaces Retry with **Approve ready PR**. Use it only after you personally inspect the draft and explicitly
 mark that exact PR ready in GitHub. It checks the exact reviewed head and records the
 operator receipt before resuming merge. Other retries resume their current stage. **Skip** it (removes
 the worktree and the trigger label; a running issue has its session cancelled first and
@@ -358,11 +358,11 @@ branch history cannot be rebuilt.
   and a CI wait limit. Anything outside those bounds stops as **blocked** or **failed**
   with the reason on the issue and the dashboard.
 - **Draft and readiness boundary.** Every PR the daemon creates uses GitHub draft mode.
-  Green CI and internal review approval only park the issue. Code Factory has no command
-  that marks a PR ready. Merge requires a receipt from the dedicated **Approve ready PR**
-  action for the exact PR and reviewed head after the parked draft changed to ready on
-  GitHub. Generic Retry cannot create that receipt. Older ready PRs lack the recorded draft
-  provenance and are never adopted, pushed to, reviewed, or auto-merged. This is a workflow boundary rather than
+  It becomes ready only immediately before merge, after Verify and Opus approve the exact
+  head. With `require_ready_approval = true`, green CI and review only park the issue, and
+  merge requires a receipt from the dedicated **Approve ready PR** action for the exact PR
+  and reviewed head; generic Retry cannot create that receipt, and older ready PRs are never
+  adopted. This is a workflow boundary rather than
   cryptographic proof of a human actor: a process with the dashboard token or direct ledger
   and GitHub credentials could imitate the operator actions. Keep those credentials outside
   model sessions and restrict access to the dashboard.
@@ -465,7 +465,7 @@ reported unused runtimes.
 | Model sessions fail immediately | Check the provider login used by the daemon and run `herdr-code-factory doctor` to verify all three model IDs. |
 | Planner blocked with a question | Answer on the issue, adjust the description if needed, then **Retry**. |
 | Planner blocks but no alert arrives | Confirm the Message Me skill exists at `~/.codex/skills/message-me/scripts/message_me.py`, then inspect the issue event log for the recorded delivery status. |
-| Issue is waiting for PR readiness | Inspect the draft, explicitly choose **Ready for review** in GitHub, then choose **Approve ready PR** in the dashboard. Retry alone is refused. |
+| Issue is waiting for PR readiness (`require_ready_approval = true`) | Inspect the draft, explicitly choose **Ready for review** in GitHub, then choose **Approve ready PR** in the dashboard. Retry alone is refused. |
 | A legacy ready PR is waiting for authorization | It was never observed as a parked draft under this policy, so Code Factory will not adopt it. Finish it manually. |
 | Release stays **failed** | Read the error in the release card; a red Verify run or a Keychain prompt are the usual causes. Fix, then **Release now**. |
 

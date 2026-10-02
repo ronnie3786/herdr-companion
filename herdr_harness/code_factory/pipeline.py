@@ -1411,7 +1411,8 @@ class CodeFactory:
                                   f"The branch has no commits beyond {self._base_ref()}; returning to the implement stage")
             return "implement"
         existing = self._github.find_pull_request(branch)
-        if (existing and str(existing.get("state") or "OPEN").upper() == "OPEN"
+        if (self._settings.require_ready_approval
+                and existing and str(existing.get("state") or "OPEN").upper() == "OPEN"
                 and existing.get("isDraft") is not True):
             # A ready PR inherited from an older run has no receipt proving that
             # this policy observed a draft and a human subsequently made that exact
@@ -1686,7 +1687,25 @@ class CodeFactory:
                 "No posted approval for the exact pull request head; returning to review",
             )
             return "review"
-        readiness = plan.get("pr_ready_authorization")
+        if not self._settings.require_ready_approval:
+            # The trigger label is the operator's authorization for the whole
+            # pipeline. The PR stays a draft through implementation and review
+            # and becomes ready only for the exact approved, verified head.
+            pull = self._github.mark_ready(pr_number)
+            if str(pull.get("headRefOid") or "") != head:
+                self._store.add_event(number, "merge", "warning",
+                                      "The pull request head changed before merge; returning to review")
+                return "review"
+            plan["pr_ready_authorization"] = {
+                "prNumber": pr_number, "headSha": head, "draftObserved": True,
+                "parkedAt": None, "authorizedAt": utc_now(), "source": "trigger_label",
+            }
+            self._save_plan(issue, plan, paths)
+            self._store.add_event(number, "merge", "info",
+                                  f"Marked reviewed PR #{pr_number} ready for head {head[:12]}")
+            readiness = plan["pr_ready_authorization"]
+        else:
+            readiness = plan.get("pr_ready_authorization")
         receipt_valid = (
             isinstance(readiness, dict)
             and readiness.get("prNumber") == pr_number
@@ -1694,7 +1713,7 @@ class CodeFactory:
             and readiness.get("draftObserved") is True
             and isinstance(readiness.get("authorizedAt"), str)
             and bool(readiness["authorizedAt"].strip())
-            and readiness.get("source") == "explicit_operator_action"
+            and readiness.get("source") in {"explicit_operator_action", "trigger_label"}
         )
         pull = self._github.pull_request(pr_number)
         remote_head = str(pull.get("headRefOid") or "")

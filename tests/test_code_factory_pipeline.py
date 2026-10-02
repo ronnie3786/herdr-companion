@@ -284,6 +284,11 @@ class FakeGitHub:
             pr["headRefOid"] = self._remote_head(pr["headRefName"]) or pr["headRefOid"]
         return dict(self.prs[number])
 
+    def mark_ready(self, number: int) -> dict[str, Any]:
+        self.calls.append(("mark_ready", (number,)))
+        self.prs[number]["isDraft"] = False
+        return self.pull_request(number)
+
     def pull_request_diff(self, number: int) -> str:
         self.calls.append(("pull_request_diff", (number,)))
         return "diff --git a/app/task_t1.py b/app/task_t1.py\n+print('t1')\n"
@@ -738,7 +743,7 @@ class HappyPathTests(PipelineTestCase):
         self.assertEqual(issue["status"], "active")
         self.assertEqual(issue["stage"], "release")
         self.assertEqual(issue["kind"], "bug")
-        self.assertEqual(issue["attempts"], 2, "the synthetic operator resumes the parked draft in a second run")
+        self.assertEqual(issue["attempts"], 1, "a reviewed draft is marked ready and merged in the same run")
         self.assertEqual(issue["reviewRound"], 2, "request_changes + approve")
         self.assertEqual(issue["ciFailures"], 1)
         self.assertEqual(issue["ciStatus"], "success")
@@ -891,10 +896,35 @@ class HappyPathTests(PipelineTestCase):
         self.assertTrue(self.factory.poll_once()["releaseStarted"] is False, "nothing left to release")
 
 
+class AutomaticReadinessTests(PipelineTestCase):
+    def test_reviewed_draft_is_marked_ready_and_merged_without_parking(self):
+        self.github.add_issue(12, "Crash when opening the HUD")
+        self.factory.poll_once()
+        draft_during_review: list[bool] = []
+
+        def observe_review(call: dict[str, Any]) -> None:
+            if call["charter"] == prompts.REVIEWER_CHARTER:
+                draft_during_review.append(self.github.prs[100]["isDraft"])
+
+        self.pi.on_call = observe_review
+        issue = self.factory.run_issue(12)
+
+        self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
+        self.assertEqual(draft_during_review, [True], "the PR stays a draft through review")
+        names = [call[0] for call in self.github.calls]
+        self.assertEqual(names.count("mark_ready"), 1)
+        self.assertLess(names.index("mark_ready"), names.index("merge_pull_request"), "ready only right before merge")
+        self.assertEqual(len(self.github.merges), 1)
+        receipt = issue["planJson"]["pr_ready_authorization"]
+        self.assertEqual((receipt["source"], receipt["headSha"]), ("trigger_label", issue["headSha"]))
+        self.assertEqual(self.sessions(12), ["planner", "implementer", "implementer", "reviewer"])
+
+
 class PullRequestReadinessTests(PipelineTestCase):
     def setUp(self):
         super().setUp()
         self.auto_authorize_ready = False
+        self.factory = self.make_factory(require_ready_approval="true")
 
     def test_draft_parks_once_and_only_scoped_operator_authorization_resumes(self):
         self.github.add_issue(12, "Crash when opening the HUD")
@@ -1050,7 +1080,7 @@ class BlockingAndActionTests(PipelineTestCase):
             self.factory.action(12, "retry")
         issue = self.factory.run_issue(12)
         self.assertEqual((issue["status"], issue["stage"]), ("active", "release"))
-        self.assertEqual(issue["attempts"], 3, "planning retry plus the synthetic readiness authorization each resume the issue")
+        self.assertEqual(issue["attempts"], 2, "only the planning retry resumes the issue")
         self.assertEqual(self.sessions(12), ["planner", "planner", "implementer", "implementer", "reviewer"])
         second_planner = [call for call in self.pi.calls if call["charter"] == prompts.PLANNER_CHARTER][1]
         self.assertIn("<<<ISSUE_BODY\n" + amended + "\nISSUE_BODY>>>", second_planner["prompt"])

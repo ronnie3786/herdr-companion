@@ -155,6 +155,7 @@ ENVIRONMENT_FIELDS = {
         "dashboard_token": "HERDR_CODE_FACTORY_DASHBOARD_TOKEN",
         "dashboard_link": "HERDR_CODE_FACTORY_DASHBOARD_LINK",
         "release_enabled": "HERDR_CODE_FACTORY_RELEASE_ENABLED",
+        "require_ready_approval": "HERDR_CODE_FACTORY_REQUIRE_READY_APPROVAL",
         "release_channel": "HERDR_CODE_FACTORY_RELEASE_CHANNEL",
         "comment_on_issues": "HERDR_CODE_FACTORY_COMMENT_ON_ISSUES",
         "base_branch": "HERDR_CODE_FACTORY_BASE_BRANCH",

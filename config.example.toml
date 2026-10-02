@@ -237,6 +237,7 @@ poll_seconds = 10
 # dashboard_token = { file = "~/.config/herdr-companion/secrets/code-factory-token" }
 # dashboard_link = "https://factory.example.invalid:9097/" # Optional canonical link for Message Me alerts.
 # release_enabled = true # Requires [deployment.macos_release] on this machine.
+# require_ready_approval = false # true parks each reviewed draft PR until you mark it ready.
 # release_channel = "preview"
 
 [apple]

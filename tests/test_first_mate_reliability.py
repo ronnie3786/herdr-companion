@@ -1,6 +1,7 @@
 """Deterministic hourly sweeps and recovery: synthetic work, no real timers/models."""
 import fcntl
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -10,7 +11,8 @@ import zipfile
 
 from herdr_harness.first_mate_backup import BackupUnavailable, capture_backup
 from herdr_harness.first_mate_runtime import (HANDOFF_ACTIVE_SECONDS, HANDOFF_GRACE_SECONDS, HANDOFF_MAX_SECONDS,
-                                              FirstMateRuntime, _read_json, _write_json)
+                                              TOOL_RUN_ALLOWANCE_SECONDS, FirstMateRuntime, _read_json,
+                                              _track_running_tool, _write_json)
 from herdr_harness.first_mate_store import FirstMateError
 from tests import test_first_mate_acceptance as fixtures
 
@@ -453,6 +455,47 @@ class FirstMateReliabilityTests(unittest.TestCase):
         _write_json(directory / 'status.json', {'ended': False, 'accepted': True, 'last_event_epoch': time.time()})
         self.runtime._watch([job])
         self.assertEqual(controls(), ['abort'])
+
+    def test_watchdog_treats_a_running_build_as_activity_until_its_allowance(self):
+        # A worker waiting on its own long test run emits no Pi events; that is
+        # not a stall. A dead Pi or a command past the allowance still is.
+        feature, assignment, job, lock, now = self.stalled()
+        directory = self.runtime._job_dir(job)
+        quiet = time.time() - self.runtime.stall_seconds - 5
+        def status(started, pid):
+            _write_json(directory / 'status.json', {
+                'ended': False, 'accepted': True, 'last_event_epoch': quiet, 'pi_pid': pid,
+                'running_tools': {'call-1': {'name': 'bash', 'started_epoch': started}}})
+        with patch.object(self.runtime, '_launch') as launch:
+            status(time.time() - 900, os.getpid())
+            self.runtime._watch([job])
+            launch.assert_not_called()
+            finished = subprocess.Popen(['true']); finished.wait()
+            status(time.time() - 900, finished.pid)
+            self.runtime._watch([job])
+            self.assertEqual(launch.call_count, 1, 'a dead Pi process is not covered')
+        job.pop('advisor_job_id', None); job['last_assessment_epoch'] = 0
+        self.runtime._save_job(job)
+        with patch.object(self.runtime, '_launch') as launch:
+            status(time.time() - TOOL_RUN_ALLOWANCE_SECONDS - 5, os.getpid())
+            self.runtime._watch([job])
+            self.assertEqual(launch.call_count, 1, 'a command past the allowance is suspicious')
+
+    def test_runner_tracks_open_tool_executions(self):
+        status = {}
+        _track_running_tool(status, {'type': 'tool_execution_start', 'toolCallId': 'a', 'toolName': 'bash'})
+        _track_running_tool(status, {'type': 'tool_execution_start', 'toolCallId': 'b', 'toolName': 'read'})
+        _track_running_tool(status, {'type': 'tool_execution_end', 'toolCallId': 'a'})
+        self.assertEqual(list(status['running_tools']), ['b'])
+        _track_running_tool(status, {'type': 'agent_end'})
+        self.assertEqual(status['running_tools'], {})
+
+    def test_load_samples_are_recorded_and_health_reports_load(self):
+        self.runtime._record_load_sample(3)
+        line = json.loads((self.runtime.root / 'load-samples.jsonl').read_text().splitlines()[-1])
+        self.assertEqual(line['workers'], 3)
+        self.assertEqual(len(line['load_average']), 3)
+        self.assertIn('load_average', self.runtime.health())
 
     def test_effect_inspection_projection_bounds_fields_and_drops_arbitrary_ledger_payload(self):
         feature, assignment, job = self.isolated()

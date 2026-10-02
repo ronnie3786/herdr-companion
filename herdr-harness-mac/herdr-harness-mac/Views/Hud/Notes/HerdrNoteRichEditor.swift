@@ -19,7 +19,7 @@ struct HerdrNoteRichEditor: View {
                             .frame(width: 32, height: 30)
                             .background(ink.opacity(controls.active.contains(format) ? 0.14 : 0), in: .rect(cornerRadius: 5))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.herdrPlain)
                     .accessibilityLabel(format.label)
                     .accessibilityAddTraits(controls.active.contains(format) ? .isSelected : [])
                     .accessibilityIdentifier("hud-note-format-\(format.rawValue)")

@@ -55,6 +55,7 @@ example = json.loads(subprocess.check_output([str(exe), 'example'], text=True))
 validate_definition(example['definition'])
 assert len(schema['schema']['assets']['characters']) == 20
 assert len(schema['schema']['assets']['instruments']) == 8
+assert (pi_extension_path({}) / 'extensions/watchers-discovery.ts').is_file()
 assert topic_path('watchers').is_file()
 subprocess.check_output([sys.executable, '-P', '-m', 'herdr_harness.watchers.runner', '--help'])
 print('ok')

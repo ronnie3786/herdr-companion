@@ -13,6 +13,7 @@
       "./extensions/companion-awareness.ts",
       "./extensions/agent-profiles.ts",
       "./extensions/notes-discovery.ts",
+      "./extensions/watchers-discovery.ts",
       "./extensions/active-work-discovery.ts",
       "./extensions/control-discovery.ts",
       "./extensions/send-to-herdr.ts",

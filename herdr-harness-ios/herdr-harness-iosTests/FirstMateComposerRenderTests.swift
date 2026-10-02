@@ -32,15 +32,16 @@ final class FirstMateComposerRenderTests: XCTestCase {
                     width: width, dynamicType: size, background: .dusk)
                 try control("composer-plus-control", composer, width: width)
                 try control("composer-send-control", composer, width: width)
+                try control("composer-microphone-control", composer, width: width)
                 for item in material.attachments {
                     try control("composer-attachment-remove-\(item.id)", composer, width: width)
                 }
                 try save(composer, "composer-material-\(Int(width))-\(size.name)")
                 let voice = FirstMateMobileVoiceController()
-                voice.begin(store: store, material: material, locked: true, isCurrent: { true }, submit: { false })
+                voice.begin(store: store, material: material, isCurrent: { true })
                 let listening = await IOSNativeRenderHarness().render(
                     FirstMateMessageComposer(text: .constant(""), placeholder: "Message First Mate", canControl: true,
-                        isSending: false, send: {}, openDocuments: {}, voice: voice, beginVoice: { _ in }).padding(16),
+                        isSending: false, send: {}, openDocuments: {}, voice: voice, beginVoice: {}).padding(16),
                     width: width, dynamicType: size, background: .dusk)
                 try control("composer-microphone-control", listening, width: width)
                 try save(listening, "composer-listening-\(Int(width))-\(size.name)")

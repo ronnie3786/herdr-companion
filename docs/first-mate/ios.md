@@ -191,19 +191,21 @@ feature and store lifecycle, alongside text. A reservation freezes its complete
 payload and detaches it immediately. Explicit retry uses that payload and request
 ID; completion never consumes newer edits or moves material to another host.
 
-Hold the mic for 300 ms, then release to transcribe and send. Holding for 2.65 s
-locks recording; Stop and send commits it. A quick tap shows guidance, sliding
-away or Cancel revokes sending, and VoiceOver activation toggles locked recording
-and send. Transcription uses this conversation's companion, with Apple fallback
-only after an ordinary provider failure. Cancellation, navigation, backgrounding
-or control loss never starts fallback or sends. Recognized text stays with its
-original draft; a concurrent edit preserves the result separately for explicit
-Append to draft. Voice messages retain the existing dictation caveat.
+Tap the microphone once to start hands-free dictation and tap Stop to transcribe
+into the draft. Review or edit the words, then use Send. The microphone stays
+available beside attachments and Send, including when the draft already has text.
+The input card retains First Mate's glass surface and colors. Cancel discards the
+recording. VoiceOver uses the same Start/Stop actions, without a hold or drag.
+Transcription uses this conversation's companion, with Apple fallback only after
+an ordinary provider failure. Cancellation, navigation, backgrounding or control
+loss never starts fallback or sends. Recognized text stays with its original
+draft; a concurrent edit preserves the result separately for explicit Append to
+draft. Voice messages retain the existing dictation caveat when sent.
 
-One accessory line above the pill holds two glass chips: the context ring with a
+One accessory line above the input card holds two glass chips: the context ring with a
 short reading ("New session", "Context 41%", "… · handoff due") and the model's
 last path component with its thinking level. Both open their sheets; the full
-context summary is the chip's VoiceOver label. The tag and hold-to-talk hint
+context summary is the chip's VoiceOver label. The tag and dictation hint
 appears only while the field is focused, or for voice and unavailable states.
 Settings load from the same host. Running-session changes require confirmation,
 a revision-pinned proposal and safe-model capability. Busy/queued turns, pending

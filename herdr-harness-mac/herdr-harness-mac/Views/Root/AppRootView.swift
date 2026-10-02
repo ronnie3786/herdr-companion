@@ -116,6 +116,9 @@ final class HerdrShellState {
     // Start in the fleet view; explicit host choices stay in effect until changed.
     var firstMateScope: FirstMateMachineScope? = .all
     private(set) var activeFirstMateMachineID: String?
+    /// The rail filter is separate from the detail store's active machine.
+    var prReviewScope: PRReviewHostScope = .all
+    let prReviewFleet = PRReviewFleetIndex()
     var prReviewMachineID: String?
     var prReviewOpenRequest: PRReviewOpenRequest?
     var prReviewAppliedRequestID: UUID?
@@ -389,7 +392,46 @@ final class HerdrShellState {
         prReviewComments.attach(store: store)
     }
 
+    func selectPRReviewScope(_ scope: PRReviewHostScope) {
+        prReviewOpenRequest = nil
+        prReviewScope = scope
+        if case .machine(let machineID) = scope { prReviewMachineID = machineID }
+    }
+
+    func openPRReviewFromFleet(_ target: PRReviewWindowTarget, model: HerdrAppModel) {
+        prReviewScope = .all
+        if target.machineID == prReview.currentMachineID {
+            prReviewMachineID = target.machineID
+            prReviewOpenRequest = nil
+            prReview.select(target.reviewID)
+            Task {
+                guard prReview.currentMachineID == target.machineID,
+                      prReview.selectedReviewID == target.reviewID else { return }
+                await prReview.refreshSelected()
+            }
+        } else {
+            showPRReview(machineID: target.machineID, reviewID: target.reviewID, model: model)
+        }
+    }
+
+    func preparePRReviewCreation(model: HerdrAppModel) {
+        guard PRReviewHostScope.resolved(prReviewScope, availableMachineIDs: model.machines.map(\.id)) == .all,
+              !model.isDemoMode,
+              let machine = model.prReviewMachine,
+              machine.id != prReviewMachineID else { return }
+        prReviewMachineID = machine.id
+        prReviewOpenRequest = nil
+    }
+
+    func prReviewHostSettingsDidChange() {
+        prReviewScope = .all
+        prReviewMachineID = nil
+        prReviewOpenRequest = nil
+        dashboard.reviewRefreshError = nil
+    }
+
     func showPRReview(machineID: String?, reviewID: String?, file: String? = nil, line: Int? = nil, side: PRReviewSide = .after, tab: PRReviewTab = .files, model: HerdrAppModel) {
+        prReviewScope = .all
         let resolvedMachineID = machineID ?? (model.isDemoMode ? "demo" : model.prReviewMachine?.id)
         prReviewMachineID = resolvedMachineID
         if let reviewID {
@@ -518,6 +560,7 @@ final class HerdrShellState {
 
     /// Scope-only destinations (Active Work, Fleet, Attention, and Activity).
     func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
+        if scope == .prReview, detailScope != .prReview { prReviewScope = .all }
         if scope == .git {
             agentControlPaneMode = .git
             agentControlPaneID = model.selectedPaneID
@@ -681,7 +724,9 @@ final class HerdrShellState {
         case .agentBoard: detailScope = .agentBoard
         case .firstMate: detailScope = .firstMate
         case .activeWork: detailScope = .activeWork
-        case .prReview: detailScope = .prReview
+        case .prReview:
+            if detailScope != .prReview { prReviewScope = .all }
+            detailScope = .prReview
         case .fleet: detailScope = .fleet
         case .attention: detailScope = .attention
         case .activity: detailScope = .activity

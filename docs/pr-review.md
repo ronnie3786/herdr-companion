@@ -45,15 +45,29 @@ On the review host:
 
 Local comments require no additional capability: the Mac stores them privately using the review and diff data already returned by `pr-review-v1`. There is no comment endpoint, no comment text is sent to the companion, and the `herdr-pr-review` CLI is unchanged.
 
-On the Mac: pair the review host in Settings → Machines as usual. The app picks the machine
-whose role is `development`; Settings → Machines → **PR review host** overrides that choice.
-Demo mode (`-HerdrDemoMode`) shows a synthetic review without any server.
+On the Mac: pair machines in Settings → Machines as usual. The host menu defaults to
+**All machines** each time PR Review opens; browsing is independent of Settings → Machines →
+**PR review host**, which chooses where new reviews start from the combined view. That creation
+host defaults to the machine whose role is `development`; if none is configured, the open
+review's machine is used. Picking one machine in the host menu also creates new reviews there.
+The combined view is Mac-only; no companion update is needed beyond existing `pr-review-v1`
+support. Demo mode (`-HerdrDemoMode`) shows a synthetic review without any server.
 
 ## Using it
 
 Open **PR Review** from the left navigator (directly under First Mate) or press ⌘8. The left
-column becomes the review rail: the review host, a field for a GitHub pull request link,
-Active / Archived, search, and the reviews themselves.
+column becomes the review rail: the host menu, a field for a GitHub pull request link,
+Active / Archived, search, and the reviews themselves. **All machines** is the first host-menu
+option and is selected by default every time you enter PR Review, including when a link opens
+an exact review on its own machine. It combines every paired, configured machine's reviews
+in one list labelled by machine; choosing a machine narrows the list until you leave PR Review.
+Active / Archived and search apply across the combined list, and search also matches machine
+names. An unreachable machine or one without `pr-review-v1` shows a per-machine notice without
+hiding other machines' reviews; a temporarily failing host keeps its last usable list.
+Opening, archiving, refreshing or popping out a row always acts on that row's own machine,
+even when two machines reuse a review ID or pull request number. New reviews from All machines
+start on the Settings PR review host (or the open review's machine if no host is configured).
+No companion update is needed for this Mac-only host option.
 
 **Starting a review.** Paste a link such as `https://github.com/example-owner/example-repo/pull/42`
 and press Return. A sheet lists the review skills, explainer-video skills, utilities and custom

@@ -17,6 +17,17 @@ private struct FirstMateDetailConnectionIdentity: Hashable {
     let isDemo: Bool
 }
 
+/// Authenticated roster identity, held only in memory and never logged.
+private struct PRReviewFleetConnectionIdentity: Hashable {
+    let roster: PRReviewFleetIdentity
+    let configurationURLs: [String?]
+}
+
+private struct PRReviewFleetPollingIdentity: Equatable {
+    let connection: PRReviewFleetConnectionIdentity
+    let isVisible: Bool
+}
+
 private struct PRReviewPollingIdentity: Equatable {
     let machineID: String?
     let reviewID: String?
@@ -176,8 +187,11 @@ struct WorkspaceNavigationView: View {
                                 accessibilityLabel: "PR review host",
                                 identifier: "pr-review-host"
                             ) {
-                                Picker("PR review host", selection: Binding(get: { shell.prReviewMachineID ?? model.prReviewMachine?.id ?? "" }, set: { shell.prReviewMachineID = $0 })) {
-                                    ForEach(model.machines) { machine in Text(machine.name).tag(machine.id) }
+                                Picker("PR review host", selection: prReviewScopeSelection) {
+                                    Text(PRReviewHostScope.allMachinesTitle).tag(PRReviewHostScope.all)
+                                    ForEach(model.machines) { machine in
+                                        Text(machine.name).tag(PRReviewHostScope.machine(machine.id))
+                                    }
                                 }
                                 .pickerStyle(.inline)
                             }
@@ -185,10 +199,18 @@ struct WorkspaceNavigationView: View {
                         PRReviewSidebarView(
                             store: shell.prReview,
                             back: { shell.show(.session, model: model) },
-                            canControl: model.isDemoMode || prReviewConfiguration != nil,
+                            canControl: model.isDemoMode || prReviewCreationConfiguration != nil,
                             openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
-                            setCreating: { shell.isCreatingPRReview = $0 },
-                            popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) }
+                            setCreating: setPRReviewCreating,
+                            popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) },
+                            fleet: prReviewFleetIsVisible ? shell.prReviewFleet : nil,
+                            openFleetReview: { shell.openPRReviewFromFleet($0, model: model) },
+                            archiveFleetReview: { target, archived in
+                                Task { await performPRReviewFleetAction(target) { try await shell.prReviewFleet.archive(target, archived: archived) } }
+                            },
+                            refreshFleetReview: { target in
+                                Task { await performPRReviewFleetAction(target) { try await shell.prReviewFleet.refreshReview(target) } }
+                            }
                         )
                     }
                 } else {
@@ -317,8 +339,14 @@ struct WorkspaceNavigationView: View {
     }
 
     private var prReviewHostTitle: String {
-        let id = shell.prReviewMachineID ?? model.prReviewMachine?.id
-        return model.machines.first { $0.id == id }?.name ?? "Choose a host"
+        Self.prReviewHostTitle(scope: resolvedPRReviewScope, machines: model.machines)
+    }
+
+    static func prReviewHostTitle(scope: PRReviewHostScope, machines: [HerdrMachine]) -> String {
+        switch scope {
+        case .all: PRReviewHostScope.allMachinesTitle
+        case .machine(let id): machines.first { $0.id == id }?.name ?? "Choose a host"
+        }
     }
 
     /// A 6pt grab strip on the rail's edge; the width persists across launches.
@@ -401,14 +429,34 @@ struct WorkspaceNavigationView: View {
         }
         .onChange(of: model.prReviewMachineRevision) { _, _ in
             // A deliberate Settings change supersedes the previous host override.
-            shell.prReviewMachineID = nil
-            shell.prReviewOpenRequest = nil
-            shell.dashboard.reviewRefreshError = nil
+            shell.prReviewHostSettingsDidChange()
+        }
+        .task(id: PRReviewFleetPollingIdentity(connection: prReviewFleetConnectionIdentity, isVisible: prReviewFleetIsVisible)) {
+            // Reconcile even while hidden so removed/reconfigured hosts cannot
+            // publish stale responses. Only the visible All machines rail polls.
+            shell.prReviewFleet.setSources(prReviewFleetSources, identity: prReviewFleetConnectionIdentity)
+            guard prReviewFleetIsVisible else { return }
+            await shell.prReviewFleet.refresh()
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, prReviewFleetIsVisible else { return }
+                await shell.prReviewFleet.refresh()
+            }
+        }
+        .onChange(of: shell.prReview.reviews.map(\.id)) { _, _ in
+            // Includes creates and archives from the single-host detail header.
+            guard prReviewFleetIsVisible else { return }
+            Task { await shell.prReviewFleet.refresh() }
         }
         .task(id: shell.prReviewOpenRequest?.id) {
             await applyPRReviewNavigationRequest()
         }
         .task(id: model.prReviewRefreshTick) {
+            if prReviewFleetIsVisible { await shell.prReviewFleet.refresh() }
             guard shell.prReview.hasLoaded else { return }
             if shell.detailScope == .dashboard {
                 _ = await shell.prReview.refreshDashboard()
@@ -593,6 +641,72 @@ struct WorkspaceNavigationView: View {
         )
     }
 
+    private var resolvedPRReviewScope: PRReviewHostScope {
+        PRReviewHostScope.resolved(shell.prReviewScope, availableMachineIDs: model.machines.map(\.id))
+    }
+
+    private var prReviewScopeSelection: Binding<PRReviewHostScope> {
+        Binding(get: { resolvedPRReviewScope }, set: { shell.selectPRReviewScope($0) })
+    }
+
+    private var prReviewFleetIsVisible: Bool {
+        shell.detailScope == .prReview && resolvedPRReviewScope == .all && !model.isDemoMode
+    }
+
+    private var prReviewFleetConnectionIdentity: PRReviewFleetConnectionIdentity {
+        let configurations = model.machines.map { model.prReviewConfiguration(machineID: $0.id) }
+        return .init(
+            roster: .init(
+                isDemo: model.isDemoMode,
+                generation: model.connectionGeneration,
+                machines: zip(model.machines, configurations).map { machine, configuration in
+                    .init(id: machine.id, name: machine.name, urlString: machine.urlString, token: configuration?.token ?? "")
+                }
+            ),
+            configurationURLs: configurations.map { $0?.baseURL.absoluteString }
+        )
+    }
+
+    private var prReviewFleetSources: [PRReviewFleetSource] {
+        guard !model.isDemoMode else { return [] }
+        return model.machines.compactMap { machine in
+            guard let configuration = model.prReviewConfiguration(machineID: machine.id) else { return nil }
+            return .init(machineID: machine.id, machineName: machine.name, client: HerdrAPIClient(configuration: configuration))
+        }
+    }
+
+    private var prReviewCreationConfiguration: ServerConfiguration? {
+        if resolvedPRReviewScope == .all, !model.isDemoMode, let machine = model.prReviewMachine {
+            return model.prReviewConfiguration(machineID: machine.id)
+        }
+        return prReviewConfiguration
+    }
+
+    private func setPRReviewCreating(_ creating: Bool) {
+        if creating {
+            shell.preparePRReviewCreation(model: model)
+            // Pin the transport before the sheet can submit, rather than
+            // waiting for the connection task after a fleet-host switch.
+            shell.configurePRReviewIfNeeded(configuration: prReviewConfiguration, machineID: prReviewMachineID, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
+        }
+        shell.isCreatingPRReview = creating
+        if !creating, prReviewFleetIsVisible {
+            Task { await shell.prReviewFleet.refresh() }
+        }
+    }
+
+    private func performPRReviewFleetAction(_ target: PRReviewWindowTarget, action: () async throws -> Void) async {
+        do {
+            try await action()
+            if shell.prReview.currentMachineID == target.machineID, shell.prReview.selectedReviewID == target.reviewID {
+                await shell.prReview.refresh()
+            }
+            await shell.prReviewFleet.refresh()
+        } catch {
+            if !HerdrCancellation.isCancellation(error) { model.toastMessage = error.localizedDescription }
+        }
+    }
+
     private var prReviewMachineID: String? {
         shell.prReviewMachineID ?? (model.isDemoMode ? "demo" : model.prReviewMachine?.id)
     }
@@ -605,6 +719,7 @@ struct WorkspaceNavigationView: View {
         guard !Task.isCancelled,
               let request = shell.prReviewOpenRequest,
               request.id != shell.prReviewAppliedRequestID,
+              shell.prReview.currentMachineID == prReviewMachineID,
               model.isDemoMode || request.serverURL == prReviewConfiguration?.baseURL.absoluteString
         else { return }
 
@@ -757,7 +872,7 @@ struct WorkspaceNavigationView: View {
                     Task { await model.presentPRReviewQuestion(machineID: machineID, review: review, selection: selection, anchor: (view, rect)) }
                 },
                 questionDraftChanged: { shell.hasPRReviewQuestionDraft = $0 },
-                setCreating: { shell.isCreatingPRReview = $0 },
+                setCreating: setPRReviewCreating,
                 openPane: { paneID, machineID in
                     shell.openPane(rawPaneID: paneID, machineID: machineID, model: model)
                 },

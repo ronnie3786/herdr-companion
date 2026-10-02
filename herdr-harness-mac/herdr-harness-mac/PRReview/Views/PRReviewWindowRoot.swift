@@ -48,7 +48,7 @@ struct PRReviewWindowRoot: View {
             }
         }
         .frame(minWidth: 720, minHeight: 520)
-        .background(HerdrTheme.graphite)
+        .modifier(HerdrMainWindowChromeModifier(revealsDesktop: true))
         .foregroundStyle(HerdrTheme.text)
         .preferredColorScheme(.dark)
         .tint(HerdrTheme.accent)

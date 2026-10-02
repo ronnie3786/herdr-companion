@@ -47,7 +47,14 @@ final class AgentRolesStore {
     var selectedMachine: HerdrMachine? { machines.first { $0.id == selectedMachineID } ?? retainedMachine }
     var hasUnsavedChanges: Bool { draft != baseline }
     var isLoading: Bool { status == .loading }
-    var canEdit: Bool { status == .loaded && draft?.locked == false && !isSaving && !requiresConnectionReload }
+    var supportsPRReviewAgents: Bool { overview?.supportsPRReviewAgents == true }
+    var canCreatePRReviewRole: Bool {
+        status == .loaded && supportsPRReviewAgents && !isSaving && !requiresConnectionReload
+    }
+    var canEdit: Bool {
+        status == .loaded && draft?.locked == false && !isSaving && !requiresConnectionReload
+            && (draft?.isPRReview != true || supportsPRReviewAgents)
+    }
     var canSave: Bool {
         canEdit && hasUnsavedChanges && !hasConflict && !catalog.isLoading && validationMessage == nil
     }
@@ -64,6 +71,14 @@ final class AgentRolesStore {
         }
         if draft.whenToUse.utf8.count > 4096 { return "Shorten the when-to-use description to at most 4,096 bytes." }
         if draft.systemPrompt.utf8.count > 32768 { return "Shorten the system prompt to at most 32,768 bytes." }
+        if draft.isPRReview {
+            if !supportsPRReviewAgents { return "Update this companion to edit PR review agents." }
+            if draft.group.utf8.count > 120 || draft.group.contains(where: \.isNewline) || draft.group.contains("\t") {
+                return "Use a single-line team name of at most 120 bytes."
+            }
+            if draft.reviewPrompt.utf8.count > 32768 { return "Shorten the review prompt to at most 32,768 bytes." }
+            if AgentRoleAvatar(rawValue: draft.avatar) == nil { return "Choose an available avatar." }
+        }
         if selectedIDs.count > 2000 { return "Select no more than 2,000 skills per role." }
         return nil
     }
@@ -73,6 +88,8 @@ final class AgentRolesStore {
         return roles
     }
     var skills: [AgentRoleSkill] { catalog.skills }
+    var workerRoles: [AgentRole] { roles.filter { !$0.isPRReview } }
+    var prReviewRoles: [AgentRole] { roles.filter(\.isPRReview) }
     var selectedIDs: Set<String> { Set(draft?.skillIds ?? []) }
     var selectedTokens: Int {
         skills.filter { selectedIDs.contains($0.id) }.reduce(0) { $0 + max(0, $1.estimatedTokens) }
@@ -207,6 +224,14 @@ final class AgentRolesStore {
         clearError()
     }
 
+    func newPRReviewRole() {
+        guard canCreatePRReviewRole, !hasUnsavedChanges else { return }
+        baseline = nil
+        baselineRevision = overview?.revision ?? 0
+        draft = .customPRReview()
+        clearError()
+    }
+
     func discard() {
         guard !isSaving else { return }
         if requiresConnectionReload {
@@ -256,6 +281,7 @@ final class AgentRolesStore {
     func save() async {
         guard canSave, var role = draft else { return }
         role.name = role.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if role.isPRReview { role.group = role.group.trimmingCharacters(in: .whitespacesAndNewlines) }
         await mutate(role: role, deleting: false)
     }
 

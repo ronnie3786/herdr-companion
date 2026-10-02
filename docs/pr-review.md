@@ -1,10 +1,11 @@
 # PR Review
 
-Status: macOS 0.40.0-beta.1 with companion 0.40.0b1 (2026-09-23).
+Saved review agents require a Mac app and companion advertising `pr-review-agents-v1`.
+Earlier review, skill, and document APIs remain compatible.
 Product intent lives in [pr-review-assistant.md](pr-review-assistant.md).
 
 PR Review turns a GitHub pull request link into an AI-assisted review workspace inside the
-Mac app. The review itself, its skill runs, its documents and its findings live on the
+Mac app. The review itself, its agent runs, its documents and its findings live on the
 **review host**: the companion whose configured machine role is `development`. The Mac app is a
 client of that companion. Nothing in a review is ever deleted; finished reviews are archived.
 
@@ -16,15 +17,14 @@ On the review host:
    `pr-review-question-v1` question profile.
 2. Authenticate `gh` for the GitHub account that can read the pull requests you review, and
    install the `gh autoview` extension if you use the mark-viewed utility.
-3. Install the review skills for the agent runner (`pi` by default) so these names
-   resolve: `ios-review-remote-pr`, `comprehensive-pr-review`, `github-pr-explainer-video`,
-   `github-pr-explainer-video-v2`, `tech-explainer-video`, `pr-explainer-dev-manager`,
-   `mark-generated-and-test-viewed-in-pull-request`. Pi discovers shared skills in
-   `~/.agents/skills/` and invokes them with `/skill:<name>`. Selected skills use
-   the host's existing global Pi provider and model settings. Install selected
-   skills globally: managed review runs ignore checkout-local Pi settings,
-   extensions, and skills, so reviewing a new checkout does not require granting
-   it project trust.
+3. Install Pi and configure its default provider and model on the review computer.
+   In **Settings → Agent Roles**, choose that computer and expand **PR Review Agents**.
+   **Comprehensive** is the one bundled reviewer and needs no additional skills.
+   Create private specialists with a name, avatar, optional team, review prompt, and
+   selected skills. The skill picker reads this Mac's authorized folders and copies
+   selected packages when saved. Review agents use only these copied packages;
+   checkout-local settings, extensions, and discovered skills are not inherited.
+   Legacy skill runs still use their existing globally installed skills and runner.
 4. Optionally add a `[pr_review]` table to the private configuration
    (see [config.example.toml](../config.example.toml)). Every key has a default:
 
@@ -72,13 +72,34 @@ still follows the main detail host, not the combined rail: opening a review on a
 also changes which machine's reviews appear on the Dashboard.
 
 **Starting a review.** Paste a link such as `https://github.com/example-owner/example-repo/pull/42`
-and press Return. A sheet lists the review skills, explainer-video skills, utilities and custom
-skills; choose which to run now (the last selection is remembered) or add the review without
-running anything. The companion then fetches the PR with `gh`, clones the repository once and
-checks the head out into a per-review worktree, parses the diff, opens a tab named
-`PR #42 · <title>` in the PR Reviews workspace, pulls your GitHub viewed-file state, marks the
-review ready, starts the chosen skills, and ranks the files. Creating the same open PR twice
-returns the existing review.
+and press Return, or choose **New review** and enter the link. Choose reviewers using the
+avatar cards and checkmarks. A named team selects its members together; Comprehensive stays
+independent unless you assign it to a team. Selection is remembered per review computer.
+**Add only** prepares the review without starting reviewers. Older companions can still add
+reviews and expose their legacy Skills tab, but need a separate companion update for saved agents.
+
+The companion fetches the PR with `gh`, prepares the shared review checkout and diff,
+opens its review tab, syncs viewed state, and starts the selected agents. Each agent gets a
+separate checkout pinned to the same commits, its saved profile and selected skills, and its
+own private report directory. The execution computer's global Pi model is used. A blank
+review prompt runs the adversarial review shown as faded placeholder text in Settings.
+The PR URL is always included; custom prompts may use `{url}`, `{number}`, `{owner}`,
+and `{repo}` placeholders. Profile edits apply to later runs, while queued and running
+reviewers retain their saved profile and skill package versions.
+
+**Automatic consolidation.** Each agent's final Markdown report is saved under its own run.
+After the selected runs finish, fail, or end, a consolidator checks their findings against
+the pinned source, removes duplicates, and produces Markdown and HTML reports. The HTML
+report links to each raw report in the authenticated Mac document viewer. Missing or failed
+reviewers remain explicit incomplete coverage. Source, PR descriptions, and reports are
+evidence, not permission to post reviews, change source, or take other actions.
+
+**Add agents** queues another saved reviewer or team on this PR. **Run again** replaces that
+reviewer's current result while retaining its previous reports in history. Each batch creates
+one durable consolidation generation with the exact input run IDs and commit SHAs. New
+runs or refreshed commits invalidate an older generation; an older consolidator can never
+replace the current report. Managed jobs interrupted by a companion restart are retained
+as unsuccessful, and remaining work is reconciled without claiming success.
 
 Starting with companion 0.27.0b2, if the companion restarts during preparation, it resumes active, unfinished preparation
 with the original queued skill runs. A persisted review tab is reused. Completed, failed,
@@ -147,22 +168,23 @@ the review host that opened them: a credential or URL edit for that same machine
 a removed host shows an unavailable state instead of falling back, and while one is open the
 Context row reports Ready and offers Reveal in Finder. Skill runs register their outputs automatically.
 
-**Agents.** Every skill run is a pane in the review's tab on the review host. The tab shows
-the run state, the pane, its latest output, and buttons to open the pane, finish the run or mark
-it failed, plus the review's event timeline. A run finishes when the agent or the CLI says so,
-when the terminal reports the agent done, or is marked ended when its pane disappears.
+**Agents.** Avatar cards show selected reviewers and their queued, reviewing, completed,
+failed, or interrupted state. Their raw reports appear on the cards. The consolidator stays
+below the team with its waiting/running/report status. Run history and Activity retain older
+passes and legacy skill runs. Legacy pane runs still offer Open pane and manual completion;
+saved review agents finish from their managed process result.
 
-**Skills.** Built-in skills are grouped by kind with their ran / not-run state and run history.
-Mark a skill as ran or not run by hand, run it again, or add a custom skill (id, title, prompt
-template with `{number}`, `{url}`, `{owner}`, `{repo}`, `{review_id}`, `{run_id}`, `{checkout}`
-placeholders, output globs) without updating the app. Custom skills can also be added from the CLI.
+**Legacy skills.** Existing clients and the CLI retain their skill endpoints, templates,
+output globs, and marks. The older companion's Skills tab can run and manage these entries.
+New saved-agent reviews compose selected skills inside an agent profile instead of launching
+the old specialist-grouping skill. No operator-specific specialist or team is bundled.
 
 **Archive.** Archiving hides a review from the Active list and keeps every file, run, document
 and event; Archived lists them and Unarchive brings one back.
 
 **Pop-out windows.** Right-click any active review row — selected or not — or the header of the
 review currently displayed, and choose **Pop Out into Window**. The review opens in its own
-resizable Mac window that keeps the complete workspace (Files, Context, Agents, Skills, and
+resizable Mac window that keeps the complete workspace (Files, Context, Agents, and
 Ask AI) while the main Herdr window stays free to move through All sessions and other chats;
 an unsent chat draft is untouched by either window, and ⌘8 brings the section back. Every window
 is pinned to the machine and review it was opened from: changing the main window's review host,

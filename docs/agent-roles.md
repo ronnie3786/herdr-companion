@@ -122,3 +122,23 @@ remote machine's discovered skills.
 The Mac app ships through its signed release feed. Companion server packages and
 Pi extensions are updated separately. Creating or saving a role never deploys
 these components.
+
+## PR Review Agents
+
+On a companion advertising `pr-review-agents-v1`, Settings shows a separate,
+collapsed **PR Review Agents** section. Each saved reviewer has a name, avatar,
+optional team, review prompt, and the same explicit skill selection and package
+copying controls as other Agent Roles. Only **Comprehensive** is bundled. Private
+specialists and team names belong in the companion's role store.
+
+A blank review prompt remains blank in storage and uses the faded adversarial
+review example at launch, with the actual PR URL inserted. Review agents use the
+execution computer's global Pi default model, without First Mate routing or
+delegation settings. Their purpose is `pr_review`; First Mate's worker catalog
+excludes them. Older roles decode as `worker` and remain compatible with earlier
+clients. New profiles cannot be saved to a companion missing the capability.
+
+Select these agents when starting a review or adding another pass from its Agents
+tab. Runs retain the role and selected package versions captured at queue time.
+See [PR Review](pr-review.md) for automatic consolidation, history, and incomplete
+coverage behavior.

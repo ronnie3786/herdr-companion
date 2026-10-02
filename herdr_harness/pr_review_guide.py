@@ -208,7 +208,8 @@ class ReviewContextService:
             head = binding.get("head_sha")
             freshness = revision_freshness(binding, review)
             # A shared-folder scan cannot prove who produced a document.
-            reviewer = "Consolidated review" if document.get("origin") == "skill" else "Saved review context"
+            verified_reviewer = run.get("agent_name") if run and run.get("kind") == "reviewer" else None
+            reviewer = verified_reviewer or ("Consolidated review" if document.get("origin") in {"skill", "review-consolidation"} else "Saved review context")
             for index, (heading, excerpt) in enumerate(report_sections(raw, document["kind"])):
                 paths = mentioned_paths(heading + "\n" + excerpt, files)
                 if path is not None and path not in paths:
@@ -226,10 +227,10 @@ class ReviewContextService:
                 disposition = "dismissed" if re.search(r"\b(dismissed|rejected|false positive|superseded)\b", heading, re.I) else "reported"
                 identity = hashlib.sha256((document["id"] + str(index) + excerpt).encode()).hexdigest()[:20]
                 sources.append({"id": "source_" + identity, "document_id": document["id"], "title": document["title"],
-                    "section": heading[:500], "reviewer": asserted_reviewer or reviewer, "excerpt": _bounded(excerpt, 1800),
+                    "section": heading[:500], "reviewer": verified_reviewer or asserted_reviewer or reviewer, "excerpt": _bounded(excerpt, 1800),
                     "excerpt_truncated": len(excerpt.encode()) > 1800, "content_hash": document.get("content_hash"),
                     "paths": paths, "freshness": freshness, "head_sha": head, "run_id": run["id"] if run else document.get("run_id"),
-                    "provenance": "report_assertion" if asserted_reviewer else "shared_output_scan" if run else "saved_document", "source_associations": associations, "revision_observation": "run_boundaries" if head else "unknown",
+                    "provenance": "agent_response" if verified_reviewer else "report_assertion" if asserted_reviewer else "shared_output_scan" if run else "saved_document", "source_associations": associations, "revision_observation": "run_boundaries" if head else "unknown",
                     "disposition": disposition, "assessment": "unverified",
                     "url": f"/api/v1/pr-reviews/{review['id']}/documents/{document['id']}/content"})
         sources.sort(key=lambda item: (item["disposition"] == "dismissed", item["freshness"] != "current", not bool(item["paths"]), item["id"]))

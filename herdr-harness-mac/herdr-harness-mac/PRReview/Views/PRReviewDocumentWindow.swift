@@ -203,7 +203,7 @@ struct PRReviewDocumentWindowRoot: View {
         case .markdown:
             PRReviewMarkdownDocumentView(store: session.store, document: document)
         case .html:
-            PRReviewHTMLReportView(store: session.store, document: document)
+            PRReviewHTMLReportView(store: session.store, document: document, documentHost: host)
         }
     }
 

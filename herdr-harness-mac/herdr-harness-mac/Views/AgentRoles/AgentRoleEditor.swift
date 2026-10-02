@@ -21,19 +21,24 @@ struct AgentRoleEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: role.locked ? "lock.shield" : "person.fill")
-                    .herdrFont(.title2)
-                    .foregroundStyle(HerdrTheme.accent)
-                    .frame(width: 44, height: 44)
-                    .background(HerdrTheme.firstMateAvatarFill, in: Circle())
-                    .accessibilityHidden(true)
+                if role.isPRReview {
+                    AgentRoleAvatarView(avatar: role.avatar, size: 44, selected: true)
+                } else {
+                    Image(systemName: role.locked ? "lock.shield" : "person.fill")
+                        .herdrFont(.title2)
+                        .foregroundStyle(HerdrTheme.accent)
+                        .frame(width: 44, height: 44)
+                        .background(HerdrTheme.firstMateAvatarFill, in: Circle())
+                        .accessibilityHidden(true)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     TextField("Role name", text: $role.name)
                         .textFieldStyle(.plain)
                         .herdrFont(.title3, weight: .semibold)
                         .disabled(!store.canEdit)
                         .accessibilityIdentifier("agent-role-name")
-                    Text(role.locked ? "System role · Always restricted" : role.builtin ? "Built-in role" : "Custom role")
+                    Text(role.isPRReview ? (role.builtin ? "Built-in review agent" : "Custom review agent")
+                         : role.locked ? "System role · Always restricted" : role.builtin ? "Built-in role" : "Custom role")
                         .herdrFont(.caption)
                         .foregroundStyle(HerdrTheme.secondaryText)
                 }
@@ -54,7 +59,9 @@ struct AgentRoleEditor: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 switch tab {
-                case .profile: AgentRoleProfileEditor(store: store, role: $role)
+                case .profile:
+                    if role.isPRReview { PRReviewAgentProfileEditor(store: store, role: $role) }
+                    else { AgentRoleProfileEditor(store: store, role: $role) }
                 case .skills: AgentRoleSkillsView(store: store, showSources: showSources)
                 }
                 AgentRoleSaveBar(store: store)

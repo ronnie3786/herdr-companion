@@ -207,7 +207,7 @@ struct PRReviewFilesView: View {
             TextField("Filter files", text: $store.search).textFieldStyle(.roundedBorder)
         }
         .padding(10)
-        .background(HerdrTheme.ink)
+        .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground) }
     }
 
     private func selectFirstFileIfNeeded() {
@@ -641,7 +641,7 @@ struct PRReviewDiffView: View {
         }
         .buttonStyle(.bordered)
         .padding(compact ? 8 : 10)
-        .background(HerdrTheme.ink)
+        .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: HerdrTheme.railBackground) }
     }
 
     private var highlight: (start: Int, end: Int, side: PRReviewSide)? {

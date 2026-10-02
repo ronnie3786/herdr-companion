@@ -3,7 +3,7 @@ import SwiftUI
 
 struct AgentRolesView: View {
     private enum Navigation: Equatable {
-        case role(String), machine(String), newRole, reload
+        case role(String), machine(String), newRole, newPRReviewRole, reload
     }
 
     @Bindable var store: AgentRolesStore
@@ -20,7 +20,7 @@ struct AgentRolesView: View {
             Divider()
             if store.machines.isEmpty && store.draft == nil {
                 ContentUnavailableView("No machines yet", systemImage: "desktopcomputer",
-                    description: Text("Add a machine in Settings › Machines to configure its First Mate roles."))
+                    description: Text("Add a machine in Settings › Machines to configure its agent roles."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 switch store.status {
@@ -47,7 +47,8 @@ struct AgentRolesView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .loaded:
                     HStack(spacing: 0) {
-                        AgentRolesRail(store: store, select: { request(.role($0)) }, newRole: { request(.newRole) })
+                        AgentRolesRail(store: store, select: { request(.role($0)) },
+                            newRole: { request(.newRole) }, newPRReviewRole: { request(.newPRReviewRole) })
                         Divider()
                         if let role = Binding($store.draft) {
                             AgentRoleEditor(store: store, role: role, initialTab: initialTab, showSources: { showsSources = true })
@@ -113,6 +114,7 @@ struct AgentRolesView: View {
         case let .role(id): store.selectRole(id)
         case let .machine(id): Task { await store.selectMachine(id) }
         case .newRole: store.newRole()
+        case .newPRReviewRole: store.newPRReviewRole()
         case .reload:
             refreshConnections()
             Task {

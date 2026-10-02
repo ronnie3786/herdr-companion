@@ -5488,7 +5488,9 @@ final class HerdrAppModel {
                         )
                     } else if event.event == "active_work.updated" {
                         activeWorkRefreshTick &+= 1
-                    } else if event.event == "pr_review.updated" {
+                    } else if event.event == "pr_review.updated" || event.event == "agent_roles.changed" {
+                        // PR pickers read their saved agent catalog from capabilities.
+                        // Reuse the scoped review refresh without resetting selections.
                         prReviewRefreshTick &+= 1
                     } else if event.event == "pr_review.walkthrough" {
                         prReviewRefreshTick &+= 1

@@ -88,9 +88,29 @@ final class PRReviewStore {
     var unsupported = false
     var error: String?
     var capabilities: PRReviewCapabilities?
+    private(set) var isQueueingAgents = false
+    @ObservationIgnored private var agentQueueID: UUID?
     var documentUploads: [String: PRReviewDocumentUpload] = [:]
     var contextImportError: String?
     var unconfigured = false
+
+    var supportsReviewAgents: Bool { isDemo || capabilities?.supportsAgents == true }
+    var reviewAgents: [AgentRole] {
+        (isDemo ? PRReviewAgentDemo.agents : capabilities?.agents ?? []).filter(\.isPRReview)
+    }
+
+    var currentAgentRuns: [PRReviewRun] {
+        guard let snapshot else { return [] }
+        if let consolidation = snapshot.consolidation, consolidation.matches(snapshot.review) {
+            let inputs = Set(consolidation.inputRunIDs)
+            return snapshot.runs.filter { inputs.contains($0.id) }
+        }
+        return []
+    }
+
+    var activeAgentIDs: Set<String> {
+        Set((snapshot?.runs ?? []).filter(\.isActive).compactMap(\.agentID))
+    }
 
     /// Every document resource this store has published a phase for. A
     /// connection change retires phases still marked `.downloading` so a slow
@@ -210,6 +230,8 @@ final class PRReviewStore {
     func select(_ id: String?) {
         guide.suspend()
         isRefreshingReview = false
+        agentQueueID = nil
+        isQueueingAgents = false
         selectedReviewID = id
         snapshot = nil
         diff = nil
@@ -713,6 +735,52 @@ final class PRReviewStore {
         }
     }
 
+    /// Returns success so a failed request leaves the sheet and choices intact.
+    func createWithAgents(url: String, agentIDs: [String]) async -> Bool {
+        guard let client, !isDemo, !isCreating, supportsReviewAgents else { return false }
+        let scope = operationScope(reviewID: selectedReviewID)
+        isCreating = true
+        error = nil
+        defer { if isCurrentConnection(scope) { isCreating = false } }
+        do {
+            let value = try await client.createPRReview(url: url, agentIDs: agentIDs, requestID: UUID().uuidString)
+            guard isCurrentSelection(scope) else { return false }
+            select(value.review.id)
+            receive(value)
+            if !reviews.contains(where: { $0.id == value.review.id }) { reviews.insert(value.review, at: 0) }
+            tab = agentIDs.isEmpty ? .files : .agents
+            return true
+        } catch {
+            guard isCurrentSelection(scope), !HerdrCancellation.isCancellation(error) else { return false }
+            record(error)
+            return false
+        }
+    }
+
+    func queueAgents(_ agentIDs: [String]) async -> Bool {
+        guard let client, let selectedReviewID, !isDemo, supportsReviewAgents,
+              !isQueueingAgents, !agentIDs.isEmpty else { return false }
+        let scope = operationScope(reviewID: selectedReviewID)
+        let queueID = UUID()
+        agentQueueID = queueID
+        isQueueingAgents = true
+        error = nil
+        defer {
+            if agentQueueID == queueID { agentQueueID = nil; isQueueingAgents = false }
+        }
+        do {
+            _ = try await client.createPRReviewAgentRuns(id: selectedReviewID, agentIDs: agentIDs,
+                                                       requestID: UUID().uuidString)
+            guard isCurrentSelection(scope) else { return false }
+            await refreshSelected()
+            return isCurrentSelection(scope)
+        } catch {
+            guard isCurrentSelection(scope), !HerdrCancellation.isCancellation(error) else { return false }
+            record(error)
+            return false
+        }
+    }
+
     func refreshReview() async {
         guard let selectedReviewID,
               let client,
@@ -775,6 +843,22 @@ final class PRReviewStore {
                 return
             }
             record(error)
+        }
+    }
+
+    func linkedReportDocument(id: String, reviewID: String) async throws -> PRReviewDocument {
+        guard selectedReviewID == reviewID else { throw APIError.invalidResponse }
+        let scope = operationScope(reviewID: reviewID)
+        if let document = snapshot?.documents.first(where: { $0.id == id && $0.reviewID == reviewID }) { return document }
+        guard let client else { throw APIError.invalidResponse }
+        do {
+            let document = try await client.prReviewDocument(reviewID: reviewID, documentID: id)
+            guard isCurrentSelection(scope) else { throw CancellationError() }
+            guard document.id == id, document.reviewID == reviewID else { throw APIError.invalidResponse }
+            return document
+        } catch {
+            guard isCurrentSelection(scope) else { throw CancellationError() }
+            throw error
         }
     }
 
@@ -1412,6 +1496,9 @@ final class PRReviewStore {
     /// uploads that did reach the server before the transport changed.
     private func settleInterruptedProgress() {
         isRefreshingReview = false
+        isCreating = false
+        isQueueingAgents = false
+        agentQueueID = nil
         let uploadMessage = "The connection changed before this upload finished. Retry to upload it again."
         let downloadMessage = "This download was interrupted. Open the document to try again."
         let interruptedUploads = documentUploads.filter { entry in

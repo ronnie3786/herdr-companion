@@ -33,9 +33,24 @@ enum AgentRoleTestFixtures {
                   systemPrompt: "", modelProfile: "execution", allowDelegation: false, skillIds: skills)
     }
 
-    static func overview(revision: Int = 0, roles: [AgentRole] = roles, machineID: String = "server-desktop") -> AgentRolesOverview {
+    static let reviewRoles = [
+        AgentRole(id: "pr-review-comprehensive", builtin: true, locked: false, name: "Comprehensive",
+            whenToUse: "", systemPrompt: "", modelProfile: "default", allowDelegation: false,
+            skillIds: [], purpose: "pr_review"),
+        AgentRole(id: "sample-review-agent", builtin: false, locked: false, name: "Atlas",
+            whenToUse: "", systemPrompt: "", modelProfile: "default", allowDelegation: false,
+            skillIds: ["skill_alpha"], purpose: "pr_review", reviewPrompt: "Review the sample change for actionable regressions.\n\nPull request: {url}",
+            group: "Sample team", avatar: "quality"),
+    ]
+
+    static func reviewOverview(machineID: String = "server-desktop") -> AgentRolesOverview {
+        overview(roles: roles + reviewRoles, machineID: machineID, capabilities: ["pr-review-agents-v1"])
+    }
+
+    static func overview(revision: Int = 0, roles: [AgentRole] = roles, machineID: String = "server-desktop",
+                         capabilities: [String]? = nil) -> AgentRolesOverview {
         AgentRolesOverview(ok: true, capability: "agent-roles-v1", machineId: machineID, revision: revision,
-            roles: roles, skills: skills, sources: [], warnings: [])
+            roles: roles, skills: skills, sources: [], warnings: [], capabilities: capabilities)
     }
 }
 
@@ -89,7 +104,8 @@ actor AgentRoleTestClient: AgentRolesClient {
             if let index = roles.firstIndex(where: { $0.id == role.id }) { roles[index] = role }
             else { roles.append(role) }
         } else { roles.removeAll { $0.id == mutation.roleId } }
-        overview = AgentRoleTestFixtures.overview(revision: overview.revision + 1, roles: roles, machineID: overview.machineId)
+        overview = AgentRoleTestFixtures.overview(revision: overview.revision + 1, roles: roles, machineID: overview.machineId,
+            capabilities: overview.capabilities)
         return overview
     }
 }

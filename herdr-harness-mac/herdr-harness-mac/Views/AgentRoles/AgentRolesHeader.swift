@@ -11,7 +11,7 @@ struct AgentRolesHeader: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Agent Roles").herdrFont(size: SettingsDesign.pageTitle, weight: .semibold)
-                    Text("Shape how First Mate and its team work.")
+                    Text("Shape your First Mate team and PR review agents.")
                         .herdrFont(.callout)
                         .foregroundStyle(HerdrTheme.secondaryText)
                 }

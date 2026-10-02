@@ -78,6 +78,7 @@ worker_thinking = "medium"
 architect_model = "synthetic/architect"
 architect_thinking = "xhigh"
 auto_recovery = false
+usage_enabled = false
 sweep_seconds = 3600
 nudge_grace_seconds = 300
 minimum_free_mb = 2048
@@ -95,6 +96,7 @@ message_hub_url = "https://messages.example.invalid/api/v1/messages"
         self.assertEqual(config.environ['HERDR_FIRST_MATE_ARCHITECT_MODEL'], 'synthetic/architect')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_ARCHITECT_THINKING'], 'xhigh')
         self.assertIn(config.environ['HERDR_FIRST_MATE_AUTO_RECOVERY'].lower(), {'false', '0'})
+        self.assertIn(config.environ['HERDR_FIRST_MATE_USAGE_ENABLED'].lower(), {'false', '0'})
         self.assertEqual(config.environ['HERDR_FIRST_MATE_SWEEP_SECONDS'], '3600')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_NUDGE_GRACE_SECONDS'], '300')
         self.assertEqual(config.environ['HERDR_FIRST_MATE_MINIMUM_FREE_MB'], '2048')

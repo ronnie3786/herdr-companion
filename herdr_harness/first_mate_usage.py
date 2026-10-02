@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,8 +143,9 @@ def aggregate_usage(summaries: Iterable[dict], *, updated_at: str) -> dict:
 class FirstMateUsage:
     """Stream saved JSONL with stat caching and aggregate managed inventory."""
 
-    def __init__(self, sessions_root: str | Path):
+    def __init__(self, sessions_root: str | Path, *, enabled: bool = True):
         self.sessions_root = Path(sessions_root).expanduser().resolve()
+        self.enabled = enabled
         self._lock = threading.RLock()
         # One current stat version per source identity; old versions are replaced.
         self._cache: dict[tuple[str, str | None], tuple[tuple[int, int, int, int], dict]] = {}
@@ -164,6 +166,12 @@ class FirstMateUsage:
 
     def session_usage(self, session_file: str | Path, expected_session_id: str | None = None) -> dict:
         """Return whole-file usage. Complete JSONL records are streamed once per stat."""
+        if not self.enabled:
+            # Operational circuit breaker: keep saved-session identities and
+            # conversations available without scanning their full usage history.
+            result = _empty_summary(datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+            result["_source_state"] = "disabled"
+            return result
         lexical = str(Path(session_file).expanduser())
         last_key = (lexical, expected_session_id)
         try:
@@ -454,11 +462,16 @@ class FirstMateUsage:
             return None
 
         eligible_jobs = [job for job in jobs
-                         if (jobs_root / str(job.get("id")) / "started.json").exists()
-                         or job.get("native_session_id")]
+                         if job.get("native_session_id")
+                         or (jobs_root / str(job.get("id")) / "started.json").exists()]
 
         def canonical_path(value: Any) -> str:
             try:
+                if not self.enabled:
+                    # Group recorded metadata lexically when no files are read.
+                    # Resolving every historical path for every card is expensive.
+                    # The session reader still validates paths before opening them.
+                    return os.path.abspath(os.path.expanduser(str(value))) if value else ""
                 return str(Path(str(value)).expanduser().resolve()) if value else ""
             except (OSError, RuntimeError, ValueError):
                 return str(value or "")

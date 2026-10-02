@@ -143,6 +143,10 @@ thinking_level = "high"
 # Role defaults belong in the operator's private configuration. A feature can
 # override only its coordinator selection for the next coordinator turn.
 max_workers = 8
+# Recovery switch for hosts where historical usage scans delay opening chats.
+# false keeps conversations and saved sessions accessible, with usage unavailable.
+# Saved history is preserved. Restart the companion after changing this setting.
+usage_enabled = true
 context_target = 150000
 stall_seconds = 600
 coordinator_timeout_seconds = 86400 # Inactivity; model output/completed tools renew it.

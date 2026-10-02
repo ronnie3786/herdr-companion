@@ -891,7 +891,8 @@ class FirstMateRuntime:
         self._catalog_at = 0.0
         self._assessment_reads = AssessmentReadCache()
         self._verification_read_context = threading.local()
-        self.usage = FirstMateUsage(self.root / "sessions")
+        self.usage = FirstMateUsage(self.root / "sessions", enabled=
+            self.environ.get("HERDR_FIRST_MATE_USAGE_ENABLED", "true").lower() not in {"0", "false", "no"})
         self.context = FirstMateContext(self.jobs_root, self.context_target)
         from .first_mate_reliability import FirstMateReliability
         self.reliability = FirstMateReliability(self)

@@ -551,6 +551,50 @@ class FirstMateUsageInventoryTests(unittest.TestCase):
         self.assertEqual(listed, detail)
         self.assertEqual(listed["cost_usd"], 1.5)
 
+    def test_usage_recovery_mode_keeps_chats_and_saved_sessions_without_scanning_usage(self):
+        visit = self.stage()
+        assignment, job = self.worker(visit, "recovery", cost=1.5)
+        # Select the same option a private per-machine configuration supplies.
+        runtime = FirstMateRuntime(self.store, environ={
+            "PATH": "", "HERDR_FIRST_MATE_USAGE_ENABLED": "false",
+        }, runtime_root=self.runtime.root)
+        before = Path(job["session_file"]).read_bytes()
+        with mock.patch.object(runtime.usage, "_parse", side_effect=AssertionError("usage scan")), \
+             mock.patch.object(runtime.usage, "_safe_path", side_effect=AssertionError("usage path scan")):
+            listed = runtime.list_features()[0]
+            self.assertEqual(listed["usage"]["status"], "unavailable")
+            self.assertIsNone(listed["usage"]["cost_usd"])
+            snapshot = runtime.snapshot(self.feature["id"])
+            worker = next(a for a in snapshot["assignments"] if a["id"] == assignment["id"])
+            self.assertEqual(worker["usage"]["status"], "unavailable")
+            self.assertEqual(worker["subtree_usage"]["status"], "unavailable")
+            self.assertIn("native-recovery", [s["native_session_id"] for s in snapshot["sessions"]])
+            for view in ("chat", "overview", "details"):
+                result = runtime.read_view(self.feature["id"], view=view)
+                self.assertEqual(result["feature"]["usage"]["status"], "unavailable")
+                self.assertTrue(runtime.read_view(self.feature["id"], view=view,
+                                                 if_version=result["version"])["unchanged"])
+            saved = runtime.session("native-recovery", limit=1)
+            self.assertTrue(saved["messages"])
+            self.assertEqual(saved["usage"]["status"], "unavailable")
+        self.assertEqual(Path(job["session_file"]).read_bytes(), before)
+        # Restoring normal mode can still account for the retained history.
+        self.assertEqual(self.runtime.feature(self.feature["id"])["usage"]["cost_usd"], 1.5)
+
+    def test_usage_recovery_accounting_does_not_resolve_historical_paths(self):
+        visit = self.stage()
+        self.worker(visit, "metadata-only", cost=1.5)
+        accountant = FirstMateUsage(self.runtime.root / "sessions", enabled=False)
+        jobs = self.runtime._jobs()
+        ledger = self.store.list_session_records()
+        assignments = self.store.list_assignments(feature_id=self.feature["id"])
+        with mock.patch.object(Path, "resolve", side_effect=AssertionError("historical path scan")):
+            result = accountant.account(feature_id=self.feature["id"], assignments=assignments,
+                ledger_sessions=ledger, jobs=jobs, jobs_root=self.runtime.jobs_root,
+                updated_at=self.feature["updated_at"])
+        self.assertEqual(result["usage"]["status"], "unavailable")
+        self.assertEqual(result["sessions"][0]["native_session_id"], "native-metadata-only")
+
 
 if __name__ == "__main__":
     unittest.main()

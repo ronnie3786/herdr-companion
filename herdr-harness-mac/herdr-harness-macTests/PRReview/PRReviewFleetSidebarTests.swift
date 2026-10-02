@@ -35,7 +35,10 @@ struct PRReviewFleetSidebarTests {
 
     @Test("Duplicate review IDs render separate rows and selection includes the machine")
     func duplicateIDsAndSelection() async throws {
-        let shared = review("prr_shared", title: "Same synthetic title")
+        var shared = review("prr_shared", title: "Same synthetic title")
+        shared.walkthrough = .init(id: "synthetic-guide", state: "finished", baseSHA: shared.baseSHA, headSHA: shared.headSHA,
+                                   comparisonID: nil, createdAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:01:00Z",
+                                   seenAt: nil, error: nil, chapterCount: 3, needsAttention: true)
         let fleet = PRReviewFleetIndex()
         fleet.setSources([
             source("host-a", "Alpha Studio", active: [shared]),
@@ -57,6 +60,16 @@ struct PRReviewFleetSidebarTests {
         let beta = try #require(rows.first { $0.accessibilityIdentifier() == rowID("host-b", shared.id) })
         #expect(alpha.isAccessibilitySelected())
         #expect(!beta.isAccessibilitySelected())
+        #expect(alpha.accessibilityLabel()?.contains("Walkthrough ready") == true)
+        #expect(beta.accessibilityLabel()?.contains("Walkthrough ready") == true)
+        // SwiftUI combines a button's label into the row's AX element, so its
+        // child identifier is checked through the same helper the label uses.
+        let walkthroughIDs = fleet.active.map {
+            PRReviewSidebarView.walkthroughAccessibilityIdentifier(reviewID: $0.review.id, rowID: $0.id.id)
+        }
+        #expect(Set(walkthroughIDs) == [
+            "pr-review-walkthrough-host-a|prr_shared", "pr-review-walkthrough-host-b|prr_shared",
+        ])
     }
 
     @Test("Search intersects Active and Archived across both hosts", arguments: [false, true])
@@ -158,7 +171,7 @@ struct PRReviewFleetSidebarTests {
         #expect(reviewRows(in: window).isEmpty)
     }
 
-    @Test("Configured empty fleets show the same empty state before and after loading", arguments: [false, true])
+    @Test("Configured empty fleets show loading until the first response", arguments: [false, true])
     func emptyBeforeAndAfterLoad(archived: Bool) async throws {
         let fleet = PRReviewFleetIndex()
         fleet.setSources([source("host-a", "Alpha Studio", active: [])], identity: "empty host")
@@ -169,12 +182,23 @@ struct PRReviewFleetSidebarTests {
         let message = archived ? "No archived reviews" : "No active reviews"
 
         #expect(!fleet.hasLoaded)
-        #expect(text(in: window).contains(message))
+        #expect(text(in: window).contains("Loading reviews…"))
+        #expect(!text(in: window).contains(message))
+        #expect(elements(in: window).contains { $0.accessibilityIdentifier() == "pr-review-fleet-loading" })
         await fleet.refresh()
         try await pump(window)
         #expect(fleet.hasLoaded)
+        #expect(!text(in: window).contains("Loading reviews…"))
         #expect(text(in: window).contains(message))
         #expect(reviewRows(in: window).isEmpty)
+    }
+
+    @Test("New review help explains an unavailable creation host", arguments: [false, true])
+    func creationHostHelp(canControl: Bool) {
+        let sidebar = PRReviewSidebarView(store: PRReviewStore(), back: {}, canControl: canControl)
+        #expect(sidebar.newReviewHelp == (canControl
+            ? "Start a pull request review"
+            : "Choose a PR review host in Settings → Machines or pick a machine"))
     }
 
     @Test("Omitting fleet inputs keeps single-host rows and selection unchanged")
@@ -190,6 +214,7 @@ struct PRReviewFleetSidebarTests {
         #expect(rows.compactMap { $0.accessibilityIdentifier() } == ["pr-review-review-prr_single"])
         let row = try #require(rows.first)
         #expect(row.accessibilityLabel()?.contains("Single-host synthetic review") == true)
+        #expect(PRReviewSidebarView.walkthroughAccessibilityIdentifier(reviewID: "prr_single") == "pr-review-walkthrough-prr_single")
         #expect(row.accessibilityPerformPress())
         try await pump(window)
         #expect(store.currentMachineID == "host-a")

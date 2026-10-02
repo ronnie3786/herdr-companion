@@ -19,6 +19,14 @@ struct PRReviewSidebarView: View {
         store.showArchived ? store.archivedReviews : store.reviews
     }
 
+    var newReviewHelp: String {
+        canControl ? "Start a pull request review" : "Choose a PR review host in Settings → Machines or pick a machine"
+    }
+
+    static func walkthroughAccessibilityIdentifier(reviewID: String, rowID: String? = nil) -> String {
+        "pr-review-walkthrough-\(rowID ?? reviewID)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: HerdrTheme.rowSpacing) {
             Button("All sessions", systemImage: "chevron.left", action: back)
@@ -34,7 +42,7 @@ struct PRReviewSidebarView: View {
                 Button("New review", systemImage: "plus", action: presentStartSheet)
                     .labelStyle(.iconOnly)
                     .disabled(!canControl)
-                    .help("Start a pull request review")
+                    .help(newReviewHelp)
                     .accessibilityIdentifier("pr-review-new")
             }
 
@@ -74,6 +82,11 @@ struct PRReviewSidebarView: View {
                         let entries = filteredFleetReviews(fleet)
                         if fleet.sourceCount == 0 {
                             empty("Pair a machine in Settings → Machines", image: "gearshape")
+                        } else if entries.isEmpty, !fleet.hasLoaded {
+                            ProgressView("Loading reviews…")
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, HerdrTheme.pagePadding)
+                                .accessibilityIdentifier("pr-review-fleet-loading")
                         } else if entries.isEmpty {
                             empty(store.showArchived ? "No archived reviews" : "No active reviews", image: "arrow.triangle.pull")
                         } else {
@@ -125,7 +138,7 @@ struct PRReviewSidebarView: View {
         let review = entry.review
         let selected = entry.machineID == store.currentMachineID && review.id == store.selectedReviewID
         return Button { openFleetReview?(entry.id) } label: {
-            reviewLabel(review, selected: selected, machineName: entry.machineName)
+            reviewLabel(review, selected: selected, machineName: entry.machineName, rowID: entry.id.id)
         }
         .buttonStyle(.herdrPlain)
         .accessibilityIdentifier("pr-review-review-\(entry.id.id)")
@@ -168,7 +181,7 @@ struct PRReviewSidebarView: View {
         }
     }
 
-    private func reviewLabel(_ review: PRReviewSummary, selected: Bool, machineName: String? = nil) -> some View {
+    private func reviewLabel(_ review: PRReviewSummary, selected: Bool, machineName: String? = nil, rowID: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(review.title)
                 .herdrFont(.subheadline, weight: .semibold)
@@ -191,7 +204,7 @@ struct PRReviewSidebarView: View {
                 Label(walkthrough.text, systemImage: walkthrough.systemImage)
                     .herdrFont(.caption, weight: walkthrough.isNew ? .semibold : .regular)
                     .foregroundStyle(walkthrough.failed ? HerdrTheme.alert : walkthrough.isNew ? HerdrTheme.accent : HerdrTheme.mist)
-                    .accessibilityIdentifier("pr-review-walkthrough-\(review.id)")
+                    .accessibilityIdentifier(Self.walkthroughAccessibilityIdentifier(reviewID: review.id, rowID: rowID))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

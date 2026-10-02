@@ -343,6 +343,114 @@ struct PRReviewFleetIndexTests {
         #expect(await beta.listScopes.count == 2)
     }
 
+    @Test("Fleet archive forgets only the exact owner's local walkthrough after success", arguments: [false, true])
+    func fleetArchiveForgetsOnlyOwnerProgress(targetIsOpen: Bool) async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("fleet-walkthrough-\(UUID().uuidString).json")
+        let domain = "PRReviewFleetArchiveTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            defaults.removePersistentDomain(forName: domain)
+        }
+        let snapshot = PRReviewDemo.snapshot()
+        let shared = snapshot.review
+        let owner = target("host-b", shared.id)
+        let session = PRReviewGuideSession(persistenceURL: url)
+        let shell = HerdrShellState(userDefaults: defaults, prReviewGuide: session)
+        defer { session.suspend() }
+        let scopes = [
+            PRReviewGuideScope(machineID: "host-a", reviewID: shared.id, baseSHA: shared.baseSHA, headSHA: shared.headSHA),
+            PRReviewGuideScope(machineID: "host-b", reviewID: shared.id, baseSHA: shared.baseSHA, headSHA: shared.headSHA),
+            PRReviewGuideScope(machineID: "host-b", reviewID: "prr_other", baseSHA: shared.baseSHA, headSHA: shared.headSHA),
+        ]
+        let saved = scopes.map { scope in
+            PRReviewGuideSession.Saved(
+                scope: scope, plan: PRReviewGuideDemo.make(scope: scope),
+                checkpoint: .init(chapter: 1, segment: 0, time: 0, voice: "af_jessica"),
+                transcript: [.init(id: "synthetic-answer", question: "Why this change?",
+                                   answer: PRReviewGuideDemo.make(scope: scope, question: "Why this change?"))]
+            )
+        }
+        try JSONEncoder().encode(saved).write(to: url, options: .atomic)
+        let original = try Data(contentsOf: url)
+        shell.prReview.configure(client: TestPRReviewClient(), machineID: targetIsOpen ? "host-b" : "host-a", demo: false)
+        shell.prReview.selectedReviewID = shared.id
+        shell.prReview.snapshot = snapshot
+        session.configure(store: shell.prReview)
+        #expect(session.plan != nil && session.transcript.count == 1)
+        #expect(session.chapterIndex == 1)
+        let openPlan = session.plan
+        let alpha = SyntheticPRReviewFleetClient(active: [shared])
+        let beta = SyntheticPRReviewFleetClient(active: [shared])
+        shell.prReviewFleet.setSources([source("host-a", "Alpha", alpha), source("host-b", "Beta", beta)], identity: 1)
+
+        // Unarchive and a failed archive must preserve both saved and open state.
+        try await shell.archivePRReviewFromFleet(owner, archived: false)
+        #expect(try Data(contentsOf: url) == original)
+        #expect(session.plan == openPlan && session.transcript.count == 1)
+        await beta.setActionError(SyntheticPRReviewFleetError.offline)
+        await #expect(throws: SyntheticPRReviewFleetError.offline) {
+            try await shell.archivePRReviewFromFleet(owner, archived: true)
+        }
+        #expect(try Data(contentsOf: url) == original)
+        #expect(session.plan == openPlan && session.transcript.count == 1)
+
+        await beta.setActionError(nil)
+        try await shell.archivePRReviewFromFleet(owner, archived: true)
+        let remaining = try JSONDecoder().decode([PRReviewGuideSession.Saved].self, from: Data(contentsOf: url))
+        #expect(remaining.map(\.scope) == [scopes[0], scopes[2]])
+        #expect(remaining.allSatisfy { $0.transcript.count == 1 && $0.checkpoint.chapter == 1 })
+        if targetIsOpen {
+            #expect(session.plan == nil && session.transcript.isEmpty)
+            #expect(!session.isPlaying && !session.isBusy && !session.isLoadingAudio)
+        } else {
+            #expect(session.plan == openPlan && session.transcript.count == 1)
+            #expect(session.chapterIndex == 1)
+        }
+        #expect(await alpha.archiveRequests.isEmpty)
+        #expect(await beta.archiveRequests.map(\.archived) == [false, true, true])
+    }
+
+    @Test("Event refresh updates the open detail without waiting for a slow fleet host")
+    func eventRefreshDoesNotWaitForFleet() async throws {
+        let domain = "PRReviewFleetRefreshTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let shell = HerdrShellState(userDefaults: defaults)
+        let gate = PRReviewFleetGate()
+        let slow = SyntheticPRReviewFleetClient(active: [review("prr_slow")], listGates: ["active": gate])
+        let detailClient = SyntheticPRReviewWindowClient()
+        shell.prReviewFleet.setSources([source("host-b", "Beta", slow)], identity: 1)
+        shell.prReview.configure(client: detailClient, machineID: "host-a", demo: false)
+        shell.prReview.selectedReviewID = PRReviewDemo.reviewID
+        shell.prReview.hasLoaded = true
+        shell.detailScope = .prReview
+        let refresh = Task { await shell.refreshPRReviews(refreshFleet: true) }
+        defer { refresh.cancel() }
+        try await gate.waitForRequest()
+        try await waitUntil { shell.prReview.snapshot != nil }
+        #expect(shell.prReview.snapshot?.review.id == PRReviewDemo.reviewID)
+        #expect(shell.prReviewFleet.isRefreshing)
+        #expect(!shell.prReviewFleet.hasLoaded)
+        await gate.release()
+        await refresh.value
+        #expect(shell.prReviewFleet.hasLoaded)
+        #expect(await detailClient.reviewIDs == [PRReviewDemo.reviewID, PRReviewDemo.reviewID])
+    }
+
+    @Test("Event refresh does not poll a hidden fleet")
+    func eventRefreshSkipsHiddenFleet() async throws {
+        let domain = "PRReviewHiddenFleetRefreshTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: domain))
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let shell = HerdrShellState(userDefaults: defaults)
+        let client = SyntheticPRReviewFleetClient(active: [review("prr_hidden")])
+        shell.prReviewFleet.setSources([source("host-b", "Beta", client)], identity: 1)
+        await shell.refreshPRReviews(refreshFleet: false)
+        #expect(await client.listScopes.isEmpty)
+        #expect(!shell.prReviewFleet.hasLoaded)
+    }
+
     @Test("Missing owners reject mutations without using another companion")
     func missingOwnerThrows() async {
         let alpha = SyntheticPRReviewFleetClient(active: [review("prr_shared")])

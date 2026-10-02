@@ -206,7 +206,7 @@ struct WorkspaceNavigationView: View {
                             fleet: prReviewFleetIsVisible ? shell.prReviewFleet : nil,
                             openFleetReview: { shell.openPRReviewFromFleet($0, model: model) },
                             archiveFleetReview: { target, archived in
-                                Task { await performPRReviewFleetAction(target) { try await shell.prReviewFleet.archive(target, archived: archived) } }
+                                Task { await performPRReviewFleetAction(target) { try await shell.archivePRReviewFromFleet(target, archived: archived) } }
                             },
                             refreshFleetReview: { target in
                                 Task { await performPRReviewFleetAction(target) { try await shell.prReviewFleet.refreshReview(target) } }
@@ -456,14 +456,7 @@ struct WorkspaceNavigationView: View {
             await applyPRReviewNavigationRequest()
         }
         .task(id: model.prReviewRefreshTick) {
-            if prReviewFleetIsVisible { await shell.prReviewFleet.refresh() }
-            guard shell.prReview.hasLoaded else { return }
-            if shell.detailScope == .dashboard {
-                _ = await shell.prReview.refreshDashboard()
-            } else {
-                await shell.prReview.refresh()
-                await shell.prReview.refreshSelected()
-            }
+            await shell.refreshPRReviews(refreshFleet: prReviewFleetIsVisible)
         }
         .task(id: PRReviewPollingIdentity(
             machineID: shell.prReviewMachineID ?? model.prReviewMachine?.id,

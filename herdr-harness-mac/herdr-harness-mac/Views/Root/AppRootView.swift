@@ -196,7 +196,7 @@ final class HerdrShellState {
     @ObservationIgnored private let historyStore: NavigationHistoryPersistenceStore
     @ObservationIgnored private let preferences: UserDefaults
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(userDefaults: UserDefaults = .standard, prReviewGuide: PRReviewGuideSession = PRReviewGuideSession()) {
         self.preferences = userDefaults
         let historyStore = NavigationHistoryPersistenceStore(userDefaults: userDefaults)
         self.dashboard = DashboardState(defaults: userDefaults)
@@ -204,7 +204,7 @@ final class HerdrShellState {
         self.history = NavigationHistory(snapshot: historyStore.load())
         let documentResources = PRReviewDocumentResources()
         self.prReviewDocumentResources = documentResources
-        self.prReview = PRReviewStore(documentResources: documentResources)
+        self.prReview = PRReviewStore(documentResources: documentResources, guide: prReviewGuide)
     }
 
     /// First Mate belongs to the process-owned shell, so a newly created main
@@ -412,6 +412,29 @@ final class HerdrShellState {
         } else {
             showPRReview(machineID: target.machineID, reviewID: target.reviewID, model: model)
         }
+    }
+
+    /// The fleet reconciles server lists only. A successful archive also ends
+    /// this Mac's walkthrough and forgets saved progress for that exact owner.
+    func archivePRReviewFromFleet(_ target: PRReviewWindowTarget, archived: Bool) async throws {
+        try await prReviewFleet.archive(target, archived: archived)
+        if archived {
+            prReview.guide.forgetSavedProgress(machineID: target.machineID, reviewID: target.reviewID)
+        }
+    }
+
+    /// An event-driven detail update must not wait for an unreachable fleet host.
+    func refreshPRReviews(refreshFleet: Bool) async {
+        async let fleet: Void = refreshFleet ? prReviewFleet.refresh() : ()
+        if prReview.hasLoaded {
+            if detailScope == .dashboard {
+                _ = await prReview.refreshDashboard()
+            } else {
+                await prReview.refresh()
+                await prReview.refreshSelected()
+            }
+        }
+        await fleet
     }
 
     func preparePRReviewCreation(model: HerdrAppModel) {

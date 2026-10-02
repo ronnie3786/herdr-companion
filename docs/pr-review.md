@@ -67,7 +67,9 @@ hiding other machines' reviews; a temporarily failing host keeps its last usable
 Opening, archiving, refreshing or popping out a row always acts on that row's own machine,
 even when two machines reuse a review ID or pull request number. New reviews from All machines
 start on the Settings PR review host (or the open review's machine if no host is configured).
-No companion update is needed for this Mac-only host option.
+No companion update is needed for this Mac-only host option. The Dashboard's reviews section
+still follows the main detail host, not the combined rail: opening a review on another machine
+also changes which machine's reviews appear on the Dashboard.
 
 **Starting a review.** Paste a link such as `https://github.com/example-owner/example-repo/pull/42`
 and press Return. A sheet lists the review skills, explainer-video skills, utilities and custom

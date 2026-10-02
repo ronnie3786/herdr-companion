@@ -144,6 +144,8 @@ final class PRReviewFleetIndex {
 
     /// Archives only the target's companion and reconciles that row from the
     /// returned snapshot. No other host is polled or mutated as a side effect.
+    /// Callers must also forget this Mac's saved walkthrough progress after a
+    /// successful archive; use HerdrShellState.archivePRReviewFromFleet in the shell.
     func archive(_ target: PRReviewWindowTarget, archived: Bool) async throws {
         guard let source = sources.first(where: { $0.machineID == target.machineID }) else {
             throw APIError.invalidResponse

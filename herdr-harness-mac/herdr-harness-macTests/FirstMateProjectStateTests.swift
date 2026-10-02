@@ -259,6 +259,21 @@ struct FirstMateProjectStateTests {
         #expect(!index.isCurrent(connection))
     }
 
+    @Test("Manual setup preserves the exact selected directory", arguments: ["/workspace/App ", "/workspace/App\t", "/workspace/App\n"])
+    func manualDirectoryIsVerbatim(path: String) async throws {
+        let client = ProjectStateClient(projects: [])
+        let index = try await index(client)
+        let model = FirstMateStartSessionModel()
+        model.mode = .manual
+        model.manualMachineID = "studio"
+        model.manualTitle = "Review this folder"
+        model.manualPath = path
+        model.prompt = "Check the selected project"
+        #expect(model.canStart(in: index))
+        let started = try #require(await model.start(in: index))
+        #expect(started.snapshot.feature.cwd == path)
+    }
+
     enum CatalogChange: CaseIterable, Sendable {
         case edited, archived, removed
     }

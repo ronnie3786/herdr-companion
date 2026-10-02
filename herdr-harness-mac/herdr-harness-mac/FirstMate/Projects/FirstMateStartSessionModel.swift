@@ -33,7 +33,7 @@ final class FirstMateStartSessionModel {
         .init(mode: mode, selection: mode == .project ? selectedProject : nil,
               machineID: mode == .manual ? manualMachineID : selectedProject?.machineID,
               title: mode == .project ? Self.title(for: prompt) : manualTitle.trimmingCharacters(in: .whitespacesAndNewlines),
-              cwd: mode == .manual ? manualPath.trimmingCharacters(in: .whitespacesAndNewlines) : "", prompt: prompt)
+              cwd: mode == .manual ? manualPath : "", prompt: prompt)
     }
 
     private var pendingSubmission: Submission? {

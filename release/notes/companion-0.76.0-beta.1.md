@@ -4,7 +4,7 @@ Adds configurable PR Review Agents, team selection, isolated reviewer runs, reta
 
 Watchers script runs now wait for terminated background processes to exit before finishing, keeping their execution locks accurate during cleanup.
 
-Use Mac **0.89.0-beta.1** or later for the agent picker, reviewer cards, and profile editor. Older clients keep the legacy skill API. Existing review and agent-role records migrate additively.
+Use Mac **0.90.0-beta.1** or later for the agent picker, reviewer cards, and profile editor. Older clients keep the legacy skill API. Existing review and agent-role records migrate additively.
 
 Build and install this wheel in a new versioned Python 3.11+ runtime, update the matching installed CLIs and Pi package paths, preserve private configuration and state, and restart the affected companion services using the server update procedure in the README. Retain the previous runtime and service definitions for rollback. Mac updates do not install this package.
 

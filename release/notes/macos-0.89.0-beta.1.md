@@ -1,8 +1,17 @@
-# PR Review Agents
+# macOS 0.89.0-beta.1
 
-- Configure reviewers in **Settings → Agent Roles → PR Review Agents**, with private prompts, copied skill packages, avatars, and teams. The bundled Comprehensive reviewer uses the execution computer's default Pi model.
-- Start a PR review by choosing agents or a whole team. The Agents tab shows each reviewer, its raw report, and the consolidator. Add reviewers or rerun them to rebuild the consolidated report.
-- Consolidated HTML reports link to the raw reports and identify incomplete coverage. Reports stay tied to their PR revision.
-- PR Review uses the First Mate purple glass appearance.
+Preview channel · build 139.
 
-Install companion **0.76.0b1** or later with `pr-review-agents-v1` on each review host. The Mac updater installs only the Mac app. Older companions retain the legacy skill review flow.
+## PR Review: undo and redo Viewed
+
+Press ⌃Z to undo your last Viewed toggle and ⌃⇧Z to redo it. Both marking a file viewed and clearing Viewed are supported, in the main PR Review window or a popped-out review window. ([Issue #162](https://github.com/ronnie3786/herdr-companion/issues/162), [PR #166](https://github.com/ronnie3786/herdr-companion/pull/166))
+
+## Companion compatibility
+
+This release updates the Mac app only and adds no companion API requirements. No companion update is needed for Viewed undo/redo. The companion server, CLI and Pi package are published separately.
+
+## Install and verify
+
+With preview releases enabled, open **Settings → Updates** and choose **Check for Updates…** to install **0.89.0-beta.1** (build 139).
+
+In PR Review, mark a file Viewed, press ⌃Z to undo, then ⌃⇧Z to redo. Repeat after clearing Viewed, and try both the main and popped-out review windows.

@@ -56,14 +56,14 @@ struct PRReviewFilesView: View {
             Button("Undo Viewed Change") { Task { await store.undoViewed() } }
                 .keyboardShortcut(PRReviewViewedHistoryShortcut.undoKey, modifiers: PRReviewViewedHistoryShortcut.undoModifiers)
                 .disabled(!store.canUndoViewed)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .frame(width: 0, height: 0)
                 .clipped()
                 .accessibilityHidden(true)
             Button("Redo Viewed Change") { Task { await store.redoViewed() } }
                 .keyboardShortcut(PRReviewViewedHistoryShortcut.redoKey, modifiers: PRReviewViewedHistoryShortcut.redoModifiers)
                 .disabled(!store.canRedoViewed)
-                .buttonStyle(.plain)
+                .buttonStyle(.herdrPlain)
                 .frame(width: 0, height: 0)
                 .clipped()
                 .accessibilityHidden(true)

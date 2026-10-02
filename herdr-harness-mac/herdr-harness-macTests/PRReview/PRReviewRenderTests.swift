@@ -41,6 +41,20 @@ struct PRReviewRenderTests {
         #expect(PRReviewViewedHistoryShortcut.redoModifiers == [.control, .shift])
     }
 
+    @Test("Viewed history shortcut buttons use the non-fading Herdr style", arguments: ["Undo", "Redo"])
+    func viewedHistoryShortcutStyles(action: String) throws {
+        let file = URL(filePath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "herdr-harness-mac/PRReview/Views/PRReviewFilesView.swift")
+        let source = try String(contentsOf: file, encoding: .utf8)
+        let start = try #require(source.range(of: "Button(\"\(action) Viewed Change\")"))
+        let modifiers = source[start.upperBound...]
+        let end = try #require(modifiers.range(of: ".frame(width: 0, height: 0)"))
+        #expect(modifiers[..<end.lowerBound].contains(".buttonStyle(.herdrPlain)"))
+    }
+
     @Test("Undo restores the rendered row and checkbox viewed state", arguments: [false, true])
     func rendersRestoredViewedState(viewed: Bool) async throws {
         let restoreAccessibility = enableAccessibility()

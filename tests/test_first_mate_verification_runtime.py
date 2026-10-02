@@ -435,22 +435,22 @@ class VerificationRuntimeTests(unittest.TestCase):
             self.runtime._record_verification({**job, "kind": "coordinator"}, params, "verification-coordinator")
         self.assertEqual(coordinator.exception.code, "stale_owner")
 
-        # An outcome may reference only retained runs of its own execution.
+        # Bad evidence references cannot strand otherwise completed work. A
+        # foreign feature and an unknown ID get the same generic diagnostic.
         run_id = first["run"]["id"]
         other_feature = self.store.create_feature({
             "title": "Synthetic other feature", "goal": "Other goal",
             "cwd": str(self.repo), "request_id": "create-other"})
         other = self.stage_and_assignment(suffix="2", feature=other_feature)
-        with self.assertRaises(FirstMateError) as mismatch:
-            self.store.record_outcome(other["id"], other["generation"], other["native_session_id"],
-                                      other["input_revision"], "success", "Done", "outcome-other",
-                                      verification_run_ids=[run_id])
-        self.assertEqual(mismatch.exception.code, "verification_scope_mismatch")
-        with self.assertRaises(FirstMateError) as unknown:
-            self.store.record_outcome(other["id"], other["generation"], other["native_session_id"],
-                                      other["input_revision"], "success", "Done", "outcome-unknown",
-                                      verification_run_ids=["fmvr_invented"])
-        self.assertEqual(unknown.exception.code, "not_found")
+        result = self.store.record_outcome(other["id"], other["generation"], other["native_session_id"],
+                                          other["input_revision"], "success", "Done", "outcome-other",
+                                          verification_run_ids=[run_id, "fmvr_invented"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["verification_run_ids"], [])
+        recording = result["verification_recording"]
+        self.assertEqual(recording["state"], "incomplete")
+        self.assertEqual([entry["reason"] for entry in recording["unresolved_references"]],
+                         ["unavailable_in_assignment_lineage"] * 2)
 
         # A valid outcome retains the exact run references for later selection.
         self.store.record_outcome(assignment["id"], assignment["generation"],
@@ -460,6 +460,100 @@ class VerificationRuntimeTests(unittest.TestCase):
         self.assertEqual(linked["verification_run_ids"], [run_id])
         feature = self.store.get_feature(self.feature["id"])
         self.assertEqual(self.runtime._default_verification_selection(feature), [run_id])
+
+    def handoff(self, assignment):
+        handoff = self.store.begin_handoff(assignment["id"], assignment["generation"],
+                                           "handoff-evidence", "Finished; report retained evidence.")
+        successor = self.store.bind_handoff_successor(
+            handoff["id"], "native-evidence-successor", str(self.root / "successor.jsonl"),
+            "evidence-successor", "bind-evidence-successor", verified_predecessor_stopped=True)
+        self.store.acknowledge_handoff(handoff["id"], "native-evidence-successor",
+                                       successor["generation"], "ack-evidence-successor")
+        return self.store.get_assignment(assignment["id"])
+
+    def test_explicit_empty_selection_does_not_inherit_old_evidence(self):
+        assignment = self.stage_and_assignment()
+        self.record_run("prior-batch", SUITES, revision=self.base, assignment=assignment)
+        result = self.store.record_outcome(assignment["id"], assignment["generation"],
+            assignment["native_session_id"], assignment["input_revision"], "success", "Finished", "empty-selection",
+            verification_run_ids=[])
+        self.assertEqual(result["verification_run_ids"], [])
+        self.assertFalse(result["verification_recording"]["inherited"])
+
+    def test_successor_finishes_with_original_evidence_without_duplication(self):
+        first = self.stage_and_assignment()
+        revision = self.commit("finished source")
+        self.record_inventory(SUITES, revision=revision)
+        run = self.record_run("original-batch", SUITES, revision=revision, assignment=first)
+        successor = self.handoff(first)
+        params = (successor["id"], successor["generation"], successor["native_session_id"],
+                  successor["input_revision"], "success", "Work complete", "successor-outcome")
+        result = self.store.record_outcome(*params, code_revision=revision,
+                                           verification_run_ids=[run["id"]],
+                                           documents=[{"title": "Result", "content": "Synthetic result"}])
+        replay = self.store.record_outcome(*params, code_revision=revision,
+                                           verification_run_ids=[run["id"]],
+                                           documents=[{"title": "Result", "content": "Synthetic result"}])
+        self.assertEqual(result, replay)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["verification_run_ids"], [run["id"]])
+        self.assertEqual(result["verification_recording"]["reconciliation_attempts"], 1)
+        self.assertEqual(self.store.list_verification_runs(self.feature["id"]), [run])
+        self.assertEqual(len(self.store.snapshot(self.feature["id"])["documents"]), 2)  # handoff + outcome
+        self.assertEqual(self.runtime.verification_assessment(self.feature["id"])["status"], "verified")
+
+    def test_omitted_selection_inherits_latest_current_results_after_handoff(self):
+        first = self.stage_and_assignment()
+        old = self.record_run("old-batch", SUITES, revision=self.base, assignment=first)
+        revision = self.commit("updated source")
+        self.record_inventory(SUITES, revision=revision)
+        current = self.record_run("current-batch", SUITES, revision=revision, assignment=first)
+        successor = self.handoff(first)
+        result = self.store.record_outcome(successor["id"], successor["generation"], successor["native_session_id"],
+                                          successor["input_revision"], "success", "Done", "inherit-outcome",
+                                          code_revision=revision)
+        self.assertEqual(result["verification_run_ids"], [current["id"]])
+        self.assertTrue(result["verification_recording"]["inherited"])
+        self.assertEqual(self.runtime.verification_assessment(self.feature["id"])["status"], "verified")
+        self.assertEqual(self.store.get_verification_run(old["id"]), old)
+
+    def test_missing_evidence_is_terminal_and_retained_across_restart(self):
+        assignment = self.stage_and_assignment()
+        params = (assignment["id"], assignment["generation"], assignment["native_session_id"],
+                  assignment["input_revision"], "success", "Finished implementation", "missing-evidence")
+        result = self.store.record_outcome(*params, verification_run_ids=["fmvr_missing"])
+        self.assertTrue(result["has_outcome"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["verification_recording"]["state"], "incomplete")
+        self.store.close()
+        self.store = FirstMateStore(self.root / "store.sqlite3")
+        replay = self.store.record_outcome(*params, verification_run_ids=["fmvr_missing"])
+        self.assertEqual(replay, result)
+        restored = self.store.get_assignment(assignment["id"])
+        self.assertEqual(restored["verification_recording"], result["verification_recording"])
+        self.assertEqual(restored["recovery_count"], 0)
+
+    def test_missing_evidence_never_allows_a_stale_worker_to_finish(self):
+        first = self.stage_and_assignment()
+        self.handoff(first)
+        with self.assertRaises(FirstMateError) as stale:
+            self.store.record_outcome(first["id"], first["generation"], first["native_session_id"],
+                                      first["input_revision"], "success", "Done", "stale-outcome",
+                                      verification_run_ids=["fmvr_missing"])
+        self.assertEqual(stale.exception.code, "stale_generation")
+
+    def test_reused_pass_does_not_hide_later_failure(self):
+        first = self.stage_and_assignment()
+        revision = self.commit("finished source")
+        self.record_inventory(SUITES, revision=revision)
+        passed = self.record_run("passing-batch", SUITES, revision=revision, assignment=first)
+        self.record_run("failing-batch", [SUITES[0]], revision=revision, outcome="failed", assignment=first)
+        successor = self.handoff(first)
+        result = self.store.record_outcome(successor["id"], successor["generation"], successor["native_session_id"],
+                                          successor["input_revision"], "failed", "Test failure retained", "failed-outcome",
+                                          code_revision=revision, verification_run_ids=[passed["id"]])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(self.runtime.verification_assessment(self.feature["id"])["status"], "failed")
 
     def test_stage_completion_persists_the_scoped_verdict_and_gate_set_atomically(self):
         assignment = self.stage_and_assignment()
@@ -596,21 +690,46 @@ class VerificationRuntimeTests(unittest.TestCase):
                                   assignment["native_session_id"], assignment["input_revision"],
                                   "success", "Complete", "outcome-select",
                                   verification_run_ids=[broad["id"]])
-        with self.assertRaises(FirstMateError) as foreign:
-            self.runtime._tool(coordinator, "fm_complete_stage", {
-                "summary": "Synthetic", "recommendation": "Next",
-                "verification_run_ids": ["fmvr_invented"]}, "complete-foreign")
-        self.assertEqual(foreign.exception.code, "not_found")
         result = self.runtime._tool(coordinator, "fm_complete_stage", {
             "summary": "Synthetic", "recommendation": "Next",
             "verification_run_ids": [broad["id"]]}, "complete-explicit")
         self.assertEqual(result["status"], "completed")
         self.assertEqual(self.store.get_feature(self.feature["id"])["verification"]["status"], "verified")
+
         # Feature completion recomputes and retains the same scoped verdict.
         finished = self.runtime._tool(coordinator, "fm_finish_feature",
                                       {"summary": "Delivered"}, "finish-feature")
         self.assertEqual(finished["status"], "completed")
         self.assertEqual(self.store.get_feature(self.feature["id"])["verification"]["status"], "verified")
+
+    def test_completion_reference_repair_is_bounded_and_does_not_stall(self):
+        assignment = self.stage_and_assignment()
+        self.store.record_outcome(assignment["id"], assignment["generation"], assignment["native_session_id"],
+            assignment["input_revision"], "success", "Finished", "outcome-optional")
+        coordinator = {"kind": "coordinator", "feature_id": self.feature["id"],
+                       "claim": {"id": "synthetic-message", "role": "user"},
+                       "owner": "coordinator-owner", "cwd": str(self.repo)}
+        result = self.runtime._tool(coordinator, "fm_complete_stage", {
+            "summary": "Finished", "recommendation": "Next", "verification_run_ids": ["fmvr_missing"]}, "complete-missing")
+        self.assertEqual(result["status"], "completed")
+        verification = self.store.get_feature(self.feature["id"])["verification"]
+        self.assertNotEqual(verification["status"], "verified")
+        self.assertEqual(verification["recording"]["reconciliation_attempts"], 1)
+
+    def test_optional_assessment_timeout_retains_recorded_batch_and_completion(self):
+        assignment = self.stage_and_assignment()
+        job = {"kind": "worker", "feature_id": self.feature["id"], "claim": assignment,
+               "native_session_id": assignment["native_session_id"], "cwd": str(self.repo)}
+        with patch.object(self.runtime, "_verification_read_identity", side_effect=OSError("offline")):
+            result = self.runtime._record_verification(job, {
+                "revision": self.base, "gates": [gate("SuiteOne")]}, "record-offline")
+        self.assertTrue(result["run"]["id"])
+        self.assertEqual(result["verification"]["status"], "unavailable")
+        self.assertEqual(len(self.store.list_verification_runs(self.feature["id"])), 1)
+        with patch.object(self.runtime, "verification_assessment", side_effect=subprocess.TimeoutExpired("git", 3)):
+            selection, assessment = self.runtime._completion_verification(self.feature["id"], [result["run"]["id"]])
+        self.assertEqual(selection, [result["run"]["id"]])
+        self.assertEqual(assessment["status"], "unavailable")
 
     def test_lineage_successor_inherits_predecessor_package_coverage(self):
         # Implementer A changes pkg/app in an isolated worktree; successor B

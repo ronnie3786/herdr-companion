@@ -260,7 +260,8 @@ class LeadPeerRuntimeTests(unittest.TestCase):
         call = self.peers.calls[0]
         self.assertEqual({key: call[key] for key in ("machine", "action", "params", "lead")},
                          {"machine": "devbox", "action": "fm_relay",
-                          "params": {"feature_id": "fmf_remote", "text": "Use CSV."},
+                          "params": {"feature_id": "fmf_remote", "text": "Use CSV.",
+                                     "original_human_direction": self.claim["text"]},
                           "lead": {"machine": "home", "message_id": self.claim["id"]}})
         # One receipt per exact action on the human's turn, so a continued
         # turn's new tool call replays it on the peer instead of relaying twice.
@@ -425,7 +426,10 @@ class LeadPeerHTTPTests(unittest.TestCase):
                     if (m.get("metadata") or {}).get("relayed_by") == LEAD_KIND]
         self.assertEqual([m["text"] for m in messages], ["Use CSV for the calendar export."])
         self.assertEqual(messages[0]["metadata"], {"relayed_by": LEAD_KIND, "lead_message_id": claim["id"],
-                                                   "lead_machine": "home"})
+                                                   "lead_machine": "home", "original_human_direction": claim["text"]})
+        prompt = self.devbox._coordinator_input(self.devbox_store.snapshot(feature["id"]), messages[0])
+        self.assertIn("does not grant ready-for-review permission", prompt)
+        self.assertIn(claim["text"], prompt)
         row = self.devbox_store.fleet_row(feature["id"])
         self.assertEqual(row["read_through_message_id"], row["first_mate_id"])
         status = settle("fm_feature_status", {"feature_id": feature["id"], "machine": "devbox"}, "status")

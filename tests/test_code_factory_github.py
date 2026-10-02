@@ -152,28 +152,35 @@ class ArgvTests(GitHubClientTestCase):
 
         self.runner.on_call = capture
         self.runner.reply("https://github.com/owner/repo/pull/34\n")
-        self.runner.reply_json({"number": 34, "url": "https://github.com/owner/repo/pull/34"})
+        self.runner.reply_json({"number": 34, "url": "https://github.com/owner/repo/pull/34", "isDraft": True})
         result = self.client.create_pull_request("codefactory/issue-12", "main", "Fix crash", "Refs #12\n\nBody")
-        self.assertEqual(result, {"number": 34, "url": "https://github.com/owner/repo/pull/34"})
+        self.assertEqual(result, {"number": 34, "url": "https://github.com/owner/repo/pull/34", "isDraft": True})
         create, view = self.runner.argv
         self.assertEqual(create[:12], [
             "gh", "pr", "create", "--repo", REPO, "--head", "codefactory/issue-12", "--base", "main",
             "--title", "Fix crash", "--body-file",
         ])
+        self.assertEqual(create[-1], "--draft")
         self.assertEqual(seen["body"], "Refs #12\n\nBody")
-        self.assertEqual(view, ["gh", "pr", "view", "codefactory/issue-12", "--repo", REPO, "--json", "number,url"])
+        self.assertEqual(view, ["gh", "pr", "view", "codefactory/issue-12", "--repo", REPO, "--json", "number,url,isDraft"])
         self.assertGreaterEqual(self.runner.calls[0]["timeout"], 120)
+
+    def test_create_pull_request_fails_closed_if_github_did_not_keep_it_draft(self):
+        self.runner.reply("https://github.com/owner/repo/pull/34\n")
+        self.runner.reply_json({"number": 34, "url": "https://github.com/owner/repo/pull/34", "isDraft": False})
+        with self.assertRaisesRegex(CodeFactoryError, "did not leave.*draft"):
+            self.client.create_pull_request("codefactory/issue-12", "main", "Fix crash", "Refs #12")
 
     def test_find_pull_request_prefers_open(self):
         self.runner.reply_json([
-            {"number": 30, "url": "u30", "state": "CLOSED", "headRefOid": "aaa"},
-            {"number": 31, "url": "u31", "state": "OPEN", "headRefOid": "bbb"},
+            {"number": 30, "url": "u30", "state": "CLOSED", "isDraft": False, "headRefOid": "aaa"},
+            {"number": 31, "url": "u31", "state": "OPEN", "isDraft": True, "headRefOid": "bbb"},
         ])
         found = self.client.find_pull_request("codefactory/issue-12")
-        self.assertEqual(found, {"number": 31, "url": "u31", "state": "OPEN", "headRefOid": "bbb"})
+        self.assertEqual(found, {"number": 31, "url": "u31", "state": "OPEN", "isDraft": True, "headRefOid": "bbb"})
         self.assertEqual(self.runner.argv[0], [
             "gh", "pr", "list", "--repo", REPO, "--head", "codefactory/issue-12", "--state", "all",
-            "--json", "number,url,state,headRefOid",
+            "--json", "number,url,state,isDraft,headRefOid",
         ])
         self.runner.reply_json([])
         self.assertIsNone(self.client.find_pull_request("codefactory/issue-13"))
@@ -183,7 +190,7 @@ class ArgvTests(GitHubClientTestCase):
         self.assertEqual(self.client.pull_request(34)["mergeCommit"]["oid"], "deadbeef")
         self.assertEqual(self.runner.argv[0], [
             "gh", "pr", "view", "34", "--repo", REPO,
-            "--json", "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus",
+            "--json", "number,url,state,isDraft,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus",
         ])
         self.runner.reply("x" * (400 * 1024 + 10))
         diff = self.client.pull_request_diff(34)
@@ -237,7 +244,7 @@ class ArgvTests(GitHubClientTestCase):
         self.assertEqual(merged["mergeSha"], "deadbeef")
         self.assertEqual(self.runner.argv, [[
             "gh", "pr", "view", "34", "--repo", REPO, "--json",
-            "number,url,state,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus",
+            "number,url,state,isDraft,headRefOid,mergedAt,mergeCommit,baseRefName,headRefName,title,mergeable,mergeStateStatus",
         ]], "a pull request that already landed is never merged again")
 
     def test_merge_pull_request_raises_when_the_pull_request_stays_unmerged(self):

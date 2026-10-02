@@ -89,7 +89,9 @@ test("validated First Mate roles inject exact scoped identity without job-body l
       assert.match(result.systemPrompt, /yield rather than polling/);
       assert.match(result.systemPrompt, /external authenticated operator CLI/);
       assert.match(result.systemPrompt, /agent-docs\/first-mate\.md/);
-      const awareness = result.systemPrompt.slice(result.systemPrompt.indexOf(COMPANION_AWARENESS_MARKER));
+      const awareness = result.systemPrompt.slice(result.systemPrompt.indexOf(COMPANION_AWARENESS_MARKER))
+        .split("<!-- herdr-workflow-policy:v1 -->")[0];
+      assert.match(result.systemPrompt, /gh pr create --draft/);
       assert.ok(awareness.trim().split(/\s+/u).length >= 150 && awareness.trim().split(/\s+/u).length <= 220);
       assert.equal(result.systemPrompt.split(COMPANION_AWARENESS_MARKER).length - 1, 1);
       assert.doesNotMatch(result.systemPrompt, /PRIVATE full assignment body|private\/synthetic\/worktree/);

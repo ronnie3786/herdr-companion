@@ -1,8 +1,8 @@
 # Code Factory: from an in-app report to a signed release
 
 Code Factory turns a bug report or feature request filed from the Mac app into a
-GitHub issue, a planned and implemented pull request, an Opus code review, a squash
-merge, and a signed macOS preview release, without a person driving each step. It is an
+GitHub issue, a planned and implemented draft pull request, an Opus code review, an
+explicit human readiness decision, a squash merge, and a signed macOS preview release. It is an
 operator-run daemon plus a Tailscale-reachable dashboard. Nothing in it replaces the
 authentication, privacy, signing, or CI gates already described in
 [docs/macos-releases.md](macos-releases.md) and [AGENTS.md](../AGENTS.md).
@@ -57,7 +57,7 @@ This is an experimental personal automation. Read the safety section before enab
    Targeted builds may diagnose compiler failures; the complete candidate is still
    exercised by the final Verify gate. The daemon also runs the public-source
    privacy check and gives Sol one chance to fix findings.
-7. **Pull request and CI.** The daemon pushes the branch, opens a PR that references the
+7. **Draft pull request and CI.** The daemon pushes the branch, opens a draft PR that references the
    issue (`Refs #n`, never `Closes`, so the issue stays open until released), and waits
    for the **Verify** workflow on the exact head commit. Verify does not run the Mac and
    iOS unit targets, so the daemon runs `scripts/local-verify.py` for the same commit
@@ -120,7 +120,19 @@ This is an experimental personal automation. Read the safety section before enab
    plus a bounded log tail (up to 16,000 characters total). Implementers and revisers
    run cheap focused checks and targeted builds for compiler failures before committing;
    the authoritative full Verify matrix still runs on the exact candidate.
-10. **Merge and cleanup.** Immediately before merge the daemon asks GitHub whether the
+10. **Human readiness, merge, and cleanup.** After Verify and Opus approve the exact head,
+    the daemon parks the issue once as `awaiting_pr_ready_authorization`. It does not mark
+    the PR ready, merge it, notify repeatedly, spend a failure or revision budget, or start
+    another model session while parked. Inspect the draft and, when you explicitly want it
+    to proceed, use GitHub's **Ready for review** action and then choose **Approve ready PR**
+    in the Code Factory dashboard. That action verifies the recorded PR number and reviewed
+    head, requires that this policy previously observed it as a draft, confirms GitHub now
+    reports it ready, and records a scoped operator receipt. **Retry** is not readiness
+    approval. A ready PR inherited from an older run has no draft provenance or receipt and
+    is parked as soon as it is discovered, before Code Factory pushes to, reviews,
+    authorizes, or merges it.
+
+    After that receipt, immediately before merge the daemon asks GitHub whether the
     branch conflicts with the base, requesting both `mergeable` and `mergeStateStatus`
     in the PR response. A conflicted branch goes to a fresh Sol
     conflict-resolution session (`openai-codex/gpt-6-sol`, thinking `xhigh`)
@@ -294,7 +306,10 @@ machine's tailnet address. Either way it shows:
 
 Actions: **Retry** a blocked or failed issue at its current stage. A retry blocked on a
 human question first refreshes the GitHub issue snapshot and returns to fresh planning; if the
-refresh fails, the issue stays blocked. Other retries resume their current stage. **Skip** it (removes
+refresh fails, the issue stays blocked. The readiness boundary replaces Retry with
+**Approve ready PR**. Use it only after you personally inspect the draft and explicitly
+mark that exact PR ready in GitHub. It checks the exact reviewed head and records the
+operator receipt before resuming merge. Other retries resume their current stage. **Skip** it (removes
 the worktree and the trigger label; a running issue has its session cancelled first and
 its worktree removed once the worker has stopped), **Clean up** a leftover worktree, and
 **Release now** to start a batch immediately. The same operations exist on the command
@@ -304,6 +319,7 @@ line:
 herdr-code-factory status
 herdr-code-factory status --issue 42
 herdr-code-factory action 42 retry
+herdr-code-factory action 42 authorize_pr_ready # daemon stopped; first mark the draft ready in GitHub
 herdr-code-factory enqueue 42
 herdr-code-factory release-now
 herdr-code-factory cleanup
@@ -314,7 +330,8 @@ lifetime; `once`, `enqueue` (without `--queue-only`), `action`, `release-now` an
 `cleanup` refuse to start while it is held and name the holding process, so a cron
 entry or a second terminal never runs a stage in a worktree the daemon is using. Use
 the dashboard while the daemon runs, or `enqueue --queue-only` to record an issue for
-its next poll. `action N retry` processes the issue immediately on the command line.
+its next poll. `action N retry` and `action N authorize_pr_ready` process the issue
+immediately on the command line. While the daemon runs, use the dashboard action.
 Re-enqueueing a skipped issue whose worktree was removed restarts implementation from
 the saved plan (or re-plans); once a pull request exists it is refused, since the
 branch history cannot be rebuilt.
@@ -340,10 +357,19 @@ branch history cannot be rebuilt.
   after transient provider failures, per-role session timeouts, one release at a time,
   and a CI wait limit. Anything outside those bounds stops as **blocked** or **failed**
   with the reason on the issue and the dashboard.
+- **Draft and readiness boundary.** Every PR the daemon creates uses GitHub draft mode.
+  Green CI and internal review approval only park the issue. Code Factory has no command
+  that marks a PR ready. Merge requires a receipt from the dedicated **Approve ready PR**
+  action for the exact PR and reviewed head after the parked draft changed to ready on
+  GitHub. Generic Retry cannot create that receipt. Older ready PRs lack the recorded draft
+  provenance and are never adopted, pushed to, reviewed, or auto-merged. This is a workflow boundary rather than
+  cryptographic proof of a human actor: a process with the dashboard token or direct ledger
+  and GitHub credentials could imitate the operator actions. Keep those credentials outside
+  model sessions and restrict access to the dashboard.
 - **Sessions run as the operator.** Pi sessions are not sandboxed: they run with the
   daemon's user and environment (minus `HERDR_*` settings and GitHub tokens such as
   `GH_TOKEN`/`GITHUB_TOKEN`) and, for implementer roles, a shell tool. The daemon
-  itself performs every push, `gh` call and merge, runs its git commands with
+  itself performs every push, routine `gh` call and merge after the operator receipt, runs its git commands with
   repository hooks disabled, and on a session timeout terminates the session's whole
   process group.
 - **Release process groups.** Release `prepare` and `publish` commands run in their
@@ -370,7 +396,7 @@ branch history cannot be rebuilt.
   leaves the machine. The pickup comment never carries the dashboard URL: the dashboard
   binds to a tailnet address and its API may be token-less, so the URL stays in the
   ledger and on the dashboard itself.
-- **Merge and release gates.** Squash merges are pinned to the commit that was verified
+- **Merge and release gates.** Squash merges require the scoped readiness receipt and are pinned to the commit that was verified
   and reviewed (`--match-head-commit`) and carry an explicit body. Immediately before
   merge, the daemon revalidates that the exact head has a posted approval satisfying every
   current requirement. Legacy stored approvals without the structured assessment return
@@ -406,6 +432,9 @@ structural checks enforce traceability and merge invariants, but they cannot mat
 guarantee that a model reasoned correctly; concrete evidence and human inspection remain
 important for high-risk changes.
 
+Likewise, an already-ready PR first encountered after the draft-readiness policy has no
+trusted receipt. Code Factory parks it and will not modify or merge it automatically.
+
 Screenshot labels, IDs, display names, and ordering are observations, not canonical
 identities or whitelist entries. Machine- or operator-specific presentation stays in the
 private configuration, while public source and examples use generic defaults.
@@ -436,6 +465,8 @@ reported unused runtimes.
 | Model sessions fail immediately | Check the provider login used by the daemon and run `herdr-code-factory doctor` to verify all three model IDs. |
 | Planner blocked with a question | Answer on the issue, adjust the description if needed, then **Retry**. |
 | Planner blocks but no alert arrives | Confirm the Message Me skill exists at `~/.codex/skills/message-me/scripts/message_me.py`, then inspect the issue event log for the recorded delivery status. |
+| Issue is waiting for PR readiness | Inspect the draft, explicitly choose **Ready for review** in GitHub, then choose **Approve ready PR** in the dashboard. Retry alone is refused. |
+| A legacy ready PR is waiting for authorization | It was never observed as a parked draft under this policy, so Code Factory will not adopt it. Finish it manually. |
 | Release stays **failed** | Read the error in the release card; a red Verify run or a Keychain prompt are the usual causes. Fix, then **Release now**. |
 
 ## Verification

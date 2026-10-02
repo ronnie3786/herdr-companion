@@ -87,6 +87,8 @@ test("extension evaluates and injects on every agent turn", () => {
   const resumed = handler({systemPrompt:"turn after resume"});
   assert.match(first.systemPrompt, /turn one/);
   assert.match(resumed.systemPrompt, /turn after resume/);
+  assert.match(resumed.systemPrompt, /gh pr create --draft/);
+  assert.match(resumed.systemPrompt, /keep sessions moving/);
   assert.equal(first.systemPrompt.split(COMPANION_AWARENESS_MARKER).length - 1, 1);
   assert.equal(handler({systemPrompt:first.systemPrompt}), undefined);
 });

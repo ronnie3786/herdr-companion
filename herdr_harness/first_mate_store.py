@@ -32,6 +32,7 @@ from .first_mate_verification import (
     normalize_gate_run,
     normalize_inventory,
     normalize_selection,
+    suite_key,
     suite_label,
 )
 
@@ -477,6 +478,10 @@ class FirstMateStore:
         attempt_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_attempts)")}
         if "verification_run_ids_json" not in attempt_columns:
             self._db.execute("ALTER TABLE fm_attempts ADD COLUMN verification_run_ids_json TEXT NOT NULL DEFAULT '[]'")
+        with self._transaction():
+            if "verification_recording_json" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_attempts)")}:
+                self._db.execute("ALTER TABLE fm_attempts ADD COLUMN verification_recording_json TEXT NOT NULL DEFAULT '{}'")
+            self._db.execute("INSERT OR IGNORE INTO fm_schema VALUES(18,?)", (_now(),))
         if "visibility" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_messages)")}:
             with self._transaction():
                 # Another process may have migrated between the check and the lock.
@@ -658,7 +663,7 @@ class FirstMateStore:
             return None
         result = dict(row)
         for name in ("metadata_json", "payload_json", "followup_stages_json", "provenance_json",
-                     "verification_json", "verification_run_ids_json", "suites_json", "gates_json",
+                     "verification_json", "verification_run_ids_json", "verification_recording_json", "suites_json", "gates_json",
                      "assessment_json", "verification_selection_json", "git_baselines_json", "git_evidence_json"):
             if name in result:
                 result[name[:-5]] = json.loads(result.pop(name))
@@ -694,9 +699,10 @@ class FirstMateStore:
 
     def _assignment_projection(self, result: dict) -> dict:
         result["visit_ids"] = [row[0] for row in self._db.execute("SELECT visit_id FROM fm_assignment_memberships WHERE assignment_id=? ORDER BY revision,visit_id", (result["id"],))]
-        attempt = self._db.execute("SELECT code_revision,verification_run_ids_json FROM fm_attempts WHERE assignment_id=? AND generation=?", (result["id"], result["generation"])).fetchone()
+        attempt = self._db.execute("SELECT code_revision,verification_run_ids_json,verification_recording_json FROM fm_attempts WHERE assignment_id=? AND generation=?", (result["id"], result["generation"])).fetchone()
         result["code_revision"] = attempt["code_revision"] if attempt else None
         result["verification_run_ids"] = json.loads(attempt["verification_run_ids_json"]) if attempt else []
+        result["verification_recording"] = json.loads(attempt["verification_recording_json"]) if attempt else {}
         result["has_outcome"] = self._db.execute(
             "SELECT 1 FROM fm_receipts WHERE scope=? AND json_extract(result_json,'$.generation')=? LIMIT 1",
             ("outcome:" + result["id"], result["generation"])).fetchone() is not None
@@ -979,7 +985,8 @@ class FirstMateStore:
                         "created_at": latest["created_at"]}}
 
     def relay_human_message(self, feature_id: str, text: str, *, lead_message_id: str,
-                            request_id: str, lead_machine: str | None = None) -> dict:
+                            request_id: str, lead_machine: str | None = None,
+                            original_human_direction: str | None = None) -> dict:
         """Post the human's words, relayed by the lead, as their message to a feature.
 
         The feature's coordinator sees an ordinary human message (the lead holds
@@ -990,6 +997,8 @@ class FirstMateStore:
         payload = {"text": _text(text, "text"), "lead_message_id": _text(lead_message_id, "lead_message_id", 200)}
         if lead_machine is not None:
             payload["lead_machine"] = _text(lead_machine, "lead_machine", 64)
+        if original_human_direction is not None:
+            payload["original_human_direction"] = _text(original_human_direction, "original_human_direction")
         with self._transaction():
             feature = self._one("fm_features", feature_id)
             if feature.get("kind") == LEAD_KIND:
@@ -1001,7 +1010,7 @@ class FirstMateStore:
             if feature["status"] in {"cancelled", "completed"}:
                 raise FirstMateError("Feature is closed", code="feature_closed")
             latest = self._latest_first_mate_message(feature_id)
-            relay = {key: payload[key] for key in ("lead_message_id", "lead_machine") if key in payload}
+            relay = {key: payload[key] for key in ("lead_message_id", "lead_machine", "original_human_direction") if key in payload}
             message = self._message(feature_id, "user", text, metadata={"relayed_by": LEAD_KIND, **relay})
             self._event(feature_id, "message.queued", "Human direction relayed by the lead First Mate"
                         + (f" on {payload['lead_machine']}" if "lead_machine" in payload else ""),
@@ -2214,6 +2223,56 @@ class FirstMateStore:
         self._db.execute("INSERT INTO fm_documents VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (document_id, assignment["feature_id"], assignment["visit_id"], assignment["id"], assignment["native_session_id"], assignment["generation"], assignment["input_revision"], title, media_type, content, hashlib.sha256(content.encode()).hexdigest(), _now()))
         return self._one("fm_documents", document_id)
 
+    def _outcome_verification(self, assignment: dict, selected_runs: list[str], *, code_revision: str | None,
+                              inherit: bool) -> dict:
+        """Resolve evidence once without making attachment a completion gate.
+
+        Producer identities and timestamps are immutable. Freshness and failures
+        remain the coverage evaluator's job; a reference is never a test pass.
+        Unknown and foreign IDs intentionally have the same generic diagnostic.
+        """
+        rows = self._db.execute("SELECT id,metadata_json FROM fm_assignments WHERE feature_id=?",
+                                (assignment["feature_id"],)).fetchall()
+        assignments = {row["id"]: json.loads(row["metadata_json"]) for row in rows}
+        lineage = {assignment["id"]}
+        pending = [assignment["id"]]
+        while pending:
+            current = pending.pop()
+            metadata = assignments.get(current, {})
+            related = [metadata.get("source_assignment_id")]
+            related.extend(identity for identity, child in assignments.items()
+                           if child.get("parent_assignment_id") == current)
+            for identity in related:
+                if isinstance(identity, str) and identity in assignments and identity not in lineage:
+                    lineage.add(identity)
+                    pending.append(identity)
+        runs = [self._decode(row) for row in self._db.execute(
+            "SELECT * FROM fm_verification_runs WHERE feature_id=? ORDER BY created_at,id",
+            (assignment["feature_id"],)) if row["assignment_id"] in lineage]
+        eligible = [run["id"] for run in runs]
+        eligible_set = set(eligible)
+        if inherit:
+            # Prefer current results without selecting every superseded batch.
+            # The evaluator still considers the full history for later failures.
+            latest: dict[tuple[str, str], str] = {}
+            for run in runs:
+                if code_revision and run["tested_revision"] != code_revision:
+                    continue
+                for gate in run["gates"]:
+                    latest[(run["workspace"], suite_key(gate["suite"]))] = run["id"]
+            latest_ids = set(latest.values())
+            accepted = [identity for identity in eligible if identity in latest_ids]
+        else:
+            accepted = [identity for identity in selected_runs if identity in eligible_set]
+        unresolved = [{"run_id": identity, "reason": "unavailable_in_assignment_lineage"}
+                      for identity in selected_runs if identity not in eligible_set]
+        return {"state": "incomplete" if unresolved else ("attached" if accepted else "unavailable"),
+                "run_ids": accepted, "unresolved_references": unresolved,
+                "inherited": inherit, "reconciliation_attempts": 1,
+                "warning": ("Work outcome accepted; verification evidence is incomplete. "
+                            "Do not retry or hand off solely to re-record evidence.")
+                           if unresolved else ""}
+
     def record_outcome(self, assignment_id: str, generation: int, native_session_id: str, input_revision: int, verdict: str, summary: str, request_id: str, documents: list[dict] | None = None, code_revision: str | None = None, verification_run_ids: list[str] | None = None) -> dict:
         if verdict not in {"success", "passed", "needs_changes", "blocked", "failed", "cancelled"}:
             raise FirstMateError("Invalid outcome verdict", code="invalid_request", status=400)
@@ -2230,11 +2289,6 @@ class FirstMateStore:
             if cached is not None:
                 return cached
             assignment = self._execution(assignment_id, generation, native_session_id, input_revision)
-            for run_id in selected_runs:
-                run = self._one("fm_verification_runs", run_id)
-                if (run["feature_id"] != assignment["feature_id"] or run["assignment_id"] != assignment_id
-                        or run["generation"] != generation):
-                    raise FirstMateError("Verification run does not belong to this execution", code="verification_scope_mismatch")
             if verdict in {"success", "passed"} and any(child["status"] != "completed" for child in self._children(assignment_id)):
                 raise FirstMateError("A parent cannot succeed before all direct children succeed", code="children_incomplete")
             expected_code_revision = assignment["metadata"].get("expected_code_revision")
@@ -2245,12 +2299,15 @@ class FirstMateStore:
             session = self._db.execute("SELECT * FROM fm_sessions WHERE native_session_id=?", (native_session_id,)).fetchone()
             if not session or session["status"] != "active" or session["generation"] != generation or session["assignment_id"] != assignment_id:
                 raise FirstMateError("Session ownership is no longer active", code="stale_owner")
+            recording = self._outcome_verification(assignment, selected_runs, code_revision=code_revision,
+                                                    inherit=verification_run_ids is None)
+            accepted_runs = recording["run_ids"]
             retained = [self._document(assignment, d.get("title"), d.get("content"), d.get("media_type", "text/markdown")) for d in documents or []]
             status = "completed" if verdict in {"success", "passed"} else ("blocked" if verdict in {"blocked", "needs_changes"} else verdict)
             self._db.execute("UPDATE fm_assignments SET status=?,verdict=?,summary=?,updated_at=? WHERE id=?", (status, verdict, summary, _now(), assignment_id))
-            self._db.execute("UPDATE fm_attempts SET status=?,verdict=?,summary=?,code_revision=?,verification_run_ids_json=?,updated_at=? WHERE assignment_id=? AND generation=?", (status, verdict, summary, code_revision, _json(selected_runs), _now(), assignment_id, generation))
+            self._db.execute("UPDATE fm_attempts SET status=?,verdict=?,summary=?,code_revision=?,verification_run_ids_json=?,verification_recording_json=?,updated_at=? WHERE assignment_id=? AND generation=?", (status, verdict, summary, code_revision, _json(accepted_runs), _json(recording), _now(), assignment_id, generation))
             self._db.execute("UPDATE fm_sessions SET status='retained',updated_at=? WHERE native_session_id=?", (_now(), native_session_id))
-            event_payload = {"assignment_id": assignment_id, "generation": generation, "native_session_id": native_session_id, "input_revision": input_revision, "verdict": verdict, "code_revision": code_revision, "document_ids": [d["id"] for d in retained], "verification_run_ids": selected_runs}
+            event_payload = {"assignment_id": assignment_id, "generation": generation, "native_session_id": native_session_id, "input_revision": input_revision, "verdict": verdict, "code_revision": code_revision, "document_ids": [d["id"] for d in retained], "verification_run_ids": accepted_runs, "verification_recording": recording}
             self._event(assignment["feature_id"], "assignment.outcome", summary, event_payload)
             # The owning lead resumes from durable child state and synthesizes its
             # findings. Only its top-level outcome needs a First Mate turn, and

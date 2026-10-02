@@ -1,7 +1,7 @@
 """HTTP server for the Code Factory dashboard: one static page plus a small JSON API.
 
 The server runs ``http.server.ThreadingHTTPServer`` on a daemon thread and reads the
-ledger through the shared ``CodeFactoryStore``. Actions (retry, skip, clean up,
+ledger through the shared ``CodeFactoryStore``. Actions (retry, authorize PR readiness, skip, clean up,
 release now) are delegated to the pipeline's ``CodeFactory.action`` method; the
 server never mutates state itself. When a bearer ``token`` is configured every
 ``/api/*`` request must carry it (constant-time comparison); the HTML page is always
@@ -38,7 +38,7 @@ CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; "
     "img-src data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 )
-ISSUE_ACTIONS = ("retry", "skip", "cleanup", "release_now")
+ISSUE_ACTIONS = ("retry", "authorize_pr_ready", "skip", "cleanup", "release_now")
 MAX_BODY_BYTES = 64 * 1024
 REQUEST_TIMEOUT_SECONDS = 30.0
 TAILSCALE_CANDIDATES = ("tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale")

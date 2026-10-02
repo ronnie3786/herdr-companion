@@ -49,6 +49,7 @@ struct AgentRoleEditor: View {
             if role.locked {
                 ContentUnavailableView("Recovery stays restricted", systemImage: "lock.shield",
                     description: Text("Recovery Advisor always runs without skills or delegation. Its system role cannot be edited."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 switch tab {
                 case .profile: AgentRoleProfileEditor(store: store, role: $role)

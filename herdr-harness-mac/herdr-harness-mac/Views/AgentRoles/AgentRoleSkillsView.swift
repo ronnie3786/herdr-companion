@@ -83,6 +83,8 @@ struct AgentRoleSkillsView: View {
                                 Button(letter) { proxy.scrollTo(letter, anchor: .top) }
                                     .buttonStyle(.borderless)
                                     .herdrFont(.caption2, weight: .semibold)
+                                    .foregroundStyle(store.letters.contains(letter)
+                                        ? HerdrTheme.secondaryText : HerdrTheme.secondaryText.opacity(0.3))
                                     .frame(width: 24, height: 18)
                                     .disabled(!store.letters.contains(letter))
                                     .accessibilityLabel("Jump to \(letter)")

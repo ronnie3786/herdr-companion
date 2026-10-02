@@ -17,7 +17,7 @@ struct AgentRoleRow: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(role.name).herdrFont(.callout, weight: .medium).lineLimit(2)
-                    Text(role.locked ? "System" : role.skillIds.map { "\($0.count) skills" } ?? "Automatic skills")
+                    Text(role.locked ? "System" : role.skillIds.map { "\($0.count) \($0.count == 1 ? "skill" : "skills")" } ?? "Automatic skills")
                         .herdrFont(.caption2)
                         .foregroundStyle(HerdrTheme.secondaryText)
                 }

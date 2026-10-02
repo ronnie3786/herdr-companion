@@ -21,6 +21,7 @@ struct AgentRolesView: View {
             if store.machines.isEmpty && store.draft == nil {
                 ContentUnavailableView("No machines yet", systemImage: "desktopcomputer",
                     description: Text("Add a machine in Settings › Machines to configure its First Mate roles."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 switch store.status {
                 case .loading:
@@ -34,6 +35,7 @@ struct AgentRolesView: View {
                     } actions: {
                         Button("Try Again", action: retry)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case let .unavailable(message):
                     ContentUnavailableView {
                         Label("Couldn't load Agent Roles", systemImage: "wifi.slash")
@@ -42,6 +44,7 @@ struct AgentRolesView: View {
                     } actions: {
                         Button("Try Again", action: retry)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .loaded:
                     HStack(spacing: 0) {
                         AgentRolesRail(store: store, select: { request(.role($0)) }, newRole: { request(.newRole) })
@@ -52,6 +55,7 @@ struct AgentRolesView: View {
                         } else {
                             ContentUnavailableView("No roles", systemImage: "person.2",
                                 description: Text("Create a role to get started."))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                     }
                 }

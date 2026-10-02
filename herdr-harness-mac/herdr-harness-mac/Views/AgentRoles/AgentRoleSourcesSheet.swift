@@ -21,6 +21,7 @@ struct AgentRoleSourcesSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(catalog.sources) { source in
+                        let skillCount = catalog.skills.count { $0.source == source.id }
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 10) {
                                 Label(source.name, systemImage: source.available ? "folder" : "folder.badge.questionmark")
@@ -38,7 +39,7 @@ struct AgentRoleSourcesSheet: View {
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(source.available
-                                ? "\(catalog.skills.count { $0.source == source.id }) skills"
+                                ? "\(skillCount) \(skillCount == 1 ? "skill" : "skills")"
                                 : "Unavailable. Choose this folder to grant access, or add another folder.")
                                 .herdrFont(.caption)
                                 .foregroundStyle(source.available ? HerdrTheme.secondaryText : HerdrTheme.warning)

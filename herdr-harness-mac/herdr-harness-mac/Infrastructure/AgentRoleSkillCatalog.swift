@@ -227,7 +227,8 @@ enum AgentRoleCatalogScanner {
             }
             return
         }
-        let children = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey],
+        // Foundation's URL enumerator does not follow a final directory symlink on macOS.
+        let children = try FileManager.default.contentsOfDirectory(at: resolved, includingPropertiesForKeys: [.isDirectoryKey],
                                                                    options: [.skipsHiddenFiles])
         for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where !excluded(child.lastPathComponent) {
             guard (try? child.resolvingSymlinksInPath().resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
@@ -271,7 +272,7 @@ enum AgentRoleCatalogScanner {
             throw AgentRoleCatalogError("A selected skill contains a folder link outside its package or a link cycle.")
         }
         defer { visited.remove(canonical.path) }
-        let children = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey],
+        let children = try FileManager.default.contentsOfDirectory(at: canonical, includingPropertiesForKeys: [.isDirectoryKey],
                                                                    options: [.skipsHiddenFiles])
         var names = Set<String>()
         for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where !excluded(child.lastPathComponent) {

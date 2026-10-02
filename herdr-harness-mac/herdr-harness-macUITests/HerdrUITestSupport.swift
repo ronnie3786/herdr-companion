@@ -18,8 +18,9 @@ class HerdrUITestCase: XCTestCase {
     @MainActor
     func launchDemoApp(startOnDashboard: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState"]
+        app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState", "-ApplePersistenceIgnoreState", "YES"]
         app.launch()
+        app.activate()
         // Existing suites exercise the secondary Chat shell. Enter it through
         // the same Dashboard link a person uses, rather than changing launch behavior.
         if !startOnDashboard {
@@ -42,10 +43,15 @@ class HerdrUITestCase: XCTestCase {
         app.launchArguments = [
             "-HerdrDemoMode",
             "-HerdrResetSidebarState",
+            "-ApplePersistenceIgnoreState", "YES",
             "-HerdrPRReviewCommentStorePath",
             commentStoreURL.path,
         ]
         app.launch()
+        app.activate()
+        let chats = app.buttons["dashboard-recent-chats"]
+        XCTAssertTrue(chats.waitForExistence(timeout: 10))
+        chats.click()
         return app
     }
 

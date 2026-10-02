@@ -37,12 +37,12 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         assertCommentBody(body, in: comments)
         let thread = threadCard(containing: body, in: comments)
         XCTAssertTrue(thread.waitForExistence(timeout: 5), "The saved comment should have its own thread")
-        XCTAssertTrue(thread.descendantText(containing: SyntheticPRReview.firstPath).exists)
-        XCTAssertTrue(thread.descendantText(containing: "before ").exists, "A mixed selection retains the removed side")
-        XCTAssertTrue(thread.descendantText(containing: "after ").exists, "A mixed selection retains the added side")
+        XCTAssertTrue(thread.discussionText(containing: SyntheticPRReview.firstPath).exists)
+        XCTAssertTrue(thread.discussionText(containing: "before ").exists, "A mixed selection retains the removed side")
+        XCTAssertTrue(thread.discussionText(containing: "after ").exists, "A mixed selection retains the added side")
         XCTAssertTrue(thread.descendantButton(titled: "Show in diff").exists)
         expandDisclosure("Original code", in: thread)
-        XCTAssertTrue(thread.descendantText(containing: "struct SeedCatalog {}").waitForExistence(timeout: 5),
+        XCTAssertTrue(thread.discussionText(containing: "struct SeedCatalog {}").waitForExistence(timeout: 5),
                       "The original selected code should remain available")
 
         let copy = thread.descendantButton(titled: "Copy")
@@ -60,15 +60,15 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         let comments = openCommentsList(in: main, app: app)
         let thread = comments.descendant(identifier: "pr-review-thread-demo-catalog-thread")
         XCTAssertTrue(thread.waitForExistence(timeout: 5))
-        XCTAssertTrue(thread.descendantText(containing: "Swift reviewer: How will an empty catalog").exists)
-        XCTAssertTrue(thread.descendantText(containing: "Agent").exists)
+        XCTAssertTrue(thread.discussionText(containing: "Swift reviewer: How will an empty catalog").exists)
+        XCTAssertTrue(thread.discussionText(containing: "Agent").exists)
         let reply = thread.descendant(identifier: "pr-review-thread-reply-demo-catalog-thread")
         XCTAssertTrue(reply.waitForExistence(timeout: 5))
         reply.click()
         let body = "Human review: please add an explicit loading state.\nThe empty case needs a test."
         saveDraft(body, in: app)
         assertCommentBody(body, in: thread)
-        XCTAssertTrue(thread.descendantText(containing: "Human").exists)
+        XCTAssertTrue(thread.discussionText(containing: "Human").exists)
 
         let state = thread.descendant(identifier: "pr-review-thread-state-demo-catalog-thread")
         XCTAssertTrue(state.waitForExistence(timeout: 5))
@@ -81,11 +81,11 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         selectCommentFilter("All", in: comments)
         XCTAssertTrue(thread.descendantButton(titled: "Resolve").waitForExistence(timeout: 5))
         expandDisclosure("Original code", in: thread)
-        XCTAssertTrue(thread.descendantText(containing: "+struct SeedCatalog {}").waitForExistence(timeout: 5))
+        XCTAssertTrue(thread.discussionText(containing: "+struct SeedCatalog {}").waitForExistence(timeout: 5))
         expandDisclosure("Activity (", in: thread)
-        XCTAssertTrue(thread.descendantText(containing: "Human replied").waitForExistence(timeout: 5))
-        XCTAssertTrue(thread.descendantText(containing: "Human resolved").exists)
-        XCTAssertTrue(thread.descendantText(containing: "Human reopened").exists)
+        XCTAssertTrue(thread.discussionText(containing: "Human replied").waitForExistence(timeout: 5))
+        XCTAssertTrue(thread.discussionText(containing: "Human resolved").exists)
+        XCTAssertTrue(thread.discussionText(containing: "Human reopened").exists)
     }
 
     @MainActor
@@ -128,7 +128,7 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         saveDraft(original, in: app)
         let created = threadCard(containing: original, in: comments)
         XCTAssertTrue(created.waitForExistence(timeout: 5))
-        XCTAssertTrue(created.descendantText(containing: "Pull request").exists)
+        XCTAssertTrue(created.discussionText(containing: "Pull request").exists)
         XCTAssertFalse(created.descendantButton(titled: "Show in diff").exists)
         closeCommentsList(in: app)
 
@@ -152,8 +152,8 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         closeCommentsList(in: app)
         selectReview(SyntheticPRReview.secondReviewID, in: main, app: app, expectedDiff: SyntheticPRReview.secondDiff)
         let secondComments = openCommentsList(in: main, app: app)
-        XCTAssertTrue(secondComments.descendantText(containing: "No open comments").waitForExistence(timeout: 5))
-        XCTAssertFalse(secondComments.descendantText(containing: "Question about the overall sync approach").exists)
+        XCTAssertTrue(secondComments.discussionText(containing: "No open comments").waitForExistence(timeout: 5))
+        XCTAssertFalse(secondComments.discussionText(containing: "Question about the overall sync approach").exists)
         secondComments.descendant(identifier: "pr-review-add-pr-comment").click()
         saveDraft("Reminder-only synthetic comment", in: app)
         closeCommentsList(in: app)
@@ -162,7 +162,7 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         let restored = openCommentsList(in: main, app: app)
         assertCommentBody(original, in: restored)
         assertCommentBody(reply, in: restored)
-        XCTAssertFalse(restored.descendantText(containing: "Reminder-only synthetic comment").exists)
+        XCTAssertFalse(restored.discussionText(containing: "Reminder-only synthetic comment").exists)
     }
 
     // MARK: - Shared steps
@@ -232,7 +232,7 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         diff.click()
         app.typeKey("a", modifierFlags: .command)
 
-        let predicate = NSPredicate(format: "label CONTAINS[c] %@", "Add comment")
+        let predicate = NSPredicate(format: "label CONTAINS[c] %@ OR title CONTAINS[c] %@", "Add comment", "Add comment")
         let candidates = {
             [
                 diff.buttons.matching(predicate).firstMatch,
@@ -316,22 +316,14 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         waitUntilEnabled(button)
         button.click()
 
-        var sheet = waitForFirst(of: [
-            window.descendant(identifier: "pr-review-discussions"),
-            app.control(identifier: "pr-review-discussions"),
-        ], timeout: 5)
-        if sheet == nil {
+        // AppKit can reparent the sheet's accessibility tree after its opening
+        // animation. Keep the query rooted at the app, not the presenting window.
+        let sheet = app.control(identifier: "pr-review-discussions")
+        if !sheet.waitForExistence(timeout: 5) {
             // A first click can land while the window is still activating.
             button.click()
-            sheet = waitForFirst(of: [
-                window.descendant(identifier: "pr-review-discussions"),
-                app.control(identifier: "pr-review-discussions"),
-            ], timeout: 5)
         }
-        guard let sheet else {
-            XCTFail("The Comments control should open the review-wide list")
-            return app.control(identifier: "pr-review-discussions")
-        }
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "The Comments control should open the review-wide list")
         return sheet
     }
 
@@ -357,7 +349,7 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         line: UInt = #line
     ) {
         for fragment in body.components(separatedBy: "\n") where !fragment.isEmpty {
-            XCTAssertTrue(sheet.descendantText(containing: fragment).waitForExistence(timeout: 10),
+            XCTAssertTrue(sheet.discussionText(containing: fragment).waitForExistence(timeout: 10),
                           "Expected saved text: \(fragment)", file: file, line: line)
         }
     }
@@ -365,10 +357,16 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
     @MainActor
     private func threadCard(containing body: String, in sheet: XCUIElement) -> XCUIElement {
         let fragment = body.components(separatedBy: "\n")[0]
-        return sheet.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "pr-review-thread-"))
-            .containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", fragment, fragment))
-            .firstMatch
+        let cards = sheet.groups.matching(NSPredicate(format: "identifier BEGINSWITH %@", "pr-review-thread-"))
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            if let card = cards.allElementsBoundByIndex.first(where: { $0.discussionText(containing: fragment).exists }) {
+                return card
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        XCTFail("The discussion should retain the saved message: \(fragment)")
+        return sheet.groups["missing-discussion-thread"]
     }
 
     @MainActor
@@ -539,5 +537,13 @@ private enum SyntheticPRReview {
 
     static func popOutIdentifier(_ reviewID: String) -> String {
         "pr-review-pop-out-demo|\(reviewID)"
+    }
+}
+
+private extension XCUIElement {
+    /// Discussion prose is exposed as StaticText. Restrict AXValue queries to
+    /// text so AppKit does not evaluate it recursively on container controls.
+    func discussionText(containing fragment: String) -> XCUIElement {
+        staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@", fragment, fragment)).firstMatch
     }
 }

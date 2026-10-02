@@ -50,6 +50,7 @@ struct PRReviewDiscussionView: View {
         .preferredColorScheme(.dark)
         .tint(HerdrTheme.accent)
         .interactiveDismissDisabled(session.hasDraft || session.isSaving)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pr-review-discussions")
         .confirmationDialog("Discard this draft?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
             Button("Discard draft", role: .destructive) { session.discardDraft() }

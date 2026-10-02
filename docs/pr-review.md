@@ -389,7 +389,10 @@ for byte, so an improvement cannot silently ship to only one surface.
   That suite covers the client contract, store and window scoping, routing identity, saved
   question persistence, refresh presentation, deleted-file disclosure and renderer mounting,
   the local WebKit renderer and synthetic demo layouts.
-- Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests -only-testing:herdr-harness-macUITests/HerdrPRReviewCommentUITests`.
+- Mac interactive (final gate): `xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' CODE_SIGNING_ALLOWED=YES test -only-testing:herdr-harness-macUITests/HerdrPRReviewUITests -only-testing:herdr-harness-macUITests/HerdrPRReviewCommentUITests`.
+  Use the configured Apple Development identity and team through `CODE_SIGN_IDENTITY` and
+  `DEVELOPMENT_TEAM`, with fresh derived data. Give UI tests a separate `HERDR_MAC_BUNDLE_ID`
+  when another Herdr build is running, and run interactive suites one at a time.
   That suite exercises the row and header context menus, two concurrent review windows with
   independent tabs and files, chat navigation with an unsent draft, duplicate-window focus, and
   close-versus-archive. Deleted-file coverage selects the synthetic deleted source, prose and

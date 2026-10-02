@@ -4,6 +4,7 @@ import SwiftUI
 struct PRReviewFilesView: View {
     @Bindable var store: PRReviewStore
     @Bindable var comments = PRReviewCommentsSession()
+    var discussions: PRReviewDiscussionSession?
     var canControl = false
     var questionHistory: PRReviewQuestionHistory?
     var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
@@ -149,6 +150,8 @@ struct PRReviewFilesView: View {
                         PRReviewDiffView(
                             store: store,
                             comments: comments,
+                            discussions: discussions,
+                            canComment: canControl,
                             compact: geometry.size.height < 500,
                             questionHistory: questionHistory,
                             openQuestion: openQuestion,
@@ -481,6 +484,8 @@ struct PRReviewFileRow: View {
 struct PRReviewDiffView: View {
     @Bindable var store: PRReviewStore
     @Bindable var comments = PRReviewCommentsSession()
+    var discussions: PRReviewDiscussionSession?
+    var canComment = false
     var compact = false
     var questionHistory: PRReviewQuestionHistory?
     var openQuestion: (PRReviewQuestionHistory.Question) -> Void = { _ in }
@@ -715,6 +720,8 @@ struct PRReviewDiffView: View {
                 askAI(selection, view, rect)
             },
             addComment: addComment,
+            threads: discussions?.inlineThreads(path: diffFile.path, store: store) ?? [],
+            openThread: { discussions?.present(threadID: $0) },
             questionDraftChanged: { isNonEmpty in
                 hasQuestionDraft = isNonEmpty
                 questionDraftChanged(isNonEmpty)
@@ -745,6 +752,10 @@ struct PRReviewDiffView: View {
     /// and the host can accept a selection, so existing ask-only call sites
     /// keep their exact behavior.
     private var addComment: ((PRReviewSelection) -> Void)? {
+        if let discussions {
+            guard canComment, discussions.isAvailable else { return nil }
+            return { selection in discussions.beginComment(selection: selection, store: store) }
+        }
         guard comments.isReady, store.comparisonSelection == .all else { return nil }
         return { selection in
             comments.beginComposition(selection: selection, store: store)

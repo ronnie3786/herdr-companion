@@ -445,6 +445,122 @@ struct PRReviewDiffTextTests {
         #expect(received.last?.text == "fresh revision selection")
     }
 
+    @Test("Inline thread payload preserves sides and clamps invalid reply counts")
+    func inlineThreadPayload() throws {
+        let threads = [
+            PRReviewInlineThread(id: "old-thread", line: 2, side: .before, author: "Human", body: "Before", replyCount: 1, resolved: false),
+            PRReviewInlineThread(id: "new-thread", line: 3, side: .after, author: "Agent", body: "After", replyCount: -1, resolved: true),
+            PRReviewInlineThread(id: "invalid", line: 0, side: .after, author: "Agent", body: "No anchor", replyCount: 0, resolved: false),
+        ]
+        let payload = PRReviewDiffRenderer.payload(file: commentingFixture(), identity: "synthetic", threads: threads)
+        let data = try JSONEncoder().encode(payload)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let values = try #require(object["threads"] as? [[String: Any]])
+        #expect(values.count == 2)
+        #expect(values[0]["side"] as? String == "old")
+        #expect(values[1]["side"] as? String == "new")
+        #expect(values[1]["replyCount"] as? Int == 0)
+        #expect(values[1]["resolved"] as? Bool == true)
+    }
+
+    @Test("Local thread cards render below exact side anchors and open native discussion", arguments: ["unified", "split"])
+    @MainActor
+    func inlineThreadCards(diffStyle: String) async throws {
+        var opened: [String] = []
+        let threads = [
+            PRReviewInlineThread(id: "old-thread", line: 2, side: .before, author: "Human", body: "Why remove this seed?", replyCount: 0, resolved: false),
+            PRReviewInlineThread(id: "new-thread", line: 3, side: .after, author: "Agent", body: "Swift review\n  Preserve this whitespace.\n<script>unsafe()</script>", replyCount: 2, resolved: true),
+            PRReviewInlineThread(id: "same-line", line: 3, side: .after, author: "Human", body: "An independent question", replyCount: 1, resolved: false),
+        ]
+        let mounted = mount(file: commentingFixture(), diffStyle: diffStyle, threads: threads, openThread: { opened.append($0) })
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let ready = await waitUntil { mounted.view.renderedIdentity != nil }
+        try #require(ready)
+        let visible = await waitForSelector(mounted.view, "[data-thread-id=new-thread]")
+        try #require(visible)
+        let values = try await mounted.view.evaluateJavaScript("""
+        (() => {
+          const host = document.querySelector('diffs-container');
+          const cards = [...host.querySelectorAll('.native-review-thread')];
+          const old = cards.find(card => card.dataset.threadId === 'old-thread');
+          const added = cards.find(card => card.dataset.threadId === 'new-thread');
+          const oldLine = host.shadowRoot.querySelector('[data-line="2"][data-line-type*="deletion"]');
+          const newLine = host.shadowRoot.querySelector('[data-line="3"][data-line-type*="addition"]');
+          return {
+            count: cards.length,
+            oldSlot: old.parentElement.parentElement.slot,
+            newSlot: added.parentElement.parentElement.slot,
+            oldBelow: old.getBoundingClientRect().top >= oldLine.getBoundingClientRect().bottom,
+            newBelow: added.getBoundingClientRect().top >= newLine.getBoundingClientRect().bottom,
+            slotsAssigned: cards.every(card => card.parentElement.parentElement.assignedSlot != null),
+            oldAction: old.querySelector('button').textContent,
+            newAction: added.querySelector('button').textContent,
+            status: added.querySelector('.native-review-thread-status').textContent,
+            body: added.querySelector('.native-review-thread-body').textContent,
+            scripts: added.querySelectorAll('script').length,
+            replies: added.querySelector('footer > span').textContent
+          };
+        })()
+        """) as? [String: Any]
+        let result = try #require(values)
+        #expect(result["count"] as? Int == 3)
+        #expect(result["oldSlot"] as? String == "annotation-deletions-2")
+        #expect(result["newSlot"] as? String == "annotation-additions-3")
+        #expect(result["oldBelow"] as? Bool == true)
+        #expect(result["newBelow"] as? Bool == true)
+        #expect(result["slotsAssigned"] as? Bool == true)
+        #expect(result["oldAction"] as? String == "Reply")
+        #expect(result["newAction"] as? String == "View discussion")
+        #expect(result["status"] as? String == "Resolved")
+        #expect(result["replies"] as? String == "2 replies")
+        #expect(result["body"] as? String == threads[1].body)
+        #expect(result["scripts"] as? Int == 0)
+        _ = try await mounted.view.evaluateJavaScript("document.querySelector('[data-thread-id=new-thread] button').click()")
+        let delivered = await waitUntil { opened == ["new-thread"] }
+        #expect(delivered)
+    }
+
+    @Test("Thread bridge rejects stale identities, wrong paths, and unknown or removed discussions") @MainActor
+    func threadBridgeRejectsStaleMessages() async throws {
+        var opened: [String] = []
+        let file = commentingFixture()
+        let thread = PRReviewInlineThread(id: "saved-thread", line: 3, side: .after, author: "Agent", body: "Review finding", replyCount: 0, resolved: false)
+        let mounted = mount(file: file, threads: [thread], openThread: { opened.append($0) })
+        defer { mounted.view.tearDown(); mounted.window.close() }
+        let visible = await waitForSelector(mounted.view, "[data-thread-id=saved-thread]")
+        try #require(visible)
+        _ = try await mounted.view.evaluateJavaScript("""
+        (() => {
+          const handler = window.webkit.messageHandlers.herdrDiffBridge;
+          const identity = document.querySelector('main').dataset.renderIdentity;
+          window.__threadIdentity = identity;
+          handler.postMessage({kind: 'openThread', identity: 'stale', path: '\(file.path)', threadID: 'saved-thread'});
+          handler.postMessage({kind: 'openThread', identity, path: 'Other.swift', threadID: 'saved-thread'});
+          handler.postMessage({kind: 'openThread', identity, path: '\(file.path)', threadID: 'unknown'});
+          handler.postMessage({kind: 'openThread', identity, path: '\(file.path)', threadID: 'saved-thread'});
+          return true;
+        })()
+        """)
+        let delivered = await waitUntil { opened.count == 1 }
+        try #require(delivered)
+        #expect(opened == ["saved-thread"])
+
+        mounted.view.render(PRReviewDiffRenderer.payload(file: file, identity: "next-revision", threads: []))
+        let removed = await waitForSelector(mounted.view, "[data-thread-id=saved-thread]", exists: false)
+        try #require(removed)
+        _ = try await mounted.view.evaluateJavaScript("""
+        (() => {
+          const handler = window.webkit.messageHandlers.herdrDiffBridge;
+          handler.postMessage({kind: 'openThread', identity: window.__threadIdentity, path: '\(file.path)', threadID: 'saved-thread'});
+          handler.postMessage({kind: 'openThread', identity: document.querySelector('main').dataset.renderIdentity,
+            path: '\(file.path)', threadID: 'saved-thread'});
+          return true;
+        })()
+        """)
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(opened == ["saved-thread"])
+    }
+
     @Test("Selection controls stay inside a narrow enlarged viewport") @MainActor
     func selectionControlsFitNarrowViewport() async throws {
         let mounted = mount(file: commentingFixture(), size: CGSize(width: 300, height: 320),
@@ -624,7 +740,7 @@ struct PRReviewDiffTextTests {
         for overflow in ["wrap", "scroll", "wrap"] {
             let payload = PRReviewDiffRenderer.Payload(identity: "fallback-" + overflow, path: "Garden.bin",
                 oldPath: "", patch: patch, plainText: patch, fontScale: 1, highlight: nil,
-                diffStyle: "unified", overflow: overflow, comparison: nil, comparisonSelection: nil)
+                diffStyle: "unified", overflow: overflow, comparison: nil, comparisonSelection: nil, threads: [])
             try await renderForOverflowTest(mounted.view, payload: payload)
             let result = try await mounted.view.evaluateJavaScript("""
             (() => {
@@ -714,16 +830,22 @@ struct PRReviewDiffTextTests {
         size: CGSize = CGSize(width: 760, height: 360),
         highlight: (start: Int, end: Int, side: PRReviewSide)? = nil,
         askAI: ((PRReviewSelection, NSView, CGRect) -> Void)? = nil,
-        addComment: ((PRReviewSelection) -> Void)? = nil
+        addComment: ((PRReviewSelection) -> Void)? = nil,
+        diffStyle: String = "unified",
+        threads: [PRReviewInlineThread] = [],
+        openThread: ((String) -> Void)? = nil
     ) -> (window: NSWindow, view: PRReviewDiffTextView) {
         let hosting = NSHostingView(rootView:
             PRReviewDiffText(
                 file: file,
                 baseSHA: "synthetic-base",
                 headSHA: "synthetic-head",
+                diffStyle: diffStyle,
                 highlight: highlight,
                 askAI: askAI,
-                addComment: addComment
+                addComment: addComment,
+                threads: threads,
+                openThread: openThread
             )
                 .frame(width: size.width, height: size.height)
                 .environment(\.colorScheme, .dark)

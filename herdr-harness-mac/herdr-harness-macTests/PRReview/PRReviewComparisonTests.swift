@@ -147,6 +147,27 @@ struct PRReviewComparisonTests {
         #expect(store.comparisonSelection == .all)
     }
 
+    @Test("Saved discussion comparisons preserve explicit commit and range modes")
+    func discussionComparisonModes() async throws {
+        let store = try configured()
+        await store.loadComparison()
+        let listing = try #require(store.comparisonCommits)
+        let headCommit = GitComparisonSelection(mode: .commit, startCommit: listing.headSHA)
+        store.selectComparison(headCommit)
+        await store.loadComparison()
+        #expect(store.comparisonSelection == headCommit)
+        #expect(store.currentComparison?.mode == .commit)
+
+        let fromBaseline = GitComparisonSelection(mode: .range, startCommit: listing.baselineSHA, endCommit: Self.firstSHA)
+        store.selectComparison(fromBaseline)
+        await store.loadComparison()
+        #expect(store.comparisonSelection == fromBaseline)
+        #expect(store.currentComparison?.mode == .range)
+
+        store.selectComparison(.init(mode: .range, startCommit: listing.headSHA, endCommit: Self.firstSHA))
+        #expect(store.comparisonSelection == fromBaseline)
+    }
+
     @Test("Merged branch commits are selectable but sibling ranges cannot flip history")
     func mergedHistoryAncestry() {
         func commit(_ sha: String, _ parents: [String]) -> GitCommit {

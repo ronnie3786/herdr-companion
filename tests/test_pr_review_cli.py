@@ -118,6 +118,72 @@ class PRReviewCLITests(unittest.TestCase):
         code, _ = self.run_cli(["get", "prr_sample"], replies=[error])
         self.assertEqual(code, 4)
 
+    def test_local_comments_preserve_markdown_and_require_observed_revision(self):
+        markdown = "SwiftUI reviewer: question\n\n```swift\nlet value = 1\n```\n  "
+        code, _ = self.run_cli(["comment", "prr_sample", "--body-file", "-", "--request-id", "comment-one"], stdin=markdown)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0].full_url, "https://host.example.test/api/v1/pr-reviews/prr_sample/comments")
+        self.assertEqual(json.loads(self.requests[0].data), {"body": markdown, "author": "agent", "request_id": "comment-one"})
+
+        code, _ = self.run_cli(["comment", "prr_sample", "--body", "Question", "--path", "Sources/Garden.swift", "--side", "after", "--start", "3"])
+        self.assertEqual(code, 2)
+        self.assertEqual(self.requests, [])
+
+        base, head = "a" * 40, "b" * 40
+        code, _ = self.run_cli(["comment", "prr_sample", "--body", "Question", "--author", "human", "--path", "Sources/Garden.swift",
+            "--side", "after", "--start", "3", "--base-sha", base, "--head-sha", head, "--mode", "commit", "--start-commit", head])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(self.requests[0].data)["anchor"], {
+            "path": "Sources/Garden.swift", "side": "after", "start_line": 3, "end_line": 3,
+            "base_sha": base, "head_sha": head, "comparison": {"mode": "commit", "start_commit": head}})
+        self.assertEqual(json.loads(self.requests[0].data)["author"], "human")
+
+    def test_comment_lifecycle_uses_versions_and_explicit_thread_identity(self):
+        code, _ = self.run_cli(["comments", "prr_sample", "--state", "open", "--path", "Sources/Garden.swift"])
+        self.assertEqual(code, 0)
+        self.assertIn("/comments?state=open&path=Sources%2FGarden.swift", self.requests[0].full_url)
+        code, _ = self.run_cli(["comments", "prr_sample", "--thread", "prct_one"])
+        self.assertEqual(code, 0)
+        self.assertTrue(self.requests[0].full_url.endswith("/comments/prct_one"))
+
+        code, _ = self.run_cli(["reply", "--thread", "prct_one", "--body", "Answer", "--request-id", "reply-one"],
+            environ={**self.environ, "HERDR_PR_REVIEW_ID": "prr_env"})
+        self.assertEqual(code, 0)
+        self.assertTrue(self.requests[0].full_url.endswith("/prr_env/comments/prct_one/replies"))
+        self.assertEqual(json.loads(self.requests[0].data), {"body": "Answer", "author": "agent", "request_id": "reply-one"})
+        for name, state in (("resolve", "resolved"), ("reopen", "open")):
+            code, _ = self.run_cli([name, "prr_sample", "--thread", "prct_one", "--expected-version", "2", "--request-id", name])
+            self.assertEqual(code, 0)
+            self.assertTrue(self.requests[0].full_url.endswith("/comments/prct_one/state"))
+            self.assertEqual(json.loads(self.requests[0].data), {"state": state, "author": "agent", "expected_version": 2, "request_id": name})
+        code, _ = self.run_cli(["edit-comment", "prr_sample", "--thread", "prct_one", "--message", "prcm_one",
+            "--expected-version", "3", "--author", "human", "--body", "Correction"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0].method, "PUT")
+        self.assertTrue(self.requests[0].full_url.endswith("/comments/prct_one/messages/prcm_one"))
+
+    def test_comment_failures_send_no_request_and_never_launch_github(self):
+        for argv in (["comment", "prr_sample", "--body", " "],
+                     ["comment", "prr_sample", "--body", "x" * 20001],
+                     ["resolve", "prr_sample", "--thread", "prct_one", "--expected-version", "0"],
+                     ["resolve", "prr_sample", "--thread", "prct_one"],
+                     ["comments", "prr_sample", "--thread", "prct_one", "--state", "open"]):
+            code, _ = self.run_cli(argv)
+            self.assertEqual(code, 2)
+            self.assertEqual(self.requests, [])
+            self.assertEqual(self.launches, [])
+
+    def test_diff_cli_exposes_pinned_comparisons_to_agents(self):
+        base, head = "a" * 40, "b" * 40
+        code, _ = self.run_cli(["diff", "prr_sample", "--mode", "range", "--start-commit", base, "--end-commit", head,
+            "--base-sha", base, "--head-sha", head, "--path", "Sources/Garden.swift"])
+        self.assertEqual(code, 0)
+        self.assertIn("mode=range", self.requests[0].full_url)
+        self.assertIn("base_sha=" + base, self.requests[0].full_url)
+        code, _ = self.run_cli(["commits", "prr_sample", "--head-sha", head])
+        self.assertEqual(code, 0)
+        self.assertTrue(self.requests[0].full_url.endswith("/commits?head_sha=" + head))
+
     def test_document_download_and_state_command(self):
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "findings.md"

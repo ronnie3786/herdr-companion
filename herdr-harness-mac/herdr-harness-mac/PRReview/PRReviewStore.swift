@@ -35,6 +35,10 @@ struct PRReviewDeletedDisclosureScope: Equatable {
 final class PRReviewStore {
     let guide: PRReviewGuideSession
     var guideClient: (any PRReviewGuideClient)? { client as? any PRReviewGuideClient }
+    var discussionClient: (any PRReviewDiscussionClient)? {
+        if isDemo, let machineID { return PRReviewDiscussionDemoClient.client(machineID: machineID) }
+        return client as? any PRReviewDiscussionClient
+    }
     var guideConnectionGeneration: Int { generation }
     private var client: (any PRReviewClient)?
     private var generation = 0
@@ -1597,6 +1601,20 @@ extension PRReviewStore {
         if before == listing.baselineSHA {
             selection = after == listing.headSHA ? .all : .init(mode: .commit, startCommit: after)
         } else { selection = .init(mode: .range, startCommit: before, endCommit: after) }
+        selectComparison(selection)
+    }
+
+    /// Saved discussions retain the exact comparison mode captured by an agent,
+    /// even where the menu would choose an equivalent full-PR comparison.
+    func selectComparison(_ selection: GitComparisonSelection) {
+        guard let listing = comparisonCommits else { return }
+        switch selection.mode {
+        case .all: break
+        case .commit:
+            guard listing.allows(before: listing.baselineSHA, after: selection.startCommit ?? "") else { return }
+        case .range:
+            guard listing.allows(before: selection.startCommit ?? "", after: selection.endCommit ?? "") else { return }
+        }
         guard selection != comparisonSelection else { return }
         comparisonSelection = selection
         comparisonDiff = nil

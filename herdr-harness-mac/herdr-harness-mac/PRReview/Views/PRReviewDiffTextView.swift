@@ -3,6 +3,18 @@ import CryptoKit
 import SwiftUI
 import WebKit
 
+/// A compact projection of a saved local discussion at its current diff anchor.
+/// Full replies and historical anchors remain owned by the native review session.
+struct PRReviewInlineThread: Codable, Equatable, Sendable {
+    let id: String
+    let line: Int
+    let side: PRReviewSide
+    let author: String
+    let body: String
+    let replyCount: Int
+    let resolved: Bool
+}
+
 /// Local WebKit host for the same bundled Pierre renderer used by Chat Git and
 /// First Mate Git. The document and every syntax grammar ship in the app, so an
 /// already-loaded PR remains readable without the companion or network.
@@ -15,6 +27,7 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
     var addComment: ((PRReviewSelection) -> Void)? {
         didSet { syncCommentingAvailability() }
     }
+    var openThread: ((String) -> Void)?
     var questionDraftChanged: ((Bool) -> Void)?
     var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
     private(set) var renderedIdentity: String?
@@ -128,6 +141,8 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
             receiveAsk(body)
         case "comment":
             receiveComment(body)
+        case "openThread":
+            receiveOpenThread(body)
         default:
             break
         }
@@ -263,7 +278,17 @@ final class PRReviewDiffTextView: WKWebView, WKScriptMessageHandler, WKNavigatio
         let spans = Self.coalescedSpans(rawSpans)
         guard !spans.isEmpty else { return }
         let selectedText = (body["exactCode"] as? String) ?? (body["code"] as? String) ?? ""
-        addComment?(PRReviewSelection(path: path, oldPath: oldPath, spans: spans, text: selectedText))
+        addComment?(PRReviewSelection(path: path, oldPath: oldPath, spans: spans, text: selectedText,
+            comparison: pendingPayload?.comparison, comparisonSelection: pendingPayload?.comparisonSelection))
+    }
+
+    private func receiveOpenThread(_ body: [String: Any]) {
+        guard let payload = pendingPayload,
+              let path = body["path"] as? String, path == payload.path,
+              let threadID = body["threadID"] as? String,
+              payload.threads.contains(where: { $0.id == threadID })
+        else { return }
+        openThread?(threadID)
     }
 
     /// Enables the bundled renderer's Add comment action only while a host
@@ -340,6 +365,8 @@ struct PRReviewDiffText: NSViewRepresentable {
     var scrollRequest: (path: String, line: Int, side: PRReviewSide, token: Int)?
     var askAI: ((PRReviewSelection, NSView, CGRect) -> Void)?
     var addComment: ((PRReviewSelection) -> Void)?
+    var threads: [PRReviewInlineThread] = []
+    var openThread: ((String) -> Void)?
     var questionDraftChanged: ((Bool) -> Void)?
     var onVisibleLinesChange: ((String, Int, Int, PRReviewSide) -> Void)?
 
@@ -356,6 +383,7 @@ struct PRReviewDiffText: NSViewRepresentable {
         guideAnnotations?.install(view)
         view.askAI = askAI
         view.addComment = addComment
+        view.openThread = openThread
         view.questionDraftChanged = questionDraftChanged
         view.onVisibleLinesChange = onVisibleLinesChange
         let identity = Coordinator.RenderIdentity(
@@ -367,18 +395,20 @@ struct PRReviewDiffText: NSViewRepresentable {
             diffStyle: diffStyle, overflow: overflow,
             comparison: comparison, comparisonSelection: comparisonSelection
         )
-        if context.coordinator.shouldRender(identity: identity, file: file, highlight: highlight) {
+        if context.coordinator.shouldRender(identity: identity, file: file, highlight: highlight, threads: threads) {
             view.render(PRReviewDiffRenderer.payload(
                 file: file,
                 identity: identity.value,
                 fontScale: fontScale,
                 highlight: highlight,
                 diffStyle: diffStyle, overflow: overflow,
-                comparison: comparison, comparisonSelection: comparisonSelection
+                comparison: comparison, comparisonSelection: comparisonSelection,
+                threads: threads
             ))
             context.coordinator.lastRenderedIdentity = identity
             context.coordinator.lastFile = file
             context.coordinator.lastHighlight = RenderHighlight(highlight)
+            context.coordinator.lastThreads = threads
         }
         if let scrollRequest, scrollRequest.path == file.path,
            context.coordinator.lastScrollToken != scrollRequest.token {
@@ -428,6 +458,7 @@ struct PRReviewDiffText: NSViewRepresentable {
         var lastRenderedIdentity: RenderIdentity?
         var lastFile: PRReviewDiffFile?
         fileprivate var lastHighlight: RenderHighlight?
+        fileprivate var lastThreads: [PRReviewInlineThread] = []
         private weak var view: PRReviewDiffTextView?
 
         func shouldSetAttributedString(for identity: RenderIdentity) -> Bool {
@@ -437,9 +468,11 @@ struct PRReviewDiffText: NSViewRepresentable {
         fileprivate func shouldRender(
             identity: RenderIdentity,
             file: PRReviewDiffFile,
-            highlight: (start: Int, end: Int, side: PRReviewSide)?
+            highlight: (start: Int, end: Int, side: PRReviewSide)?,
+            threads: [PRReviewInlineThread]
         ) -> Bool {
             shouldSetAttributedString(for: identity) || lastFile != file || lastHighlight != RenderHighlight(highlight)
+                || lastThreads != threads
         }
 
         func install(_ view: PRReviewDiffTextView) { self.view = view }
@@ -455,6 +488,16 @@ enum PRReviewDiffRenderer {
             let side: String
         }
 
+        struct Thread: Encodable {
+            let id: String
+            let line: Int
+            let side: String
+            let author: String
+            let body: String
+            let replyCount: Int
+            let resolved: Bool
+        }
+
         let identity: String
         let path: String
         let oldPath: String
@@ -466,6 +509,7 @@ enum PRReviewDiffRenderer {
         let overflow: String
         let comparison: GitComparison?
         let comparisonSelection: GitComparisonSelection?
+        let threads: [Thread]
     }
 
     static func payload(
@@ -474,7 +518,8 @@ enum PRReviewDiffRenderer {
         fontScale: HerdrFontScale = .medium,
         highlight: (start: Int, end: Int, side: PRReviewSide)? = nil,
         diffStyle: String = "unified", overflow: String = "scroll",
-        comparison: GitComparison? = nil, comparisonSelection: GitComparisonSelection? = nil
+        comparison: GitComparison? = nil, comparisonSelection: GitComparisonSelection? = nil,
+        threads: [PRReviewInlineThread] = []
     ) -> Payload {
         let patch = patch(for: file)
         let digest = SHA256.hash(data: Data(patch.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -489,7 +534,11 @@ enum PRReviewDiffRenderer {
                 Payload.Highlight(start: $0.start, end: $0.end, side: $0.side == .before ? "old" : "new")
             },
             diffStyle: diffStyle, overflow: overflow,
-            comparison: comparison, comparisonSelection: comparisonSelection
+            comparison: comparison, comparisonSelection: comparisonSelection,
+            threads: threads.filter { $0.line > 0 && !$0.id.isEmpty }.map {
+                Payload.Thread(id: $0.id, line: $0.line, side: $0.side.wireSide,
+                    author: $0.author, body: $0.body, replyCount: max(0, $0.replyCount), resolved: $0.resolved)
+            }
         )
     }
 

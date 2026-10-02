@@ -55,6 +55,59 @@ body { overflow: auto; background: var(--herdr-diff-background); }
 .native-ask span { color: #b8aaff; margin-right: 4px; }
 .native-comment span { color: #7ee787; margin-right: 4px; }
 
+/* Pierre slots these cards below the exact diff line, preserving its layout
+   in both unified and split views. The preview opens the full native thread. */
+.native-review-threads {
+  padding: 10px 12px;
+  min-width: 0;
+  color: var(--herdr-diff-foreground);
+  font: calc(12px * var(--herdr-diff-font-scale, 1))/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  text-align: left;
+}
+.native-review-thread {
+  width: 100%;
+  max-width: min(640px, calc(100vw - 90px));
+  min-width: 0;
+  border: 1px solid rgba(151, 132, 255, 0.35);
+  border-radius: 8px;
+  background: var(--herdr-diff-gutter-background);
+  overflow: hidden;
+}
+.native-review-thread + .native-review-thread { margin-top: 8px; }
+.native-review-thread header,
+.native-review-thread footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.native-review-thread header { border-bottom: 1px solid var(--herdr-diff-separator); }
+.native-review-thread-status,
+.native-review-thread footer > span { color: var(--herdr-diff-muted); font-size: 0.9em; }
+.native-review-thread[data-resolved="true"] .native-review-thread-status { color: #7ee787; }
+.native-review-thread-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 10px 12px 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.native-review-thread button {
+  border: 1px solid rgba(151, 132, 255, 0.4);
+  border-radius: 5px;
+  padding: 4px 9px;
+  background: var(--herdr-diff-background);
+  color: var(--herdr-diff-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+.native-review-thread button:hover { background: var(--herdr-diff-hover); }
+.native-review-thread button:focus-visible { outline: 2px solid #b8aaff; outline-offset: 2px; }
+
 .hz-diff-plain-fallback { min-width: max-content; padding: 18px; color: var(--herdr-diff-foreground); }
 .hz-diff-plain-fallback > span { display: block; margin-bottom: 12px; color: #ffb04a; font-size: 12px; }
 .hz-diff-plain-fallback pre {

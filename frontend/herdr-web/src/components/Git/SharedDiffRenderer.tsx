@@ -1,7 +1,7 @@
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { registerCustomCSSVariableTheme } from "@pierre/diffs";
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
-import type { SelectedLineRange } from "@pierre/diffs";
+import type { DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import { parseDiffPresentation } from "./diffPresentation";
 
 export type SharedDiffStyle = "unified" | "split";
@@ -60,29 +60,33 @@ export const HERDR_DIFF_THEME_OVERRIDES = `
   }
 `;
 
-interface SharedDiffRendererProps {
+interface SharedDiffRendererProps<Annotation> {
   file: string;
   patch: string;
   diffStyle?: SharedDiffStyle;
   overflow?: SharedDiffOverflow;
   fontScale?: number;
   selectedLines?: SelectedLineRange | null;
+  lineAnnotations?: DiffLineAnnotation<Annotation>[];
+  renderAnnotation?: (annotation: DiffLineAnnotation<Annotation>) => ReactNode;
   disableWorkerPool?: boolean;
   className?: string;
   onRendered?: (node: HTMLElement) => void;
 }
 
-export function SharedDiffRenderer({
+export function SharedDiffRenderer<Annotation = undefined>({
   file,
   patch,
   diffStyle = "unified",
   overflow = "scroll",
   fontScale = 1,
   selectedLines = null,
+  lineAnnotations,
+  renderAnnotation,
   disableWorkerPool = false,
   className,
   onRendered,
-}: SharedDiffRendererProps) {
+}: SharedDiffRendererProps<Annotation>) {
   const parsed = useMemo(() => parseDiffPresentation(file, patch), [file, patch]);
   const style = { "--herdr-diff-font-scale": fontScale } as CSSProperties;
 
@@ -107,6 +111,8 @@ export function SharedDiffRenderer({
       style={style}
       fileDiff={parsed.fileDiff}
       selectedLines={selectedLines}
+      lineAnnotations={lineAnnotations}
+      renderAnnotation={renderAnnotation}
       disableWorkerPool={disableWorkerPool}
       options={{
         themeType: "dark",

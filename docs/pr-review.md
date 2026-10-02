@@ -43,7 +43,7 @@ On the review host:
 | `checkout_timeout_seconds` | `900` | Timeout for each clone, fetch, and checkout command (10–3600). Clones fetch blobs on demand and skip checking out the default branch. |
 | `pi_binary`, `claude_binary` | found on `PATH` | Explicit binaries when the service PATH differs. |
 
-Local comments require no additional capability: the Mac stores them privately using the review and diff data already returned by `pr-review-v1`. There is no comment endpoint, no comment text is sent to the companion, and the `herdr-pr-review` CLI is unchanged.
+Local discussions require `pr-review-comments-v1` on the review host. The Mac app and `herdr-pr-review` CLI read and write the same private SQLite records on that companion. Install the matching companion package separately; the Mac updater only updates the app. An older companion shows upgrade guidance while previous Mac-only comments remain accessible.
 
 On the Mac: pair machines in Settings → Machines as usual. The host menu defaults to
 **All machines** each time PR Review opens; browsing is independent of Settings → Machines →
@@ -128,15 +128,15 @@ conversation; **Continue in agent** hands off for actions. The system prompt req
 
 New questions stay as **Saved questions** bubbles below the diff. Click a bubble to reopen its saved conversation without sending the question again. Each new selection question starts a separate thread, and follow-ups stay in that thread. Bubbles survive file switches, review refreshes, pop-out closure and app relaunch. They are scoped to the original host/review, carry file and line context, and show **Earlier revision** after the PR changes. The index and transcripts are stored privately on this Mac; they do not sync to other clients. Questions created before this version are not retroactively indexed. A saved thread is not cleared by starting another question.
 
-**Local comments.** Select code and choose **Add comment** beside **Ask AI** (or keep using right-click for the Ask AI question field). The local editor freezes the file, before/after side, line ranges, exact selected code, and the review's `base`/`head` SHAs at the moment it opens, so one selection may cross added, removed and context lines. Save requires nonblank text and stores the Markdown exactly as typed — internal blank lines, trailing spaces and non-ASCII characters are preserved. Cancel creates no record; a blank Save is refused; a failed write keeps the draft in the editor with its reason and never reports success.
+**Local comments and discussions.** Select code and choose **Add comment** beside **Ask AI**. Save creates a thread under the selected lines in the shared diff renderer, in unified or split view. Each thread carries its original before/after line spans, file, comparison and base/head SHAs, plus a code excerpt verified by the review host. Markdown and whitespace are preserved. A failed save keeps the draft and error visible; retrying unchanged text reuses the request identity to avoid duplicate comments.
 
-Saved comments are private JSON under the app's Application Support directory (`Herdr/PRReview/pr-review-comments-v1.json`), written atomically with owner-only permissions. They are scoped by configured machine and review id — never by a display name or pull request number — so two hosts that reuse a review id or number stay separate. The main window and every popped-out review window share one process-wide store, so a comment saved in either appears in both, while the list itself remains scoped to the review it belongs to. Nothing is synchronized to the companion or another client, and comments are never pruned by refresh, archiving or window closure. Deleting that one file removes them; an unreadable, corrupt, or newer-version file is preserved and refuses writes until the operator resolves it.
+The review header's **Comments** button is available on every tab and shows the number of open threads. Use **Add PR comment** for questions about the whole pull request. **Open**, **Resolved**, and **All** filter the discussion list. Every message is labelled **Human** or **Agent**; agents identify the reviewer or skill in their message body. **Reply** continues a conversation, including replying to an agent finding. **Resolve** marks an issue addressed, and **Reopen** returns it to the open list. Replies do not automatically change the thread's state. **Activity** records creation, replies, edits and state changes with the revision at that time. Edited messages retain their earlier text in history. These labels are supplied by callers, not authenticated individual identities.
 
-The review header's **Comments** count and button are available on every tab, filter and empty state. The list shows each comment's compact saved code excerpt (with **Show full selection** when it exceeds three lines), its file and before/after line metadata, the exact text, and an **Earlier revision** or **Not in current revision** badge when applicable. **Show in diff** verifies the revision, clears the impact, viewed and text filters, switches to Files, selects the saved file and highlights the first saved span; it refuses to guess when the file, lines or revision no longer match. **Edit** updates the saved text in place. **Copy comment** copies only the exact comment Markdown, and **Open file in GitHub** opens that file's place in the pull request's **Files changed** view (`/pull/<n>/files#diff-<sha256 of the file path>`); for a saved commit, **Open original revision** opens the recorded file at that revision. Herdr never submits a comment or a review, never marks a comment published, and never puts comment text into a URL. To publish, copy the comment and paste it into GitHub manually.
+Comments are stored in the review host's private `pr-review.sqlite3` ledger. They survive app relaunch, companion restart, review refresh and archiving. Agents running on that machine use the CLI below to list, create, reply, edit, resolve and reopen the same threads. Open Mac windows refresh discussions every few seconds, so agent findings appear without reopening the review. The Mac requires control access to write comments. Nothing in this discussion API publishes a GitHub comment or review.
 
-After a refresh that changes the base or head, comments are not remapped onto the new diff. They keep their saved excerpt and an explicit **Earlier revision** label, and **Show in diff** explains why it will not highlight guessed current lines. A file or line that no longer exists in the loaded revision is reported instead of substituted.
+A new commit never silently resolves an open finding. Anchored threads from the old base/head remain in the Comments list with **Earlier revision** and their original code, replies and activity. They are not drawn onto guessed current lines. **Show in diff** opens the exact saved comparison when it still belongs to the prepared revision; otherwise read the preserved **Original code**. Historical comparisons within the prepared review also support comments. The **Previous Mac comments** link keeps existing records accessible through their original local editor and navigation, without deleting or automatically uploading that file. New discussions use the review host. Explicit demo mode uses synthetic discussions held in memory.
 
-**Refresh.** Companion 0.40.0b1 coalesces overlapping refreshes, fetches rebased PR heads, and publishes revision metadata and files together. Failed refreshes retain the last usable review with a retryable warning. Optional GitHub viewed-file sync cannot make a prepared review fail. Tracked edits in the managed checkout are preserved and block checkout replacement rather than being overwritten. New revisions invalidate old impact rankings and reset viewed state for changed patches; unchanged files keep their local marks. Old ranking jobs cannot overwrite ratings for a newer revision. The Mac keeps the file selection and filters when still applicable and keeps saved questions and saved comments anchored to their original revision. A saved comment from before the change stays readable with its **Earlier revision** excerpt and is never silently moved onto current code. Install the companion package separately on the review host; the Mac updater does not deploy it.
+**Refresh.** Companion 0.40.0b1 coalesces overlapping refreshes, fetches rebased PR heads, and publishes revision metadata and files together. Failed refreshes retain the last usable review with a retryable warning. Optional GitHub viewed-file sync cannot make a prepared review fail. Tracked edits in the managed checkout are preserved and block checkout replacement rather than being overwritten. New revisions invalidate old impact rankings and reset viewed state for changed patches; unchanged files keep their local marks. Old ranking jobs cannot overwrite ratings for a newer revision. The Mac keeps the file selection and filters when still applicable and keeps saved questions and comment threads anchored to their original revision. Open findings stay open until explicitly resolved. An earlier thread stays readable with its **Earlier revision** excerpt and is never silently moved onto current code. Install the companion package separately on the review host; the Mac updater does not deploy it.
 
 **Context.** The review library holds per-agent markdown findings, the consolidated HTML
 report, audio summaries, explainer videos, links and anything you drop in (files, folders, web
@@ -196,6 +196,14 @@ herdr-pr-review files REVIEW_ID
 herdr-pr-review diff REVIEW_ID [--path Sources/Example.swift]
 herdr-pr-review file REVIEW_ID --path Sources/Example.swift --side after --start 40 --end 80
 herdr-pr-review findings REVIEW_ID --path Sources/Example.swift
+herdr-pr-review comments REVIEW_ID [--state open|resolved|all] [--path Sources/Example.swift]
+herdr-pr-review comments REVIEW_ID --thread THREAD_ID
+herdr-pr-review comment REVIEW_ID --body-file finding.md [--author agent|human]
+herdr-pr-review comment REVIEW_ID --body-file finding.md --path Sources/Example.swift --side after --start 42 --end 45 --base-sha BASE_SHA --head-sha HEAD_SHA
+herdr-pr-review reply REVIEW_ID --thread THREAD_ID --body-file answer.md
+herdr-pr-review resolve REVIEW_ID --thread THREAD_ID --expected-version 2
+herdr-pr-review reopen REVIEW_ID --thread THREAD_ID --expected-version 3
+herdr-pr-review edit-comment REVIEW_ID --thread THREAD_ID --message MESSAGE_ID --expected-version 4 --body-file correction.md
 herdr-pr-review run REVIEW_ID --skill comprehensive-pr-review
 herdr-pr-review runs REVIEW_ID
 herdr-pr-review run-output REVIEW_ID RUN_ID --lines 200
@@ -221,6 +229,86 @@ herdr-pr-review state [--client UI_ID] [--wait 30]
 "guided_order", "guided_reason"}`. `open` verifies the review and then opens a
 `herdr://pr-review?...` link in the installed Mac app; links never carry tokens. `state` reaches
 the Mac app through the agent-control receiver and returns the `pr-review.state` result below.
+
+### Agent comment workflow
+
+Comment commands require `pr-review-comments-v1` on the selected review host. They use the
+same private CLI configuration and main bearer token as existing PR Review commands. Select
+the owning host with `--machine` when using the installed CLI; a review ID is only meaningful
+on that host. The server stores discussion in its private `pr-review.sqlite3`, available to
+the Mac and CLI after either client restarts. Installing the updated Mac app does not install
+this companion capability; install the matching companion package separately.
+
+Read `diff REVIEW_ID` before adding an inline comment. Use its exact `base_sha`, `head_sha`,
+file `path`, and available side/line numbers in the `comment` command. `--end` defaults to
+`--start`. Omitting all anchor flags creates a PR-wide discussion. For commit or range
+comparisons, `commits`, `diff`, and `file` expose the pinned comparison; pass the same
+`--mode commit|range`, `--start-commit`, and optional `--end-commit` to `comment`.
+Missing lines, wrong sides, files outside the comparison, and stale revisions are rejected.
+The server captures its own diff excerpt, so agents cannot attach invented code as evidence.
+
+`comment`, `reply`, and `edit-comment` accept `--body` or `--body-file` (`-` reads stdin).
+Markdown and whitespace are retained exactly, up to 20,000 characters. All comment mutations
+default to `--author agent`; a human can explicitly choose `--author human`. These are role
+labels, not separately authenticated identities. Put the reviewing specialist or skill name
+in the message itself, for example, `SwiftUI reviewer: ...`. Read existing open threads first
+and reply to the relevant thread to keep discussion together. Preserve a `--request-id` when
+retrying an interrupted mutation to avoid duplicate comments.
+
+Resolve or reopen threads explicitly after reviewing the finding. Read the latest thread
+`version` and pass it as `--expected-version`; an intervening reply or edit returns a conflict
+instead of overwriting another client's work. A new PR commit preserves every thread and its
+open/resolved state. Inline threads keep their original excerpt and revision with `outdated:
+true`; they are never guessed onto new lines or automatically marked fixed. Replies and
+resolution history continue to work on earlier-revision threads. Edits preserve the original
+author label and record the editor role and previous body in history.
+
+These commands never post a GitHub comment or review, synchronize to GitHub, or wake an
+agent. Use `reply` when an agent is explicitly asked to answer a human question. Legacy
+Mac-only comments remain in their existing local file and are not automatically imported.
+
+### Local discussion API
+
+`GET /api/v1` and `GET /api/v1/pr-reviews/capabilities` advertise `pr-review-comments-v1`.
+All endpoints below require the existing main bearer token, including reads. Ingest-only
+tokens are rejected. The prefix is `/api/v1/pr-reviews/{review_id}`:
+
+| Method and path | Request | Response |
+| --- | --- | --- |
+| `GET /comments` | Optional `state=all|open|resolved`, `path` query | `{ok, threads}` |
+| `GET /comments/{thread_id}` | None | `{ok, thread}` |
+| `POST /comments` | `{body, author, request_id, anchor?}` | `201 {ok, thread}` |
+| `POST /comments/{thread_id}/replies` | `{body, author, request_id}` | `{ok, thread}` |
+| `POST /comments/{thread_id}/state` | `{state: "open"|"resolved", author, expected_version, request_id}` | `{ok, thread}` |
+| `PUT /comments/{thread_id}/messages/{message_id}` | `{body, author, expected_version, request_id}` | `{ok, thread}` |
+
+Unknown or missing fields are rejected. `author` must be `human` or `agent`. `expected_version`
+is a positive integer; mismatches return HTTP 409 with `stale_comment_version`. Reusing a
+request ID with changed content returns `idempotency_conflict`. Exact retries recover the
+original response, even after the review advances; clients must retain a newer loaded thread
+version or reload instead of replacing it with an older receipt.
+
+An inline anchor requires `path`, full `base_sha` and `head_sha` values, and either
+`side: "before"|"after", start_line, end_line` or `spans: [{side, start, end}]`. The two
+line-selection forms are mutually exclusive. A selection may contain up to 20 spans and
+500 distinct side/line positions. Optional `comparison: {mode, start_commit?, end_commit?}`
+uses the same committed-comparison contract as `GET /diff`. Omit `anchor` for a PR-wide
+discussion. Anchor `code_excerpt` is output-only.
+
+The returned thread contains `id`, `review_id`, `state`, `version`, nullable `anchor`,
+`base_sha`, `head_sha`, `outdated`, `created_at`, `updated_at`, `messages`, and `history`.
+Timestamps use ISO 8601 UTC. Each message has `id`, `author`, `body`, `created_at`, and
+`updated_at`. Each history entry has `id`, `action` (`created`, `replied`, `edited`, `resolved`,
+or `reopened`), `author`, nullable `message_id`, the current `base_sha`/`head_sha`,
+`previous_body` for an edit, and `created_at`. An anchor returns normalized `spans`, the
+first span's `side`/`start_line`/`end_line`, immutable `code_excerpt` with diff prefixes,
+resolved `comparison`, and original `comparison_selection` for exact navigation.
+
+Thread, message, and history writes share one SQLite transaction and durable retry receipt.
+Archive, refresh, new commits, and file deletion never remove comments. A reply does not
+reopen a resolved thread. `outdated` describes the inline anchor independently of resolution;
+PR-wide discussions have no line anchor and report `outdated: false`. Existing review and
+snapshot endpoints retain their earlier response shapes; clients fetch comments separately.
 
 ## Driving the view from outside (agent control, Clicky)
 
@@ -263,7 +351,7 @@ for byte, so an improvement cannot silently ship to only one surface.
 
 ## Verification
 
-- Python: `.venv/bin/python -m unittest tests.test_pr_review_store tests.test_pr_review_runtime tests.test_pr_review_http tests.test_pr_review_cli tests.test_pr_review_questions tests.test_pr_review_diff`.
+- Python: `.venv/bin/python -m unittest tests.test_pr_review_comments tests.test_pr_review_store tests.test_pr_review_runtime tests.test_pr_review_http tests.test_pr_review_cli tests.test_pr_review_questions tests.test_pr_review_diff`.
 - Mac unit (required exact-SHA Verify): `xcodebuild … test -only-testing:herdr-harness-macTests/PRReview*`.
   That suite covers the client contract, store and window scoping, routing identity, saved
   question persistence, refresh presentation, deleted-file disclosure and renderer mounting,
@@ -277,14 +365,16 @@ for byte, so an improvement cannot silently ship to only one surface.
   keyboard navigation and independent main/pop-out choices, and proves a nonempty Ask AI draft
   blocks collapse. It is recorded as pending until the final gate executes it; generated
   render PNGs and screenshots are layout evidence, not installed-app verification.
-  `HerdrPRReviewCommentUITests` drives real diff selection and the bundled
-  renderer's **Add comment** action against a unique temporary comment store: multiline Save,
-  list preview and exact **Copy comment** text, **Edit**, **Show in diff** after obstructive
-  filters, shared main/pop-out records, another review's isolation, and reopening after app
-  termination on the same store. It never activates **Open file in GitHub**. Both suites are
-  recorded as pending until the final gate executes them; generated render PNGs and screenshots
-  are layout evidence, not installed-app verification. The manual GitHub link check below is the
-  only browser evidence for file anchoring.
+  `HerdrPRReviewCommentUITests` uses the explicit synthetic discussion client to exercise
+  selected-code and PR-level comments, exact multiline text, Human replies to an Agent,
+  Open/Resolved/All filters, resolve/reopen activity, original code, Show in diff after
+  obstructive filters, and shared main/pop-out conversations with review isolation.
+  Demo discussions are process-local; companion tests cover durable storage across restart,
+  archive and new revisions. `PRReviewDiscussionTests` covers request encoding, scope changes,
+  late responses, optimistic versions and idempotent retries. `PRReviewCommentRenderTests`
+  produces wide and narrow discussion previews and retains previous-Mac editor coverage.
+  UI acceptance stays pending until the click-through gate actually completes; an Xcode
+  runner startup failure does not count as a passing UI test. Render PNGs are layout evidence.
 - Manual: [MANUAL_TEST_CHECKLIST.md](../herdr-harness-mac/MANUAL_TEST_CHECKLIST.md) → PR Review,
   including the production Git renderer comparison and simultaneous review/chat windows.
 
@@ -308,11 +398,8 @@ for byte, so an improvement cannot silently ship to only one surface.
   unchanged refreshes in the same window, but resets for another host, review, base/head revision,
   a newly opened window, or an app relaunch; it is never synchronized and never changes viewed
   state or the patch. No companion support beyond `pr-review-v1` is required.
-- Local comments are Mac-only and manual-publish only. There is no companion endpoint, no GitHub
-  API call, no publication status and no cross-client synchronization; the only outbound actions
-  are an explicit **Copy comment** and an explicit **Open file in GitHub** browser navigation.
+- Discussions require the companion comment capability and are stored only on the selected review host. They are available to authorized clients of that host, not synchronized between different hosts or sent to GitHub.
 - Comment anchors are frozen at composition. A rebased, force-pushed or otherwise changed revision
   shows **Earlier revision** with the saved excerpt rather than remapping to current lines; a file
-  or line missing from the loaded diff is reported, never guessed. Comment storage is one
-  versioned JSON file, replaced atomically; a corrupt, unreadable or unknown-version file is kept
-  byte-for-byte and blocks writes until it is resolved.
+  or line missing from the loaded diff is reported, never guessed. New threads use the review
+  host ledger; previous Mac-only comments retain their original private JSON storage.

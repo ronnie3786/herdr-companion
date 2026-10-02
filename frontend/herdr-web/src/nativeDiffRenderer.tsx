@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { SelectedLineRange } from "@pierre/diffs";
+import type { DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import { SharedDiffRenderer } from "./components/Git/SharedDiffRenderer";
 import { selectionAskContext } from "./components/Git/selectionAsk";
 import "./nativeDiffRenderer.css";
@@ -16,6 +16,16 @@ interface NativeDiffPayload {
   diffStyle?: "unified" | "split";
   overflow?: "scroll" | "wrap";
   highlight?: { start: number; end: number; side: "old" | "new" };
+  threads?: NativeInlineThread[];
+}
+interface NativeInlineThread {
+  id: string;
+  line: number;
+  side: "old" | "new";
+  author: string;
+  body: string;
+  replyCount: number;
+  resolved: boolean;
 }
 interface ScrollRequest { line: number; side: "old" | "new"; identity: string }
 interface SelectionTarget {
@@ -143,6 +153,21 @@ function App() {
     return { start: highlight.start, end: highlight.end, side, endSide: side };
   }, [payload?.highlight]);
 
+  const threadAnnotations = useMemo(() => {
+    // Pierre creates one annotation slot per side/line. Group independent
+    // discussions on that anchor so every thread stays visible and clickable.
+    const annotations = new Map<string, DiffLineAnnotation<NativeInlineThread[]>>();
+    for (const thread of payload?.threads ?? []) {
+      if (!Number.isInteger(thread.line) || thread.line < 1 || thread.id.length === 0) continue;
+      const side = thread.side === "old" ? "deletions" : "additions";
+      const key = `${side}:${thread.line}`;
+      const annotation = annotations.get(key);
+      if (annotation !== undefined) annotation.metadata.push(thread);
+      else annotations.set(key, { side, lineNumber: thread.line, metadata: [thread] });
+    }
+    return [...annotations.values()];
+  }, [payload?.threads]);
+
   const onRendered = useCallback((node: HTMLElement) => {
     if (payload === null || currentPayload?.identity !== payload.identity) return;
     if (!node.shadowRoot?.querySelector("[data-line]")) return;
@@ -237,6 +262,32 @@ function App() {
       data-overflow={payload.overflow ?? "scroll"}>
       <SharedDiffRenderer file={payload.path} patch={payload.patch} fontScale={payload.fontScale}
         diffStyle={payload.diffStyle} overflow={payload.overflow}
+        lineAnnotations={threadAnnotations}
+        renderAnnotation={({ metadata }) => (
+          <div className="native-review-threads">
+            {metadata.map((thread) => (
+              <article key={thread.id} className="native-review-thread" data-thread-id={thread.id}
+                data-resolved={thread.resolved} aria-label={`${thread.author} local comment on line ${thread.line}`}>
+                <header>
+                  <strong>{thread.author}</strong>
+                  <span className="native-review-thread-status">{thread.resolved ? "Resolved" : "Open"}</span>
+                </header>
+                <div className="native-review-thread-body">{thread.body}</div>
+                <footer>
+                  <span>{thread.replyCount === 1 ? "1 reply" : `${thread.replyCount} replies`}</span>
+                  <button type="button"
+                    aria-label={`View discussion for ${thread.author} comment on line ${thread.line}`}
+                    onClick={() => {
+                      setSelectionTarget(null);
+                      post({ kind: "openThread", identity: payload.identity, path: payload.path, threadID: thread.id });
+                    }}>
+                    {thread.replyCount > 0 || thread.resolved ? "View discussion" : "Reply"}
+                  </button>
+                </footer>
+              </article>
+            ))}
+          </div>
+        )}
         selectedLines={selectedLines} disableWorkerPool onRendered={onRendered} />
       {selectionTarget !== null ? (
         <div className="native-selection-actions"

@@ -1,16 +1,10 @@
 import AppKit
 import XCTest
 
-/// Interactive acceptance coverage for local PR Review comments.
-///
-/// Every test launches the synthetic `-HerdrDemoMode` fleet with a unique
-/// temporary comment store handed to the DEBUG-only
-/// `-HerdrPRReviewCommentStorePath` argument, so records are written to an
-/// isolated file and a real termination/relaunch can prove persistence without
-/// touching the operator's data. The tests drive the actual bundled diff
-/// renderer for selection, keep the existing PR Review suites untouched, and
-/// never open a browser or submit anything to GitHub: Copy uses only the system
-/// pasteboard, and Open file in GitHub is asserted to exist, never clicked.
+/// Acceptance coverage for host-local Human/Agent discussions using the explicit
+/// synthetic demo client. Demo discussions last for the app process; durable
+/// storage and relaunch behavior belong to companion service tests. The unique
+/// previous-comment store below keeps legacy operator data out of these tests.
 final class HerdrPRReviewCommentUITests: HerdrUITestCase {
     private var storeDirectory: URL?
 
@@ -30,233 +24,145 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         try super.tearDownWithError()
     }
 
-    // MARK: - Save, preview, copy
-
     @MainActor
-    func testSelectedCodeSavesMultilineCommentWithPreviewAndCopy() {
-        let app = launchDemoApp(commentStoreURL: temporaryCommentStoreDirectory())
-        defer { app.terminate() }
-        let main = openPRReview(app)
-        XCTAssertTrue(
-            waitForDiffText(SyntheticPRReview.firstDiff, in: main),
-            "The synthetic diff should render before selecting code"
-        )
-
-        let body = "First line with **Markdown**\nSecond line stays exact"
-        saveSelectionComment(in: main, app: app, body: body)
-
-        let comments = openCommentsList(in: main, app: app)
-        assertCommentBody(body, in: comments)
-
-        let preview = commentElement(prefix: "pr-review-comment-preview-", in: comments)
-        XCTAssertTrue(preview.waitForExistence(timeout: 5), "Each comment should show its saved code excerpt")
-        XCTAssertTrue(
-            elementText(preview).contains("struct SeedCatalog {}"),
-            "The preview should show the selected code, found: \(elementText(preview))"
-        )
-        XCTAssertTrue(
-            comments.descendantText(containing: "before line 8").waitForExistence(timeout: 5),
-            "A mixed selection should keep its removed side and line"
-        )
-        XCTAssertTrue(
-            comments.descendantText(containing: "after line 12").waitForExistence(timeout: 5),
-            "A mixed selection should keep its context lines"
-        )
-
-        // A long excerpt keeps the full saved selection available.
-        let expand = comments.descendantButton(titled: "Show full selection")
-        XCTAssertTrue(expand.waitForExistence(timeout: 5), "More than three saved lines should offer the full excerpt")
-        expand.click()
-        XCTAssertTrue(comments.descendantButton(titled: "Show less").waitForExistence(timeout: 5))
-
-        // Copy comment is the manual-publishing path: exact text, nothing else.
-        let copy = comments.descendantButton(titled: "Copy comment")
-        XCTAssertTrue(copy.waitForExistence(timeout: 5), "Each comment should offer Copy comment")
-        copy.click()
-        XCTAssertTrue(waitForPasteboard(body), "Copy comment must copy only the exact saved Markdown")
-
-        // The GitHub handoff is offered but no automated test may activate it.
-        XCTAssertTrue(
-            comments.descendantButton(titled: "Open file in GitHub").waitForExistence(timeout: 5),
-            "Each comment should offer the PR file link"
-        )
-        XCTAssertTrue(comments.descendantButton(titled: "Show in diff").exists)
-    }
-
-    // MARK: - Local location navigation
-
-    @MainActor
-    func testShowInDiffClearsFiltersAndRestoresTheSavedLocation() {
+    func testSelectedCodeSavesMultilineDiscussionWithLocationAndCopy() {
         let app = launchDemoApp(commentStoreURL: temporaryCommentStoreDirectory())
         defer { app.terminate() }
         let main = openPRReview(app)
         XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: main))
 
-        saveSelectionComment(in: main, app: app, body: "Navigate back to the saved seed catalog lines")
+        let body = "First line with **Markdown**\nSecond line stays exact"
+        saveSelectionComment(in: main, app: app, body: body)
+        let comments = openCommentsList(in: main, app: app)
+        assertCommentBody(body, in: comments)
+        let thread = threadCard(containing: body, in: comments)
+        XCTAssertTrue(thread.waitForExistence(timeout: 5), "The saved comment should have its own thread")
+        XCTAssertTrue(thread.descendantText(containing: SyntheticPRReview.firstPath).exists)
+        XCTAssertTrue(thread.descendantText(containing: "before ").exists, "A mixed selection retains the removed side")
+        XCTAssertTrue(thread.descendantText(containing: "after ").exists, "A mixed selection retains the added side")
+        XCTAssertTrue(thread.descendantButton(titled: "Show in diff").exists)
+        expandDisclosure("Original code", in: thread)
+        XCTAssertTrue(thread.descendantText(containing: "struct SeedCatalog {}").waitForExistence(timeout: 5),
+                      "The original selected code should remain available")
 
-        // Hide every file, then leave the Files tab entirely. Show in diff has
-        // to clear both obstacles on its way to the saved anchor.
+        let copy = thread.descendantButton(titled: "Copy")
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        copy.click()
+        XCTAssertTrue(waitForPasteboard("Human:\n" + body), "Copy preserves attribution and exact saved Markdown")
+    }
+
+    @MainActor
+    func testHumanRepliesToAgentAndResolvesReopensWithOriginalCodeAndActivity() {
+        let app = launchDemoApp(commentStoreURL: temporaryCommentStoreDirectory())
+        defer { app.terminate() }
+        let main = openPRReview(app)
+        XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: main))
+        let comments = openCommentsList(in: main, app: app)
+        let thread = comments.descendant(identifier: "pr-review-thread-demo-catalog-thread")
+        XCTAssertTrue(thread.waitForExistence(timeout: 5))
+        XCTAssertTrue(thread.descendantText(containing: "Swift reviewer: How will an empty catalog").exists)
+        XCTAssertTrue(thread.descendantText(containing: "Agent").exists)
+        let reply = thread.descendant(identifier: "pr-review-thread-reply-demo-catalog-thread")
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        reply.click()
+        let body = "Human review: please add an explicit loading state.\nThe empty case needs a test."
+        saveDraft(body, in: app)
+        assertCommentBody(body, in: thread)
+        XCTAssertTrue(thread.descendantText(containing: "Human").exists)
+
+        let state = thread.descendant(identifier: "pr-review-thread-state-demo-catalog-thread")
+        XCTAssertTrue(state.waitForExistence(timeout: 5))
+        state.click()
+        XCTAssertTrue(thread.waitForNonExistence(timeout: 5), "Resolved threads leave the Open filter")
+        selectCommentFilter("Resolved", in: comments)
+        XCTAssertTrue(thread.descendantButton(titled: "Reopen").waitForExistence(timeout: 5))
+        thread.descendantButton(titled: "Reopen").click()
+        XCTAssertTrue(thread.waitForNonExistence(timeout: 5), "Reopened threads leave the Resolved filter")
+        selectCommentFilter("All", in: comments)
+        XCTAssertTrue(thread.descendantButton(titled: "Resolve").waitForExistence(timeout: 5))
+        expandDisclosure("Original code", in: thread)
+        XCTAssertTrue(thread.descendantText(containing: "+struct SeedCatalog {}").waitForExistence(timeout: 5))
+        expandDisclosure("Activity (", in: thread)
+        XCTAssertTrue(thread.descendantText(containing: "Human replied").waitForExistence(timeout: 5))
+        XCTAssertTrue(thread.descendantText(containing: "Human resolved").exists)
+        XCTAssertTrue(thread.descendantText(containing: "Human reopened").exists)
+    }
+
+    @MainActor
+    func testShowInDiffClearsFiltersAndRestoresSavedLocation() {
+        let app = launchDemoApp(commentStoreURL: temporaryCommentStoreDirectory())
+        defer { app.terminate() }
+        let main = openPRReview(app)
+        XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: main))
         let search = main.textFields["Filter files"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.click()
         search.typeText("no-synthetic-file-matches-this-filter")
-        XCTAssertTrue(
-            main.descendant(identifier: "pr-review-no-filter-matches").waitForExistence(timeout: 5),
-            "The synthetic filter should hide every file"
-        )
+        XCTAssertTrue(main.descendant(identifier: "pr-review-no-filter-matches").waitForExistence(timeout: 5))
         selectTab("Context", expectedContentIdentifier: "pr-review-context", in: main)
 
         let comments = openCommentsList(in: main, app: app)
-        let show = comments.descendantButton(titled: "Show in diff")
-        XCTAssertTrue(show.waitForExistence(timeout: 5), "Each comment should offer Show in diff")
+        let thread = comments.descendant(identifier: "pr-review-thread-demo-catalog-thread")
+        let show = thread.descendantButton(titled: "Show in diff")
+        XCTAssertTrue(show.waitForExistence(timeout: 5))
         show.click()
-
-        XCTAssertTrue(
-            app.control(identifier: "pr-review-comments").waitForNonExistence(timeout: 5),
-            "Show in diff should dismiss the comments list"
-        )
-        XCTAssertTrue(
-            main.descendant(identifier: "pr-review-file-0").waitForExistence(timeout: 10),
-            "Show in diff should return to the Files tab with the filters cleared"
-        )
-        XCTAssertFalse(
-            main.descendant(identifier: "pr-review-no-filter-matches").exists,
-            "Show in diff must actually clear the obstructing filter"
-        )
+        XCTAssertTrue(app.control(identifier: "pr-review-discussions").waitForNonExistence(timeout: 5))
+        XCTAssertTrue(main.descendant(identifier: "pr-review-file-0").waitForExistence(timeout: 10))
+        XCTAssertFalse(main.descendant(identifier: "pr-review-no-filter-matches").exists)
+        XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: main))
         let savedPath = main.staticTexts.matching(
             NSPredicate(format: "label == %@ OR value == %@", SyntheticPRReview.firstPath, SyntheticPRReview.firstPath)
         ).firstMatch
-        XCTAssertTrue(
-            savedPath.waitForExistence(timeout: 10),
-            "Show in diff should select the file the comment was saved on"
-        )
+        XCTAssertTrue(savedPath.waitForExistence(timeout: 10))
     }
 
-    // MARK: - Shared windows and review isolation
-
     @MainActor
-    func testMainAndPopOutShareCommentsWhileAnotherReviewStaysIsolated() {
+    func testPRLevelCommentAndRepliesAreSharedAcrossWindowsAndIsolatedByReview() {
         let app = launchDemoApp(commentStoreURL: temporaryCommentStoreDirectory())
         defer { app.terminate() }
         let main = openPRReview(app)
         XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: main))
+        let original = "Question about the overall sync approach.\nThis applies to the full PR."
+        let comments = openCommentsList(in: main, app: app)
+        comments.descendant(identifier: "pr-review-add-pr-comment").click()
+        saveDraft(original, in: app)
+        let created = threadCard(containing: original, in: comments)
+        XCTAssertTrue(created.waitForExistence(timeout: 5))
+        XCTAssertTrue(created.descendantText(containing: "Pull request").exists)
+        XCTAssertFalse(created.descendantButton(titled: "Show in diff").exists)
+        closeCommentsList(in: app)
 
-        let original = "Shared comment from the main window\nSecond line stays exact"
-        saveSelectionComment(in: main, app: app, body: original)
-
-        // Pop the review out; the new window observes the shared record.
         let row = main.buttons[SyntheticPRReview.rowIdentifier(SyntheticPRReview.firstReviewID)]
         bringForward(row, in: app)
         choosePopOut(SyntheticPRReview.firstReviewID, from: row, in: app)
         let popout = waitForReviewWindow(SyntheticPRReview.firstReviewID, in: app)
         XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: popout))
-
-        let popoutComments = openCommentsList(
-            in: popout,
-            app: app,
-            windowTitle: SyntheticPRReview.firstTitle
-        )
+        let popoutComments = openCommentsList(in: popout, app: app, windowTitle: SyntheticPRReview.firstTitle)
         assertCommentBody(original, in: popoutComments)
-
-        // Edit in the pop-out; the main window must observe the same text.
-        let edit = popoutComments.descendantButton(titled: "Edit")
-        XCTAssertTrue(edit.waitForExistence(timeout: 5), "Each comment should offer Edit")
-        edit.click()
-        let prefill = waitForFirst(of: [
-            app.textViews["pr-review-comment-body"],
-            app.control(identifier: "pr-review-comment-body"),
-        ], timeout: 10)
-        XCTAssertEqual(
-            prefill?.value as? String,
-            original,
-            "Edit should prefill the exact saved text"
-        )
-        let edited = original + " (edited in the pop-out)"
-        guard let bodyField = typeCommentBody(edited, in: app, clearing: true) else {
-            XCTFail("Edit should open the local comment editor with its saved text")
-            return
-        }
-        XCTAssertEqual(
-            bodyField.value as? String,
-            edited,
-            "The editor should hold the exact edited text"
-        )
-        let save = app.control(identifier: "pr-review-comment-save")
-        XCTAssertTrue(save.waitForExistence(timeout: 5))
-        waitUntilEnabled(save)
-        save.click()
-        XCTAssertTrue(app.control(identifier: "pr-review-comment-editor").waitForNonExistence(timeout: 5))
-        assertCommentBody(edited, in: popoutComments)
+        let shared = threadCard(containing: original, in: popoutComments)
+        shared.descendantButton(titled: "Reply").click()
+        let reply = "Follow-up from the pop-out review window."
+        saveDraft(reply, in: app)
+        assertCommentBody(reply, in: shared)
         closeCommentsList(in: app)
 
         let mainComments = openCommentsList(in: main, app: app)
-        assertCommentBody(edited, in: mainComments)
+        assertCommentBody(original, in: mainComments)
+        assertCommentBody(reply, in: mainComments)
         closeCommentsList(in: app)
-
-        // Another review is a separate scope: its list starts empty.
-        selectReview(
-            SyntheticPRReview.secondReviewID,
-            in: main,
-            app: app,
-            expectedDiff: SyntheticPRReview.secondDiff
-        )
+        selectReview(SyntheticPRReview.secondReviewID, in: main, app: app, expectedDiff: SyntheticPRReview.secondDiff)
         let secondComments = openCommentsList(in: main, app: app)
-        XCTAssertTrue(
-            secondComments.descendant(identifier: "pr-review-comments-empty").waitForExistence(timeout: 5),
-            "A review without comments should show its own empty list"
-        )
-        XCTAssertFalse(
-            commentElement(prefix: "pr-review-comment-body-", in: secondComments).exists,
-            "The first review's comment must not leak into the second review"
-        )
+        XCTAssertTrue(secondComments.descendantText(containing: "No open comments").waitForExistence(timeout: 5))
+        XCTAssertFalse(secondComments.descendantText(containing: "Question about the overall sync approach").exists)
+        secondComments.descendant(identifier: "pr-review-add-pr-comment").click()
+        saveDraft("Reminder-only synthetic comment", in: app)
         closeCommentsList(in: app)
 
-        // A comment on the second review is still invisible to the first.
-        saveSelectionComment(in: main, app: app, body: "Reminder-only synthetic comment")
-        selectReview(
-            SyntheticPRReview.firstReviewID,
-            in: main,
-            app: app,
-            expectedDiff: SyntheticPRReview.firstDiff
-        )
-        let reviewOneComments = openCommentsList(in: main, app: app)
-        assertCommentBody(edited, in: reviewOneComments)
-        XCTAssertFalse(
-            reviewOneComments.descendantText(containing: "Reminder-only synthetic comment").exists,
-            "The second review's comment must not leak into the first review"
-        )
-        closeCommentsList(in: app)
-    }
-
-    // MARK: - Relaunch persistence
-
-    @MainActor
-    func testSavedCommentSurvivesTerminationAndRelaunchWithTheSameStore() {
-        let storeURL = temporaryCommentStoreDirectory()
-        let app = launchDemoApp(commentStoreURL: storeURL)
-        defer { app.terminate() }
-        let main = openPRReview(app)
-        XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: main))
-
-        let body = "Survives termination\nSecond line stays exact"
-        saveSelectionComment(in: main, app: app, body: body)
-        app.terminate()
-
-        let relaunched = launchDemoApp(commentStoreURL: storeURL)
-        defer { relaunched.terminate() }
-        let restored = openPRReview(relaunched)
-        XCTAssertTrue(waitForDiffText(SyntheticPRReview.firstDiff, in: restored))
-
-        let comments = openCommentsList(in: restored, app: relaunched)
-        assertCommentBody(body, in: comments)
-        XCTAssertFalse(
-            comments.descendant(identifier: "pr-review-comments-storage-error").exists,
-            "A store written by the same version should load without a storage error"
-        )
-        let preview = commentElement(prefix: "pr-review-comment-preview-", in: comments)
-        XCTAssertTrue(preview.waitForExistence(timeout: 5))
-        XCTAssertTrue(elementText(preview).contains("struct SeedCatalog {}"))
-        XCTAssertTrue(comments.descendantButton(titled: "Show in diff").exists)
+        selectReview(SyntheticPRReview.firstReviewID, in: main, app: app, expectedDiff: SyntheticPRReview.firstDiff)
+        let restored = openCommentsList(in: main, app: app)
+        assertCommentBody(original, in: restored)
+        assertCommentBody(reply, in: restored)
+        XCTAssertFalse(restored.descendantText(containing: "Reminder-only synthetic comment").exists)
     }
 
     // MARK: - Shared steps
@@ -350,7 +256,7 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         // publishes its text node rather than the button itself.
         button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertTrue(
-            app.control(identifier: "pr-review-comment-editor").waitForExistence(timeout: 10),
+            app.control(identifier: "pr-review-discussion-body").waitForExistence(timeout: 10),
             "Add comment should open the local comment editor"
         )
     }
@@ -362,8 +268,8 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         clearing: Bool = false
     ) -> XCUIElement? {
         guard let field = waitForFirst(of: [
-            app.textViews["pr-review-comment-body"],
-            app.control(identifier: "pr-review-comment-body"),
+            app.textViews["pr-review-discussion-body"],
+            app.control(identifier: "pr-review-discussion-body"),
         ], timeout: 10) else { return nil }
         field.click()
         // A replacement selects the prefilled edit text first so the result is
@@ -379,23 +285,23 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
     @MainActor
     private func saveSelectionComment(in window: XCUIElement, app: XCUIApplication, body: String) {
         selectAllAndAddComment(in: window, app: app)
+        saveDraft(body, in: app)
+        closeCommentsList(in: app)
+    }
+
+    @MainActor
+    private func saveDraft(_ body: String, in app: XCUIApplication) {
         guard let field = typeCommentBody(body, in: app) else {
-            XCTFail("The comment editor should expose its multiline body")
+            XCTFail("The discussion composer should expose its multiline body")
             return
         }
-        XCTAssertEqual(
-            field.value as? String,
-            body,
-            "The editor must keep the exact typed text before saving"
-        )
-        let save = app.control(identifier: "pr-review-comment-save")
-        XCTAssertTrue(save.waitForExistence(timeout: 5), "The editor should expose Save")
+        XCTAssertEqual(field.value as? String, body, "The composer keeps the exact typed text")
+        let save = app.control(identifier: "pr-review-discussion-save")
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
         waitUntilEnabled(save)
         save.click()
-        XCTAssertTrue(
-            app.control(identifier: "pr-review-comment-editor").waitForNonExistence(timeout: 5),
-            "A successful save should close the editor"
-        )
+        XCTAssertTrue(app.control(identifier: "pr-review-discussion-body").waitForNonExistence(timeout: 5),
+                      "A successful save should clear the composer")
     }
 
     @MainActor
@@ -411,20 +317,20 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         button.click()
 
         var sheet = waitForFirst(of: [
-            window.descendant(identifier: "pr-review-comments"),
-            app.control(identifier: "pr-review-comments"),
+            window.descendant(identifier: "pr-review-discussions"),
+            app.control(identifier: "pr-review-discussions"),
         ], timeout: 5)
         if sheet == nil {
             // A first click can land while the window is still activating.
             button.click()
             sheet = waitForFirst(of: [
-                window.descendant(identifier: "pr-review-comments"),
-                app.control(identifier: "pr-review-comments"),
+                window.descendant(identifier: "pr-review-discussions"),
+                app.control(identifier: "pr-review-discussions"),
             ], timeout: 5)
         }
         guard let sheet else {
             XCTFail("The Comments control should open the review-wide list")
-            return app.control(identifier: "pr-review-comments")
+            return app.control(identifier: "pr-review-discussions")
         }
         return sheet
     }
@@ -432,19 +338,17 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
     @MainActor
     private func closeCommentsList(in app: XCUIApplication) {
         let done = waitForFirst(of: [
-            app.control(identifier: "pr-review-comments-done"),
+            app.control(identifier: "pr-review-discussions").descendantButton(titled: "Done"),
             app.buttons["Done"],
         ], timeout: 5)
         XCTAssertNotNil(done)
         done?.click()
         XCTAssertTrue(
-            app.control(identifier: "pr-review-comments").waitForNonExistence(timeout: 5),
+            app.control(identifier: "pr-review-discussions").waitForNonExistence(timeout: 5),
             "Done should close the review-wide comments list"
         )
     }
 
-    /// Verifies the saved text is readable in the list without pinning AppKit's
-    /// choice of AXLabel versus AXValue for a multiline `Text`.
     @MainActor
     private func assertCommentBody(
         _ body: String,
@@ -452,33 +356,42 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let element = commentElement(prefix: "pr-review-comment-body-", in: sheet)
-        guard element.waitForExistence(timeout: 5) else {
-            XCTFail("The list should show the saved comment text", file: file, line: line)
-            return
-        }
-        let observed = elementText(element)
         for fragment in body.components(separatedBy: "\n") where !fragment.isEmpty {
-            XCTAssertTrue(
-                observed.contains(fragment),
-                "Expected “\(fragment)” in the saved comment, found: \(observed)",
-                file: file,
-                line: line
-            )
+            XCTAssertTrue(sheet.descendantText(containing: fragment).waitForExistence(timeout: 10),
+                          "Expected saved text: \(fragment)", file: file, line: line)
         }
     }
 
     @MainActor
-    private func commentElement(prefix: String, in scope: XCUIElement) -> XCUIElement {
-        scope.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+    private func threadCard(containing body: String, in sheet: XCUIElement) -> XCUIElement {
+        let fragment = body.components(separatedBy: "\n")[0]
+        return sheet.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "pr-review-thread-"))
+            .containing(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", fragment, fragment))
             .firstMatch
     }
 
     @MainActor
-    private func elementText(_ element: XCUIElement) -> String {
-        let value = element.value as? String ?? ""
-        return value.isEmpty ? element.label : "\(element.label) \(value)"
+    private func expandDisclosure(_ titlePrefix: String, in scope: XCUIElement) {
+        let label = NSPredicate(format: "label BEGINSWITH %@ OR title BEGINSWITH %@", titlePrefix, titlePrefix)
+        guard let disclosure = waitForFirst(of: [
+            scope.disclosureTriangles.matching(label).firstMatch,
+            scope.buttons.matching(label).firstMatch,
+            scope.descendants(matching: .any).matching(label).firstMatch,
+        ], timeout: 5) else {
+            XCTFail("The thread should expose \(titlePrefix)")
+            return
+        }
+        disclosure.click()
+    }
+
+    @MainActor
+    private func selectCommentFilter(_ title: String, in sheet: XCUIElement) {
+        guard let segment = waitForFirst(of: [sheet.radioButtons[title], sheet.buttons[title]], timeout: 5) else {
+            XCTFail("The discussion status picker should offer \(title)")
+            return
+        }
+        segment.click()
     }
 
     @MainActor

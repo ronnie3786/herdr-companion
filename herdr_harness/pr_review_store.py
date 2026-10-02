@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS prr_document_sources(review_id TEXT,document_id TEXT,
 CREATE INDEX IF NOT EXISTS prr_skill_runs_summary ON prr_skill_runs(review_id,skill_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS prr_walkthroughs(id TEXT PRIMARY KEY,review_id TEXT NOT NULL,state TEXT NOT NULL,base_sha TEXT,head_sha TEXT,comparison_id TEXT,created_at TEXT,finished_at TEXT,seen_at TEXT,error TEXT,chapter_count INTEGER);
 CREATE INDEX IF NOT EXISTS prr_walkthroughs_review ON prr_walkthroughs(review_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS prr_comment_threads(id TEXT PRIMARY KEY,review_id TEXT NOT NULL REFERENCES prr_reviews(id),state TEXT NOT NULL,anchor_json TEXT,base_sha TEXT,head_sha TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,version INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS prr_comment_threads_review ON prr_comment_threads(review_id,created_at);
+CREATE TABLE IF NOT EXISTS prr_comment_messages(id TEXT PRIMARY KEY,thread_id TEXT NOT NULL REFERENCES prr_comment_threads(id),author TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS prr_comment_messages_thread ON prr_comment_messages(thread_id,created_at);
+CREATE TABLE IF NOT EXISTS prr_comment_history(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,thread_id TEXT NOT NULL REFERENCES prr_comment_threads(id),action TEXT NOT NULL,author TEXT NOT NULL,message_id TEXT,base_sha TEXT,head_sha TEXT,previous_body TEXT,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS prr_comment_history_thread ON prr_comment_history(thread_id,sequence);
 """
 
 
@@ -375,6 +381,145 @@ class PRReviewStore:
                 item["payload"] = json.loads(item.pop("payload_json"))
                 events.append(item)
             return {"events": events, "cursor": events[-1]["sequence"] if events else after}
+
+    @staticmethod
+    def comment_author(value: object) -> str:
+        if value not in ("human", "agent"):
+            raise PRReviewError("Comment author must be human or agent", code="invalid_request", status=400)
+        return value
+
+    @staticmethod
+    def comment_body(value: object) -> str:
+        # Preserve Markdown and whitespace exactly, but reject empty comments.
+        return _text(value, "comment body", 20_000)
+
+    @staticmethod
+    def _comment_version(value: object) -> int:
+        if type(value) is not int or value < 1:
+            raise PRReviewError("expected_version must be a positive integer", code="invalid_request", status=400)
+        return value
+
+    def _comment_thread(self, row: sqlite3.Row, review: Mapping[str, Any]) -> dict[str, Any]:
+        result = dict(row)
+        result["anchor"] = json.loads(result.pop("anchor_json")) if row["anchor_json"] else None
+        result["outdated"] = bool(result["anchor"] and (
+            result["base_sha"] != review.get("base_sha") or result["head_sha"] != review.get("head_sha")))
+        result["messages"] = [dict(item) for item in self._db.execute(
+            "SELECT id,author,body,created_at,updated_at FROM prr_comment_messages WHERE thread_id=? ORDER BY created_at,rowid", (row["id"],))]
+        result["history"] = [dict(item) for item in self._db.execute(
+            "SELECT id,action,author,message_id,base_sha,head_sha,previous_body,created_at FROM prr_comment_history WHERE thread_id=? ORDER BY sequence", (row["id"],))]
+        return result
+
+    def comment_threads(self, review_id: str, *, state: str = "all", path: str | None = None) -> list[dict[str, Any]]:
+        if state not in {"all", "open", "resolved"}:
+            raise PRReviewError("Invalid comment state", code="invalid_request", status=400)
+        if path is not None:
+            _text(path, "path", 4096)
+        with self._lock:
+            review = self.get_review(review_id)
+            threads = [self._comment_thread(row, review) for row in self._db.execute(
+                "SELECT * FROM prr_comment_threads WHERE review_id=? ORDER BY created_at,rowid", (review_id,))]
+            return [item for item in threads if (state == "all" or item["state"] == state)
+                    and (path is None or (item["anchor"] or {}).get("path") == path)]
+
+    def comment_thread(self, review_id: str, thread_id: str) -> dict[str, Any]:
+        with self._lock:
+            review = self.get_review(review_id)
+            row = self._db.execute("SELECT * FROM prr_comment_threads WHERE review_id=? AND id=?", (review_id, thread_id)).fetchone()
+            if row is None:
+                raise PRReviewError("Comment thread was not found", code="not_found", status=404)
+            return self._comment_thread(row, review)
+
+    def _comment_history(self, review_id: str, thread_id: str, action: str, author: str,
+                         message_id: str | None = None, previous_body: str | None = None) -> None:
+        review = self.get_review(review_id)
+        self._db.execute("""INSERT INTO prr_comment_history(id,thread_id,action,author,message_id,base_sha,head_sha,previous_body,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?)""", (_id("prch"), thread_id, action, author, message_id,
+            review.get("base_sha"), review.get("head_sha"), previous_body, _now()))
+        self._event(review_id, "comment." + action, "Local review comment " + action, {"thread_id": thread_id, "author": author})
+        self._touch(review_id)
+
+    def create_comment_thread(self, review_id: str, payload: Mapping[str, Any], *,
+                              anchor: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Persist a runtime-validated, immutable anchor; never contact GitHub."""
+        body = self.comment_body(payload.get("body"))
+        author = self.comment_author(payload.get("author"))
+        request_id = _text(payload.get("request_id"), "request_id", 200)
+        scope = "comment.create:" + review_id
+        with self._transaction():
+            cached = self._receipt(scope, request_id, payload)
+            if cached is not None:
+                return cached
+            review = self.get_review(review_id)
+            if anchor is not None and (anchor["base_sha"] != review.get("base_sha") or anchor["head_sha"] != review.get("head_sha")):
+                raise PRReviewError("The pull request revision changed. Refresh the review.", code="stale_review_revision", status=409)
+            if payload.get("anchor") is not None and anchor is None:
+                raise PRReviewError("Comment anchor was not validated", code="invalid_request", status=400)
+            now, thread_id, message_id = _now(), _id("prct"), _id("prcm")
+            self._db.execute("INSERT INTO prr_comment_threads VALUES(?,?,?,?,?,?,?,?,?)", (
+                thread_id, review_id, "open", _json(anchor) if anchor else None,
+                review.get("base_sha"), review.get("head_sha"), now, now, 1))
+            self._db.execute("INSERT INTO prr_comment_messages VALUES(?,?,?,?,?,?)", (message_id, thread_id, author, body, now, now))
+            self._comment_history(review_id, thread_id, "created", author, message_id)
+            return self._save(scope, request_id, payload, self.comment_thread(review_id, thread_id))
+
+    def reply_comment_thread(self, review_id: str, thread_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if set(payload) != {"body", "author", "request_id"}:
+            raise PRReviewError("Reply contains missing or unsupported fields", code="invalid_request", status=400)
+        body = self.comment_body(payload.get("body"))
+        author = self.comment_author(payload.get("author"))
+        scope = "comment.reply:" + review_id + ":" + thread_id
+        with self._transaction():
+            cached = self._receipt(scope, payload.get("request_id"), payload)
+            if cached is not None:
+                return cached
+            self.comment_thread(review_id, thread_id)
+            now, message_id = _now(), _id("prcm")
+            self._db.execute("INSERT INTO prr_comment_messages VALUES(?,?,?,?,?,?)", (message_id, thread_id, author, body, now, now))
+            self._db.execute("UPDATE prr_comment_threads SET updated_at=?,version=version+1 WHERE id=?", (now, thread_id))
+            self._comment_history(review_id, thread_id, "replied", author, message_id)
+            return self._save(scope, payload["request_id"], payload, self.comment_thread(review_id, thread_id))
+
+    def set_comment_state(self, review_id: str, thread_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if set(payload) != {"state", "author", "expected_version", "request_id"} or payload.get("state") not in ("open", "resolved"):
+            raise PRReviewError("Invalid comment state request", code="invalid_request", status=400)
+        author = self.comment_author(payload.get("author"))
+        version = self._comment_version(payload.get("expected_version"))
+        scope = "comment.state:" + review_id + ":" + thread_id
+        with self._transaction():
+            cached = self._receipt(scope, payload.get("request_id"), payload)
+            if cached is not None:
+                return cached
+            thread = self.comment_thread(review_id, thread_id)
+            if thread["version"] != version:
+                raise PRReviewError("This comment changed. Reload before updating it.", code="stale_comment_version", status=409)
+            if thread["state"] != payload["state"]:
+                self._db.execute("UPDATE prr_comment_threads SET state=?,updated_at=?,version=version+1 WHERE id=?", (payload["state"], _now(), thread_id))
+                self._comment_history(review_id, thread_id, "resolved" if payload["state"] == "resolved" else "reopened", author)
+            return self._save(scope, payload["request_id"], payload, self.comment_thread(review_id, thread_id))
+
+    def edit_comment_message(self, review_id: str, thread_id: str, message_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if set(payload) != {"body", "author", "expected_version", "request_id"}:
+            raise PRReviewError("Edit contains missing or unsupported fields", code="invalid_request", status=400)
+        body = self.comment_body(payload.get("body"))
+        author = self.comment_author(payload.get("author"))
+        version = self._comment_version(payload.get("expected_version"))
+        scope = "comment.edit:" + review_id + ":" + thread_id + ":" + message_id
+        with self._transaction():
+            cached = self._receipt(scope, payload.get("request_id"), payload)
+            if cached is not None:
+                return cached
+            thread = self.comment_thread(review_id, thread_id)
+            if thread["version"] != version:
+                raise PRReviewError("This comment changed. Reload before updating it.", code="stale_comment_version", status=409)
+            message = next((item for item in thread["messages"] if item["id"] == message_id), None)
+            if message is None:
+                raise PRReviewError("Comment message was not found", code="not_found", status=404)
+            now = _now()
+            self._db.execute("UPDATE prr_comment_messages SET body=?,updated_at=? WHERE id=?", (body, now, message_id))
+            self._db.execute("UPDATE prr_comment_threads SET updated_at=?,version=version+1 WHERE id=?", (now, thread_id))
+            self._comment_history(review_id, thread_id, "edited", author, message_id, previous_body=message["body"])
+            return self._save(scope, payload["request_id"], payload, self.comment_thread(review_id, thread_id))
 
     def _document(self, item: dict[str, Any]) -> dict[str, Any]:
         item["downloadable"] = bool(item.get("stored_path"))

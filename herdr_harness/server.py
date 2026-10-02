@@ -475,6 +475,7 @@ def api_description() -> dict:
             "first-mate-lenient-verification-recording-v1", POLICY_VERSION,
             simulator_previews.CAPABILITY,
             "pr-review-v1",
+            "pr-review-comments-v1",
             "pr-review-guide-v1",
             "pr-review-walkthroughs-v1",
             "pr-review-context-v2",
@@ -518,6 +519,7 @@ def api_description() -> dict:
             "prReviews": "/api/v1/pr-reviews",
             "prReview": "/api/v1/pr-reviews/{reviewId}",
             "prReviewCapabilities": "/api/v1/pr-reviews/capabilities",
+            "prReviewComments": "/api/v1/pr-reviews/{reviewId}/comments",
             "prReviewCommits": "/api/v1/pr-reviews/{reviewId}/commits",
             "prReviewContext": "/api/v1/pr-reviews/{reviewId}/context",
             "prReviewGuide": "/api/v1/pr-reviews/{reviewId}/guide",
@@ -1624,7 +1626,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             store = service.pr_review_store
             runtime = service.pr_review
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-walkthroughs-v1", "pr-review-comparison-v1", "git-comparison-v1"], **runtime.capabilities(), "skills": store.skills()}
+                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-comments-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-walkthroughs-v1", "pr-review-comparison-v1", "git-comparison-v1"], **runtime.capabilities(), "skills": store.skills()}
             if method == "POST" and tail == ["review-status", "refresh"]:
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Review status refresh contains an unsupported field")
@@ -1658,6 +1660,33 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             rest = tail[1:]
             if not rest and method == "GET":
                 return {"ok": True, **store.snapshot(review_id)}
+            if rest[:1] == ["comments"]:
+                if rest == ["comments"] and method == "GET":
+                    if set(query) - {"state", "path"} or any(len(values) != 1 for values in query.values()):
+                        raise HTTPValidationError("Invalid comment query fields")
+                    return {"ok": True, "threads": store.comment_threads(review_id,
+                        state=(query.get("state") or ["all"])[0], path=(query.get("path") or [None])[0])}
+                if query:
+                    raise HTTPValidationError("Comment endpoint does not accept query fields")
+                if rest == ["comments"] and method == "POST":
+                    return {"ok": True, "thread": runtime.create_comment_thread(review_id, body)}, 201
+                if len(rest) >= 2:
+                    thread_id = _identifier(rest[1], "thread_id")
+                    if len(rest) == 2 and method == "GET":
+                        return {"ok": True, "thread": store.comment_thread(review_id, thread_id)}
+                    thread = None
+                    if rest[2:] == ["replies"] and method == "POST":
+                        thread = store.reply_comment_thread(review_id, thread_id, body)
+                    elif rest[2:] == ["state"] and method == "POST":
+                        thread = store.set_comment_state(review_id, thread_id, body)
+                    elif len(rest) == 4 and rest[2] == "messages" and method == "PUT":
+                        thread = store.edit_comment_message(review_id, thread_id, _identifier(rest[3], "message_id"), body)
+                    if thread is not None:
+                        changed = getattr(service, "pr_review_changed", None)
+                        if callable(changed):
+                            changed(review_id)
+                        return {"ok": True, "thread": thread}
+                raise HTTPValidationError("Comment endpoint not found", code="not_found", status=404)
             if rest in (["archive"], ["unarchive"]) and method == "POST":
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Archive contains an unsupported field")

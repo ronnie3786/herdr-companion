@@ -40,6 +40,20 @@ def _review_id(subparser, environ):
     subparser.add_argument("id", nargs="?", default=environ.get("HERDR_PR_REVIEW_ID"))
 
 
+def _comment_input(subparser):
+    source = subparser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--body", help="Exact Markdown comment text")
+    source.add_argument("--body-file", help="Read Markdown from a file, or - for stdin")
+
+
+def _comparison_input(subparser):
+    subparser.add_argument("--mode", choices=("all", "commit", "range"))
+    subparser.add_argument("--start-commit")
+    subparser.add_argument("--end-commit")
+    subparser.add_argument("--base-sha")
+    subparser.add_argument("--head-sha")
+
+
 def parser(environ):
     command_parser = Parser(description=__doc__)
     command_parser.add_argument("--base-url", default=environ.get("HERDR_HARNESS_URL") or "http://127.0.0.1:9092")
@@ -80,6 +94,12 @@ def parser(environ):
     diff = commands.add_parser("diff", help="Show a review diff")
     _review_id(diff, environ)
     diff.add_argument("--path")
+    _comparison_input(diff)
+
+    commits = commands.add_parser("commits", help="Read the pinned review commit history")
+    _review_id(commits, environ)
+    commits.add_argument("--base-sha")
+    commits.add_argument("--head-sha")
 
     file_command = commands.add_parser("file", help="Read a reviewed file")
     _review_id(file_command, environ)
@@ -87,6 +107,37 @@ def parser(environ):
     file_command.add_argument("--side", required=True, choices=("before", "after"))
     file_command.add_argument("--start", type=int)
     file_command.add_argument("--end", type=int)
+    _comparison_input(file_command)
+
+    comments = commands.add_parser("comments", help="Read persistent comments on the review host")
+    _review_id(comments, environ)
+    comments.add_argument("--state", choices=("all", "open", "resolved"), default="all")
+    comments.add_argument("--path")
+    comments.add_argument("--thread", help="Read one thread including its revision history")
+
+    for name, help_text in (("comment", "Add a private PR or inline comment"),
+                            ("reply", "Reply to a private review thread"),
+                            ("resolve", "Mark a private thread resolved"),
+                            ("reopen", "Reopen a private thread"),
+                            ("edit-comment", "Edit a message while retaining its history")):
+        subparser = commands.add_parser(name, help=help_text)
+        _review_id(subparser, environ)
+        subparser.add_argument("--author", choices=("human", "agent"), default="agent")
+        subparser.add_argument("--request-id")
+        if name in ("comment", "reply", "edit-comment"):
+            _comment_input(subparser)
+        if name != "comment":
+            subparser.add_argument("--thread", required=True)
+        if name in ("resolve", "reopen", "edit-comment"):
+            subparser.add_argument("--expected-version", type=int, required=True)
+        if name == "edit-comment":
+            subparser.add_argument("--message", required=True)
+        if name == "comment":
+            subparser.add_argument("--path")
+            subparser.add_argument("--side", choices=("before", "after"))
+            subparser.add_argument("--start", type=int)
+            subparser.add_argument("--end", type=int)
+            _comparison_input(subparser)
 
     findings = commands.add_parser("findings", help="Read findings for one file")
     _review_id(findings, environ)
@@ -304,12 +355,47 @@ def execute(args, client, *, stdin, launch, environ):
         return client.request("POST", path + "/" + args.command, {"request_id": _request_id(args)})
     if args.command == "sync-viewed":
         return client.request("POST", path + "/viewed/sync", {"request_id": _request_id(args)})
-    if args.command == "diff":
-        suffix = "?" + urllib.parse.urlencode({"path": args.path}) if args.path else ""
-        return client.request("GET", path + "/diff" + suffix)
+    if args.command in ("diff", "commits"):
+        query = {name: getattr(args, name, None) for name in ("path", "mode", "start_commit", "end_commit", "base_sha", "head_sha") if getattr(args, name, None) is not None}
+        suffix = "?" + urllib.parse.urlencode(query) if query else ""
+        return client.request("GET", path + "/" + args.command + suffix)
     if args.command == "file":
-        query = {name: getattr(args, name) for name in ("path", "side", "start", "end") if getattr(args, name) is not None}
+        query = {name: getattr(args, name) for name in ("path", "side", "start", "end", "mode", "start_commit", "end_commit", "base_sha", "head_sha") if getattr(args, name) is not None}
         return client.request("GET", path + "/file?" + urllib.parse.urlencode(query))
+    if args.command == "comments":
+        if args.thread:
+            if args.path or args.state != "all":
+                raise CLIError("Thread lookup cannot use list filters", "invalid_arguments")
+            return client.request("GET", path + "/comments/" + _quote(args.thread))
+        query = {"state": args.state, **({"path": args.path} if args.path else {})}
+        return client.request("GET", path + "/comments?" + urllib.parse.urlencode(query))
+    if args.command in ("comment", "reply", "resolve", "reopen", "edit-comment"):
+        body = {"author": args.author, "request_id": _request_id(args)}
+        if args.command in ("comment", "reply", "edit-comment"):
+            body["body"] = _read_file(args.body_file, stdin) if args.body_file else args.body
+            if not body["body"].strip() or len(body["body"]) > 20_000 or "\x00" in body["body"]:
+                raise CLIError("Comment body must contain 1 to 20000 characters", "invalid_arguments")
+        if args.command == "comment":
+            anchor_fields = ("path", "side", "start", "end", "base_sha", "head_sha", "mode", "start_commit", "end_commit")
+            if any(getattr(args, name) is not None for name in anchor_fields):
+                if any(getattr(args, name) is None for name in ("path", "side", "start", "base_sha", "head_sha")):
+                    raise CLIError("Inline comments require --path, --side, --start, --base-sha and --head-sha from the reviewed diff", "invalid_arguments")
+                body["anchor"] = {"path": args.path, "side": args.side, "start_line": args.start,
+                    "end_line": args.end if args.end is not None else args.start, "base_sha": args.base_sha, "head_sha": args.head_sha}
+                selection = {name: getattr(args, name) for name in ("mode", "start_commit", "end_commit") if getattr(args, name) is not None}
+                if selection:
+                    body["anchor"]["comparison"] = selection
+            return client.request("POST", path + "/comments", body)
+        thread_path = path + "/comments/" + _quote(args.thread)
+        if args.command == "reply":
+            return client.request("POST", thread_path + "/replies", body)
+        if args.expected_version < 1:
+            raise CLIError("--expected-version must be a positive integer from the thread", "invalid_arguments")
+        body["expected_version"] = args.expected_version
+        if args.command == "edit-comment":
+            return client.request("PUT", thread_path + "/messages/" + _quote(args.message), body)
+        body["state"] = "resolved" if args.command == "resolve" else "open"
+        return client.request("POST", thread_path + "/state", body)
     if args.command == "findings":
         return client.request("GET", path + "/findings?" + urllib.parse.urlencode({"path": args.path}))
     if args.command == "run":

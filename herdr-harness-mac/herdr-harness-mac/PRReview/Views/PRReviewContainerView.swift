@@ -4,6 +4,7 @@ import SwiftUI
 struct PRReviewContainerView: View {
     @Bindable var store: PRReviewStore
     @Bindable var comments: PRReviewCommentsSession
+    @State private var discussions = PRReviewDiscussionSession()
     var canControl = false
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
@@ -69,8 +70,15 @@ struct PRReviewContainerView: View {
                         .accessibilityIdentifier("pr-review-empty")
                 }
             }
-            .sheet(isPresented: commentsSheetPresented, onDismiss: { comments.dismissCommentsSheet() }) {
-                commentSheet
+            .sheet(isPresented: $discussions.isPresented) {
+                PRReviewDiscussionView(session: discussions, store: store, canControl: canControl,
+                    previousCommentCount: comments.count(machineID: store.currentMachineID, reviewID: store.selectedReviewID),
+                    showPreviousComments: {
+                        comments.presentList(machineID: store.currentMachineID, reviewID: store.selectedReviewID)
+                    })
+                .sheet(isPresented: commentsSheetPresented, onDismiss: { comments.dismissCommentsSheet() }) {
+                    commentSheet
+                }
             }
         }
         .navigationTitle(navigationTitle)
@@ -93,6 +101,13 @@ struct PRReviewContainerView: View {
         .onChange(of: store.selectedPath) { _, path in store.guide.observedFileNavigation(path) }
         .onChange(of: store.currentMachineID) { _, _ in comments.updateScope(from: store) }
         .onChange(of: store.selectedReviewID) { _, _ in comments.updateScope(from: store) }
+        .task(id: discussionScopeIdentity) {
+            discussions.configure(store: store)
+            while !Task.isCancelled {
+                await discussions.refresh()
+                do { try await Task.sleep(for: .seconds(3)) } catch { break }
+            }
+        }
         .sheet(isPresented: $store.isPresentingStartSheet, onDismiss: { setCreating(false) }) {
             PRReviewStartSheet(store: store) {
                 store.pendingURL = nil
@@ -104,6 +119,10 @@ struct PRReviewContainerView: View {
 
     private var guideScopeIdentity: String {
         "\(store.currentMachineID ?? "")|\(store.selectedReviewID ?? "")|\(store.snapshot?.review.baseSHA ?? "")|\(store.snapshot?.review.headSHA ?? "")|\(store.comparisonSelection.identity)|\(store.currentComparison?.id ?? "")|\(store.guideConnectionGeneration)|\(store.capabilities?.capabilities.contains("pr-review-guide-v1") == true)"
+    }
+
+    private var discussionScopeIdentity: String {
+        "\(store.currentMachineID ?? "")|\(store.selectedReviewID ?? "")|\(store.guideConnectionGeneration)|\(store.capabilities?.capabilities.contains("pr-review-comments-v1") == true)"
     }
 
     private func header(_ review: PRReviewSummary) -> some View {
@@ -173,9 +192,9 @@ struct PRReviewContainerView: View {
     /// empty and filtered file states and archived reviews. The count is
     /// scoped to this configured machine and review id, never to a label.
     private func commentsButton(_ review: PRReviewSummary) -> some View {
-        let count = comments.count(machineID: store.currentMachineID, reviewID: review.id)
+        let count = discussions.openCount
         return Button {
-            comments.presentList(machineID: store.currentMachineID, reviewID: review.id)
+            discussions.present()
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "text.bubble")
@@ -189,10 +208,9 @@ struct PRReviewContainerView: View {
                 }
             }
         }
-        .disabled(!comments.isReady)
         .help("Saved comments for this review")
         .accessibilityIdentifier("pr-review-comments-button")
-        .accessibilityValue("\(count) saved")
+        .accessibilityValue("\(count) open")
     }
 
     private var commentsSheetPresented: Binding<Bool> {
@@ -216,7 +234,10 @@ struct PRReviewContainerView: View {
                     currentFilePaths: store.snapshot.map { Set($0.files.map(\.path)) },
                     edit: { comments.beginEditing($0) },
                     showInDiff: { comment in
-                        Task { await comments.showInDiff(comment, store: store) }
+                        Task {
+                            await comments.showInDiff(comment, store: store)
+                            if !comments.isPresentingComments { discussions.isPresented = false }
+                        }
                     }
                 )
             }
@@ -232,6 +253,7 @@ struct PRReviewContainerView: View {
             PRReviewFilesView(
                 store: store,
                 comments: comments,
+                discussions: discussions,
                 canControl: canControl,
                 questionHistory: documentHost?.prReviewQuestions,
                 openQuestion: { documentHost?.presentSavedPRReviewQuestion($0) },

@@ -29,7 +29,7 @@ from .agent_runs import _assistant_text, _child_path
 from .child_environment import agent_environment
 from .normalization import pane_index
 from .pr_review_diff import line_window, parse_unified_diff
-from .git_comparison import comparison_identity, comparison_request, comparison_patch, first_parent_history, resolve_comparison
+from .git_comparison import SHA, comparison_identity, comparison_request, comparison_patch, first_parent_history, resolve_comparison
 from .pr_review_store import PRReviewError
 from .pr_review_status import REVIEW_QUERY, VIEWER_QUERY, viewer_review_summary
 
@@ -936,6 +936,76 @@ class PRReviewRuntime:
         active = [source for source in sources if source["disposition"] != "dismissed"]
         text = "\n\n".join(f"## {source['title']} ({source['reviewer']}; {source['freshness']} revision)\n{source['excerpt']}" for source in active)
         return {"path": path, "text": text[:limit], "document_ids": list(dict.fromkeys(source["document_id"] for source in active))}
+
+    def create_comment_thread(self, review_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Pin local discussion to verified diff rows, without publishing a review."""
+        if set(payload) - {"body", "author", "request_id", "anchor"} or not {"body", "author", "request_id"} <= set(payload):
+            raise PRReviewError("Comment contains missing or unsupported fields", code="invalid_request", status=400)
+        self.store.comment_body(payload.get("body"))
+        self.store.comment_author(payload.get("author"))
+        # A retry must still find the original receipt after the review advances.
+        cached = self.store.receipt("comment.create:" + review_id, payload.get("request_id"), payload)
+        if cached is not None:
+            return cached
+        anchor = self._comment_anchor(review_id, payload["anchor"]) if payload.get("anchor") is not None else None
+        thread = self.store.create_comment_thread(review_id, payload, anchor=anchor)
+        self._changed(review_id)
+        return thread
+
+    def _comment_anchor(self, review_id: str, anchor: object) -> dict[str, Any]:
+        invalid = lambda message: PRReviewError(message, code="invalid_request", status=400)
+        if not isinstance(anchor, dict) or set(anchor) - {"path", "side", "start_line", "end_line", "spans", "base_sha", "head_sha", "comparison"}:
+            raise invalid("Invalid comment anchor")
+        path = anchor.get("path")
+        if (not isinstance(path, str) or not path or len(path) > 4096 or "\x00" in path
+                or path.startswith("/") or any(part in {"", ".", ".."} for part in path.split("/"))):
+            raise invalid("Comment path must be an exact repository-relative diff path")
+        for key in ("base_sha", "head_sha"):
+            if not isinstance(anchor.get(key), str) or not SHA.fullmatch(anchor[key]):
+                raise invalid("Comment anchors require the full base_sha and head_sha from the reviewed diff")
+        if "spans" in anchor:
+            if set(anchor) & {"side", "start_line", "end_line"}:
+                raise invalid("Choose either spans or a single line range")
+            spans = anchor["spans"]
+        else:
+            spans = [{"side": anchor.get("side"), "start": anchor.get("start_line"), "end": anchor.get("end_line")}]
+        if not isinstance(spans, list) or not 1 <= len(spans) <= 20:
+            raise invalid("A comment must anchor to between 1 and 20 line ranges")
+        keys = set()
+        for span in spans:
+            if (not isinstance(span, dict) or set(span) != {"side", "start", "end"}
+                    or span["side"] not in ("before", "after")
+                    or type(span["start"]) is not int or type(span["end"]) is not int
+                    or not 1 <= span["start"] <= span["end"] <= 10**9
+                    or span["end"] - span["start"] >= 500):
+                raise invalid("Invalid comment line range")
+            keys.update((span["side"], number) for number in range(span["start"], span["end"] + 1))
+        if len(keys) > 500:
+            raise invalid("Comment selection exceeds 500 lines")
+        comparison = anchor.get("comparison")
+        if isinstance(comparison, dict) and "mode" in comparison and not isinstance(comparison["mode"], str):
+            raise invalid("Invalid comment comparison mode")
+        selection = comparison_request(comparison)
+        diff = self.diff(review_id, path, comparison=selection if selection["mode"] != "all" else None,
+                         base_sha=anchor["base_sha"], head_sha=anchor["head_sha"])
+        file = next((item for item in diff["files"] if item["path"] == path), None)
+        if file is None or file.get("binary"):
+            raise invalid("Comment file is unavailable in this comparison")
+        selected, found = [], set()
+        for hunk in file.get("hunks", []):
+            for line in hunk.get("lines", []):
+                matches = keys & {("before", line.get("old_number")), ("after", line.get("new_number"))}
+                if matches:
+                    found.update(matches)
+                    selected.append({"add": "+", "del": "-", "context": " "}.get(line.get("kind"), " ") + line["text"])
+        if found != keys:
+            raise invalid("Comment lines are unavailable in the loaded diff; refresh and select exact lines")
+        excerpt = "\n".join(selected)
+        if len(excerpt) > 50_000:
+            raise invalid("Comment code excerpt exceeds 50000 characters")
+        return {"path": path, "side": spans[0]["side"], "start_line": spans[0]["start"], "end_line": spans[0]["end"],
+                "spans": spans, "base_sha": anchor["base_sha"], "head_sha": anchor["head_sha"],
+                "comparison": diff["comparison"], "comparison_selection": selection, "code_excerpt": excerpt}
 
     def _save_document(self, review_id: str, filename: str, data: bytes, media_type: str | None, title: str, origin: str, request_id: str, *, origin_path: str | None = None) -> dict[str, Any]:
         if not data or len(data) > MAX_DOCUMENT_BYTES:

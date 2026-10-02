@@ -177,7 +177,7 @@ private struct PRReviewEventsResponse: Decodable, Sendable {
     let events: [PRReviewEvent]
 }
 
-actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRReviewGuideClient, AgentProfilesClient, AgentRolesClient {
+actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRReviewGuideClient, PRReviewDiscussionClient, AgentProfilesClient, AgentRolesClient {
     /// Nonisolated so the model can bind refreshed topology to the endpoint
     /// that produced it without another actor hop.
     nonisolated let configuration: ServerConfiguration
@@ -450,6 +450,22 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
     }
 
     func prReviewCapabilities() async throws -> PRReviewCapabilities { try await request(path: try prReviewPath("capabilities")) }
+    func prReviewDiscussions(reviewID: String) async throws -> [PRReviewDiscussion] {
+        let response: PRReviewDiscussionsResponse = try await request(path: try prReviewPath(id: reviewID) + "/comments")
+        return response.threads
+    }
+    func createPRReviewDiscussion(reviewID: String, request body: PRReviewDiscussionCreate) async throws -> PRReviewDiscussion {
+        let response: PRReviewDiscussionResponse = try await request(path: try prReviewPath(id: reviewID) + "/comments", method: "POST", body: body)
+        return response.thread
+    }
+    func replyToPRReviewDiscussion(reviewID: String, threadID: String, request body: PRReviewDiscussionReply) async throws -> PRReviewDiscussion {
+        let response: PRReviewDiscussionResponse = try await request(path: try prReviewPath(id: reviewID) + "/comments/" + validatedPRReviewID(threadID) + "/replies", method: "POST", body: body)
+        return response.thread
+    }
+    func setPRReviewDiscussionState(reviewID: String, threadID: String, request body: PRReviewDiscussionStateChange) async throws -> PRReviewDiscussion {
+        let response: PRReviewDiscussionResponse = try await request(path: try prReviewPath(id: reviewID) + "/comments/" + validatedPRReviewID(threadID) + "/state", method: "POST", body: body)
+        return response.thread
+    }
     func prReviewSkills() async throws -> [PRReviewSkill] { let r: PRReviewSkillsResponse = try await request(path: try prReviewPath("skills")); return r.skills }
     func addPRReviewSkill(_ body: PRReviewSkillCreateRequest) async throws -> PRReviewSkill { let r: PRReviewSkillResponse = try await request(path: try prReviewPath("skills"), method: "POST", body: body); return r.skill }
     func removePRReviewSkill(id: String, requestID: String) async throws -> [PRReviewSkill] { let r: PRReviewSkillsResponse = try await request(path: try prReviewPath("skills", id: id), method: "DELETE", body: PRReviewRequestID(requestID: requestID)); return r.skills }

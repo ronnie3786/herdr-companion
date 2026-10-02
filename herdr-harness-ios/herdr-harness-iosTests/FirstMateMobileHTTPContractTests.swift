@@ -30,7 +30,7 @@ struct FirstMateMobileHTTPContractTests {
             #expect(fetched.lead?.feature.isLead == true)
             #expect(ensured.lead?.machine?.id == (metadata is NSNull ? nil : "server-local-id"))
             #expect(requests.map(\.httpMethod) == ["GET", "POST"])
-            #expect(requests.map(\.timeoutInterval) == [15, 86_400])
+            #expect(requests.map(\.timeoutInterval) == [90, 86_400])
             #expect(requests.allSatisfy { $0.url?.host == "phase-one.example.invalid" && $0.url?.port == 9443 })
             #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer synthetic-owner-token" })
             let object = try JSONDecoder().decode([String: String].self, from: #require(requests.last?.httpBody))
@@ -56,7 +56,7 @@ struct FirstMateMobileHTTPContractTests {
         _ = try await client.sendFirstMateMessage(featureID: snapshot.feature.id, text: "Review this", requestID: "frozen-request", context: context)
         #expect(requests[0].url?.query == "events=journal")
         #expect(requests[1].url?.query == nil)
-        #expect(requests.map(\.timeoutInterval) == [15, 15, 86_400])
+        #expect(requests.map(\.timeoutInterval) == [90, 90, 86_400])
         let body = try #require(requests.last?.httpBody)
         struct Sent: Decodable { let text: String; let request_id: String; let context: FirstMateLeadContext }
         let sent = try JSONDecoder().decode(Sent.self, from: body)
@@ -136,11 +136,11 @@ struct FirstMateMobileHTTPContractTests {
     func timeoutMatrix() {
         for suffix in ["lead", "features", "features/f/messages", "features/f/actions", "features/f/model-settings", "features/f/read", "features/f/links"] {
             #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/" + suffix, method: "POST") == 86_400)
-            #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/" + suffix, method: "GET") == 15)
+            #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/" + suffix, method: "GET") == 90)
         }
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/features/f/attachments", method: "POST") == 90)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/features/f/attachments", method: "GET") == 15)
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/features/events", method: "GET") == 15)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/features/f/attachments", method: "GET") == 90)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/features/events", method: "GET") == 90)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/voice/transcriptions", method: "POST") == 120)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/workspaces/w/attachments", method: "POST") == 90)
     }

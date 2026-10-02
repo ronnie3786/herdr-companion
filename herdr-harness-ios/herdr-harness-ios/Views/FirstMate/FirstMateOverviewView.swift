@@ -10,10 +10,6 @@ struct FirstMateOverviewView: View {
     @Environment(\.firstMateInspectorContext) private var context
     @State private var showsFullGoal = false
 
-    private var currentAgents: [FirstMateAssignment] {
-        snapshot.currentVisit.map { snapshot.agents(for: $0.id) } ?? []
-    }
-
     /// The same journal milestones as Mac Overview, including First Mate's
     /// private notes from background work; bookkeeping stays in the activity log.
     private var latestMilestones: [FirstMateEvent] {
@@ -22,6 +18,7 @@ struct FirstMateOverviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            FirstMateActivityView(store: store, snapshot: snapshot)
             if let conversation = context?.conversation, !snapshot.feature.isLead {
                 FirstMateNowCard(conversation: conversation, machineName: context?.machineName ?? conversation.machineName)
             }
@@ -37,7 +34,7 @@ struct FirstMateOverviewView: View {
 
                 if let visit = snapshot.currentVisit {
                     VStack(alignment: .leading, spacing: 0) {
-                        HerdrMicroLabel(text: "Current focus")
+                        HerdrMicroLabel(text: "Current workflow step")
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(visit.title).herdrFont(.body, weight: .semibold).foregroundStyle(HerdrTheme.primaryText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -54,39 +51,6 @@ struct FirstMateOverviewView: View {
                     .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .herdrCard()
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    HerdrMicroLabel(text: "Agents")
-                    Spacer(minLength: 8)
-                    if !snapshot.assignments.isEmpty {
-                        Button(snapshot.assignments.count == 1 ? "View agent" : "View all \(snapshot.assignments.count)") {
-                            store.inspector = .agents
-                        }
-                        .buttonStyle(.herdrPlain)
-                        .herdrFont(.footnote, weight: .medium).foregroundStyle(HerdrTheme.accent)
-                        .frame(minWidth: 44, minHeight: 44).contentShape(.rect)
-                        .accessibilityLabel(snapshot.assignments.count == 1 ? "See the agent" : "See all \(snapshot.assignments.count) agents")
-                    }
-                }
-                let shown = Array(currentAgents.prefix(3))
-                ForEach(Array(shown.enumerated()), id: \.element.id) { index, agent in
-                    FirstMateAgentRow(store: store, agent: agent, style: .compact, showsDivider: index < shown.count - 1)
-                }
-                if currentAgents.count > 3 {
-                    Button("\(currentAgents.count - 3) more \(currentAgents.count == 4 ? "agent" : "agents") on this step") {
-                        store.inspector = .agents
-                    }
-                    .buttonStyle(.herdrPlain)
-                    .herdrFont(.footnote, weight: .medium).foregroundStyle(HerdrTheme.accent)
-                    .frame(minHeight: 44)
-                } else if currentAgents.isEmpty {
-                    Text(snapshot.assignments.isEmpty ? "Your First Mate will assemble the crew when work is authorized."
-                         : "No agents are working on this step.")
-                        .herdrFont(.subheadline).foregroundStyle(HerdrTheme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

@@ -12,8 +12,8 @@ struct FirstMateOverviewView: View {
 
     var body: some View {
         let buildsQuery = MobileAppHubSettings.firstMateQuery(hubURLText: buildsHubURL, featureID: snapshot.feature.id)
-        let currentAgents = Array(snapshot.assignments.filter { $0.visitID == snapshot.feature.currentVisitID }.prefix(3))
         VStack(alignment: .leading, spacing: 12) {
+            FirstMateActivityView(store: store, snapshot: snapshot)
             if !snapshot.pullRequestLinks.isEmpty {
                 FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .overview)
                     .padding(12)
@@ -52,7 +52,7 @@ struct FirstMateOverviewView: View {
                 .herdrCard()
             if let visit = snapshot.currentVisit {
                 VStack(alignment: .leading, spacing: 0) {
-                    HerdrMicroLabel(text: "Current focus")
+                    HerdrMicroLabel(text: "Current workflow step")
                     HStack(spacing: 8) {
                         Text(visit.title)
                             .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
@@ -67,27 +67,6 @@ struct FirstMateOverviewView: View {
                 .padding(12)
                 .herdrCard()
             }
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    HerdrMicroLabel(text: "Agents")
-                    Spacer()
-                    Button("View all \(snapshot.assignments.count)") { store.inspector = .agents }
-                        .buttonStyle(.herdrPlain)
-                        .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
-                        .foregroundStyle(palette.accent)
-                        .frame(minHeight: HerdrTheme.minHitTarget)
-                        .contentShape(.rect)
-                }
-                ForEach(Array(currentAgents.enumerated()), id: \.element.id) { index, agent in
-                    FirstMateAgentRow(store: store, agent: agent, style: .compact, showsDivider: index < currentAgents.count - 1)
-                }
-                if snapshot.assignments.isEmpty {
-                    Text("Your First Mate will assemble the crew when work is authorized.")
-                        .herdrFont(size: HerdrTheme.TextSize.small)
-                        .foregroundStyle(palette.tertiaryText)
-                }
-            }
-            .padding(.top, 4)
             VStack(alignment: .leading, spacing: 0) {
                 HerdrMicroLabel(text: "Latest in the journal")
                     .padding(.bottom, 4)

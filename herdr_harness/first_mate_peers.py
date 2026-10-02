@@ -7,11 +7,12 @@ whose own API credential is configured on this host: exactly the machines
 that machine's own features (``first-mate-lead-peers-v1``).
 
 Credentials stay in the private configuration and are never logged or
-returned. A peer that fails to answer counts as offline for a short while, so
-one lead turn never waits on a down machine twice.
+returned. Connection failures use a short outage backoff. Slow requests and
+server errors stay distinguishable from a confirmed connection failure.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -24,12 +25,20 @@ from .first_mate_store import FirstMateError
 
 CAPABILITY = "first-mate-lead-peers-v1"
 REMOTE_PATH = "/api/v1/first-mate/lead/remote"
-TIMEOUT_SECONDS = 6.0
+TIMEOUT_SECONDS = 60.0
 OFFLINE_SECONDS = 30.0
 ROSTER_SECONDS = 300.0
-# A peer's refusal (an unknown feature, a closed one) is its answer; these
-# codes mean the machine did not answer at all.
-_UNREACHABLE = {"herdr_unavailable", "redirect_not_allowed", "response_too_large", "invalid_response"}
+# A slow operation, HTTP error or invalid response does not prove a machine
+# is offline. Only connection failures enter the short outage backoff.
+_UNREACHABLE = {"herdr_unavailable"}
+
+
+def _request_timeout(environ: Mapping[str, str]) -> float:
+    try:
+        value = float(environ.get("HERDR_FIRST_MATE_PEER_TIMEOUT_SECONDS", TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
+        return TIMEOUT_SECONDS
+    return min(300.0, max(15.0, value)) if math.isfinite(value) else TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -48,6 +57,7 @@ class PeerDirectory:
     def __init__(self, environ: Mapping[str, str], *, opener: Callable[..., Any] | Any | None = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.environ = dict(environ)
+        self.timeout = _request_timeout(self.environ)
         self.opener = opener
         self.clock = clock
         self._lock = threading.Lock()
@@ -79,7 +89,7 @@ class PeerDirectory:
                         continue
                     try:
                         clients[machine_id] = machine_client(config, machine_id, self.environ, roster=roster,
-                                                             opener=self.opener, timeout=TIMEOUT_SECONDS)
+                                                             opener=self.opener, timeout=self.timeout)
                     except CLIError:
                         continue  # No credential for it on this host: not a peer.
                     peers.append(Peer(machine_id, record.get("name") or machine_id, record["url"]))
@@ -123,7 +133,12 @@ class PeerDirectory:
             if exc.http_status in {404, 405, 501}:
                 raise FirstMateError(f"{peer.name}'s companion needs an update before First Mate can reach it",
                                      code="machine_unsupported", status=503) from None
-            if exc.code in _UNREACHABLE or (exc.http_status or 0) >= 500:
+            if exc.code == "herdr_timeout" or exc.http_status in {408, 504}:
+                raise FirstMateError(
+                    f"{peer.name}'s request timed out; its activity is currently unknown. "
+                    "If this was a write, inspect its receipt before sending it again.",
+                    code="machine_timeout", status=504) from None
+            if exc.code in _UNREACHABLE and exc.http_status is None:
                 with self._lock:
                     self._offline_until[machine_id] = self.clock() + OFFLINE_SECONDS
                 raise FirstMateError(f"{peer.name} is offline right now", code="machine_offline", status=503) from None

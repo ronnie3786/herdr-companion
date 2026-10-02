@@ -891,7 +891,7 @@ actor HerdrAPIClient: FirstMateClient {
 
     static func timeoutInterval(path: String, method: String) -> TimeInterval {
         if path.hasPrefix("/api/v1/first-mate/") {
-            guard method == "POST" else { return 15 }
+            guard method == "POST" else { return 90 }
             // Mobile uploads keep their explicit bound before the shipped
             // long-running mutation rule. Resource IDs ending in "events"
             // are still reads, never an accidental stream timeout.
@@ -899,10 +899,10 @@ actor HerdrAPIClient: FirstMateClient {
             return 86_400
         }
         if path == "/api/v1/health" || path == "/api/v1/network" {
-            return 8
+            return 30
         }
         if path == "/api/v1/response-audio/capabilities" {
-            return 8
+            return 30
         }
         if path.hasPrefix("/api/v1/response-audio/") {
             return 150
@@ -914,14 +914,13 @@ actor HerdrAPIClient: FirstMateClient {
             return 75
         }
         // The harness holds the POST open while it queues the run; every other
-        // agent-run call is a short read that still outlives the generic 15s
-        // budget on a slow link.
+        // agent-run read leaves headroom beyond a 30-second native command.
         if path == "/api/v1/agent-runs", method == "POST" {
             return 90
         }
         if path == "/api/v1/agent-runs" || path.hasPrefix("/api/v1/agent-runs/") ||
             path == "/api/v1/hud-chats" || path.hasPrefix("/api/v1/hud-chats/") {
-            return 30
+            return 45
         }
         if method == "GET" && (path.hasSuffix("events") || path.hasSuffix("stream")) {
             return 24 * 60 * 60
@@ -941,7 +940,9 @@ actor HerdrAPIClient: FirstMateClient {
             // seconds respectively. The client must outlive the upstream call.
             return 30
         }
-        return 15
+        // The companion's native/Pi request may take 30 seconds. Keep its
+        // result observable before a user retries a possibly accepted command.
+        return 45
     }
 
     static func validate(response: URLResponse, data: Data = Data()) throws {

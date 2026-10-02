@@ -266,7 +266,7 @@ struct FleetTests {
 
     @Test("Leaves enough time for long-running Fleet operations")
     func fleetRequestTimeouts() {
-        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet", method: "GET") == 15)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet", method: "GET") == 45)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet/sync", method: "POST") == 150)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/fleet/action", method: "POST") == 150)
     }

@@ -22,7 +22,7 @@ from typing import Any, Callable, Mapping, Optional
 from .secret_file import SecretFileError, load_private_bearer_token_file
 
 SSE_READ_TIMEOUT_SECONDS = 25.0
-SNAPSHOT_TIMEOUT_SECONDS = 8.0
+SNAPSHOT_TIMEOUT_SECONDS = 30.0
 MAX_SSE_LINE_BYTES = 512 * 1024
 ERROR_LOG_INTERVAL_SECONDS = 300.0
 

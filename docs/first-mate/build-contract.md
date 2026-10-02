@@ -16,7 +16,7 @@ Root prefix `/api/v1/first-mate`, authenticated with normal companion read/contr
 
 - GET `/features`: `{ok:true,features:[feature]}`
 - POST `/features`: `{title,goal,cwd,request_id,work_item_id?}` -> `{ok:true,feature}`
-- GET `/features/{id}`: `{ok:true,feature,visits,assignments,documents,messages,events,handoffs,memberships,sessions,sessions_truncated,event_cursor?}`. Optional `?events=journal` omits `pi.*` telemetry events; see “Agent view board extension”. With `first-mate-quiet-chat-v1`, every message carries `visibility` (`conversation` or `background`); clients render only `conversation` rows with role `user`, `human`, or `assistant`. The board's `messages` and `messages_total`, and the feature summary's latest message and parked-turn flag, count only `conversation` rows.
+- GET `/features/{id}`: `{ok:true,feature,visits,assignments,documents,messages,events,handoffs,memberships,sessions,sessions_truncated,event_cursor?}`. Optional `?events=journal` omits `pi.*` telemetry events; see “Agent view board extension”. With `first-mate-quiet-chat-v1`, every message carries `visibility` (`conversation` or `background`); clients render only `conversation` rows with role `user`, `human`, or `assistant`. The board's `messages` and `messages_total`, and the feature summary's latest message, count only `conversation` rows. Pending background updates still prevent a false parked-turn status.
 - POST `/features/{id}/messages`: `{text,request_id}` -> `{ok:true,message,feature}` immediately after durable queueing. This acknowledgment is partial; clients fetch feature detail separately.
 - POST `/features/{id}/actions`: `{action,request_id,expected_revision?}` for pause/resume/cancel. No HTTP action bypasses a human gate; demo scenario advancement is local to the synthetic native fixture.
 - GET `/features/{id}/events?after=0`: `{ok:true,events,cursor}`
@@ -418,6 +418,46 @@ Feature summaries add `activity_at`, which telemetry never moves, and
 bounds, and validation are in [Dashboard companion data](../dashboard-api.md#agent-view-board).
 Older clients ignore these additions; newer clients must accept their absence on
 older servers.
+
+### Current and upcoming activity
+
+List, board, detail, and compact chat/overview responses share the same
+`feature.dashboard_summary`. It adds `queued_assignment_count` for the current
+visit and revision, `queued_message_count`, `processing_message_count`,
+`pending_human_message_count`, and `followup_stages`. The follow-up list contains
+only the current revision's explicitly recorded authorized stages. A prior
+revision's title and follow-ups are not presented as the new plan.
+`awaiting_turn` requires no coordinator owner, no active or queued assignment,
+and no queued or processing message of any role. It never changes the durable
+feature status or authorizes execution.
+
+Board, full detail, and compact chat/overview reads add `pending_messages` and
+`pending_messages_truncated`. This queue is independent of the conversation
+page, so a queued background update or an earlier human message cannot disappear
+when chat is paginated. It includes at most 100 rows, with processing first and
+then the scheduler's user-first FIFO order. Each row includes the ordinary
+message identity, role, status, timestamps, visibility, a text preview of at
+most 1,200 characters, and `text_truncated`. Summary counts describe the complete
+queue. Compact assignment rows include `visit_ids`, preserving membership when
+an unchanged worker was carried into a revised visit.
+
+Human board and presentation reads compact repeated evidence without changing
+the ledger. Current verification status, failure membership, and scope remain
+intact. `historical_evidence_summary:true` identifies a summarized historical
+assessment; that assessment has `summary:true`, exact `counts`, sampled gate
+references, and explicit truncation flags. Historical evidence summaries are
+limited to 4 KiB. Message metadata retains bounded provenance and a summarized
+historical verdict instead of repeating every coverage diagnostic. When changed,
+`metadata_summary:true` and `metadata_detail_reference` identify the exact feature
+and message in the full `GET /features/{id}?events=journal` response.
+
+An oversized event payload is summarized to at most 8 KiB and carries
+`payload_summary:true` plus `payload_detail_reference` containing `feature_id`,
+`after`, and `limit`. Read its complete record from
+`GET /features/{feature_id}/events?after={after}&limit=1`. The full feature,
+event, and document readers retain the original evidence. These display
+projections are never used for verification gates or mutation authorization.
+Projection versions changed to invalidate caches after the shape update.
 
 ## Fleet summary API
 

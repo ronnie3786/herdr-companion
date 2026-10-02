@@ -54,6 +54,7 @@ final class FirstMateStore {
     private(set) var inspectorRefreshRevision = 0
     private(set) var inspectorSnapshots: [String: FirstMateSnapshot] = [:]
     private(set) var inspectorErrors: [String: String] = [:]
+    private(set) var inspectorCheckedAt: [String: Date] = [:]
     private(set) var earlierMessageCursors: [String: String] = [:]
     private(set) var loadingEarlierMessages: Set<String> = []
     private(set) var earlierMessagesErrors: [String: String] = [:]
@@ -269,7 +270,7 @@ final class FirstMateStore {
         capabilitiesCheckedAt = nil
         conversationRefreshID = UUID()
         readViewsSupported = false
-        inspectorSnapshots = [:]; inspectorErrors = [:]; inspectorVersions = [:]; inspectorRequests = [:]
+        inspectorSnapshots = [:]; inspectorErrors = [:]; inspectorCheckedAt = [:]; inspectorVersions = [:]; inspectorRequests = [:]
         chatVersions = [:]; chatRequests = [:]
         earlierMessageCursors = [:]; loadingEarlierMessages = []; earlierMessagesErrors = [:]
         demoUsesWallClock = demo && demoFeatures != nil
@@ -339,12 +340,33 @@ final class FirstMateStore {
            existing.feature.revision > value.feature.revision ||
            (existing.feature.modelSettingsRevision ?? 0) > (value.feature.modelSettingsRevision ?? 0) { return }
         if value.hasDetails, let existing = snapshots[value.feature.id], existing.feature.revision == value.feature.revision,
-           existing.latestEventSequence > value.latestEventSequence { return }
+           existing.latestEventSequence > value.latestEventSequence ||
+           (existing.latestEventSequence == value.latestEventSequence && Self.isStrictlyOlderTimestamp(value.feature.updatedAt, than: existing.feature.updatedAt)) { return }
         if !isPresentationRead {
             for view in [FirstMateReadView.overview, .details] {
-                inspectorVersions[inspectorKey(featureID: value.feature.id, view: view)] = nil
+                let key = inspectorKey(featureID: value.feature.id, view: view)
+                inspectorVersions[key] = nil
+                inspectorRequests[key] = nil
+                inspectorCheckedAt[key] = nil
             }
             inspectorRefreshRevision &+= 1
+        } else if value.hasDetails,
+                  snapshots[value.feature.id].map({ !FirstMateActivity.sameWork($0, value) }) ?? true {
+            // Chat and the inspector are independent reads. Wake the inspector
+            // when the chat proves its displayed work is behind, without making
+            // token telemetry alone trigger another expensive details read.
+            var needsRefresh = false
+            for view in [FirstMateReadView.overview, .details] {
+                let key = inspectorKey(featureID: value.feature.id, view: view)
+                guard let cached = inspectorSnapshots[key],
+                      value.latestEventSequence >= cached.latestEventSequence,
+                      !FirstMateActivity.sameWork(cached, value) else { continue }
+                inspectorVersions[key] = nil
+                inspectorRequests[key] = nil
+                inspectorCheckedAt[key] = nil
+                needsRefresh = true
+            }
+            if needsRefresh { inspectorRefreshRevision &+= 1 }
         }
         // Mutation receipts invalidate an outstanding conditional read. Its
         // older response must not replace freshly accepted local work.
@@ -628,7 +650,9 @@ final class FirstMateStore {
         if let existing = snapshots[id] {
             guard existing.feature.revision <= value.feature.revision,
                   (existing.feature.modelSettingsRevision ?? 0) <= (value.feature.modelSettingsRevision ?? 0),
-                  existing.latestEventSequence <= value.latestEventSequence else { return }
+                  existing.latestEventSequence <= value.latestEventSequence,
+                  existing.latestEventSequence != value.latestEventSequence ||
+                    !Self.isStrictlyOlderTimestamp(value.feature.updatedAt, than: existing.feature.updatedAt) else { return }
         }
         var cursor = response.nextBefore
         if response.version != nil, let existing = snapshots[id], let first = value.messages.first {
@@ -688,12 +712,28 @@ final class FirstMateStore {
                 guard inspectorSnapshots[key] != nil, let version = response.version, version == inspectorVersions[key] else { throw APIError.invalidResponse }
             } else {
                 guard let value = response.snapshot, value.feature.id == featureID else { throw APIError.invalidResponse }
-                if let cached = inspectorSnapshots[key], cached.feature.revision > value.feature.revision || cached.latestEventSequence > value.latestEventSequence { return }
+                func isOlder(than known: FirstMateSnapshot, compareWork: Bool) -> Bool {
+                    if known.feature.revision > value.feature.revision ||
+                        (known.feature.modelSettingsRevision ?? 0) > (value.feature.modelSettingsRevision ?? 0) { return true }
+                    // A busy chat can advance its cursor for token telemetry
+                    // while this independent read is in flight. Matching work
+                    // is still current, and must not starve the inspector.
+                    if compareWork && FirstMateActivity.sameWork(known, value) { return false }
+                    return known.latestEventSequence > value.latestEventSequence ||
+                        (known.latestEventSequence == value.latestEventSequence && Self.isStrictlyOlderTimestamp(value.feature.updatedAt, than: known.feature.updatedAt))
+                }
+                if inspectorSnapshots[key].map({ isOlder(than: $0, compareWork: false) }) == true ||
+                    snapshots[featureID].map({ isOlder(than: $0, compareWork: true) }) == true {
+                    inspectorVersions[key] = nil
+                    inspectorErrors[key] = "Waiting for the companion's latest activity. Showing the last received snapshot."
+                    return
+                }
                 if inspectorSnapshots[key].map({ !FirstMatePollPresentation.sameSnapshot($0, value) }) ?? true {
                     inspectorSnapshots[key] = value
                 }
                 inspectorVersions[key] = response.version
             }
+            inspectorCheckedAt[key] = .now
             if inspectorErrors[key] != nil { inspectorErrors[key] = nil }
         } catch is CancellationError { return }
         catch {

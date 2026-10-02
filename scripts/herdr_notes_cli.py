@@ -41,6 +41,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class NotesClient:
     api_path = "/api/v1/notes"
+    timeout_seconds = 20
 
     def __init__(self, base_url, token, *, opener=None):
         try:
@@ -71,7 +72,7 @@ class NotesClient:
             headers={"Authorization": "Bearer " + self.token, "Accept": "application/json",
                      "Content-Type": "application/json", "User-Agent": "herdr-notes/1"})
         try:
-            with self.opener(request, timeout=20) as response:
+            with self.opener(request, timeout=self.timeout_seconds) as response:
                 if response.geturl() != request.full_url:
                     raise CLIError("Herdr redirects are not allowed", "redirect_not_allowed")
                 raw = response.read(MAX_BYTES + 1)

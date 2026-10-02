@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping
 from . import first_mate_fleet as fleet_format
 from . import skim as skim_format
 from .directory_browser import canonical_directory
+from .first_mate_read_models import activity_presentation
 from .first_mate_links import (
     LinkValidationError,
     normalize_link,
@@ -129,6 +130,7 @@ def _is_journal_event_type(kind: str) -> bool:
 
 # The Agent view board is bounded independently of the ledger's size.
 BOARD_MAX_MESSAGES, BOARD_MAX_JOURNAL, BOARD_MAX_SESSIONS = 200, 200, 200
+PENDING_MESSAGE_LIMIT = 100
 BOARD_MESSAGE_ROLES = ("user", "assistant", "human")
 
 # The chat is the conversation between the human and First Mate. System rows
@@ -1002,6 +1004,13 @@ class FirstMateStore:
         with self._lock:
             return self._one("fm_features", feature_id)
 
+    def get_feature_summary(self, feature_id: str) -> dict:
+        with self._lock:
+            rows = self._feature_summaries("WHERE f.id=?", (feature_id,))
+            if not rows:
+                raise FirstMateError("First Mate record not found", code="not_found", status=404)
+            return rows[0]
+
     def list_features(self, view: str = "active", *, include_lead: bool = False) -> list[dict]:
         """Features in update order. The lead First Mate is never a feature;
         only the runtime's dispatch loop asks for it (``include_lead``)."""
@@ -1159,7 +1168,10 @@ class FirstMateStore:
         # Project bounded card data in one SQL query, without loading every
         # feature's full transcript, documents, or assignment metadata.
         rows = self._db.execute(f"""SELECT f.*,
-                v.title AS current_stage_title,
+                CASE WHEN v.revision=f.revision THEN v.title END AS current_stage_title,
+                CASE WHEN v.revision=f.revision AND v.status NOT IN ('superseded','cancelled')
+                    AND f.status NOT IN ('completed','cancelled') THEN v.followup_stages_json
+                    ELSE '[]' END AS upcoming_stages_json,
                 (SELECT count(*) FROM fm_visits x WHERE x.feature_id=f.id AND x.revision=f.revision) AS stage_count,
                 CASE WHEN v.id IS NOT NULL AND v.revision=f.revision THEN
                     (SELECT count(*) FROM fm_visits x WHERE x.feature_id=f.id AND x.revision=f.revision
@@ -1169,8 +1181,10 @@ class FirstMateStore:
                     COALESCE((SELECT created_at FROM fm_events WHERE sequence=(SELECT max(sequence) FROM fm_events
                         WHERE feature_id=f.id AND {JOURNAL_EVENT_SQL})),f.created_at),
                     COALESCE((SELECT max(created_at) FROM fm_messages WHERE feature_id=f.id),f.created_at)) AS activity_at,
-                EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
-                    AND status IN ('queued','processing')) AS pending_human_message,
+                (SELECT count(*) FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
+                    AND status IN ('queued','processing')) AS pending_human_message_count,
+                (SELECT count(*) FROM fm_messages WHERE feature_id=f.id AND status='queued') AS queued_message_count,
+                (SELECT count(*) FROM fm_messages WHERE feature_id=f.id AND status='processing') AS processing_message_count,
                 m.id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
                     AND (created_at>m.created_at OR (created_at=m.created_at AND id>m.id))) AS assistant_spoke_last,
                 substr(CASE WHEN e.created_at>=COALESCE(v.created_at,f.created_at) THEN
@@ -1178,6 +1192,8 @@ class FirstMateStore:
                     ELSE v.recommendation END,1,600) AS needs_user_prompt,
                 (SELECT count(*) FROM fm_assignment_memberships x JOIN fm_assignments a ON a.id=x.assignment_id
                     WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision) AS assignment_count,
+                (SELECT count(*) FROM fm_assignment_memberships x JOIN fm_assignments a ON a.id=x.assignment_id
+                    WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision AND a.status='queued') AS queued_assignment_count,
                 (SELECT count(*) FROM fm_assignment_memberships x JOIN fm_assignments a ON a.id=x.assignment_id
                     WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision
                     AND a.status IN ('dispatching','running','waiting_children','handoff_pending','awaiting_ack','recovering')) AS running_assignment_count
@@ -1192,18 +1208,21 @@ class FirstMateStore:
             summary = {key: feature.pop(key) for key in (
                 'current_stage_title', 'stage_count', 'current_stage_index', 'latest_message',
                 'latest_message_at', 'needs_user_prompt', 'assignment_count', 'running_assignment_count',
-                'activity_at')}
-            pending_human, assistant_last = feature.pop('pending_human_message'), feature.pop('assistant_spoke_last')
+                'activity_at', 'queued_assignment_count', 'queued_message_count',
+                'processing_message_count', 'pending_human_message_count')}
+            summary['followup_stages'] = json.loads(feature.pop('upcoming_stages_json'))
+            assistant_last = feature.pop('assistant_spoke_last')
             # The ledger records executed stages, not a promised future
             # workflow. Clients must not label this a complete plan total.
             summary['stage_count_is_estimate'] = True
             summary['needs_user'] = feature['status'] in {'awaiting_direction', 'blocked'}
-            # First Mate finished its turn with no running agent and is parked
+            # First Mate finished its turn with no active or queued work and is parked
             # until a human replies. This is not a workflow gate; needs_user and
             # status keep their meaning.
             summary['awaiting_turn'] = self._awaiting_turn(feature['status'], feature['coordinator_owner'],
-                                                           summary['running_assignment_count'],
-                                                           pending_human, assistant_last)
+                                                           summary['running_assignment_count'] + summary['queued_assignment_count'],
+                                                           summary['queued_message_count'] + summary['processing_message_count'],
+                                                           assistant_last)
             if not summary['needs_user']:
                 summary['needs_user_prompt'] = summary['latest_message'][:600] if summary['awaiting_turn'] else None
             elif not summary['needs_user_prompt']:
@@ -1212,10 +1231,10 @@ class FirstMateStore:
         return features
 
     @staticmethod
-    def _awaiting_turn(status: str, coordinator_owner: Any, running_assignments: int,
-                       pending_human: Any, assistant_spoke_last: Any) -> bool:
+    def _awaiting_turn(status: str, coordinator_owner: Any, active_assignments: int,
+                       pending_messages: Any, assistant_spoke_last: Any) -> bool:
         return (status in {'coordinating', 'running'} and not coordinator_owner
-                and running_assignments == 0 and not pending_human and bool(assistant_spoke_last))
+                and active_assignments == 0 and not pending_messages and bool(assistant_spoke_last))
 
     # -- fleet (first-mate-fleet-v1) --------------------------------------------
 
@@ -1262,11 +1281,13 @@ class FirstMateStore:
                     COALESCE((SELECT max(created_at) FROM fm_messages WHERE feature_id=f.id),f.created_at)) AS activity_at,
                 EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
                     AND status IN ('queued','processing')) AS pending_human_message,
+                EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id
+                    AND status IN ('queued','processing')) AS pending_message,
                 m.id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM fm_messages WHERE feature_id=f.id AND role IN ('user','human')
                     AND (created_at>m.created_at OR (created_at=m.created_at AND id>m.id))) AS assistant_spoke_last,
                 (SELECT count(*) FROM fm_assignment_memberships x JOIN fm_assignments a ON a.id=x.assignment_id
                     WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision
-                    AND a.status IN ('dispatching','running','waiting_children','handoff_pending','awaiting_ack','recovering')) AS running_assignment_count,
+                    AND a.status IN ('queued','dispatching','running','waiting_children','handoff_pending','awaiting_ack','recovering')) AS active_assignment_count,
                 (SELECT json_extract(a.metadata_json,'$.progress.summary') FROM fm_assignment_memberships x
                     JOIN fm_assignments a ON a.id=x.assignment_id
                     WHERE x.visit_id=f.current_visit_id AND x.revision=f.revision AND a.status='running'
@@ -1290,8 +1311,8 @@ class FirstMateStore:
             item = dict(row)
             item["active_roles"] = json.loads(item["active_roles"])
             item["awaiting_turn"] = self._awaiting_turn(item["status"], item["coordinator_owner"],
-                                                        item.pop("running_assignment_count"),
-                                                        item["pending_human_message"], item.pop("assistant_spoke_last"))
+                                                        item.pop("active_assignment_count"),
+                                                        item.pop("pending_message"), item.pop("assistant_spoke_last"))
             if item["skim_say_tokens"] is not None:
                 try:
                     item["skim_say_tokens"] = json.loads(item["skim_say_tokens"])
@@ -1718,7 +1739,8 @@ class FirstMateStore:
             raise FirstMateError("Invalid events view", code="invalid_request", status=400)
         # The journal view is a pure read; the default keeps its original writer-locked read.
         with self._read() if events == "journal" else self._transaction():
-            result = {"feature": self._one("fm_features", feature_id)}
+            result = {"feature": self.get_feature_summary(feature_id),
+                      **self._pending_message_projection(feature_id)}
             for key in ("visits", "assignments", "documents", "messages", "events", "handoffs", "links"):
                 ordering = "sequence" if key == "events" else "created_at,id"
                 projection = "*" if key != "documents" else "id,feature_id,visit_id,assignment_id,native_session_id,generation,input_revision,title,media_type,content_hash,created_at"
@@ -1751,6 +1773,24 @@ class FirstMateStore:
     def _event_cursor(self, feature_id: str) -> int:
         return self._db.execute("SELECT COALESCE(max(sequence),0) FROM fm_events WHERE feature_id=?", (feature_id,)).fetchone()[0]
 
+    def _pending_message_projection(self, feature_id: str) -> dict:
+        """Bounded queue independent of paginated conversation and event history.
+
+        Called inside the enclosing read snapshot. The active turn comes first,
+        then the same human-priority order used by claim_message. Only a preview
+        leaves the store; private coordinator context and owners are omitted.
+        """
+        rows = self._db.execute(
+            "SELECT id,feature_id,role,status,substr(text,1,1200) AS text,created_at,updated_at,visibility,"
+            "length(text)>1200 AS text_truncated FROM fm_messages "
+            "WHERE feature_id=? AND status IN ('queued','processing') "
+            "ORDER BY CASE status WHEN 'processing' THEN 0 ELSE 1 END,"
+            "CASE role WHEN 'user' THEN 0 ELSE 1 END,created_at,id LIMIT ?",
+            (feature_id, PENDING_MESSAGE_LIMIT + 1)).fetchall()
+        return {"pending_messages": [{**dict(row), "text_truncated": bool(row["text_truncated"])}
+                                     for row in rows[:PENDING_MESSAGE_LIMIT]],
+                "pending_messages_truncated": len(rows) > PENDING_MESSAGE_LIMIT}
+
     def read_version(self, feature_id: str) -> str:
         with self._lock:
             return self._board_version(feature_id)
@@ -1771,7 +1811,7 @@ class FirstMateStore:
         if before is not None:
             _text(before, "before", 200)
         with self._read():
-            feature = self._one("fm_features", feature_id)
+            feature = self.get_feature_summary(feature_id)
             if before is not None:
                 self._conversation_cursor(feature_id, before)
             return {
@@ -1809,15 +1849,21 @@ class FirstMateStore:
             _text(before, "before", 200)
         with self._read():
             read_version = self._board_version(feature_id)
-            feature = self._one("fm_features", feature_id)
+            feature = self.get_feature_summary(feature_id)
             result = {"feature": feature, "visits": [], "messages": [], "events": [],
                       "assignments": [], "documents": [], "sessions": [], "handoffs": [],
                       "links": [], "event_cursor": self._event_cursor(feature_id),
-                      "_read_version": read_version,
+                      "_read_version": read_version, **self._pending_message_projection(feature_id),
                       "has_queued_work": bool(feature.get("coordinator_owner") or self._db.execute(
                           "SELECT 1 FROM fm_messages WHERE feature_id=? AND status IN ('queued','processing') LIMIT 1",
                           (feature_id,)).fetchone())}
-            result["assignments"] = [dict(row) for row in self._db.execute(
+            visit_ids: dict[str, list[str]] = {}
+            for row in self._db.execute(
+                "SELECT m.assignment_id,m.visit_id FROM fm_assignment_memberships m "
+                "JOIN fm_visits v ON v.id=m.visit_id WHERE v.feature_id=? ORDER BY m.revision,m.visit_id",
+                (feature_id,)):
+                visit_ids.setdefault(row[0], []).append(row[1])
+            result["assignments"] = [{**dict(row), "visit_ids": visit_ids.get(row["id"], [])} for row in self._db.execute(
                 f"SELECT {BOARD_ASSIGNMENT_COLUMNS} FROM fm_assignments WHERE feature_id=? ORDER BY created_at,id",
                 (feature_id,))]
             result["documents"] = [dict(row) for row in self._db.execute(
@@ -1863,7 +1909,7 @@ class FirstMateStore:
         marker.pop("updated_at")
         # Invalidate pre-cleanup projections after a server upgrade even when
         # no user data changed. This is a presentation version, not a migration.
-        return "b2-" + hashlib.sha256(_json(marker).encode()).hexdigest()[:20]
+        return "b3-" + hashlib.sha256(_json(marker).encode()).hexdigest()[:20]
 
     def board(self, feature_id: str, *, messages: int = 60, journal: int = 40, if_version: str | None = None) -> dict:
         """Bounded Agent view projection built from SQLite alone.
@@ -1890,8 +1936,9 @@ class FirstMateStore:
                       FROM fm_sessions WHERE feature_id=?) s {_SESSION_JOINS}
                 WHERE s.assignment_id IS NULL OR s.board_rank=1
                 ORDER BY s.created_at DESC,s.native_session_id LIMIT ?""", (feature_id, BOARD_MAX_SESSIONS + 1)).fetchall()
-            return {
+            return activity_presentation({
                 "version": version, "unchanged": False,
+                **self._pending_message_projection(feature_id),
                 "feature": self._feature_summaries("WHERE f.id=?", (feature_id,))[0],
                 "visits": [self._decode(row) for row in self._db.execute("SELECT * FROM fm_visits WHERE feature_id=? ORDER BY created_at,id", (feature_id,))],
                 "assignments": [{**dict(row), "visit_ids": visit_ids.get(row["id"], [])} for row in self._db.execute(
@@ -1907,7 +1954,7 @@ class FirstMateStore:
                 "sessions": [dict(row) for row in session_rows[:BOARD_MAX_SESSIONS]],
                 "sessions_truncated": len(session_rows) > BOARD_MAX_SESSIONS,
                 "event_cursor": self._event_cursor(feature_id),
-            }
+            })
 
     def get_events(self, feature_id: str, after: int = 0, limit: int = 1000) -> dict:
         if isinstance(after, bool) or not isinstance(after, int) or after < 0:

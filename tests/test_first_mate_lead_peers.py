@@ -20,7 +20,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 
-from herdr_harness.first_mate_peers import CAPABILITY, OFFLINE_SECONDS, Peer, PeerDirectory
+from herdr_harness.first_mate_peers import CAPABILITY, OFFLINE_SECONDS, TIMEOUT_SECONDS, Peer, PeerDirectory
 from herdr_harness.first_mate_runtime import DeferredOperation, FirstMateRuntime
 from herdr_harness.first_mate_store import LEAD_KIND, FirstMateError, FirstMateStore
 from herdr_harness.server import make_handler
@@ -111,8 +111,71 @@ class PeerDirectoryTests(unittest.TestCase):
         self.assertEqual(json.loads(request.data), {"action": "fm_relay", "request_id": "request-1",
                                                     "params": {"feature_id": "fmf_remote", "text": "Use CSV."},
                                                     "lead": {"machine": "home", "message_id": "fmm_turn"}})
-        self.assertLessEqual(timeout, 10)
+        self.assertEqual(timeout, TIMEOUT_SECONDS)
+        self.assertGreater(timeout, 15)  # Outlive SQLite contention, not just a healthy ping.
         self.assertIsNotNone(self.peers.last_seen("devbox"))
+
+    def test_slow_peer_can_answer_after_the_former_six_second_budget(self):
+        # Model a server taking seven seconds without slowing the suite.
+        def slow(request, timeout=None):
+            if timeout < 7:
+                raise TimeoutError("synthetic slow server")
+            return FakeResponse(request.full_url, {"ok": True, "result": {"current": "running"}})
+        self.peers.opener = slow
+        result = self.peers.call("devbox", "fm_feature_status", {"feature_id": "f"},
+                                 request_id="slow-read", lead={"machine": "home", "message_id": "m"})
+        self.assertEqual(result, {"current": "running"})
+        self.assertFalse(self.peers.offline("devbox"))
+
+    def test_timeouts_do_not_quarantine_peer_or_retry_an_ambiguous_write(self):
+        for error in (TimeoutError("slow"), urllib.error.URLError(TimeoutError("slow"))):
+            with self.subTest(error=type(error).__name__):
+                self.requests.clear()
+                def slow(request):
+                    raise error
+                self.answer = slow
+                with self.assertRaises(FirstMateError) as raised:
+                    self.peers.call("devbox", "fm_relay", {"feature_id": "f", "text": "Continue"},
+                                    request_id="stable-write", lead={"machine": "home", "message_id": "m"})
+                self.assertEqual(raised.exception.code, "machine_timeout")
+                self.assertEqual(raised.exception.status, 504)
+                self.assertFalse(self.peers.offline("devbox"))
+                self.assertEqual(len(self.requests), 1)
+                self.answer = lambda request: FakeResponse(request.full_url, {"ok": True, "result": {"features": []}})
+                self.peers.call("devbox", "fm_fleet", {}, request_id="check-after-timeout",
+                                lead={"machine": "home", "message_id": "m"})
+                self.assertEqual(len(self.requests), 2)
+
+    def test_http_errors_do_not_mark_the_entire_machine_offline(self):
+        for status in (429, 500, 502, 503, 504):
+            with self.subTest(status=status):
+                def refusing(request):
+                    raise urllib.error.HTTPError(request.full_url, status, "synthetic", {},
+                        io.BytesIO(b'{"error":{"code":"operation_unavailable","message":"Try later"}}'))
+                self.answer = refusing
+                with self.assertRaises(FirstMateError) as raised:
+                    self.peers.call("devbox", "fm_fleet", {}, request_id="server-error",
+                                    lead={"machine": "home", "message_id": "m"})
+                self.assertEqual(raised.exception.code, "machine_timeout" if status == 504 else "operation_unavailable")
+                self.assertFalse(self.peers.offline("devbox"))
+
+    def test_invalid_response_is_an_operation_failure_not_a_machine_outage(self):
+        self.answer = lambda request: FakeResponse(request.full_url, ["invalid"])
+        with self.assertRaises(FirstMateError) as raised:
+            self.peers.call("devbox", "fm_fleet", {}, request_id="invalid",
+                            lead={"machine": "home", "message_id": "m"})
+        self.assertEqual(raised.exception.code, "invalid_response")
+        self.assertFalse(self.peers.offline("devbox"))
+
+    def test_peer_budget_is_configurable_bounded_and_nonfinite_safe(self):
+        for configured, expected in (("120", 120), ("1", 15), ("999", 300),
+                                     ("nan", 60), ("inf", 60), ("bad", 60)):
+            with self.subTest(configured=configured):
+                peer = PeerDirectory({**self.peers.environ, "HERDR_FIRST_MATE_PEER_TIMEOUT_SECONDS": configured},
+                                     opener=self.peers.opener)
+                peer.call("devbox", "fm_fleet", {}, request_id="configured",
+                          lead={"machine": "home", "message_id": "m"})
+                self.assertEqual(self.requests[-1][1], expected)
 
     def test_a_machine_that_does_not_answer_is_offline_for_a_while(self):
         def down(request):

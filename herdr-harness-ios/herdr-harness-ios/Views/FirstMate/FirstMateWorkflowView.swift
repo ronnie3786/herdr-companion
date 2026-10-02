@@ -6,6 +6,7 @@ struct FirstMateWorkflowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            FirstMateActivityView(store: store, snapshot: snapshot)
             FirstMateInspectorHeading(title: "Feature journal",
                 detail: "Every visit retains its agents and evidence. Revisions keep earlier work available.") {
                 Picker("Workflow presentation", selection: $store.graphMode) {

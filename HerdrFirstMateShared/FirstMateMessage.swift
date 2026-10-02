@@ -13,6 +13,7 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
     /// A skim of a long reply (`first-mate-skim-v1`). Older companions omit it,
     /// and a malformed one decodes as nil: the reply shows in full either way.
     var skim: FirstMateSkim? = nil
+    var textTruncated: Bool? = nil
     var metadata: FirstMateMessageMetadata? = nil
     /// The crew assignment that wrote this message, from the companion's
     /// `metadata.assignment_id`. Nil for First Mate's and the human's own rows.
@@ -28,6 +29,7 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, role, text, status, visibility, skim, metadata
         case featureID = "feature_id", createdAt = "created_at"
+        case textTruncated = "text_truncated"
     }
 
     init(id: String, featureID: String, role: String, text: String, status: String, createdAt: String,
@@ -55,6 +57,7 @@ struct FirstMateMessage: Codable, Equatable, Identifiable, Sendable {
         createdAt = try c.decode(String.self, forKey: .createdAt)
         visibility = try c.decodeIfPresent(String.self, forKey: .visibility)
         skim = try? c.decodeIfPresent(FirstMateSkim.self, forKey: .skim)
+        textTruncated = try c.decodeIfPresent(Bool.self, forKey: .textTruncated)
         let decoded = try? c.decodeIfPresent(FirstMateMessageMetadata.self, forKey: .metadata)
         metadata = decoded?.isEmpty == false ? decoded : nil
     }

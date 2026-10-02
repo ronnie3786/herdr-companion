@@ -303,16 +303,31 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
 
         let question = app.control(identifier: "pr-review-ask-field")
         question.click()
-        question.typeText("Explain this synthetic selection briefly")
+        let questionText = "Explain this synthetic selection briefly"
+        question.typeText(questionText)
         app.buttons["pr-review-send-question"].click()
-        let saved = firstWindow.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Explain this synthetic selection briefly")).firstMatch
-        XCTAssertTrue(saved.waitForExistence(timeout: 10), "Sending a question must leave a durable bubble in the diff")
-        bringForward(saved, in: app, windowTitle: SyntheticReview.firstTitle)
+        // Capable hosts keep answers and saved questions in the review buddy.
+        let details = control("pr-review-guide-details", in: firstWindow)
+        XCTAssertTrue(details.waitForExistence(timeout: 10))
+        XCTAssertTrue(text("You asked: " + questionText, in: firstWindow).waitForExistence(timeout: 10))
+        let history = details.disclosureTriangles.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Questions (")
+        ).firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 5), "The answer must retain its question in review history")
+        history.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .withOffset(CGVector(dx: 28, dy: 0)).click()
+        let questionLabel = NSPredicate(format: "label CONTAINS %@", questionText)
+        guard let saved = waitForFirst(of: [
+            details.links.matching(questionLabel).firstMatch,
+            details.buttons.matching(questionLabel).firstMatch,
+        ], timeout: 5) else {
+            XCTFail("Question history should reopen the saved answer")
+            return
+        }
         saved.click()
-        let answer = app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", "Ask Herdr · PR #42")).firstMatch
-        XCTAssertTrue(answer.waitForExistence(timeout: 10), "The saved bubble must reopen its conversation")
-        answer.buttons[XCUIIdentifierCloseWindow].click()
-        XCTAssertTrue(saved.exists, "Closing the answer must not remove its saved bubble")
+        XCTAssertTrue(text("You asked: " + questionText, in: firstWindow).waitForExistence(timeout: 5))
+        XCTAssertFalse(control("pr-review-guide-details", in: secondWindow).exists,
+                       "Answering in one review window must not open the other's review buddy")
 
         saveWindowScreenshot("pr-review-pop-out-ask-ai", window: firstWindow, directory: screenshotDirectory)
         saveWindowScreenshot("pr-review-pop-out-second", window: secondWindow, directory: screenshotDirectory)

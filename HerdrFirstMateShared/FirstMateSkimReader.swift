@@ -158,6 +158,22 @@ struct FirstMateSkimReader: Equatable, Sendable {
         }
     }
 
+    /// Bad optional options never invalidate the summary or become sendable.
+    var actions: [SkimReplyAction] {
+        guard !nextSteps.isEmpty else { return [] }
+        var ids = Set<String>()
+        var labels = Set<String>()
+        return Array(document.actions.filter { action in
+            action.isValid
+                && action.refs.allSatisfy { ref in
+                    guard let segment = segment(ref) else { return false }
+                    return !["code", "table", "rule", "quote"].contains(segment.kind)
+                }
+                && ids.insert(action.id).inserted
+                && labels.insert(action.label.lowercased()).inserted
+        }.prefix(3))
+    }
+
     private static let tailKinds: Set<String> = ["next", "ask", "reply"]
 
     /// Content blocks the skim doesn't link to, plus each one's section heading for context.

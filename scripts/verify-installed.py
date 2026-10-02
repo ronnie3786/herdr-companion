@@ -36,7 +36,7 @@ def main():
         assert pr_review_entry.strip() == "ok"
         profile_install = run("from importlib.metadata import distribution; from herdr_harness.resources import pi_extension_path; from herdr_harness.agent_profiles import AgentProfiles; from pathlib import Path; import subprocess, sys; assert (pi_extension_path({})/'extensions/agent-profiles.ts').is_file(); assert any(e.name == 'herdr-profiles' for e in distribution('herdr-companion').entry_points); subprocess.check_output([str(Path(sys.executable).with_name('herdr-profiles')), '--help']); s=AgentProfiles(machine_id='synthetic'); assert s.overview()['capability'] == 'agent-profiles-v1'; s.close(); print('ok')")
         assert profile_install.strip() == "ok", profile_install
-        skim_prompt = run("from herdr_harness import skim; p=skim.prompt_for('Synthetic question?', 'A synthetic reply.'); assert '## Shape: one tight breath' in p.system and '{{' not in p.system; print('ok')")
+        skim_prompt = run("from herdr_harness import skim; p=skim.prompt_for('Synthetic question?', 'A synthetic reply.'); assert '## Optional reply options' in p.system and '{{' not in p.system; print('ok')")
         assert skim_prompt.strip() == "ok", skim_prompt
         docs_entry = run("from importlib.metadata import distribution; eps=distribution('herdr-companion').entry_points; assert any(e.name == 'herdr-docs' and e.value == 'herdr_harness.agent_docs:main' for e in eps); print('ok')")
         assert docs_entry.strip() == "ok"

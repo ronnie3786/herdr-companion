@@ -14,6 +14,7 @@ struct SkimmableReply<FullReply: View>: View {
 
     @Environment(\.skimDisplayState) private var sharedState
     @Environment(\.skimScrollTo) private var scrollTo
+    @Environment(\.skimReplyContext) private var replyContext
     @Environment(\.chatProsePalette) private var palette
     @Environment(\.colorScheme) private var scheme
     @Environment(\.herdrFontScale) private var fontScale
@@ -43,6 +44,10 @@ struct SkimmableReply<FullReply: View>: View {
                 fullReply()
             }
             if let reader, usable {
+                if let context = replyContext, context.messageID == messageID, !reader.actions.isEmpty {
+                    SkimReplyActionsView(actions: reader.actions, context: context, state: state)
+                        .padding(.top, 10)
+                }
                 footer(reader)
                     .padding(.top, 8)
             }
@@ -277,6 +282,9 @@ enum SkimReplyStyle {
 final class SkimDisplayState {
     private(set) var fullReplyIDs: Set<String> = []
     private(set) var revealed: [String: [String]] = [:]
+    private(set) var sentReplyIDs: Set<String> = []
+
+    func didSendReply(for messageID: String) { sentReplyIDs.insert(messageID) }
 
     func showsFullReply(_ messageID: String) -> Bool { fullReplyIDs.contains(messageID) }
 

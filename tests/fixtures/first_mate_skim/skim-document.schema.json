@@ -29,7 +29,8 @@
         "breath",
         "breath_next",
         "breath_reply",
-        "breath_tight"
+        "breath_tight",
+        "breath_balanced"
       ]
     },
     "status": {
@@ -259,6 +260,40 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "explanation",
+          "refs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^r[1-9][0-9]*$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "refs": {
+            "$ref": "#/$defs/refs",
+            "minItems": 1
           }
         }
       }

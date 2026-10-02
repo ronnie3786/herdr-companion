@@ -707,6 +707,21 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         try await request(path: "/api/v1/response-audio/capabilities")
     }
 
+    func fetchSkimCapabilities() async throws -> ChatSkimCapabilities {
+        try await request(path: "/api/v1/skims/capabilities")
+    }
+
+    func requestChatSkim(reply: String, question: String?) async throws -> ChatSkimEnvelope {
+        var body = ["reply": reply]
+        if let question, !question.isEmpty { body["question"] = String(question.prefix(16_000)) }
+        return try await request(path: "/api/v1/skims", method: "POST", body: body)
+    }
+
+    func fetchChatSkim(id: String) async throws -> ChatSkimEnvelope {
+        guard id.count == 64, id.allSatisfy(\.isHexDigit) else { throw APIError.invalidResponse }
+        return try await request(path: "/api/v1/skims/\(id)")
+    }
+
     func submitQuickVoice(_ body: QuickVoiceRequest) async throws -> QuickVoiceEnvelope {
         try await request(path: "/api/v1/quick-voice", method: "POST", body: body)
     }

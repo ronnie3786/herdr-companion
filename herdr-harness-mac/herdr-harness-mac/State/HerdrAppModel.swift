@@ -1597,6 +1597,16 @@ final class HerdrAppModel {
         return try await client.fetchResponseAudioCapabilities()
     }
 
+    func chatSkimTransport(for pane: HerdrPane) -> ChatSkimTransport? {
+        guard !isDemoMode, canControl(machineID: pane.machineID), self.pane(id: pane.id) != nil,
+              let client = client(forMachine: pane.machineID) else { return nil }
+        return ChatSkimTransport(
+            capabilities: { try await client.fetchSkimCapabilities() },
+            request: { try await client.requestChatSkim(reply: $0, question: $1) },
+            fetch: { try await client.fetchChatSkim(id: $0) }
+        )
+    }
+
     func prepareResponseAudio(
         action: ResponseAudioAction,
         text: String,

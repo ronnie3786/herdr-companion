@@ -71,6 +71,8 @@ struct PiChatView: View {
             .paneResponseLinks(model: model, sourceMachineID: composerPane.machineID)
             .environment(\.saveChatQuote, attachQuote)
             .environment(\.chatQuoteSource, "Pi session \(store.sessionID ?? "unknown")")
+            .environment(\.chatSkimTransport, model.chatSkimTransport(for: composerPane))
+            .environment(\.skimReplyContext, skimReplyContext)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let notice = store.commandNotice {
@@ -170,6 +172,31 @@ struct PiChatView: View {
 
     private func attachQuote(_ quote: ChatQuote) async throws {
         quotes.wrappedValue.append(quote)
+    }
+
+    private var skimReplyContext: SkimReplyContext? {
+        guard let turn = store.turns.last, let sessionID = store.sessionID,
+              let block = turn.items.reversed().compactMap({ item -> PiAssistantBlock? in
+                  if case let .assistant(block) = item { return block }
+                  return nil
+              }).first,
+              ChatSkimSource.sources(in: turn)[block.id] != nil else { return nil }
+        return SkimReplyContext(messageID: block.id, disabledReason: skimReplyDisabledReason) { text in
+            guard store.sessionID == sessionID, skimReplyDisabledReason == nil,
+                  let current = store.turns.last,
+                  ChatSkimSource.sources(in: current)[block.id]?.reply == block.text else { return false }
+            return await store.submit(text: text, disposition: .prompt, model: model, pane: composerPane)
+        }
+    }
+
+    private var skimReplyDisabledReason: String? {
+        SkimReplyAvailability.disabledReason(
+            connected: store.canSendCommands && interactionResponseAvailable && model.canControl(machineID: composerPane.machineID),
+            busy: store.isSubmitting || store.isAborting || store.phase == .working
+                || store.compactionActivity != nil || !store.pendingInteractions.isEmpty,
+            hasDraft: !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !attachments.isEmpty || !quotes.wrappedValue.isEmpty
+        )
     }
 
     private var paneArtifacts: [AgentResultArtifact] {

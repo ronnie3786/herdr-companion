@@ -74,10 +74,11 @@ struct SkimDocument: Codable, Equatable, Sendable {
     var rest: SkimRest
     var anchors: [SkimAnchor]
     var stats: SkimStats?
+    var actions: [SkimReplyAction]
 
     init(version: Int = 1, format: String = "breath_tight", status: String = "answer", statusLabel: String = "Answer",
          headline: [SkimToken] = [], blocks: [SkimBlock], drawers: [SkimDrawer] = [], rest: SkimRest = .init(refs: []),
-         anchors: [SkimAnchor], stats: SkimStats? = nil) {
+         anchors: [SkimAnchor], stats: SkimStats? = nil, actions: [SkimReplyAction] = []) {
         self.version = version
         self.format = format
         self.status = status
@@ -88,10 +89,11 @@ struct SkimDocument: Codable, Equatable, Sendable {
         self.rest = rest
         self.anchors = anchors
         self.stats = stats
+        self.actions = actions
     }
 
     enum CodingKeys: String, CodingKey {
-        case version, format, status, statusLabel, headline, blocks, drawers, rest, anchors, stats
+        case version, format, status, statusLabel, headline, blocks, drawers, rest, anchors, stats, actions
     }
 
     init(from decoder: Decoder) throws {
@@ -106,6 +108,7 @@ struct SkimDocument: Codable, Equatable, Sendable {
         rest = try c.decodeIfPresent(SkimRest.self, forKey: .rest) ?? SkimRest(refs: [])
         anchors = try c.decode([SkimAnchor].self, forKey: .anchors)
         stats = try? c.decodeIfPresent(SkimStats.self, forKey: .stats)
+        actions = (try? c.decode([SkimReplyAction].self, forKey: .actions)) ?? []
     }
 }
 

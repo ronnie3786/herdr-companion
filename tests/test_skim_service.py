@@ -104,7 +104,7 @@ class HookSelectionTests(SkimFixture, unittest.TestCase):
         key = self.skim_row(long_reply["id"])
         self.assertEqual((key["format"], key["prompt_version"], key["segmenter_version"], key["skim_version"],
                           key["model"], key["thinking"]),
-                         ("breath_tight", "skim-v3", 1, 1, "synthetic-provider/fast-model", "low"))
+                         ("breath_balanced", "skim-v4", 1, 1, "synthetic-provider/fast-model", "low"))
 
     def test_background_turns_and_disabled_skims_record_nothing(self):
         self.service(self.manager(), enabled=False)
@@ -140,7 +140,7 @@ class ProjectionTests(SkimFixture, unittest.TestCase):
         reply = self.reply()
         board = self.store.board(self.feature_id)
         message = next(m for m in board["messages"] if m["id"] == reply["id"])
-        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_tight", "prompt_version": "skim-v3",
+        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_balanced", "prompt_version": "skim-v4",
                                            "segmenter_version": 1, "skim_version": 1})
         pending_version = board["version"]
         self.assertTrue(self.store.board(self.feature_id, if_version=pending_version)["unchanged"])
@@ -200,7 +200,7 @@ class PipelineTests(SkimFixture, unittest.TestCase):
             self.skim_row(reply["id"])))
         self.assertEqual(row["status"], "ready", row.get("error"))
         self.assertEqual(row["output"], OUTPUT)
-        self.assertEqual(row["document"]["format"], "breath_tight")
+        self.assertEqual(row["document"]["format"], "breath_balanced")
         self.assertEqual([block["kind"] for block in row["document"]["blocks"]], ["say", "ask"])
         self.assertEqual(row["attempts"], 1)
         self.assertIsNotNone(row["duration_ms"])
@@ -214,7 +214,7 @@ class PipelineTests(SkimFixture, unittest.TestCase):
         self.assertEqual(argv[argv.index("--model") + 1], "synthetic-provider/fast-model")
         self.assertEqual(argv[argv.index("--thinking") + 1], "low")
         system = argv[argv.index("--system-prompt") + 1]
-        self.assertIn("## Shape: one tight breath", system)
+        self.assertIn("## Optional reply options", system)
         self.assertNotIn("{{", system)
         self.assertNotIn("herdr-companion-awareness", system)
         self.assertEqual(argv[argv.index("--append-system-prompt") + 1], "")
@@ -379,7 +379,7 @@ class HudChatTests(SkimFixture, unittest.TestCase):
         wait_for_status(manager, run_id, {"completed"}, timeout=10)
         served = wait_until(lambda: (lambda value: value if value and value["status"] == "ready" else None)(
             manager.get(run_id)["run"].get("skim")))
-        self.assertEqual(served["document"]["format"], "breath_tight")
+        self.assertEqual(served["document"]["format"], "breath_balanced")
         self.assertEqual(served["segments"][0]["kind"], "paragraph")
         from herdr_harness.hud_chats import history
         turn = history(manager, run_id)["turns"][0]

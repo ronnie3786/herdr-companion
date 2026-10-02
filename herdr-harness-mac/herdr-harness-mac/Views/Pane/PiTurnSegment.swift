@@ -132,7 +132,7 @@ enum PiTurnSegmentation {
         return result
     }
 
-    private static func finalAnswerIDs(
+    static func finalAnswerIDs(
         in items: [PiConversationItem],
         isActive: Bool
     ) -> Set<String> {

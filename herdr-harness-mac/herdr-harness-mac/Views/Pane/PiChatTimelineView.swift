@@ -9,6 +9,9 @@ struct PiChatTimelineView: View {
     let respond: (PiPendingInteraction, PiInteractionResponseBody) async -> Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.saveChatQuote) private var saveQuote
+    @Environment(\.chatSkimTransport) private var skimTransport
+    @State private var skims = ChatSkimCoordinator()
+    @State private var skimState = SkimDisplayState()
     @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
     private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
@@ -94,8 +97,13 @@ struct PiChatTimelineView: View {
                         // One row per segment, never per turn: a streamed token
                         // invalidates a single row. See `PiTimelineRow`.
                         ForEach(window.rows) { row in
-                            PiTimelineRowView(row: row, artifactModel: artifactModel)
+                            PiTimelineRowView(row: row, artifactModel: artifactModel,
+                                              skim: row.skimSource.flatMap { skims.values[$0.id] })
                                 .equatable()
+                                .task(id: "\(store.sessionID ?? ""):\(row.skimSource?.id ?? ""):\(skimTransport != nil):\(skims.id)") {
+                                    guard let source = row.skimSource, let skimTransport else { return }
+                                    await skims.load(source, transport: skimTransport)
+                                }
                                 .environment(\.saveChatQuote, quoteAction(for: row, assistantIDs: assistantIDs))
                                 .transition(
                                     row.startsTurn
@@ -119,6 +127,8 @@ struct PiChatTimelineView: View {
 
                 }
                 .scrollTargetLayout()
+                .environment(\.skimDisplayState, skimState)
+                .environment(\.skimScrollTo) { id in scrollPosition.scrollTo(id: id, anchor: .center) }
                 // MonoCode's centered 896pt column, rows inset 16pt inside it.
                 .padding(.horizontal, 16)
                 .frame(maxWidth: HerdrTheme.transcriptWidth, alignment: .leading)
@@ -134,6 +144,13 @@ struct PiChatTimelineView: View {
                 )
             }
             .scrollPosition($scrollPosition)
+            .onChange(of: store.sessionID) {
+                skims.cancel()
+                skims = ChatSkimCoordinator()
+                skimState = SkimDisplayState()
+            }
+            .onChange(of: isConnected) { resetSkims() }
+            .onDisappear(perform: resetSkims)
             .task(id: store.sessionBoundaryRevision) {
                 guard store.sessionBoundaryRevision > 0 else { return }
                 do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
@@ -245,6 +262,11 @@ struct PiChatTimelineView: View {
     /// An empty new session still has visible history and an empty-state CTA.
     /// Hiding solely because the *active* transcript is empty hid the entire
     /// previous chapter and divider after /new.
+    private func resetSkims() {
+        skims.cancel()
+        skims = ChatSkimCoordinator()
+    }
+
     private var hasTimelineContent: Bool {
         store.hasContent || !store.closedSessions.isEmpty || store.connection == .connected
     }

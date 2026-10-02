@@ -207,7 +207,7 @@ class NormalizeTests(unittest.TestCase):
         ])
         document, normalized, syntax = skim.skim_from_output(reply=reply, output=output)
         self.assertEqual(syntax, "markup")
-        self.assertEqual(normalized["format"], "breath_tight")
+        self.assertEqual(normalized["format"], "breath_balanced")
         self.assertEqual([block["kind"] for block in normalized["blocks"]], ["say", "ask"])
         self.assertEqual(normalized["rest"]["refs"], ["s6"])
         self.assertEqual(len(normalized["anchors"]), 4)
@@ -244,8 +244,8 @@ class PromptTests(unittest.TestCase):
     def test_packaged_prompt_fills_every_placeholder(self) -> None:
         prompt = skim.prompt_for("Why is export slow?", "It loads every row.\n\nWant me to stream it?")
         self.assertNotIn("{{", prompt.system)
-        self.assertIn("## Shape: one tight breath", prompt.system)
-        self.assertIn("Write exactly one sentence of at most 25 words", prompt.system)
+        self.assertIn("## Optional reply options", prompt.system)
+        self.assertIn("one or two sentences of at most 30 words", prompt.system)
         self.assertTrue(prompt.user.startswith("QUESTION (what the user asked the agent):\nWhy is export slow?\n\n"))
         self.assertIn("REPLY (the agent's full reply: 2 blocks, 9 words):\n[s1 para]\nIt loads every row.", prompt.user)
 

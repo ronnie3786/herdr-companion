@@ -734,7 +734,10 @@ class HerdrService:
             if self._skims is None:
                 self._skims = SkimService(SkimSettings.from_environ(self.environ),
                                           agent_runs=lambda: self.agent_runs,
-                                          publish=self.broker.publish)
+                                          publish=self.broker.publish,
+                                          chat_store_path=(str(Path(self.environ.get("HERDR_STATE_DIR") or
+                                              Path(self.environ["HOME"]) / ".local/share/herdr-companion") / "chat-skims.sqlite3")
+                                              if self.environ.get("HERDR_STATE_DIR") or self.environ.get("HOME") else ":memory:"))
             return self._skims
 
     def _dispatch_pi_event(self, envelope: dict) -> None:

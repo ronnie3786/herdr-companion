@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping, Optional
 import uuid
 
 from . import skim
+from .skim_chat_store import ChatSkimStore
 from .agent_runs import (
     MODEL_PATTERN,
     SKIM_PROFILE,
@@ -154,7 +155,8 @@ class SkimService:
     """Queue, run, and store skims without ever delaying a reply."""
 
     def __init__(self, settings: SkimSettings, *, agent_runs: Callable[[], Any],
-                 publish: Optional[Callable[[str, dict], Any]] = None) -> None:
+                 publish: Optional[Callable[[str, dict], Any]] = None,
+                 chat_store_path: str = ":memory:") -> None:
         self.settings = settings
         self._agent_runs = agent_runs
         self._publish = publish
@@ -171,6 +173,7 @@ class SkimService:
         self._sweep_now = threading.Event()
         self._threads: list[threading.Thread] = []
         self._started = False
+        self._chats = ChatSkimStore(chat_store_path)
 
     # -- wiring --------------------------------------------------------------
 
@@ -178,6 +181,36 @@ class SkimService:
         return {"enabled": self.settings.enabled, "hud_chats": self.settings.enabled and self.settings.hud_chats,
                 "min_words": self.settings.min_words, "format": skim.DEFAULT_FORMAT,
                 "prompt_version": skim.PROMPT_VERSION}
+
+    def request_chat(self, *, reply: str, question: str | None = None) -> dict:
+        """Idempotent and asynchronous: viewing a reply never waits on a model."""
+        if len(reply) > MAX_USER_MESSAGE_CHARS or (question is not None and len(question) > 16000):
+            raise AgentRunError("The reply is too large to skim.", code="skim_too_large", status=413)
+        key = self.settings.key(reply) if self.settings.enabled else None
+        if key is None:
+            return {"id": None, "skim": None}
+        question = _question(question)
+        identifier = hashlib.sha256(json.dumps([key, question], sort_keys=True).encode()).hexdigest()
+        state = self._chats.create(identifier, {**key, "status": "pending", "updated_at": _now()}, question, reply)
+        self.start()
+        if state["status"] == "pending":
+            self._enqueue(("chat", identifier), _NEW)
+        return {"id": identifier, "skim": skim.served(state)}
+
+    def chat(self, identifier: str) -> dict:
+        state = self._chats.get(identifier)
+        if state is None:
+            raise AgentRunError("This skim is no longer cached.", code="skim_not_found", status=404)
+        return {"id": identifier, "skim": skim.served(state)}
+
+    def _skim_chat(self, identifier: str) -> None:
+        source = self._chats.begin(identifier)
+        if source is None:
+            return
+        state, question, reply = source
+        outcome = self._infer(question, reply, state)
+        if outcome is not None:
+            self._chats.finish(identifier, outcome)
 
     def attach_store(self, store: Any) -> None:
         """Record pending skims with First Mate replies and queue them after commit."""
@@ -200,6 +233,8 @@ class SkimService:
             self._started = True
         if not self.settings.enabled:
             # Turning skims off never strands a reader on "Skimming".
+            for identifier in self._chats.pending():
+                self._chats.finish(identifier, {"status": "failed"})
             if self._store is not None:
                 for feature_id in self._store.abandon_pending_skims("disabled"):
                     self._changed(feature_id)
@@ -266,6 +301,8 @@ class SkimService:
             try:
                 if job[0] == "message":
                     self._skim_message(job[1])
+                elif job[0] == "chat":
+                    self._skim_chat(job[1])
                 else:
                     self._skim_run(job[1])
             except Exception as exc:  # A skim is optional; never take the worker down.
@@ -278,7 +315,9 @@ class SkimService:
     def _settle_after_error(self, job: tuple[str, str]) -> None:
         """Never leave a reader on "Skimming" because a job broke midway."""
         try:
-            if job[0] == "message" and self._store is not None:
+            if job[0] == "chat":
+                self._chats.finish(job[1], {"status": "failed"})
+            elif job[0] == "message" and self._store is not None:
                 feature_id = self._store.finish_skim(job[1], "failed", error="internal")
                 if feature_id:
                     self._changed(feature_id)
@@ -435,6 +474,8 @@ class SkimService:
 
     def _recover(self) -> None:
         """Resume pending skims a restart interrupted (each runs at most twice)."""
+        for identifier in self._chats.pending():
+            self._enqueue(("chat", identifier), _NEW)
         if self._store is not None:
             for message_id in self._store.pending_skims():
                 self._enqueue(("message", message_id), _NEW)

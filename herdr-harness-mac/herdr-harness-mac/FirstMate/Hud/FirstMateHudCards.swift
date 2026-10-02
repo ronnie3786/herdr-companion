@@ -520,6 +520,7 @@ private struct FirstMateHudLeadTranscript: View {
                     Color.clear.frame(height: 1).id(FirstMateChatTranscript.endID)
                 }
                 .environment(\.skimDisplayState, controller.leadSkimState)
+                .environment(\.skimReplyContext, FirstMateSkimReplies.context(snapshot: snapshot, store: store, canControl: store.controlAvailable || store.isDemo))
                 .environment(\.skimScrollTo) { id in
                     withAnimation(nil) { proxy.scrollTo(id, anchor: .center) }
                 }

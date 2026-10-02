@@ -24,8 +24,8 @@ from typing import Any, Iterable, Mapping
 
 SEGMENTER_VERSION = 1
 SKIM_VERSION = 1
-PROMPT_VERSION = "skim-v3"
-DEFAULT_FORMAT = "breath_tight"
+PROMPT_VERSION = "skim-v4"
+DEFAULT_FORMAT = "breath_balanced"
 
 # ECMAScript `\s`: WhiteSpace plus LineTerminator. Python's `\s` differs (it
 # includes U+001C–U+001F and U+0085 and omits U+FEFF), so spell it out.
@@ -491,6 +491,7 @@ FORMATS = {
     "breath_next": {"cap": 45, "floor": 16},
     "breath_reply": {"cap": 45, "floor": 16},
     "breath_tight": {"cap": 35, "floor": 12},
+    "breath_balanced": {"cap": 42, "floor": 36},
 }
 VOICES = {
     "buddy": {
@@ -510,6 +511,9 @@ VOICES = {
 
 def budget(source_words: int, voice: str = "buddy", format: str = "notes") -> dict:
     """Word budget for the headline and blocks. Short replies never get longer."""
+    if format == "breath_balanced":
+        original = budget(source_words, voice, "breath_tight")
+        return {key: js_round(value * 1.2) for key, value in original.items()}
     tone = VOICES.get(voice, VOICES["buddy"])
     shape_limits = FORMATS.get(format, FORMATS["notes"])
     floor = min(tone["floor"], shape_limits["cap"])
@@ -530,6 +534,8 @@ def shape(limits: dict, format: str = "notes") -> str:
         return f"Each slot gets one short sentence, two at most. {cap}"
     if format == "breath_tight":
         return f"Write exactly one sentence of at most 25 words, include an optional next-step line only when the reply explicitly contains that question or suggestion. {cap}"
+    if format == "breath_balanced":
+        return f"Write one or two sentences of at most 30 words combined, then an optional next-step line. {cap} Reply options are excluded from this budget."
     if format.startswith("breath"):
         return f"Write one or two sentences, include an optional next-step line only when the reply explicitly contains that question or suggestion. {cap}"
     if limits["max"] <= 30:
@@ -571,7 +577,7 @@ def build_prompt(*, template: str, format_template: str = "", question: str | No
 
 
 _MARKUP_LINE = re.compile(
-    rf"^{_S}*(status|headline|say|what|why|next|reply|ask|heads[_ -]?up|caveat|drawer){_S}*:{_S}?({_DOT}*)\Z",
+    rf"^{_S}*(status|headline|say|what|why|next|reply|ask|heads[_ -]?up|caveat|drawer|action){_S}*:{_S}?({_DOT}*)\Z",
     re.IGNORECASE | re.ASCII,
 )
 _MARKUP_ITEM = re.compile(rf"^{_S}*(?:[-*•]|[0-9]{{1,2}}[.)]){_S}+({_DOT}*)\Z")
@@ -610,6 +616,11 @@ def parse_markup(raw: Any, *, final: bool = True) -> tuple[dict, list[str]]:
             elif key == "headline":
                 parsed["headline"] = value
                 last = {"obj": parsed, "key": "headline"}
+            elif key == "action":
+                fields = [js_trim(part) for part in value.split("|")]
+                if len(fields) == 3:
+                    parsed.setdefault("actions", []).append(dict(zip(("label", "explanation", "refs"), fields)))
+                last = None
             elif key == "drawer":
                 fields = [js_trim(part) for part in value.split("|")]
                 title, kind, refs = (fields + ["", "", ""])[:3]
@@ -921,6 +932,8 @@ def normalize(parsed: Any, reply: ReplyDocument, *, voice: str = "buddy",
         "drawers": drawers,
         "rest": {"refs": uncovered},
         "anchors": anchors,
+        **({"actions": normalize_actions(parsed.get("actions"), reply, blocks)}
+           if isinstance(parsed, dict) and "actions" in parsed else {}),
         "stats": {
             "sourceWords": source_words,
             "skimWords": skim_words,
@@ -932,6 +945,56 @@ def normalize(parsed: Any, reply: ReplyDocument, *, voice: str = "buddy",
         },
         "warnings": warnings,
     }
+
+
+def _followup_sentences(text: str) -> list[str]:
+    cleaned = " ".join(re.sub(r"[`*_]", "", text).split())
+    return [re.sub(r"^(?:[-+>] |\d+[.)] )", "", sentence)
+            for sentence in re.split(r"(?<=[.!?])\s+", cleaned)]
+
+
+def _is_followup_sentence(sentence: str) -> bool:
+    return sentence.endswith("?") or bool(re.match(
+        r"(?i)^(?:suggested next step:|next step:|I (?:suggest|recommend)|you (?:can|could|should)|(?:reply|respond) with |please |let me know (?:which|whether|when|what))", sentence))
+
+
+def normalize_actions(raw: Any, reply: ReplyDocument, blocks: list[dict]) -> list[dict]:
+    """Optional reply buttons are bounded, plain text, and grounded in source blocks.
+
+    A malformed option is dropped without sacrificing an otherwise useful skim.
+    Older documents have no actions, and legacy `reply` lines stay non-actionable.
+    """
+    if not isinstance(raw, list) or not any(block["kind"] in {"ask", "next"} for block in blocks):
+        return []
+    ids = {segment["id"] for segment in reply.segments
+           if segment["kind"] not in {"code", "table", "rule", "quote"}
+           and any(_is_followup_sentence(sentence) for sentence in _followup_sentences(segment["text"]))}
+    result: list[dict] = []
+    labels: set[str] = set()
+    for entry in raw[:12]:
+        if not isinstance(entry, dict):
+            continue
+        label, explanation = entry.get("label"), entry.get("explanation")
+        if not isinstance(label, str) or not isinstance(explanation, str):
+            continue
+        label, explanation = label.strip(), explanation.strip()
+        if (not 1 <= words(label) <= 5 or len(label) > 64 or not explanation or len(explanation) > 240
+                or any(ord(c) < 32 for c in label + explanation)
+                or any(c in label for c in "[]`*<>|") or label.casefold() in labels):
+            continue
+        refs = []
+        for start, end in parse_refs(_refs_text(entry.get("refs"))):
+            if end - start > 32:
+                continue
+            refs.extend(f"s{n}" for n in range(start, end + 1))
+        if not refs or not all(ref in ids for ref in refs):
+            continue
+        labels.add(label.casefold())
+        result.append({"id": f"r{len(result) + 1}", "label": label, "explanation": explanation,
+                       "refs": list(dict.fromkeys(refs))})
+        if len(result) == 3:
+            break
+    return result
 
 
 def skim_from_output(*, reply: str, output: str, voice: str = "buddy", format: str = DEFAULT_FORMAT) -> tuple[ReplyDocument, dict, str]:
@@ -971,17 +1034,11 @@ def _ground_followups(document: Any, reply: str) -> Any:
         for source in segments:
             if source["kind"] in {"code", "table", "rule"}:
                 continue
-            original = clean(source["text"])
-            # Match a full sentence, not a fragment that changes a statement
-            # into a question or extracts an action from a negation.
-            sentences = re.split(r"(?<=[.!?])\s+", original)
-            for sentence in sentences:
-                sentence = re.sub(r"^(?:[-+>] |\d+[.)] )", "", sentence)
-                if text != sentence:
-                    continue
-                if sentence.endswith("?") or re.match(
-                        r"(?i)^(?:suggested next step:|next step:|I (?:suggest|recommend)|you (?:can|could|should)|please |let me know (?:which|whether|when|what))", sentence):
-                    return True
+            # Match a complete offered sentence, never an action extracted
+            # from a statement or negation.
+            if any(text == sentence and _is_followup_sentence(sentence)
+                   for sentence in _followup_sentences(source["text"])):
+                return True
         return False
     original_blocks = document.get("blocks", [])
     blocks = [b for b in original_blocks if b.get("kind") not in {"ask", "next", "reply"} or supported(b)]
@@ -990,6 +1047,8 @@ def _ground_followups(document: Any, reply: str) -> Any:
     import copy
     result = copy.deepcopy(document)
     result["blocks"] = blocks
+    if "actions" in result and not any(b.get("kind") in {"ask", "next"} for b in blocks):
+        result["actions"] = []
     ids = set()
     def collect(value):
         if isinstance(value, dict):

@@ -56,6 +56,7 @@ struct HerdrHudTranscriptView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .environment(\.skimDisplayState, skimState)
+                    .environment(\.skimReplyContext, skimReplyContext)
                     .environment(\.skimScrollTo) { id in proxy.scrollTo(id, anchor: .center) }
                 }
                 .scrollIndicators(.hidden)
@@ -79,6 +80,33 @@ struct HerdrHudTranscriptView: View {
             exchange.response?.isEmpty == false
                 && (exchange.status == .completed || exchange.status == .promoted)
         })?.id
+    }
+
+    private var skimReplyContext: SkimReplyContext? {
+        guard let exchange = session.exchanges.last,
+              exchange.status == .completed,
+              !session.hasEnded, !session.exchanges.contains(where: { $0.promotedPaneID != nil }) else { return nil }
+        return SkimReplyContext(messageID: exchange.id, disabledReason: skimReplyDisabledReason) { text in
+            guard session.exchanges.last?.id == exchange.id,
+                  session.exchanges.last?.response == exchange.response,
+                  session.exchanges.last?.machineID == exchange.machineID, skimReplyDisabledReason == nil,
+                  !session.hasEnded, !session.exchanges.contains(where: { $0.promotedPaneID != nil }) else { return false }
+            // Existing submit preserves failed drafts and pins the destination.
+            // Only an empty composer reaches this point, so no input is replaced.
+            session.draft = text
+            await session.submit(model: model)
+            return session.exchanges.last?.id != exchange.id
+        }
+    }
+
+    private var skimReplyDisabledReason: String? {
+        SkimReplyAvailability.disabledReason(
+            connected: session.exchanges.last.map { model.canControl(machineID: $0.machineID) } ?? false,
+            busy: session.isRunning || session.isEnding || session.isLoadingHistory || session.needsHistoryRefresh
+                || !session.promotingExchangeIDs.isEmpty,
+            hasDraft: !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !session.pendingAttachments.isEmpty || !session.pendingQuotes.isEmpty
+        )
     }
 
     private var latestPromotableExchangeID: String? {

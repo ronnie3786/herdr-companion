@@ -20,6 +20,7 @@ struct PiTimelineRow: Identifiable, Equatable {
     let startsTurn: Bool
     /// The very first row: no spacing above it at all.
     let isFirstInTimeline: Bool
+    var skimSource: ChatSkimSource? = nil
 
     var topSpacing: CGFloat {
         if isFirstInTimeline { return 0 }
@@ -32,7 +33,8 @@ struct PiTimelineRow: Identifiable, Equatable {
             turnID: turnID,
             content: content,
             startsTurn: startsTurn,
-            isFirstInTimeline: true
+            isFirstInTimeline: true,
+            skimSource: skimSource
         )
     }
 
@@ -49,6 +51,7 @@ struct PiTimelineRow: Identifiable, Equatable {
         var isFirstTurn = true
 
         for turn in turns {
+            let skimSources = ChatSkimSource.sources(in: turn)
             var contents: [(id: String, content: Content)] = []
             if let user = turn.user {
                 contents.append(("\(turn.id)|user", .user(user)))
@@ -79,7 +82,11 @@ struct PiTimelineRow: Identifiable, Equatable {
                         turnID: turn.id,
                         content: entry.content,
                         startsTurn: index == 0,
-                        isFirstInTimeline: isFirstTurn && index == 0
+                        isFirstInTimeline: isFirstTurn && index == 0,
+                        skimSource: {
+                            guard case let .output(.assistant(block)) = entry.content else { return nil }
+                            return skimSources[block.id]
+                        }()
                     )
                 )
             }
@@ -129,10 +136,11 @@ enum PiTimelineMetrics {
 struct PiTimelineRowView: View, Equatable {
     let row: PiTimelineRow
     var artifactModel: HerdrAppModel? = nil
+    var skim: FirstMateSkim? = nil
     @Environment(\.chatQuoteSource) private var quoteSource
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.row == rhs.row
+        lhs.row == rhs.row && lhs.skim == rhs.skim
     }
 
     var body: some View {
@@ -149,7 +157,11 @@ struct PiTimelineRowView: View, Equatable {
         case let .user(message):
             PiUserMessageView(message: message)
         case let .output(item):
-            PiConversationItemView(item: item)
+            if case let .assistant(block) = item {
+                PiAssistantMessageView(block: block, skim: skim, isSkimmable: row.skimSource != nil)
+            } else {
+                PiConversationItemView(item: item)
+            }
         case let .working(group):
             PiWorkingGroupView(group: group)
         case let .artifacts(artifacts):

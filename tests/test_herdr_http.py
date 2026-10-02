@@ -607,6 +607,27 @@ class HerdrHTTPTests(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             return exc.code, exc.headers, json.loads(exc.read())
 
+    def test_chat_skims_require_authentication_and_bound_inputs(self):
+        self.service.skims = Mock()
+        self.service.skims.capabilities.return_value = {"enabled": True, "min_words": 80}
+        self.service.skims.request_chat.return_value = {"id": "abc", "skim": {"status": "pending"}}
+        self.service.skims.chat.return_value = {"id": "abc", "skim": {"status": "ready"}}
+        path = "/api/v1/skims"
+        payload = {"reply": "A synthetic completed reply.", "question": "What happened?"}
+        self.assertEqual(self.request(path, method="POST", payload=payload, token=None)[0], 401)
+        self.service.skims.request_chat.assert_not_called()
+        self.assertEqual(self.request(path + "/capabilities")[2]["min_words"], 80)
+        status, _, pending = self.request(path, method="POST", payload=payload)
+        self.assertEqual(status, 202)
+        self.assertEqual(pending["skim"]["status"], "pending")
+        self.service.skims.request_chat.assert_called_once_with(**payload)
+        self.assertEqual(self.request(path + "/abc")[2]["skim"]["status"], "ready")
+        self.assertEqual(self.request(path + "/abc", token=None)[0], 401)
+        for invalid in ({"reply": 7}, {**payload, "model": "override"}, {**payload, "question": 0}, {"reply": "x" * 131073}):
+            with self.subTest(invalid=list(invalid)):
+                self.assertEqual(self.request(path, method="POST", payload=invalid)[0], 400)
+        self.assertIn("chat-skim-v1", self.request("/api/v1")[2]["capabilities"])
+
     def test_pane_retirement_is_advertised_authenticated_and_identity_bound(self):
         description = self.request("/api/v1")[2]
         self.assertIn("pane-retirement-v1", description["capabilities"])

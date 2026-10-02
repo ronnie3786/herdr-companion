@@ -468,6 +468,7 @@ def api_description() -> dict:
             "first-mate-lead-v1",
             first_mate_peers.CAPABILITY,
             first_mate_fleet.CAPABILITY,
+            "chat-skim-v1",
             VERIFICATION_CAPABILITY,
             "first-mate-lenient-verification-recording-v1", POLICY_VERSION,
             simulator_previews.CAPABILITY,
@@ -2177,6 +2178,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return service.captioned_speech.synthesize(text=_string(body.get("text"), "text", maximum=12000), voice=body.get("voice"), cues=body.get("cues", []))
             if method == "GET" and tail == ["response-audio", "capabilities"]:
                 return service.response_audio_capabilities()
+            if method == "GET" and tail == ["skims", "capabilities"]:
+                return service.skims.capabilities()
+            if method == "POST" and tail == ["skims"]:
+                if any(key not in {"reply", "question"} for key in body):
+                    raise HTTPValidationError("Skim request contains an unsupported field")
+                return service.skims.request_chat(
+                    reply=_string(body.get("reply"), "reply", maximum=131072),
+                    question=_string(body["question"], "question", maximum=16000) if body.get("question") is not None else None,
+                ), 202
+            if method == "GET" and len(tail) == 2 and tail[0] == "skims":
+                return service.skims.chat(_identifier(tail[1], "skim ID"))
             if method == "GET" and tail == ["quick-voice"]:
                 return service.quick_voice.list()
             if method == "POST" and tail == ["quick-voice"]:

@@ -219,6 +219,7 @@ struct FirstMateChatView: View {
                     Color.clear.frame(height: 1).id("first-mate-chat-end")
                 }
                 .environment(\.skimDisplayState, skimState)
+                .environment(\.skimReplyContext, FirstMateSkimReplies.context(snapshot: snapshot, store: store, canControl: canControl))
                 .environment(\.skimScrollTo) { id in
                     withAnimation(nil) { proxy.scrollTo(id, anchor: .center) }
                 }

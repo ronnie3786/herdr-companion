@@ -117,7 +117,7 @@ The window needs the same fleet data the HUD spec defines: a short label, emoji,
 - **More than one machine:** add the machine name to the chat header's subtitle. The list itself stays unlabeled. Searching by machine name works.
 
 ### 4.2 Chat
-- **Header (60 pt):** the avatar, the name, the status label, "Step 4 of 6, QA" (hidden when the step is unknown), the machine name when there are several, and the inspector toggle.
+- **Header (60 pt):** the avatar, the name, the status label, "Step 4 of 6, QA" (hidden when the step is unknown), the machine name when there are several, and the inspector toggle. The 38 pt avatar is vertically centered in the bar; the name and status line form one leading-aligned column 2 pt apart, centered beside it.
 - **Bubbles:**
   - First Mate's are ink at 6% with a hairline; yours are accent at 20% with an accent edge.
   - 17 pt radius, and the tail corner is 5 pt on the last bubble of a group.

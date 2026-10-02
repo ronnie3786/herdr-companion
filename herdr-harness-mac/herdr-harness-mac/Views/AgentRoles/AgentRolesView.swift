@@ -64,9 +64,8 @@ struct AgentRolesView: View {
         .accessibilityIdentifier("agent-roles-view")
         .task {
             refreshConnections()
-            async let roles: Void = store.loadIfNeeded()
-            async let skills: Void = store.catalog.refresh()
-            _ = await (roles, skills)
+            await store.catalog.refresh()
+            await store.loadIfNeeded()
         }
         .onChange(of: store.isSaving) { _, saving in
             if !saving {
@@ -113,9 +112,8 @@ struct AgentRolesView: View {
         case .reload:
             refreshConnections()
             Task {
-                async let roles: Void = store.load()
-                async let skills: Void = store.catalog.refresh()
-                _ = await (roles, skills)
+                await store.catalog.refresh()
+                await store.load()
             }
         }
     }

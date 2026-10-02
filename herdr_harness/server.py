@@ -476,6 +476,7 @@ def api_description() -> dict:
             simulator_previews.CAPABILITY,
             "pr-review-v1",
             "pr-review-comments-v1",
+            "pr-review-agents-v1",
             "pr-review-guide-v1",
             "pr-review-walkthroughs-v1",
             "pr-review-context-v2",
@@ -1626,7 +1627,10 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             store = service.pr_review_store
             runtime = service.pr_review
             if method == "GET" and tail == ["capabilities"]:
-                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-comments-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-walkthroughs-v1", "pr-review-comparison-v1", "git-comparison-v1"], **runtime.capabilities(), "skills": store.skills()}
+                details = runtime.capabilities()
+                if self._authorization_scope != "main":
+                    details.pop("agents", None)
+                return {"ok": True, "capabilities": ["pr-review-v1", "pr-review-comments-v1", "pr-review-agents-v1", "pr-review-dashboard-v1", "pr-review-context-v2", "pr-review-guide-v1", "pr-review-walkthroughs-v1", "pr-review-comparison-v1", "git-comparison-v1"], **details, "skills": store.skills()}
             if method == "POST" and tail == ["review-status", "refresh"]:
                 if set(body) != {"request_id"}:
                     raise HTTPValidationError("Review status refresh contains an unsupported field")
@@ -1651,9 +1655,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("scope is invalid")
                     return {"ok": True, "reviews": store.list_reviews(scope)}
                 if method == "POST":
-                    if set(body) - {"url", "request_id", "skill_ids", "actor"}:
+                    if set(body) - {"url", "request_id", "skill_ids", "agent_ids", "actor"}:
                         raise HTTPValidationError("Review contains an unsupported field")
-                    review = runtime.create_review(_string(body.get("url"), "url", maximum=4096), _string(body.get("request_id"), "request_id", maximum=200), body.get("skill_ids") or [], body.get("actor") or "")
+                    options = {}
+                    if "agent_ids" in body:
+                        if self._authorization_scope != "main":
+                            raise HTTPValidationError("Saved review agents require full authentication", code="review_agents_scope_forbidden", status=403)
+                        if "skill_ids" in body:
+                            raise HTTPValidationError("Choose agent_ids or skill_ids")
+                        options["agent_ids"] = body["agent_ids"]
+                    review = runtime.create_review(_string(body.get("url"), "url", maximum=4096), _string(body.get("request_id"), "request_id", maximum=200), body.get("skill_ids") or [], body.get("actor") or "", **options)
+                    if "agent_ids" in body:
+                        return {"ok": True, **store.snapshot(review["id"])}, 201
                     return {"ok": True, "review": review}, 201
                 raise HTTPValidationError("PR Review endpoint not found", code="not_found", status=404)
             review_id = _identifier(tail[0], "review_id")
@@ -1731,8 +1744,17 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if rest == ["findings"] and method == "GET":
                 return {"ok": True, **runtime.findings_for_path(review_id, _string((query.get("path") or [None])[0], "path", maximum=4096))}
             if rest == ["runs"] and method == "POST":
-                if set(body) - {"skill_id", "request_id", "actor"}:
+                if set(body) - {"skill_id", "agent_id", "agent_ids", "request_id", "actor"}:
                     raise HTTPValidationError("Run contains an unsupported field")
+                selectors = {"skill_id", "agent_id", "agent_ids"}.intersection(body)
+                if len(selectors) != 1:
+                    raise HTTPValidationError("Choose exactly one of skill_id, agent_id, or agent_ids")
+                if selectors != {"skill_id"}:
+                    if self._authorization_scope != "main":
+                        raise HTTPValidationError("Saved review agents require full authentication", code="review_agents_scope_forbidden", status=403)
+                    ids = body["agent_ids"] if "agent_ids" in body else [_identifier(body["agent_id"], "agent_id")]
+                    runs = runtime.start_agent_runs(review_id, ids, _string(body.get("request_id"), "request_id", maximum=200), body.get("actor") or "")
+                    return {"ok": True, **({"runs": runs} if "agent_ids" in body else {"run": runs[0]})}, 202
                 run = runtime.start_run(review_id, _identifier(body.get("skill_id"), "skill_id"), _string(body.get("request_id"), "request_id", maximum=200), body.get("actor") or "")
                 return {"ok": True, "run": run}, 202
             if len(rest) >= 2 and rest[0] == "runs":

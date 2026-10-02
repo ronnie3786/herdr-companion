@@ -1,6 +1,7 @@
 """Script execution with isolated control settings and bounded result payloads."""
 from __future__ import annotations
 
+import fcntl
 import os
 import pwd
 import shutil
@@ -43,6 +44,29 @@ def kill_group(pid, sig=signal.SIGKILL):
         pass
 
 
+def wait_for_descendants(path, *, timeout=10):
+    """Wait for inherited descriptors to close, including after asynchronous kill.
+
+    The runner keeps its separate execution lock throughout this wait. A probe
+    of this child-only lock observes process exit without relying on zombie
+    process groups disappearing or unlocking the shared crash-recovery fence.
+    """
+    descriptor = os.open(path, os.O_RDWR)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('Script descendants did not finish cleanup after termination') from None
+                time.sleep(min(0.01, remaining))
+    finally:
+        os.close(descriptor)
+
+
 def execute(step, *, run_dir, watcher_id, run_id, input_path, state_dir, environ, stopped, on_process=None, execution_lock=None):
     run_dir = Path(run_dir)
     step_dir = private_dir(run_dir / 'steps' / step['id'])
@@ -59,10 +83,18 @@ def execute(step, *, run_dir, watcher_id, run_id, input_path, state_dir, environ
     timed_out, was_stopped = False, False
     private_write(stdout_path, '')
     private_write(stderr_path, '')
+    descendants_lock = step_dir / 'descendants.lock'
     with stdout_path.open('wb') as stdout, stderr_path.open('wb') as stderr:
-        process = subprocess.Popen([interpreter, str(script)], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                   stdout=stdout, stderr=stderr, start_new_session=True,
-                                   pass_fds=(execution_lock,) if execution_lock is not None else ())
+        descriptor = os.open(descendants_lock, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            inherited = (descriptor, execution_lock) if execution_lock is not None else (descriptor,)
+            process = subprocess.Popen([interpreter, str(script)], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                       stdout=stdout, stderr=stderr, start_new_session=True, pass_fds=inherited)
+        finally:
+            # Only script processes now own this lock; the runner still owns
+            # execution_lock, which also survives in any orphaned descendants.
+            os.close(descriptor)
         if on_process:
             on_process(process.pid)
         try:
@@ -96,6 +128,7 @@ def execute(step, *, run_dir, watcher_id, run_id, input_path, state_dir, environ
                     # can return EPERM after its leader has already exited. The
                     # live-process timeout/stop signals above remain strict.
                     pass
+            wait_for_descendants(descendants_lock)
             if on_process:
                 on_process(None)
     selected = output_path if output_path.is_file() else stdout_path

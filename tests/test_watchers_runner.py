@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -12,6 +14,7 @@ from unittest.mock import patch
 
 from herdr_harness.watchers import runner
 from herdr_harness.watchers.runtime import WatchersRuntime, lock_held
+from herdr_harness.watchers.steps import script
 from herdr_harness.watchers.steps.script import OUTPUT_LIMIT, environment
 from herdr_harness.watchers.store import WatchersStore
 
@@ -202,6 +205,63 @@ class WatcherRunnerTests(unittest.TestCase):
         self.assertEqual(run['status'], 'finished')
         time.sleep(1.1)
         self.assertFalse(marker.exists())
+
+    def test_completion_waits_for_descendant_exit_before_releasing_runner_lock(self):
+        watcher = self.create('sleep 30 & printf finished', gate=False, deliver=False)
+        run = self.store.create_run(watcher['id'], 'manual')
+        run_dir = self.store.root / watcher['id'] / 'runs' / run['id']
+        descendants_lock = run_dir / 'steps' / 'find' / 'descendants.lock'
+        waiting, returned = threading.Event(), threading.Event()
+        groups, results = [], []
+        kill_group, flock = script.kill_group, fcntl.flock
+
+        def observe_lock(descriptor, operation):
+            try:
+                return flock(descriptor, operation)
+            except BlockingIOError:
+                if descendants_lock.exists() and os.fstat(descriptor).st_ino == descendants_lock.stat().st_ino:
+                    waiting.set()
+                raise
+
+        def execute():
+            try:
+                results.append(runner.run(run_dir, environ={'PATH': '/usr/bin:/bin'}))
+            finally:
+                returned.set()
+
+        # Model the interval after SIGKILL is issued but before descendants
+        # have exited. Deliver the signal only after observing the exit fence.
+        with patch.object(script, 'kill_group', side_effect=lambda pid, sig=signal.SIGKILL: groups.append(pid)), \
+                patch.object(fcntl, 'flock', side_effect=observe_lock):
+            worker = threading.Thread(target=execute)
+            worker.start()
+            try:
+                self.assertTrue(waiting.wait(timeout=5), 'Script cleanup did not reach its exit fence')
+                self.assertTrue(lock_held(descendants_lock))
+                self.assertTrue(lock_held(run_dir / 'runner.lock'))
+                self.assertEqual(self.store.get_run(run['id'])['status'], 'running')
+                self.assertFalse(returned.is_set())
+            finally:
+                for pid in groups:
+                    kill_group(pid)
+                worker.join(timeout=15)
+        self.assertFalse(worker.is_alive(), 'Runner did not finish after descendants exited')
+        self.assertEqual(results, [0])
+        self.assertEqual(self.store.get_run(run['id'])['status'], 'finished')
+        self.assertFalse(lock_held(run_dir / 'runner.lock'))
+
+    def test_descendant_cleanup_timeout_keeps_inherited_lock_owned(self):
+        path = self.base / 'descendants.lock'
+        descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with patch.object(script.time, 'monotonic', side_effect=[0, 11]):
+                with self.assertRaisesRegex(TimeoutError, 'did not finish cleanup'):
+                    script.wait_for_descendants(path, timeout=10)
+            self.assertTrue(lock_held(path))
+        finally:
+            os.close(descriptor)
+        self.assertFalse(lock_held(path))
 
     def test_known_credential_patterns_are_redacted_without_environment_values(self):
         token = 'ghp_' + 'a' * 36

@@ -5497,7 +5497,9 @@ final class HerdrAppModel {
                            announcedWatcherInboxIDs.insert(notice.id).inserted {
                             await notice.post()
                         }
-                    } else if event.event == "pr_review.updated" {
+                    } else if event.event == "pr_review.updated" || event.event == "agent_roles.changed" {
+                        // PR pickers read their saved agent catalog from capabilities.
+                        // Reuse the scoped review refresh without resetting selections.
                         prReviewRefreshTick &+= 1
                     } else if event.event == "pr_review.walkthrough" {
                         prReviewRefreshTick &+= 1

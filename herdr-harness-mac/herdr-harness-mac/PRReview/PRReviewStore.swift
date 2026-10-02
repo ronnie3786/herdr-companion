@@ -58,6 +58,11 @@ final class PRReviewStore {
     private var comparisonLoadedIdentity: PRReviewDiffRequestIdentity?
     private var comparisonDiff: PRReviewDiff?
     private var comparisonViewed: [String: Set<String>] = [:]
+    private(set) var viewedHistory = PRReviewViewedHistory()
+    @ObservationIgnored private var viewedWriteTail: Task<Void, Never>?
+    @ObservationIgnored private var viewedWriteTailID: UUID?
+    @ObservationIgnored private var viewedWriteEpoch = UUID()
+    @ObservationIgnored private var pendingViewed: [String: (id: UUID, viewed: Bool)] = [:]
     @ObservationIgnored private var comparisonSeedRevision: (baseSHA: String, headSHA: String)?
     var diffStyle = "unified"
     var diffOverflow = "scroll"
@@ -92,9 +97,29 @@ final class PRReviewStore {
     var unsupported = false
     var error: String?
     var capabilities: PRReviewCapabilities?
+    private(set) var isQueueingAgents = false
+    @ObservationIgnored private var agentQueueID: UUID?
     var documentUploads: [String: PRReviewDocumentUpload] = [:]
     var contextImportError: String?
     var unconfigured = false
+
+    var supportsReviewAgents: Bool { isDemo || capabilities?.supportsAgents == true }
+    var reviewAgents: [AgentRole] {
+        (isDemo ? PRReviewAgentDemo.agents : capabilities?.agents ?? []).filter(\.isPRReview)
+    }
+
+    var currentAgentRuns: [PRReviewRun] {
+        guard let snapshot else { return [] }
+        if let consolidation = snapshot.consolidation, consolidation.matches(snapshot.review) {
+            let inputs = Set(consolidation.inputRunIDs)
+            return snapshot.runs.filter { inputs.contains($0.id) }
+        }
+        return []
+    }
+
+    var activeAgentIDs: Set<String> {
+        Set((snapshot?.runs ?? []).filter(\.isActive).compactMap(\.agentID))
+    }
 
     /// Every document resource this store has published a phase for. A
     /// connection change retires phases still marked `.downloading` so a slow
@@ -195,6 +220,7 @@ final class PRReviewStore {
         comparisonLoadError = nil
         isLoadingComparison = false
         comparisonViewed = [:]
+        viewedHistory.removeAll()
         hasLoaded = false
         unsupported = false
         error = nil
@@ -213,7 +239,10 @@ final class PRReviewStore {
 
     func select(_ id: String?) {
         guide.suspend()
+        invalidateViewedWrites()
         isRefreshingReview = false
+        agentQueueID = nil
+        isQueueingAgents = false
         selectedReviewID = id
         snapshot = nil
         diff = nil
@@ -230,6 +259,7 @@ final class PRReviewStore {
         comparisonLoadError = nil
         isLoadingComparison = false
         comparisonViewed = [:]
+        viewedHistory.removeAll()
         error = nil
         expandedDeletedPaths = []
         deletedDisclosureScope = nil
@@ -260,6 +290,7 @@ final class PRReviewStore {
         diffLoadError = nil
         diffLoadErrorIdentity = nil
         if machineChanged {
+            viewedHistory.removeAll()
             deletedDisclosureScope = nil
             resetDeletedContentDisclosure()
         }
@@ -600,6 +631,7 @@ final class PRReviewStore {
             comparisonSeedRevision = nil
             if seed.baseSHA != value.review.baseSHA || seed.headSHA != value.review.headSHA || !supportsComparisons {
                 comparisonSelection = .all
+                viewedHistory.removeAll()
                 selectedPath = nil
                 error = "The saved comparison is no longer available. Showing current PR changes."
             }
@@ -610,14 +642,23 @@ final class PRReviewStore {
             .retainingNewerViewerState(from: snapshot?.review)
         if let previous = snapshot?.review,
            previous.baseSHA != value.review.baseSHA || previous.headSHA != value.review.headSHA {
+            invalidateViewedWrites()
             comparisonSelection = .all
             comparisonCommits = nil
             comparisonDiff = nil
             comparisonLoadedIdentity = nil
             comparisonViewed = [:]
+            viewedHistory.removeAll()
             highlight = nil
             visibleLines = nil
             scrollRequest = nil
+        }
+        // Polling and agent events may arrive before a queued Viewed write.
+        // Keep the latest requested value visible until its own save settles.
+        for index in value.files.indices {
+            if let pending = pendingViewed[value.files[index].path] {
+                value.files[index].viewed = pending.viewed
+            }
         }
         snapshot = value
         selectedReviewID = value.review.id
@@ -631,6 +672,55 @@ final class PRReviewStore {
         }
         reconcileSettledUploads(with: value)
         guide.configure(store: self)
+    }
+
+    var canUndoViewed: Bool { viewedHistory.canUndo }
+    var canRedoViewed: Bool { viewedHistory.canRedo }
+
+    func setViewedRecordingUndo(paths: [String], viewed: Bool) async {
+        let requestedPaths = Set(paths)
+        let changes = comparisonFiles.filter { requestedPaths.contains($0.path) && $0.viewed != viewed }
+            .map { PRReviewViewedHistory.Change(path: $0.path, before: $0.viewed) }
+        if !changes.isEmpty {
+            viewedHistory.record(.init(changes: changes, after: viewed))
+        }
+        await setViewed(paths: paths, viewed: viewed)
+    }
+
+    func undoViewed() async {
+        guard let entry = viewedHistory.takeUndo() else { return }
+        await applyViewedHistory(entry, undo: true)
+    }
+
+    func redoViewed() async {
+        guard let entry = viewedHistory.takeRedo() else { return }
+        await applyViewedHistory(entry, undo: false)
+    }
+
+    private func applyViewedHistory(_ entry: PRReviewViewedHistory.Entry, undo: Bool) async {
+        let scope = operationScope(reviewID: selectedReviewID)
+        let epoch = viewedWriteEpoch
+        let comparison = comparisonSelection
+        let baseSHA = snapshot?.review.baseSHA
+        let headSHA = snapshot?.review.headSHA
+        func isCurrentScope() -> Bool {
+            isCurrentSelection(scope) && viewedWriteEpoch == epoch && comparisonSelection == comparison
+                && snapshot?.review.baseSHA == baseSHA && snapshot?.review.headSHA == headSHA
+        }
+        let existingPaths = Set(comparisonFiles.map(\.path))
+        let changes = entry.changes.filter { existingPaths.contains($0.path) }
+        for viewed in [false, true] {
+            guard isCurrentScope() else { return }
+            let paths = changes.filter { (undo ? $0.before : entry.after) == viewed }.map(\.path)
+            if !paths.isEmpty {
+                await setViewed(paths: paths, viewed: viewed)
+            }
+        }
+        guard isCurrentScope(), entry.changes.count == 1,
+              let path = changes.first?.path,
+              orderedFiles.contains(where: { $0.path == path })
+        else { return }
+        selectedPath = path
     }
 
     func setViewed(paths: [String], viewed: Bool) async {
@@ -659,30 +749,60 @@ final class PRReviewStore {
         }
 
         let scope = operationScope(reviewID: selectedReviewID)
-
-        do {
-            let files = try await client.setPRReviewViewed(
-                id: selectedReviewID,
-                paths: paths,
-                viewed: viewed,
-                requestID: UUID().uuidString
-            )
-            guard isCurrentSelection(scope),
-                  var current = self.snapshot,
-                  current.review.id == scope.reviewID
-            else {
-                return
+        let epoch = viewedWriteEpoch
+        let baseSHA = snapshot.review.baseSHA
+        let headSHA = snapshot.review.headSHA
+        let id = UUID()
+        for path in paths { pendingViewed[path] = (id, viewed) }
+        let previous = viewedWriteTail
+        // These user actions outlive their initiating view task. Serialize the
+        // HTTP writes while allowing subsequent toggles and undo to update UI.
+        let write = Task { @MainActor in
+            await previous?.value
+            defer {
+                for path in paths where pendingViewed[path]?.id == id {
+                    pendingViewed.removeValue(forKey: path)
+                }
+                if viewedWriteTailID == id {
+                    viewedWriteTail = nil
+                    viewedWriteTailID = nil
+                }
             }
-            current.files = files
-            self.snapshot = current
-        } catch {
-            guard isCurrentSelection(scope),
-                  !HerdrCancellation.isCancellation(error)
-            else {
-                return
+            @MainActor func isCurrentScope() -> Bool {
+                isCurrentSelection(scope) && viewedWriteEpoch == epoch
+                    && self.snapshot?.review.baseSHA == baseSHA && self.snapshot?.review.headSHA == headSHA
             }
-            record(error)
+            guard isCurrentScope() else { return }
+            do {
+                let files = try await client.setPRReviewViewed(
+                    id: selectedReviewID, paths: paths, viewed: viewed, requestID: id.uuidString
+                )
+                guard isCurrentScope(), var current = self.snapshot else { return }
+                // This endpoint returns every file. Apply only this write's
+                // flags, preserving newer metadata and any later user intent.
+                for index in current.files.indices {
+                    let path = current.files[index].path
+                    if pendingViewed[path]?.id == id,
+                       let saved = files.first(where: { $0.path == path }) {
+                        current.files[index].viewed = saved.viewed
+                    }
+                }
+                self.snapshot = current
+            } catch {
+                guard isCurrentScope(), !HerdrCancellation.isCancellation(error) else { return }
+                record(error)
+            }
         }
+        viewedWriteTail = write
+        viewedWriteTailID = id
+        await write.value
+    }
+
+    private func invalidateViewedWrites() {
+        viewedWriteEpoch = UUID()
+        pendingViewed.removeAll()
+        // Keep the tail: a new transport must not overtake an in-flight save.
+        // Queued writes check their old epoch and retire without being sent.
     }
 
     func create(url: String, skillIDs: [String] = []) async {
@@ -714,6 +834,52 @@ final class PRReviewStore {
                 return
             }
             record(error)
+        }
+    }
+
+    /// Returns success so a failed request leaves the sheet and choices intact.
+    func createWithAgents(url: String, agentIDs: [String]) async -> Bool {
+        guard let client, !isDemo, !isCreating, supportsReviewAgents else { return false }
+        let scope = operationScope(reviewID: selectedReviewID)
+        isCreating = true
+        error = nil
+        defer { if isCurrentConnection(scope) { isCreating = false } }
+        do {
+            let value = try await client.createPRReview(url: url, agentIDs: agentIDs, requestID: UUID().uuidString)
+            guard isCurrentSelection(scope) else { return false }
+            select(value.review.id)
+            receive(value)
+            if !reviews.contains(where: { $0.id == value.review.id }) { reviews.insert(value.review, at: 0) }
+            tab = agentIDs.isEmpty ? .files : .agents
+            return true
+        } catch {
+            guard isCurrentSelection(scope), !HerdrCancellation.isCancellation(error) else { return false }
+            record(error)
+            return false
+        }
+    }
+
+    func queueAgents(_ agentIDs: [String]) async -> Bool {
+        guard let client, let selectedReviewID, !isDemo, supportsReviewAgents,
+              !isQueueingAgents, !agentIDs.isEmpty else { return false }
+        let scope = operationScope(reviewID: selectedReviewID)
+        let queueID = UUID()
+        agentQueueID = queueID
+        isQueueingAgents = true
+        error = nil
+        defer {
+            if agentQueueID == queueID { agentQueueID = nil; isQueueingAgents = false }
+        }
+        do {
+            _ = try await client.createPRReviewAgentRuns(id: selectedReviewID, agentIDs: agentIDs,
+                                                       requestID: UUID().uuidString)
+            guard isCurrentSelection(scope) else { return false }
+            await refreshSelected()
+            return isCurrentSelection(scope)
+        } catch {
+            guard isCurrentSelection(scope), !HerdrCancellation.isCancellation(error) else { return false }
+            record(error)
+            return false
         }
     }
 
@@ -779,6 +945,22 @@ final class PRReviewStore {
                 return
             }
             record(error)
+        }
+    }
+
+    func linkedReportDocument(id: String, reviewID: String) async throws -> PRReviewDocument {
+        guard selectedReviewID == reviewID else { throw APIError.invalidResponse }
+        let scope = operationScope(reviewID: reviewID)
+        if let document = snapshot?.documents.first(where: { $0.id == id && $0.reviewID == reviewID }) { return document }
+        guard let client else { throw APIError.invalidResponse }
+        do {
+            let document = try await client.prReviewDocument(reviewID: reviewID, documentID: id)
+            guard isCurrentSelection(scope) else { throw CancellationError() }
+            guard document.id == id, document.reviewID == reviewID else { throw APIError.invalidResponse }
+            return document
+        } catch {
+            guard isCurrentSelection(scope) else { throw CancellationError() }
+            throw error
         }
     }
 
@@ -1415,7 +1597,11 @@ final class PRReviewStore {
     /// operations themselves are never resent; the next refresh reconciles
     /// uploads that did reach the server before the transport changed.
     private func settleInterruptedProgress() {
+        invalidateViewedWrites()
         isRefreshingReview = false
+        isCreating = false
+        isQueueingAgents = false
+        agentQueueID = nil
         let uploadMessage = "The connection changed before this upload finished. Retry to upload it again."
         let downloadMessage = "This download was interrupted. Open the document to try again."
         let interruptedUploads = documentUploads.filter { entry in
@@ -1522,6 +1708,9 @@ extension PRReviewStore {
     /// The revision and commit catalog still have to validate it before use.
     func restoreComparisonSelection(_ selection: GitComparisonSelection, baseSHA: String?, headSHA: String?) {
         guard snapshot == nil, selection != .all, let baseSHA, let headSHA else { return }
+        if comparisonSelection != selection {
+            viewedHistory.removeAll()
+        }
         comparisonSelection = selection
         comparisonSeedRevision = (baseSHA, headSHA)
     }
@@ -1617,6 +1806,7 @@ extension PRReviewStore {
         }
         guard selection != comparisonSelection else { return }
         comparisonSelection = selection
+        viewedHistory.removeAll()
         comparisonDiff = nil
         diff = nil
         comparisonLoadError = nil
@@ -1655,6 +1845,7 @@ extension PRReviewStore {
                 }
                 if !selectionIsValid {
                     comparisonSelection = .all
+                    viewedHistory.removeAll()
                     selectedPath = nil
                     error = "The saved commits are no longer available. Showing current PR changes."
                     return

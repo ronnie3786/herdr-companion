@@ -36,6 +36,7 @@ struct PRReviewContainerView: View {
     var body: some View {
         ZStack {
             HerdrBackground(followsGlass: true)
+            HerdrHazeBand().frame(maxHeight: .infinity, alignment: .top)
             VStack(spacing: 0) {
                 if let review = store.snapshot?.review ?? store.selectedReview {
                     header(review)
@@ -44,7 +45,7 @@ struct PRReviewContainerView: View {
                         Text("Files").tag(PRReviewTab.files)
                         Text("Context (\(review.documentCount))").tag(PRReviewTab.context)
                         Text("Agents (\(review.runningRuns) running)").tag(PRReviewTab.agents)
-                        Text("Skills").tag(PRReviewTab.skills)
+                        if !store.supportsReviewAgents { Text("Skills").tag(PRReviewTab.skills) }
                     }
                     .pickerStyle(.segmented)
                     .tint(HerdrTheme.controlAccent)
@@ -84,7 +85,11 @@ struct PRReviewContainerView: View {
         .navigationTitle(navigationTitle)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pr-review-container")
+        .onChange(of: store.supportsReviewAgents) { _, supported in
+            if supported && store.tab == .skills { store.tab = .agents }
+        }
         .onAppear {
+            if store.supportsReviewAgents && store.tab == .skills { store.tab = .agents }
             comments.updateScope(from: store)
             store.guide.configure(store: store)
             store.guide.setPresented(true)
@@ -278,7 +283,7 @@ struct PRReviewContainerView: View {
         case .context:
             PRReviewContextView(store: store, documentHost: documentHost)
         case .agents:
-            PRReviewAgentsView(store: store, openPane: openPane)
+            PRReviewAgentsView(store: store, canControl: canControl, documentHost: documentHost, openPane: openPane)
         case .skills:
             PRReviewSkillsView(store: store, setAddingSkill: setAddingSkill)
         }

@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+from .pr_review_agent_store import AGENT_SCHEMA, ReviewAgentStore
+
 
 class PRReviewError(RuntimeError):
     def __init__(self, message: str, *, code: str = "pr_review_conflict", status: int = 409) -> None:
@@ -77,7 +79,7 @@ CREATE INDEX IF NOT EXISTS prr_comment_history_thread ON prr_comment_history(thr
 """
 
 
-class PRReviewStore:
+class PRReviewStore(ReviewAgentStore):
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser() if str(path) != ":memory:" else None
         if self.path is not None:
@@ -91,6 +93,7 @@ class PRReviewStore:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.executescript(SCHEMA)
+        self._db.executescript(AGENT_SCHEMA)
         self.seed_skills()
 
     def close(self) -> None:
@@ -165,6 +168,7 @@ class PRReviewStore:
         result["viewer_review"] = self.viewer_review(result["id"])
         latest = self._db.execute("SELECT * FROM prr_walkthroughs WHERE review_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1", (result["id"],)).fetchone()
         result["walkthrough"] = self._walkthrough(latest) if latest else None
+        result["consolidation"] = self.consolidation(result["id"])
         if not full:
             result.pop("body", None)
         return result
@@ -313,6 +317,7 @@ class PRReviewStore:
                 self._db.execute("UPDATE prr_files SET viewed=0,viewed_at=NULL,viewed_source=NULL WHERE review_id=? AND path=?", (review_id, path))
             assignments = ",".join(f"{key}=?" for key in values)
             self._db.execute(f"UPDATE prr_reviews SET {assignments} WHERE id=?", (*values.values(), review_id))
+            self._agent_preparation_finished(review_id, previous, values)
             self._touch(review_id)
 
     def upsert_files(self, review_id: str, files: list[Mapping[str, Any]]) -> None:
@@ -370,7 +375,7 @@ class PRReviewStore:
 
     def snapshot(self, review_id: str) -> dict[str, Any]:
         with self._lock:
-            return {"review": self.get_review(review_id, True), "files": self.files(review_id), "skills": self.skill_states(review_id), "runs": self.runs_for_review(review_id), "documents": self.documents(review_id), "events": self.events(review_id)["events"][-100:]}
+            return {"review": self.get_review(review_id, True), "files": self.files(review_id), "skills": self.skill_states(review_id), "runs": self.runs_for_review(review_id), "documents": self.documents(review_id), "events": self.events(review_id)["events"][-100:], "consolidation": self.consolidation(review_id)}
 
     def events(self, review_id: str, after: int = 0) -> dict[str, Any]:
         with self._lock:
@@ -549,7 +554,7 @@ class PRReviewStore:
                 if cached is not None:
                     return cached
             document_id = str(record.get("id") or _id("prdoc"))
-            existing = self._db.execute("SELECT * FROM prr_documents WHERE review_id=? AND content_hash=?", (review_id, record.get("content_hash"))).fetchone() if record.get("content_hash") else None
+            existing = self._db.execute("SELECT * FROM prr_documents WHERE review_id=? AND content_hash=?", (review_id, record.get("content_hash"))).fetchone() if record.get("content_hash") and record.get("deduplicate", True) else None
             if existing is not None:
                 return self._document(dict(existing))
             self._db.execute("INSERT INTO prr_documents VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (document_id, review_id, record.get("run_id"), record.get("kind", "file"), record.get("title") or record.get("filename") or "document", record.get("media_type") or "application/octet-stream", record.get("filename"), record.get("stored_path"), record.get("url"), int(record.get("byte_size") or 0), record.get("content_hash"), record.get("origin", "user"), record.get("origin_path"), record.get("created_at") or _now()))
@@ -675,12 +680,12 @@ class PRReviewStore:
             row = self._db.execute("SELECT * FROM prr_skill_runs WHERE review_id=? AND id=?", (review_id, run_id)).fetchone()
             if row is None:
                 raise PRReviewError("Run was not found", code="not_found", status=404)
-            return dict(row)
+            return self._agent_run_fields(dict(row))
 
     def runs_for_review(self, review_id: str) -> list[dict[str, Any]]:
         with self._lock:
             self.get_review(review_id)
-            return [dict(row) for row in self._db.execute("SELECT * FROM prr_skill_runs WHERE review_id=? ORDER BY created_at DESC", (review_id,))]
+            return [self._agent_run_fields(dict(row)) for row in self._db.execute("SELECT * FROM prr_skill_runs WHERE review_id=? ORDER BY created_at DESC,rowid DESC", (review_id,))]
 
     def update_run(self, review_id: str, run_id: str, **values: Any) -> dict[str, Any]:
         with self._transaction():

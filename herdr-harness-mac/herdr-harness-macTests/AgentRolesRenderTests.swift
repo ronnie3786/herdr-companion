@@ -86,6 +86,53 @@ struct AgentRolesRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("PR review agents stay collapsed while editing First Mate roles")
+    func reviewSectionCollapsed() async throws {
+        let store = await makeStore(client: AgentRoleTestClient(overview: AgentRoleTestFixtures.reviewOverview()))
+        let result = try await HerdrRenderHarness.render("agent-roles-review-collapsed.png", size: Self.settingsSize) {
+            AgentRolesView(store: store)
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("The Comprehensive profile shows the blank prompt fallback and safe avatar choices")
+    func reviewProfile() async throws {
+        let store = await makeStore(client: AgentRoleTestClient(overview: AgentRoleTestFixtures.reviewOverview()))
+        store.selectRole("pr-review-comprehensive")
+        let result = try await HerdrRenderHarness.render("agent-roles-review-profile.png", size: Self.settingsSize) {
+            ZStack {
+                HerdrDuskBackdrop()
+                AgentRolesView(store: store)
+            }
+            .environment(\.herdrGlassActive, true)
+            .environment(\.herdrHazeActive, true)
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("Review profiles remain usable at large type with glass disabled")
+    func reviewProfileLarge() async throws {
+        let store = await makeStore(client: AgentRoleTestClient(overview: AgentRoleTestFixtures.reviewOverview()))
+        store.selectRole("sample-review-agent")
+        let result = try await HerdrRenderHarness.render("agent-roles-review-profile-large.png", size: CGSize(width: 820, height: 780)) {
+            AgentRolesView(store: store)
+                .environment(\.herdrFontScale, .xxxLarge)
+                .environment(\.herdrGlassActive, false)
+                .environment(\.herdrHazeActive, false)
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("PR review agents reuse the local skill catalog and package selection")
+    func reviewSkills() async throws {
+        let store = await makeStore(client: AgentRoleTestClient(overview: AgentRoleTestFixtures.reviewOverview()))
+        store.selectRole("sample-review-agent")
+        let result = try await HerdrRenderHarness.render("agent-roles-review-skills.png", size: Self.settingsSize) {
+            AgentRolesView(store: store, initialTab: .skills)
+        }
+        result.expectSubstantial()
+    }
+
     private func makeStore(client: AgentRoleTestClient = AgentRoleTestClient()) async -> AgentRolesStore {
         let store = AgentRolesStore(machines: AgentRoleTestFixtures.machines,
             clients: ["desktop": client], catalog: AgentRoleTestCatalog())

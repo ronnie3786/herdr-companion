@@ -8,10 +8,12 @@ reply is always one click away.
 
 Requires a companion advertising `first-mate-skim-v1`. Clients without it, or
 connected to an older companion, show every reply in full exactly as before.
-Main Mac chat additionally requires `chat-skim-v1`. New skims use `skim-v4`;
-existing cached skims remain readable and are not regenerated merely for a prompt
-upgrade. The signed Mac updater does not install the companion package. Install
-and restart the matching companion separately using the repository README.
+Main Mac chat additionally requires `chat-skim-v1`. New skims use `skim-v5`.
+A companion upgrade refreshes stale skims on the latest recent replies in live
+First Mate and HUD conversations, within the configured backfill window. Older
+histories remain readable. The signed Mac updater does not install the companion
+package. Install and restart the matching companion separately using the
+repository README.
 
 ## What you see
 
@@ -33,7 +35,9 @@ In order, in the assistant's reply:
 3. **Rest of the original**: everything the sentence doesn't link to, each
    block with its section heading.
 4. **An optional question or suggestion** after an amber dot, only when that
-   complete sentence appears in the original response. The skim never invents
+   complete sentence appears in the original response. Concrete offers such as
+   “I can add a test if you want” and declarative next steps are supported.
+   The skim never invents
    a follow-up to fill the template or turns ongoing work into an offer.
 5. **Suggested reply chips**, on Mac only: zero to three options, each one to
    five words, displayed in title case. Hover a chip for a one-sentence explanation, or use its VoiceOver
@@ -66,10 +70,11 @@ On iPhone and iPad the existing skim reader is unchanged: a tap opens the origin
   (First Mate: `fm_message_skims`; HUD chats: `skim.json` beside the turn), so
   clients show "Skimming…" at once. The reply itself is never delayed or changed.
 - A pool of at most two workers runs one tool-free Pi inference per reply
-  (profile `first-mate-skim-v1`): the packaged prompt `skim-v4` with the
+  (profile `first-mate-skim-v1`): the packaged prompt `skim-v5` with the
   `breath_balanced` format, no tools, extensions, skills, or context files, retries
   and compaction off, in a neutral temporary workspace. Each run has a 60-second
-  limit. A skim is attempted once; a run cut short by a restart is resumed once.
+  limit. A skim is attempted once per generation; a run cut short by a restart
+  is resumed once.
 - The output is Skim markup (see the Skim lab's SPEC). The companion segments the
   reply, normalizes the markup, repairs routine model mistakes, and rejects
   runaway output. A deterministic source check drops optional follow-ups that
@@ -84,7 +89,10 @@ On iPhone and iPad the existing skim reader is unchanged: a tap opens the origin
   plus `document`, `segments`, and `reply_sha256` once it is `ready`. A skim
   that lands changes the board version.
 - Replies from the last 24 hours that predate the companion update are skimmed
-  once in the background.
+  once in the background. Stale cached skims on the latest replies in live
+  First Mate and HUD conversations refresh once for the new generation settings.
+  A refresh temporarily shows the original reply; an empty list of actions does
+  not trigger another attempt.
 - Main Mac chat requests skims for mounted, settled final assistant text through
   authenticated `POST /api/v1/skims` and polls `GET /api/v1/skims/{id}`. Streaming,
   tool commentary, cancelled, and failed turns are ineligible. The companion uses

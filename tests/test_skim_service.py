@@ -11,6 +11,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from datetime import datetime, timezone
+import uuid
 
 from herdr_harness import skim
 from herdr_harness.agent_runs import SKIM_PROFILE, AgentRunError, AgentRunManager
@@ -104,7 +106,7 @@ class HookSelectionTests(SkimFixture, unittest.TestCase):
         key = self.skim_row(long_reply["id"])
         self.assertEqual((key["format"], key["prompt_version"], key["segmenter_version"], key["skim_version"],
                           key["model"], key["thinking"]),
-                         ("breath_balanced", "skim-v4", 1, 1, "synthetic-provider/fast-model", "low"))
+                         ("breath_balanced", "skim-v5", 1, 1, "synthetic-provider/fast-model", "low"))
 
     def test_background_turns_and_disabled_skims_record_nothing(self):
         self.service(self.manager(), enabled=False)
@@ -140,7 +142,7 @@ class ProjectionTests(SkimFixture, unittest.TestCase):
         reply = self.reply()
         board = self.store.board(self.feature_id)
         message = next(m for m in board["messages"] if m["id"] == reply["id"])
-        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_balanced", "prompt_version": "skim-v4",
+        self.assertEqual(message["skim"], {"status": "pending", "format": "breath_balanced", "prompt_version": "skim-v5",
                                            "segmenter_version": 1, "skim_version": 1})
         pending_version = board["version"]
         self.assertTrue(self.store.board(self.feature_id, if_version=pending_version)["unchanged"])
@@ -438,6 +440,212 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNone(settings.key("Too short here."))
         key = settings.key("One two three four five six.\r\n")
         self.assertEqual(key["reply_sha256"], __import__("hashlib").sha256(b"One two three four five six.\n").hexdigest())
+
+
+
+
+class SkimRefreshTests(SkimFixture, unittest.TestCase):
+    """Synthetic saved generations, with no live inference or blanket migration."""
+
+    def new_feature_id(self):
+        return self.store.create_feature({"title": "Synthetic refresh", "goal": QUESTION,
+                                          "cwd": "/tmp/synthetic-shop", "request_id": uuid.uuid4().hex})["id"]
+
+    def old_reply(self, feature_id=None, *, version="skim-v4", status="ready"):
+        feature_id = feature_id or self.feature_id
+        claim = self.store.claim_message(feature_id, "coordinator")
+        self.store.finish_message(claim["id"], "coordinator", REPLY)
+        message = next(m for m in reversed(self.store.snapshot(feature_id)["messages"]) if m["role"] == "assistant")
+        key = SkimSettings(model="synthetic-provider/fast-model").key(REPLY)
+        key["prompt_version"] = version
+        self.assertTrue(self.store.queue_skim(message["id"], key))
+        document, normalized, _ = skim.skim_from_output(reply=REPLY, output=OUTPUT)
+        self.store.begin_skim(message["id"])
+        self.store.finish_skim(message["id"], status, output=OUTPUT, document=normalized,
+                               segments=skim.segment_table(document))
+        return message["id"]
+
+    def old_run(self, manager, *, parent=None, sequence=0, finished=None, status="completed", **extra):
+        from herdr_harness.skim_service import _write_state
+        run_id = "agr_" + uuid.uuid4().hex[:12]
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        run = {"id": run_id, "profile": "hud-chat-v1", "status": status,
+               "prompt": QUESTION, "response": REPLY, "createdAt": now, "finishedAt": finished or now,
+               "hudSequence": sequence, "threadRootRunId": parent or run_id, **extra}
+        manager._write(run)
+        key = SkimSettings(model="synthetic-provider/fast-model").key(REPLY)
+        document, normalized, _ = skim.skim_from_output(reply=REPLY, output=OUTPUT)
+        _write_state(manager._run_dir(run_id), {**key, "prompt_version": "skim-v4", "status": "ready",
+                     "attempts": 1, "document": normalized, "segments": skim.segment_table(document),
+                     "created_at": now, "updated_at": now})
+        return run_id
+
+    def test_latest_stale_reply_refreshes_once_and_publishes_new_actions(self):
+        message_id = self.old_reply()
+        before = self.store.board(self.feature_id)["version"]
+        service = self.service(self.manager())
+        calls = []
+        output = OUTPUT + "\naction: Add the rollback | Ask the agent to add the rollback and test declined cards. | s6"
+        document, normalized, _ = skim.skim_from_output(reply=REPLY, output=output)
+        def infer(question, reply, key):
+            calls.append(key["prompt_version"])
+            return {"status": "ready", "output": output, "document": normalized, "segments": skim.segment_table(document)}
+        service._infer = infer
+        service.sweep()
+        pending = self.skim_row(message_id)
+        self.assertEqual((pending["status"], pending["prompt_version"], pending["attempts"]), ("pending", skim.PROMPT_VERSION, 0))
+        self.assertNotEqual(self.store.board(self.feature_id)["version"], before)
+        service.start()
+        wait_until(lambda: self.skim_row(message_id)["status"] == "ready")
+        service.sweep()
+        served = next(m for m in self.store.snapshot(self.feature_id)["messages"] if m["id"] == message_id)
+        self.assertEqual(served["text"], REPLY)
+        self.assertEqual(served["skim"]["document"]["actions"][0]["label"], "Add the rollback")
+        self.assertEqual(calls, [skim.PROMPT_VERSION])
+        self.assertTrue(any(data["feature_id"] == self.feature_id for _, data in self.published))
+
+    def test_current_empty_or_failed_results_are_not_refreshed(self):
+        for status in ("ready", "failed", "rejected"):
+            self.old_reply(self.new_feature_id(), version=skim.PROMPT_VERSION, status=status)
+        service = self.service(self.manager())
+        service.sweep()
+        self.assertEqual(service._queue.qsize(), 0)
+
+    def test_failed_upgrade_settles_without_repeated_inference(self):
+        message_id = self.old_reply()
+        service = self.service(self.manager())
+        calls = []
+        def infer(*_):
+            calls.append(1)
+            return {"status": "failed", "error": "synthetic"}
+        service._infer = infer
+        service.sweep()
+        service.start()
+        wait_until(lambda: self.skim_row(message_id)["status"] == "failed")
+        service.sweep()
+        self.assertEqual(calls, [1])
+        self.assertEqual(self.skim_row(message_id)["prompt_version"], skim.PROMPT_VERSION)
+
+    def test_only_latest_recent_live_first_mate_response_is_refreshed(self):
+        older = self.old_reply()
+        self.store.append_human_message(self.feature_id, "What should happen next?", "second")
+        latest = self.old_reply()
+        excluded = [older]
+        for reason in ("old", "archived", "completed", "cancelled", "human-last"):
+            feature_id = self.new_feature_id()
+            message_id = self.old_reply(feature_id)
+            excluded.append(message_id)
+            if reason == "human-last":
+                self.store.append_human_message(feature_id, "Already continuing", "continue")
+            elif reason == "old":
+                self.store._db.execute("UPDATE fm_messages SET created_at='2020-01-01T00:00:00Z' WHERE id=?", (message_id,))
+            elif reason == "archived":
+                self.store._db.execute("UPDATE fm_features SET archived_at='2026-01-01T00:00:00Z' WHERE id=?", (feature_id,))
+            else:
+                self.store._db.execute("UPDATE fm_features SET status=? WHERE id=?", (reason, feature_id))
+        service = self.service(self.manager())
+        service.sweep()
+        self.assertEqual(self.skim_row(latest)["prompt_version"], skim.PROMPT_VERSION)
+        self.assertEqual([self.skim_row(item)["prompt_version"] for item in excluded], ["skim-v4"] * len(excluded))
+        self.assertEqual(service._queue.qsize(), 1)
+
+    def test_refresh_rechecks_latest_message_and_leaves_pending_work_untouched(self):
+        message_id = self.old_reply()
+        settings = SkimSettings(model="synthetic-provider/fast-model")
+        since = "2020-01-01T00:00:00Z"
+        self.assertEqual(self.store.stale_skim_replies(since, settings.identity()), [message_id])
+        self.store.append_human_message(self.feature_id, "New direction", "new-direction")
+        self.assertFalse(self.store.queue_skim_refresh(message_id, settings.key(REPLY), since=since))
+        pending_id = self.old_reply(self.new_feature_id())
+        self.store._db.execute("UPDATE fm_message_skims SET status='pending' WHERE message_id=?", (pending_id,))
+        service = self.service(self.manager())
+        service.sweep()
+        self.assertEqual(self.skim_row(pending_id)["prompt_version"], "skim-v4")
+        self.assertFalse(self.store.queue_skim_refresh(pending_id, settings.key(REPLY), since=since))
+
+    def test_refresh_does_not_mutate_a_generation_still_owned_by_its_worker(self):
+        message_id = self.old_reply()
+        manager = self.manager()
+        run_id = self.old_run(manager)
+        service = self.service(manager)
+        # Simulate the brief interval after a worker saves ready but before
+        # its finally block releases the active job identity.
+        service._active.update({("message", message_id), ("run", run_id)})
+        service.sweep()
+        self.assertEqual(self.skim_row(message_id)["prompt_version"], "skim-v4")
+        self.assertEqual(public_run_skim(manager._run_dir(run_id))["prompt_version"], "skim-v4")
+        self.assertEqual(service._queue.qsize(), 0)
+        service._active.clear()
+        service.sweep()
+        self.assertEqual(service._queue.qsize(), 2)
+        self.assertEqual(self.skim_row(message_id)["status"], "pending")
+        self.assertEqual(public_run_skim(manager._run_dir(run_id))["status"], "pending")
+
+    def test_refresh_rechecks_source_hash_before_replacing_a_saved_result(self):
+        message_id = self.old_reply()
+        key = SkimSettings(model="synthetic-provider/fast-model").key(REPLY)
+        self.store._db.execute("UPDATE fm_messages SET text=? WHERE id=?", (REPLY + " New source detail.", message_id))
+        self.assertFalse(self.store.queue_skim_refresh(message_id, key, since="2020-01-01T00:00:00Z"))
+        self.assertEqual(self.skim_row(message_id)["prompt_version"], "skim-v4")
+
+    def test_refresh_pages_past_sources_below_the_new_word_minimum(self):
+        message_id = self.old_reply()
+        for index in range(105):
+            short_id = self.old_reply(self.new_feature_id())
+            # Synthetic historical skims created with a lower minimum word setting.
+            self.store._db.execute("UPDATE fm_messages SET text=? WHERE id=?", ("Short historical offer.", short_id))
+        service = self.service(self.manager())
+        service.sweep()
+        self.assertEqual(self.skim_row(message_id)["prompt_version"], skim.PROMPT_VERSION)
+        self.assertEqual(service._queue.qsize(), 1)
+
+    def test_hud_refreshes_only_latest_recent_unpromoted_completed_turn(self):
+        manager = self.manager()
+        root_id = self.old_run(manager)
+        latest_id = self.old_run(manager, parent=root_id, sequence=1)
+        excluded = [root_id, self.old_run(manager, finished="2020-01-01T00:00:00Z")]
+        promoted = self.old_run(manager, retainSession=True)
+        excluded.extend([promoted, self.old_run(manager, parent=promoted, sequence=1)])
+        active = self.old_run(manager)
+        excluded.extend([active, self.old_run(manager, parent=active, sequence=1, status="running")])
+        service = self.service(manager)
+        service.sweep()
+        self.assertEqual(public_run_skim(manager._run_dir(latest_id))["prompt_version"], skim.PROMPT_VERSION)
+        self.assertEqual(public_run_skim(manager._run_dir(latest_id))["status"], "pending")
+        for run_id in excluded:
+            self.assertEqual(public_run_skim(manager._run_dir(run_id))["prompt_version"], "skim-v4")
+        service.sweep()
+        self.assertEqual(service._queue.qsize(), 1)
+        from herdr_harness.skim_service import _read_state, _write_state
+        state = _read_state(manager._run_dir(latest_id))
+        _write_state(manager._run_dir(latest_id), {**state, "status": "ready", "document": {"actions": []}})
+        self.assertFalse(service._refresh_run(latest_id, "2020-01-01T00:00:00Z"))
+
+    def test_refresh_batch_is_shared_and_respects_queue_capacity(self):
+        from herdr_harness.skim_service import REFRESH_BATCH_LIMIT, REFRESH_QUEUE_LIMIT
+        manager = self.manager()
+        for _ in range(REFRESH_BATCH_LIMIT - 1):
+            self.old_reply(self.new_feature_id())
+        hud_ids = [self.old_run(manager) for _ in range(3)]
+        service = self.service(manager)
+        service.sweep()
+        self.assertEqual(service._queue.qsize(), REFRESH_BATCH_LIMIT)
+        self.assertEqual(sum(public_run_skim(manager._run_dir(run_id))["status"] == "pending" for run_id in hud_ids), 1)
+        for index in range(REFRESH_QUEUE_LIMIT - REFRESH_BATCH_LIMIT):
+            service._enqueue(("message", f"synthetic-waiting-{index}"), 1)
+        service.sweep()
+        self.assertEqual(service._queue.qsize(), REFRESH_QUEUE_LIMIT)
+        self.assertEqual(sum(public_run_skim(manager._run_dir(run_id))["status"] == "pending" for run_id in hud_ids), 1)
+
+    def test_zero_backfill_disables_prompt_upgrade_work(self):
+        message_id = self.old_reply()
+        manager = self.manager()
+        run_id = self.old_run(manager)
+        service = self.service(manager, backfill_hours=0)
+        service.sweep()
+        self.assertEqual(service._queue.qsize(), 0)
+        self.assertEqual(self.skim_row(message_id)["prompt_version"], "skim-v4")
+        self.assertEqual(public_run_skim(manager._run_dir(run_id))["prompt_version"], "skim-v4")
 
 
 if __name__ == "__main__":

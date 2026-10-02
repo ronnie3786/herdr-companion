@@ -249,6 +249,15 @@ class PromptTests(unittest.TestCase):
         self.assertTrue(prompt.user.startswith("QUESTION (what the user asked the agent):\nWhy is export slow?\n\n"))
         self.assertIn("REPLY (the agent's full reply: 2 blocks, 9 words):\n[s1 para]\nIt loads every row.", prompt.user)
 
+    def test_v5_offer_guidance_does_not_change_saved_v4_prompt_instructions(self) -> None:
+        reply = "I can add a regression test if you want."
+        legacy = skim.prompt_for(None, reply, version="skim-v4")
+        current = skim.prompt_for(None, reply)
+        self.assertIn("Most replies need NO options", legacy.system)
+        self.assertNotIn("include one to three useful reply options", legacy.system)
+        self.assertIn("include one to three useful reply options", current.system)
+        self.assertIn("without a question mark or a quoted reply phrase", current.system)
+
     def test_missing_question_is_marked(self) -> None:
         prompt = skim.prompt_for("   ", "Done.")
         self.assertIn("\n(not provided)\n", prompt.user)

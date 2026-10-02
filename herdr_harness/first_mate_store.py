@@ -1192,7 +1192,7 @@ class FirstMateStore:
                 LEFT JOIN fm_messages m ON m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
                     AND role='assistant' AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
                 LEFT JOIN fm_message_skims k ON k.message_id=m.id AND k.status='ready'
-                    AND k.prompt_version IN ('skim-v3','{skim_format.PROMPT_VERSION}')
+                    AND k.prompt_version IN ('skim-v3','skim-v4','{skim_format.PROMPT_VERSION}')
                 LEFT JOIN fm_events e ON e.sequence=(SELECT max(sequence) FROM fm_events WHERE feature_id=f.id
                     AND {JOURNAL_EVENT_SQL} AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
                 LEFT JOIN fm_feature_presentation p ON p.feature_id=f.id
@@ -3427,6 +3427,54 @@ class FirstMateStore:
         with self._transaction():
             message = self._one("fm_messages", message_id)
             return self._insert_pending_skim(message_id, message["feature_id"], key)
+
+    def stale_skim_replies(self, since: str, identity: Mapping[str, Any], *, limit: int = 8, offset: int = 0) -> list[str]:
+        """Latest recent replies in live conversations with an older generation key."""
+        fields = ("format", "prompt_version", "segmenter_version", "skim_version", "model", "thinking")
+        stale = " OR ".join(f"k.{name}<>?" for name in fields)
+        with self._lock:
+            return [row[0] for row in self._db.execute(
+                f"SELECT m.id FROM fm_messages m JOIN fm_message_skims k ON k.message_id=m.id "
+                f"JOIN fm_features f ON f.id=m.feature_id WHERE ({stale}) "
+                "AND k.status IN ('ready','failed','rejected') "
+                "AND f.archived_at IS NULL AND f.status NOT IN ('completed','cancelled') "
+                "AND m.role='assistant' AND m.status='done' AND m.visibility=? AND m.created_at>=? "
+                "AND m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id AND visibility=? "
+                "AND role IN ('user','human','assistant') ORDER BY created_at DESC,id DESC LIMIT 1) "
+                "ORDER BY m.created_at DESC,m.id DESC LIMIT ? OFFSET ?",
+                (*[identity[name] for name in fields], CONVERSATION, since, CONVERSATION, max(0, limit), max(0, offset)))]
+
+    def queue_skim_refresh(self, message_id: str, key: Mapping[str, Any], *, since: str) -> bool:
+        """Requeue one stale terminal result; never replace an in-flight generation.
+
+        The full reply remains available while its optional skim is refreshed.
+        Recording the target key makes even failed or empty results one-shot.
+        """
+        with self._transaction():
+            row = self._db.execute("SELECT * FROM fm_message_skims WHERE message_id=?", (message_id,)).fetchone()
+            if (row is None or row["status"] not in {"ready", "failed", "rejected"}
+                    or all(row[name] == value for name, value in key.items())):
+                return False
+            latest = self._db.execute(
+                "SELECT m.* FROM fm_messages m JOIN fm_features f ON f.id=m.feature_id "
+                "WHERE m.id=? AND m.role='assistant' AND m.status='done' AND m.visibility=? "
+                "AND m.created_at>=? AND f.archived_at IS NULL AND f.status NOT IN ('completed','cancelled') "
+                "AND m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id AND visibility=? "
+                "AND role IN ('user','human','assistant') ORDER BY created_at DESC,id DESC LIMIT 1)",
+                (message_id, CONVERSATION, since, CONVERSATION)).fetchone()
+            if latest is None:
+                return False
+            source = self._decode(latest)["text"]
+            if hashlib.sha256(skim_format.canonicalize(source).encode()).hexdigest() != key["reply_sha256"]:
+                return False
+            self._db.execute(
+                "UPDATE fm_message_skims SET format=?,prompt_version=?,segmenter_version=?,skim_version=?,"
+                "model=?,thinking=?,reply_sha256=?,status='pending',attempts=0,output='',document_json='{}',"
+                "segments_json='[]',warnings_json='[]',error='',duration_ms=NULL,updated_at=? WHERE message_id=?",
+                (key["format"], key["prompt_version"], key["segmenter_version"], key["skim_version"],
+                 key["model"], key["thinking"], key["reply_sha256"], _now(), message_id))
+            self._skim_documents.pop(message_id, None)
+            return True
 
     def begin_skim(self, message_id: str, *, max_attempts: int = 2) -> dict | None:
         """Start one attempt at a pending skim and return its key, or None.

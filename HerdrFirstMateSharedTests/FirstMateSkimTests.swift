@@ -138,6 +138,25 @@ struct FirstMateSkimTests {
         #expect(FirstMateSkimReader.cached(skim: FirstMateSkim(status: .pending), reply: message.text, owner: message.id) == nil)
     }
 
+    @Test("A refreshed skim replaces cached actions and revalidates changed offsets")
+    func refreshedCache() throws {
+        let message = try FirstMateSkimFixtures.message(FirstMateSkimFixtures.txnJSON)
+        let owner = "refreshed-synthetic-reply"
+        var skim = try #require(message.skim)
+        let original = try #require(FirstMateSkimReader.cached(skim: skim, reply: message.text, owner: owner))
+        #expect(original.actions.isEmpty)
+        skim.document?.blocks.append(.line(kind: "ask", tokens: [.text("Want me to add a test?")]))
+        let action = SkimReplyAction(id: "add-test", label: "Add a test",
+                                    explanation: "Add the suggested regression test.", refs: ["s1"])
+        skim.document?.actions = [action]
+        let updated = try #require(FirstMateSkimReader.cached(skim: skim, reply: message.text, owner: owner))
+        #expect(updated.actions == [action])
+        skim.document?.actions = []
+        #expect(FirstMateSkimReader.cached(skim: skim, reply: message.text, owner: owner)?.actions.isEmpty == true)
+        skim.segments?[0].end = message.text.utf16.count + 1
+        #expect(FirstMateSkimReader.cached(skim: skim, reply: message.text, owner: owner) == nil)
+    }
+
     @Test("CRLF replies slice by their canonical LF text")
     func crlfReplies() throws {
         let message = try FirstMateSkimFixtures.message(FirstMateSkimFixtures.txnJSON)

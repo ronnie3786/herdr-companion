@@ -52,7 +52,7 @@ struct FirstMateSkimReader: Equatable, Sendable {
 
     /// The reader for one reply, built once: views re-render often, and
     /// validation hashes and slices the whole reply. `owner` is the message
-    /// or HUD turn id; a ready skim never changes for the same reply.
+    /// or HUD turn id. Companion upgrades may refresh a ready skim in place.
     static func cached(skim: FirstMateSkim?, reply: String, owner: String) -> FirstMateSkimReader? {
         guard let skim, skim.status == .ready else { return nil }
         let parts: [String] = [
@@ -61,15 +61,24 @@ struct FirstMateSkimReader: Equatable, Sendable {
             String(reply.utf16.count), String(reply.hashValue),
         ]
         let key = NSString(string: parts.joined(separator: "\u{0}"))
-        if let entry = readerCache.object(forKey: key) { return entry.reader }
+        if let entry = readerCache.object(forKey: key), entry.skim == skim, entry.reply == reply {
+            return entry.reader
+        }
         let reader = FirstMateSkimReader(skim: skim, reply: reply)
-        readerCache.setObject(CachedReader(reader), forKey: key)
+        readerCache.setObject(CachedReader(reader, skim: skim, reply: reply), forKey: key)
         return reader
     }
 
     private final class CachedReader: @unchecked Sendable {
         let reader: FirstMateSkimReader?
-        init(_ reader: FirstMateSkimReader?) { self.reader = reader }
+        let skim: FirstMateSkim
+        let reply: String
+
+        init(_ reader: FirstMateSkimReader?, skim: FirstMateSkim, reply: String) {
+            self.reader = reader
+            self.skim = skim
+            self.reply = reply
+        }
     }
 
     // NSCache is thread-safe.

@@ -46,6 +46,8 @@ SKIM_FILE = "skim.json"
 MAX_ATTEMPTS = 2
 MAX_USER_MESSAGE_CHARS = 131072
 SWEEP_SECONDS = 300
+REFRESH_BATCH_LIMIT = 8
+REFRESH_QUEUE_LIMIT = 32
 _NEW, _BACKFILL = 0, 1
 _LOG = logging.getLogger(__name__)
 
@@ -101,6 +103,14 @@ class SkimSettings:
             workers=_bounded(environ, "HERDR_FIRST_MATE_SKIM_WORKERS", 2, 1, 2),
         )
 
+    def identity(self) -> dict:
+        """The generation contract, independent of the particular reply."""
+        return {
+            "format": skim.DEFAULT_FORMAT, "prompt_version": skim.PROMPT_VERSION,
+            "segmenter_version": skim.SEGMENTER_VERSION, "skim_version": skim.SKIM_VERSION,
+            "model": self.model, "thinking": self.thinking,
+        }
+
     def key(self, text: Any) -> Optional[dict]:
         """The idempotency key for one reply, or None when it is too short to skim."""
         if not isinstance(text, str):
@@ -108,12 +118,7 @@ class SkimSettings:
         canonical = skim.canonicalize(text)
         if skim.words(canonical) < self.min_words:
             return None
-        return {
-            "format": skim.DEFAULT_FORMAT, "prompt_version": skim.PROMPT_VERSION,
-            "segmenter_version": skim.SEGMENTER_VERSION, "skim_version": skim.SKIM_VERSION,
-            "model": self.model, "thinking": self.thinking,
-            "reply_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
-        }
+        return {**self.identity(), "reply_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
 
 
 # -- HUD chat skims live beside their run --------------------------------------
@@ -480,8 +485,64 @@ class SkimService:
             for message_id in self._store.pending_skims():
                 self._enqueue(("message", message_id), _NEW)
 
+    def _refresh_budget(self) -> int:
+        with self._lock:
+            return min(REFRESH_BATCH_LIMIT, max(0, REFRESH_QUEUE_LIMIT - len(self._queued) - len(self._active)))
+
+    def _enqueue_refresh(self, job: tuple[str, str], prepare: Callable[[], bool]) -> bool:
+        # Reserve before changing persistent state. A worker may have just
+        # written ready while still owning this job; it must not strand a new
+        # pending generation by causing _enqueue to reject it as already active.
+        with self._lock:
+            if job in self._queued or job in self._active or len(self._queued) + len(self._active) >= REFRESH_QUEUE_LIMIT:
+                return False
+            self._queued.add(job)
+        queued = False
+        try:
+            # Never hold the queue lock while taking the store/run lock.
+            if not prepare():
+                return False
+            self._queue.put((_BACKFILL, next(self._order), job))
+            queued = True
+            return True
+        finally:
+            if not queued:
+                with self._lock:
+                    self._queued.discard(job)
+
+    def _refresh_run(self, run_id: str, since: str) -> bool:
+        """Upgrade only a recent conversation's latest settled, unpromoted turn."""
+        manager = self._runs
+        if manager is None:
+            return False
+        from .hud_chats import sort_key
+        with manager._lock:
+            try:
+                run = manager._read(run_id)
+            except AgentRunError:
+                return False
+            if run.get("status") != "completed" or (run.get("finishedAt") or "") < since:
+                return False
+            members = manager._thread_runs(manager._thread_root_id(run))
+            if (not members or max(members, key=sort_key)["id"] != run_id
+                    or any(item.get("retainSession") or item.get("promotedPaneId")
+                           or item.get("status") == "promoted" for item in members)):
+                return False
+            key = self.settings.key(run.get("response"))
+            run_dir = manager._run_dir(run_id)
+            state = _read_state(run_dir)
+            if (key is None or state is None or state.get("status") not in {"ready", "failed", "rejected"}
+                    or all(state.get(name) == value for name, value in key.items())):
+                return False
+            now = _now()
+            _write_state(run_dir, {**key, "status": "pending", "attempts": 0,
+                                   "created_at": state.get("created_at", now), "updated_at": now})
+            return True
+
     def sweep(self) -> None:
-        """Queue recent replies that have no skim yet (bounded backfill)."""
+        """Backfill missing skims and upgrade a bounded set of recent latest replies."""
+        if not self.settings.enabled:
+            return
         since = datetime.now(timezone.utc) - timedelta(hours=self.settings.backfill_hours)
         since_text = since.isoformat().replace("+00:00", "Z")
         store = self._store
@@ -504,19 +565,47 @@ class SkimService:
                 if len(page) < 100:
                     break
                 offset += 100
+        refresh_budget = self._refresh_budget() if self.settings.backfill_hours else 0
+        if store is not None and refresh_budget:
+            offset = scanned = 0
+            while refresh_budget and scanned < 2000:
+                page = store.stale_skim_replies(since_text, self.settings.identity(), limit=100, offset=offset)
+                for message_id in page:
+                    if not refresh_budget:
+                        break
+                    source = store.skim_source(message_id)
+                    key = self.settings.key(source["text"]) if source else None
+                    if key is not None and self._enqueue_refresh(
+                            ("message", message_id), lambda: store.queue_skim_refresh(message_id, key, since=since_text)):
+                        self._changed(source["feature_id"])
+                        refresh_budget -= 1
+                        offset -= 1  # A refreshed row leaves the stale candidate set.
+                scanned += len(page)
+                if len(page) < 100:
+                    break
+                offset += len(page)
         manager = self._runs
         if manager is None or not self.settings.hud_chats:
             return
-        from .hud_chats import all_threads
+        from .hud_chats import all_threads, sort_key
         queued = 0
         with manager._lock:
-            members = [run for runs in all_threads(manager).values() for run in runs]
+            threads = all_threads(manager)
+            members = [run for runs in threads.values() for run in runs]
+            latest_ids = {max(runs, key=sort_key)["id"] for runs in threads.values() if runs
+                          and not any(run.get("retainSession") or run.get("promotedPaneId")
+                                      or run.get("status") == "promoted" for run in runs)}
         for run in sorted(members, key=lambda item: item.get("finishedAt") or "", reverse=True):
             run_id = str(run["id"])
             state = _read_state(manager._run_dir(run_id))
             if state is not None:
                 if state.get("status") == "pending":
                     self._enqueue(("run", run_id), _NEW)
+                elif (refresh_budget and self._refresh_budget() and run_id in latest_ids
+                      and (key := self.settings.key(run.get("response"))) is not None
+                      and any(state.get(name) != value for name, value in key.items())
+                      and self._enqueue_refresh(("run", run_id), lambda: self._refresh_run(run_id, since_text))):
+                    refresh_budget -= 1
                 continue
             if (queued >= 40 or not self.settings.backfill_hours or run.get("status") != "completed"
                     or (run.get("finishedAt") or "") < since_text):

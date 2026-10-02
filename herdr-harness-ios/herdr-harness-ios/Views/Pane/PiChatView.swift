@@ -21,6 +21,8 @@ struct PiChatView: View {
             )
 
             PiContextMeterView(usage: store.contextUsage, cost: store.sessionCost)
+                .frame(maxWidth: HerdrTheme.chatReadingWidth)
+                .frame(maxWidth: .infinity)
 
             PiChatTimelineView(
                 store: store,
@@ -59,15 +61,13 @@ struct PiChatView: View {
                 activateResponseAudio: activateResponseAudio
             )
             .id(pane.id)
-            .padding(.horizontal, 12)
-            .padding(.top, 2)
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
             .padding(.bottom, 10)
-            .background(.ultraThinMaterial)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(HerdrTheme.surface.opacity(0.55))
-                    .frame(height: 1)
-            }
+            .frame(maxWidth: HerdrTheme.chatReadingWidth)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("agent-chat-composer")
         }
         .onChange(of: store.phase) { oldPhase, newPhase in
             if oldPhase == .working, newPhase == .idle {

@@ -323,7 +323,7 @@ struct PromptComposerView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
         }
-        .background(HerdrTheme.input)
+        .background(HerdrTheme.fieldFill)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(composerInputBorder, lineWidth: 1)

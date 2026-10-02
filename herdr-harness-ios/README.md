@@ -124,12 +124,14 @@ whole so chats remain reachable with large text in landscape.
 Pane views use charcoal chrome and system-scaled prose. Chat, Git, Terminal, and
 Skills are available from **Pane actions → View**, without a separate segment
 row taking conversation space. Chat uses a one-line inline navigation title and
-flat, full-width conversation rows: there is no turn rail, large agent/status
+flat conversation rows in a centered reading column on large screens: there is no turn rail, large agent/status
 header, standalone star, or location breadcrumb. Star remains in Pane actions;
 **Chat history → Last prompt** shows only the latest visible user prompt and is
-disabled when there is none. Pushed panes use native Back and swipe. Root and
-split-detail panes expose the app Chat navigator; split detail removes the
-split view's automatic Agents-column control rather than duplicating it. Model and
+disabled when there is none. Pushed panes use native Back and swipe. Root panes expose the app Chat navigator. On iPad, Agents uses a flush left sidebar
+with a full-height divider and the same continuous dusk glass as First Mate.
+The sidebar owns the navigator and list tools; selected sessions have a quiet
+highlight. The transcript and composer share an 800-point maximum reading width,
+and the composer sits directly over the pane background without a separate gray band. Model and
 Thinking are small plain-text pickers, grouped at the leading edge with an adjacent
 down chevron on each interactive value and independent 44-point tap targets.
 Listen and TL;DR are icon-only actions at the trailing edge; preparing, playing,

@@ -18,7 +18,7 @@ class ChatSkimTests(SkimFixture, unittest.TestCase):
         initial = service.request_chat(reply=REPLY, question=QUESTION)
         identifier = initial["id"]
         ready = wait_until(lambda: (value if (value := service.chat(identifier))["skim"]["status"] == "ready" else None))
-        self.assertEqual(ready["skim"]["prompt_version"], "skim-v4")
+        self.assertEqual(ready["skim"]["prompt_version"], "skim-v5")
         self.assertIn("reply_sha256", ready["skim"])
         self.assertEqual(service.request_chat(reply=REPLY, question=QUESTION), ready)
         reopened = ChatSkimStore(path)

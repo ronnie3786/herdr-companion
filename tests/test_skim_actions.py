@@ -20,6 +20,48 @@ class SkimActionTests(unittest.TestCase):
             "explanation": "Ask the agent to restore the saved checkpoint.", "refs": ["s2"]}])
         self.assertEqual(result["stats"]["skimWords"], 17)
 
+    def test_ordinary_declarative_offers_produce_grounded_options(self):
+        offers = (
+            "I can add the rollback and a regression test if you want.",
+            "If you'd like, I can add the rollback and a regression test.",
+            "If you would like, I could add the rollback and a regression test.",
+            "The next step is to add the rollback and a regression test.",
+            "I'd recommend adding the rollback and a regression test.",
+            "I’d recommend adding the rollback and a regression test.",
+            "Next, I can add the rollback and a regression test.",
+            "I'm happy to add the rollback and a regression test.",
+        )
+        for offer in offers:
+            with self.subTest(offer=offer):
+                reply = "The declined payment leaves the reservation held.\n\n" + offer
+                output = ("status: answer\nsay: [The declined payment](s1) leaves the reservation held.\n"
+                          "ask: " + offer + "\naction: Add the rollback | Ask the agent to add the rollback and a regression test. | s2")
+                _, result, _ = skim.skim_from_output(reply=reply, output=output)
+                self.assertEqual([action["label"] for action in result["actions"]], ["Add the rollback"])
+                self.assertEqual(skim.plain(result["blocks"][-1]["tokens"]), offer)
+
+    def test_refusals_and_ongoing_work_do_not_become_actionable_offers(self):
+        statements = (
+            "I am adding the rollback and a regression test now.",
+            "I will add the rollback once the tests finish.",
+            "I cannot add the rollback or a regression test.",
+            "I can’t add the rollback or a regression test.",
+            "I could not add the rollback or a regression test.",
+            "I can confirm the rollback and regression test are already done.",
+            "The next step is not to deploy the rollback.",
+            "The next step is already complete.",
+            "The next step is blocked by missing authorization.",
+            "Do not add the rollback or a regression test.",
+        )
+        for statement in statements:
+            with self.subTest(statement=statement):
+                reply = "The reservation issue is understood.\n\n" + statement
+                output = ("status: answer\nsay: [The issue](s1) is understood.\nask: " + statement
+                          + "\naction: Add the rollback | Ask the agent to add the rollback. | s2")
+                _, result, _ = skim.skim_from_output(reply=reply, output=output)
+                self.assertEqual(result["actions"], [])
+                self.assertEqual([block["kind"] for block in result["blocks"]], ["say"])
+
     def test_unsupported_followup_also_removes_its_reply_options(self):
         output = "status: done\nsay: [The change](s1) is done.\nask: Want me to deploy it?\naction: Deploy it | Ask the agent to deploy the change. | s1"
         _, result, _ = skim.skim_from_output(reply="The change is done and the tests passed.", output=output)
@@ -66,5 +108,5 @@ class SkimActionTests(unittest.TestCase):
 
     def test_prompt_keeps_omission_source_grounding_and_exact_send_contract(self):
         prompt = skim.prompt_for(None, REPLY)
-        for policy in ("Most replies need NO options", "1 to 5 words", "EXACT reply", "one short sentence", "Never invent follow-up work"):
+        for policy in ("omit all options", "1 to 5 words", "EXACT reply", "one short sentence", "Never invent follow-up work"):
             self.assertIn(policy, prompt.system)

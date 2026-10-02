@@ -24,7 +24,7 @@ from typing import Any, Iterable, Mapping
 
 SEGMENTER_VERSION = 1
 SKIM_VERSION = 1
-PROMPT_VERSION = "skim-v4"
+PROMPT_VERSION = "skim-v5"
 DEFAULT_FORMAT = "breath_balanced"
 
 # ECMAScript `\s`: WhiteSpace plus LineTerminator. Python's `\s` differs (it
@@ -954,8 +954,29 @@ def _followup_sentences(text: str) -> list[str]:
 
 
 def _is_followup_sentence(sentence: str) -> bool:
-    return sentence.endswith("?") or bool(re.match(
-        r"(?i)^(?:suggested next step:|next step:|I (?:suggest|recommend)|you (?:can|could|should)|(?:reply|respond) with |please |let me know (?:which|whether|when|what))", sentence))
+    # The exact source sentence is checked separately. Accept ordinary offers,
+    # including declarative ones, without requiring a scripted reply phrase.
+    text = sentence.replace("’", "'").strip()
+    if re.match(r"(?i)^(?:do not|don't|never|I (?:cannot|can't|won't|will not|am not)|you (?:cannot|can't|should not|shouldn't))\b", text):
+        return False
+    if re.match(
+        r"(?i)^(?:(?:suggested |recommended |the )?next step(?: is(?: to)?| would be(?: to)?|:)) "
+        r"(?:not|never|already|blocked|complete|completed|underway)\b", text
+    ):
+        return False
+    if text.endswith("?"):
+        return True
+    if re.match(
+        r"(?i)^(?:(?:suggested |recommended |the )?next step(?: is(?: to)?| would be(?: to)?|:)|"
+        r"I(?:'d| would)? (?:suggest|recommend)\b|you (?:can|could|should)\b|"
+        r"(?:reply|respond) with |please |let me know (?:which|whether|when|what)|"
+        r"(?:choose|pick|select) (?:between |one |either |the )|let's )", text
+    ):
+        return True
+    offer = re.sub(r"(?i)^(?:if (?:you(?:'d| would)? like|you want|helpful|useful),?\s+|next,\s+)", "", text)
+    return bool(re.match(
+        r"(?i)^(?:I (?:can|could)|I(?:'m| am) happy to|I(?:'d| would) be happy to) "
+        r"(?!(?:not|never|already|confirm|see|tell)\b)\S", offer))
 
 
 def normalize_actions(raw: Any, reply: ReplyDocument, blocks: list[dict]) -> list[dict]:
@@ -1123,12 +1144,16 @@ def prompt_template(version: str = PROMPT_VERSION) -> str:
     return resources.files("herdr_harness").joinpath("skim_prompts", f"{version}.md").read_text(encoding="utf-8")
 
 
-def format_template(format: str = DEFAULT_FORMAT) -> str:
-    return resources.files("herdr_harness").joinpath("skim_prompts", "formats", f"{format}.md").read_text(encoding="utf-8")
+def format_template(format: str = DEFAULT_FORMAT, *, version: str = PROMPT_VERSION) -> str:
+    directory = resources.files("herdr_harness").joinpath("skim_prompts", "formats")
+    revision = directory.joinpath(f"{format}-{version}.md")
+    # A revised prompt must not change the instructions of a saved older job.
+    template = revision if revision.is_file() else directory.joinpath(f"{format}.md")
+    return template.read_text(encoding="utf-8")
 
 
 def prompt_for(question: str | None, reply: str, *, format: str = DEFAULT_FORMAT,
                version: str = PROMPT_VERSION, voice: str = "buddy") -> SkimPrompt:
     """The packaged system prompt and user message for one reply."""
-    return build_prompt(template=prompt_template(version), format_template=format_template(format),
+    return build_prompt(template=prompt_template(version), format_template=format_template(format, version=version),
                         question=question, reply=reply, voice=voice, format=format)

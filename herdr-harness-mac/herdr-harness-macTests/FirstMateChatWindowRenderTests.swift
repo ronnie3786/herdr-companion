@@ -36,11 +36,13 @@ struct FirstMateChatWindowRenderTests {
         _ name: String,
         size: CGSize = Self.wide,
         sidebarWidth: Double = FirstMateChatPreferences.defaultSidebarWidth,
+        inspectorWidth: Double = FirstMateChatPreferences.defaultInspectorWidth,
         session: FirstMateChatWindowSession,
         interact: (@MainActor (NSWindow) async throws -> Void)? = nil
     ) async throws {
         let defaults = try #require(UserDefaults(suiteName: "FirstMateChatRender.Layout.\(UUID().uuidString)"))
         defaults.set(sidebarWidth, forKey: FirstMateChatPreferences.sidebarWidthKey)
+        defaults.set(inspectorWidth, forKey: FirstMateChatPreferences.inspectorWidthKey)
         let result = try await HerdrRenderHarness.renderWindow(name, size: size, interact: interact) {
             ZStack {
                 HerdrDuskBackdrop()
@@ -136,27 +138,80 @@ struct FirstMateChatWindowRenderTests {
         }
     }
 
-    @Test("Opening the inspector extends the window to the right and closing gives the width back")
-    func inspectorExtendsWindow() async throws {
+    @Test("Opening and closing the inspector preserves its default or saved width", arguments: [410.0, 560.0])
+    func inspectorExtendsWindow(inspectorWidth: Double) async throws {
         let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: false)
         try await render(
-            "fmchat-chrome-extended-1360.png",
-            size: CGSize(width: 1000, height: 760),
+            "fmchat-chrome-extended-\(Int(inspectorWidth)).png",
+            size: CGSize(width: 800, height: 760),
+            inspectorWidth: inspectorWidth,
             session: session
         ) { window in
-            window.setFrame(CGRect(x: 40, y: 40, width: 1000, height: 760), display: true)
+            window.setFrame(CGRect(x: 40, y: 40, width: 800, height: 760), display: true)
             try await Task.sleep(for: .milliseconds(100))
             session.inspectorPreference = true
             try await Task.sleep(for: .milliseconds(700))
-            #expect(window.frame.width == 1360, "The window grows by the inspector's width")
-            #expect(window.frame.minX == 40, "It grows rightwards when the screen has room")
+            #expect(abs(window.frame.width - (800 + inspectorWidth)) < 0.5, "The window grows by the chosen inspector width")
+            #expect(abs(window.frame.minX - 40) < 0.5, "It grows rightwards when the screen has room")
             session.inspectorPreference = false
             try await Task.sleep(for: .milliseconds(700))
-            #expect(window.frame.width == 1000, "Closing gives the width back")
+            #expect(abs(window.frame.width - 800) < 0.5, "Closing gives the chosen width back")
             session.inspectorPreference = true
             try await Task.sleep(for: .milliseconds(700))
-            #expect(window.frame.width == 1360)
+            #expect(abs(window.frame.width - (800 + inspectorWidth)) < 0.5)
         }
+    }
+
+    @Test("The inspector divider resizes the column and keeps its width after reopening")
+    func inspectorDividerResizes() async throws {
+        // SwiftUI builds this test host's AX tree only when requested by an
+        // accessibility client. Restore the application setting afterwards.
+        let application = NSApplication.shared
+        let attribute = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = application.accessibilityAttributeValue(attribute) ?? false
+        application.accessibilitySetValue(true, forAttribute: attribute)
+        defer { application.accessibilitySetValue(previous, forAttribute: attribute) }
+        let session = try await session(selecting: .feature(Self.receipts), inspectorPreference: true)
+        try await render("fmchat-chrome-resized-inspector.png", session: session) { window in
+            let handle = try #require(resizeHandle(in: window, label: "Inspector width"))
+            #expect(resizeValue(handle) == "410 points")
+            for _ in 0..<5 {
+                #expect(handle.accessibilityPerformIncrement?() == true)
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            #expect(resizeValue(handle) == "510 points")
+            #expect(abs(window.frame.width - 1440) < 0.5, "Dragging the internal divider does not resize the window")
+            #expect(window.minSize.width == 970, "The inspector adds its chosen width to the chat and rail minimum")
+            session.inspectorPreference = false
+            try await Task.sleep(for: .milliseconds(700))
+            #expect(abs(window.frame.width - 930) < 0.5)
+            session.inspectorPreference = true
+            try await Task.sleep(for: .milliseconds(700))
+            #expect(abs(window.frame.width - 1440) < 0.5)
+            let reopened = try #require(resizeHandle(in: window, label: "Inspector width"))
+            #expect(resizeValue(reopened) == "510 points")
+        }
+    }
+
+    private func resizeValue(_ handle: AnyObject) -> String? {
+        guard let object = handle as? NSObject,
+              object.responds(to: #selector(NSView.accessibilityValue)) else { return nil }
+        return handle.accessibilityValueDescription?() ?? (object.value(forKey: "accessibilityValue") as? String)
+    }
+
+    private func resizeHandle(in window: NSWindow, label: String) -> AnyObject? {
+        var visited = Set<ObjectIdentifier>()
+        func find(_ object: AnyObject) -> AnyObject? {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return nil }
+            if object.accessibilityLabel?() == label { return object }
+            let children = (object.accessibilityChildren?() ?? []).map { $0 as AnyObject }
+                + ((object as? NSView)?.subviews ?? []).map { $0 as AnyObject }
+            for child in children {
+                if let match = find(child) { return match }
+            }
+            return nil
+        }
+        return window.contentView.flatMap { find($0) }
     }
 
     @Test("A dragged narrow sidebar is an avatar-only rail")
@@ -268,6 +323,27 @@ struct FirstMateChatWindowLayoutTests {
         // While the edge slides, chat keeps its width and the inspector grows.
         #expect(FirstMateChatColumnsLayout.columnWidths(total: 1100, sidebar: 320, inspector: 360, pinnedChat: 680) == [320, 680, 100])
         #expect(FirstMateChatColumnsLayout.columnWidths(total: 1500, sidebar: 320, inspector: 360, pinnedChat: 680) == [320, 820, 360])
+    }
+
+    @Test("Inspector resizing respects the chat floor and clamps saved preferences")
+    func inspectorResizeBounds() {
+        #expect(FirstMateChatPreferences.defaultInspectorWidth == 410)
+        #expect(Layout.resizedInspectorWidth(560, total: 1440, sidebar: 320) == 560)
+        #expect(Layout.resizedInspectorWidth(900, total: 1440, sidebar: 320) == 720)
+        #expect(Layout.resizedInspectorWidth(560, total: 1200, sidebar: 320) == 500)
+        #expect(Layout.resizedInspectorWidth(100, total: 1200, sidebar: 320) == 320)
+        #expect(Layout.resizedInspectorWidth(560, total: 870, sidebar: 80) == 410)
+        #expect(Layout.clampedInspectorWidth(.nan) == 410)
+        #expect(Layout.clampedInspectorWidth(-100) == 320)
+        #expect(Layout.clampedInspectorWidth(2000) == 720)
+    }
+
+    @Test("A wider inspector slides using its chosen width instead of the old fixed width")
+    func resizedInspectorSlides() {
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1560, sidebar: 320, inspector: 560, pinnedChat: 680) == [320, 680, 560])
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1280, sidebar: 320, inspector: 560, pinnedChat: 680) == [320, 680, 280])
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1000, sidebar: 320, inspector: 560, pinnedChat: 680) == [320, 680, 0])
+        #expect(FirstMateChatColumnsLayout.columnWidths(total: 1560, sidebar: 320, inspector: 560) == [320, 680, 560])
     }
 
     @Test("Opening the inspector grows the window rightwards, moving left only at the screen's edge")

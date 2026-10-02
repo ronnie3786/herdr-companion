@@ -6,6 +6,8 @@ struct AgentWorkspaceSection: View {
     let selectPane: (HerdrPane) -> Void
 
     let confirmAction: (AgentSessionAction) -> Void
+    var sidebar = false
+    var highlightsSelection = true
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 8) {
@@ -21,7 +23,9 @@ struct AgentWorkspaceSection: View {
                                 session: session,
                                 connectionState: model.connectionState(forMachine: session.pane.machineID),
                                 isUnread: model.unreadPaneIDs.contains(session.id),
-                                isStarred: model.starredChatIDs.contains(session.id)
+                                isStarred: model.starredChatIDs.contains(session.id),
+                                sidebar: sidebar,
+                                isSelected: sidebar && highlightsSelection && model.selectedPaneID == session.id
                             )
                         }
                         .buttonStyle(.plain)

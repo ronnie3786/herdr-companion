@@ -6,6 +6,7 @@ struct FirstMateChatTranscript: View {
     let conversation: FirstMateConversation?
     let catalog: FirstMateMentionCatalog
     let canControl: Bool
+    var scrollToLatestRequest = 0
     @Binding var followsLatest: Bool
     @Binding var readLayout: FirstMateMobileTranscriptPolicy.ReadLayout?
     @Binding var expandedReplies: Set<String>
@@ -57,42 +58,49 @@ struct FirstMateChatTranscript: View {
                             .herdrFont(.body).foregroundStyle(HerdrTheme.secondaryText)
                             .padding(.vertical, 24)
                     }
-                    ForEach(rows) { row in
-                        if let day = row.dayLabel {
-                            HStack(spacing: 4) {
-                                Text(day)
-                                if let date = HerdrTimestamp.date(from: row.message.createdAt) { Text(FirstMateChatTime.clock(for: date, calendar: .current)) }
-                            }
-                            .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(HerdrTheme.codeFill, in: .capsule)
-                            .frame(maxWidth: .infinity).padding(.vertical, 10)
-                        }
-                        FirstMateChatBubble(row: row, snapshot: snapshot, maximumWidth: width,
-                            skimState: skimState, catalog: catalog,
-                            replies: row.id == rows.last?.id ? replies : [], choice: choices[row.id], canReply: canControl,
-                            sendReply: { reply in if sendReply(reply) { choices[row.id] = reply } },
-                            presentationChanged: presentationChanged, readoutConversations: readoutConversations,
-                            showReadout: { readout = .capture($0, fleet: fleet) },
-                            feedback: store.feedback(for: snapshot.feature.id, messageID: row.message.id),
-                            rate: feedbackAction(row.message))
-                            .padding(.top, row.isFirstInGroup ? 8 : 0)
-                            .id(row.id)
-                        if !row.additionalReplies.isEmpty {
-                            DisclosureGroup("Additional response from this turn", isExpanded: additionalRepliesExpanded(row.id)) {
-                                ForEach(row.additionalReplies) { message in
-                                    FirstMateChatBubble(row: .init(message: message, speaker: FirstMateTranscriptLayout.speaker(for: message),
-                                        isFirstInGroup: true, isLastInGroup: true), snapshot: snapshot, maximumWidth: width,
-                                        skimState: skimState, catalog: catalog, sendReply: { _ in }, presentationChanged: presentationChanged, readoutConversations: readoutConversations,
-                                        showReadout: { readout = .capture($0, fleet: fleet) },
-                                        feedback: store.feedback(for: snapshot.feature.id, messageID: message.id),
-                                        rate: feedbackAction(message))
-                                    resources(files: files[message.id] ?? [], links: links[message.id] ?? [], width: width)
+                    // Measure changing rows in small batches. Individual lazy
+                    // row estimates can cycle when Send also shrinks the composer.
+                    // Older batches still load on demand for long conversations.
+                    ForEach(rowBatches(rows)) { batch in
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(batch.rows) { row in
+                                if let day = row.dayLabel {
+                                    HStack(spacing: 4) {
+                                        Text(day)
+                                        if let date = HerdrTimestamp.date(from: row.message.createdAt) { Text(FirstMateChatTime.clock(for: date, calendar: .current)) }
+                                    }
+                                    .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
+                                    .padding(.horizontal, 12).padding(.vertical, 6)
+                                    .background(HerdrTheme.codeFill, in: .capsule)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 10)
                                 }
+                                FirstMateChatBubble(row: row, snapshot: snapshot, maximumWidth: width,
+                                    skimState: skimState, catalog: catalog,
+                                    replies: row.id == rows.last?.id ? replies : [], choice: choices[row.id], canReply: canControl,
+                                    sendReply: { reply in if sendReply(reply) { choices[row.id] = reply } },
+                                    presentationChanged: presentationChanged, readoutConversations: readoutConversations,
+                                    showReadout: { readout = .capture($0, fleet: fleet) },
+                                    feedback: store.feedback(for: snapshot.feature.id, messageID: row.message.id),
+                                    rate: feedbackAction(row.message))
+                                    .padding(.top, row.isFirstInGroup ? 8 : 0)
+                                    .id(row.id)
+                                if !row.additionalReplies.isEmpty {
+                                    DisclosureGroup("Additional response from this turn", isExpanded: additionalRepliesExpanded(row.id)) {
+                                        ForEach(row.additionalReplies) { message in
+                                            FirstMateChatBubble(row: .init(message: message, speaker: FirstMateTranscriptLayout.speaker(for: message),
+                                                isFirstInGroup: true, isLastInGroup: true), snapshot: snapshot, maximumWidth: width,
+                                                skimState: skimState, catalog: catalog, sendReply: { _ in }, presentationChanged: presentationChanged, readoutConversations: readoutConversations,
+                                                showReadout: { readout = .capture($0, fleet: fleet) },
+                                                feedback: store.feedback(for: snapshot.feature.id, messageID: message.id),
+                                                rate: feedbackAction(message))
+                                            resources(files: files[message.id] ?? [], links: links[message.id] ?? [], width: width)
+                                        }
+                                    }
+                                    .herdrFont(.caption).tint(HerdrTheme.accent).frame(maxWidth: width)
+                                }
+                                resources(files: files[row.id] ?? [], links: links[row.id] ?? [], width: width)
                             }
-                            .herdrFont(.caption).tint(HerdrTheme.accent).frame(maxWidth: width)
                         }
-                        resources(files: files[row.id] ?? [], links: links[row.id] ?? [], width: width)
                     }
                     if typing {
                         HStack(spacing: 5) {
@@ -140,6 +148,9 @@ struct FirstMateChatTranscript: View {
             .onChange(of: typing) { _, _ in
                 if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
             }
+            .onChange(of: scrollToLatestRequest) { _, _ in
+                proxy.scrollTo("first-mate-chat-end", anchor: .bottom)
+            }
             .onChange(of: skimState.scrollRequest) { _, request in
                 guard let request else { return }
                 followsLatest = false
@@ -165,9 +176,21 @@ struct FirstMateChatTranscript: View {
                     Button(diagnostics) { diagnostics = FirstMateTranscriptPerformanceProbe.summary }
                         .font(.caption2).padding(8).background(HerdrTheme.base)
                         .accessibilityIdentifier("first-mate-transcript-metrics")
+                        .padding(.top, 80) // Keep the probe clear of the floating chat bar.
                 }
             }
             #endif
+        }
+    }
+
+    private struct RowBatch: Identifiable {
+        let rows: ArraySlice<FirstMateTranscriptLayout.Row>
+        var id: String { rows[rows.startIndex].id }
+    }
+
+    private func rowBatches(_ rows: [FirstMateTranscriptLayout.Row]) -> [RowBatch] {
+        stride(from: 0, to: rows.count, by: 16).map { start in
+            RowBatch(rows: rows[start..<min(start + 16, rows.count)])
         }
     }
 

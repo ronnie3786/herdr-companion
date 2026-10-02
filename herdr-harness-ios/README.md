@@ -67,8 +67,9 @@ feature-only workflow/action controls. When no host advertises lead capability,
 an explicitly client-built briefing retains capsule readouts and a creation goal
 without discarding its draft on cancel/failure. A capable lead failure shows a
 retry/read-only state rather than pretending it is an older host. The composer
-uses a 1–7-line text pill and explicit send. Plus offers Photos, Files, Paste code
-and documents; hold the mic to dictate, or type @ for owned feature/crew mentions.
+uses a 1–7-line text field inside a glass input card with explicit Send. Plus offers Photos, Files, Paste code
+and documents; tap the mic to start dictation, tap Stop to review it, then Send.
+Type @ for owned feature/crew mentions.
 Expandable model/context controls preserve host capability and confirmation gates.
 Long-press a response to rate it. Draft attachments, picks and voice provenance
 stay with the original host and feature, including after a failed send. Swipe/context
@@ -98,7 +99,9 @@ Workspaces and tabs sort by their newest matching
 chat, and agents within each tab sort newest first. Workspaces with identical
 names on different machines stay separate. Search filters before grouping, so
 counts and ordering describe the matching chats. Tap any agent to open its
-session. Offline machines indicate that agent status is last known. Workspace
+session. On iPad, the app tabs remain visible while a chat is open, including in
+narrow windows. Switching tabs preserves the selected agent. Offline machines
+indicate that agent status is last known. Workspace
 browsing and creation remain in the navigator. Long-press any agent card for
 **Rename**, **Smart Rename**, star/unstar, tab color, its workspace, and copying
 its workspace pane ID. Mac focus/zoom and Interrupt are grouped under **Mac
@@ -121,12 +124,14 @@ whole so chats remain reachable with large text in landscape.
 Pane views use charcoal chrome and system-scaled prose. Chat, Git, Terminal, and
 Skills are available from **Pane actions → View**, without a separate segment
 row taking conversation space. Chat uses a one-line inline navigation title and
-flat, full-width conversation rows: there is no turn rail, large agent/status
+flat conversation rows in a centered reading column on large screens: there is no turn rail, large agent/status
 header, standalone star, or location breadcrumb. Star remains in Pane actions;
 **Chat history → Last prompt** shows only the latest visible user prompt and is
-disabled when there is none. Pushed panes use native Back and swipe. Root and
-split-detail panes expose the app Chat navigator; split detail removes the
-split view's automatic Agents-column control rather than duplicating it. Model and
+disabled when there is none. Pushed panes use native Back and swipe. Root panes expose the app Chat navigator. On iPad, Agents uses a flush left sidebar
+with a full-height divider and the same continuous dusk glass as First Mate.
+The sidebar owns the navigator and list tools; selected sessions have a quiet
+highlight. The transcript and composer share an 800-point maximum reading width,
+and the composer sits directly over the pane background without a separate gray band. Model and
 Thinking are small plain-text pickers, grouped at the leading edge with an adjacent
 down chevron on each interactive value and independent 44-point tap targets.
 Listen and TL;DR are icon-only actions at the trailing edge; preparing, playing,

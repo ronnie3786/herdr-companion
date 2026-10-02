@@ -143,6 +143,8 @@ enum HerdrTheme {
     /// Applied by First Mate chrome now; the app-wide adoption is a later phase.
     /// This limits text scaling, never message content or scrolling.
     static let maximumDynamicTypeSize: DynamicTypeSize = .xxxLarge
+    /// Transcript and composer share a readable column on large screens.
+    static let chatReadingWidth: CGFloat = 800
     static let minHitTarget: CGFloat = 44
     static let cardRadius = 16.0
     static let compactRadius = 10.0

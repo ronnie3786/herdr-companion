@@ -4,7 +4,7 @@ import XCTest
 final class HerdrFirstMateComposerUITests: XCTestCase {
     override func setUpWithError() throws { continueAfterFailure = false }
 
-    func testAttachmentModelContextAndCannedHoldToTalk() throws {
+    func testAttachmentModelContextAndTapDictation() throws {
         let app = launch(); defer { app.terminate() }
         let row = app.buttons["first-mate-feature-demo1-demo-receipts"]
         for _ in 0..<8 where !row.isHittable { app.swipeUp() }
@@ -13,7 +13,9 @@ final class HerdrFirstMateComposerUITests: XCTestCase {
         XCTAssertTrue(mic.waitForExistence(timeout: 5))
         XCTAssertGreaterThanOrEqual(mic.frame.width, 44); XCTAssertGreaterThanOrEqual(mic.frame.height, 44)
         mic.tap()
-        XCTAssertTrue(app.staticTexts["Hold the mic to talk."].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Listening…"].waitForExistence(timeout: 3))
+        XCTAssertEqual(mic.label, "Stop voice dictation")
+        app.buttons["first-mate-cancel-dictation"].tap()
 
         app.buttons["first-mate-model-controls"].tap()
         XCTAssertTrue(app.staticTexts["Current session"].waitForExistence(timeout: 5))
@@ -37,8 +39,22 @@ final class HerdrFirstMateComposerUITests: XCTestCase {
         try capture("phase5-attachment-ready", app)
         app.buttons["first-mate-send"].tap()
         XCTAssertTrue(mic.waitForExistence(timeout: 5))
-        mic.press(forDuration: 1.0)
+        let input = app.descendants(matching: .any)["first-mate-composer"]
+        input.tap(); input.typeText("Keep this introduction.")
+        XCTAssertTrue(mic.isHittable, "Dictation stays available while editing a draft")
+        mic.tap()
+        XCTAssertTrue(app.staticTexts["Listening…"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["first-mate-send"].isEnabled)
+        try capture("dictation-listening", app)
+        mic.tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        XCTAssertEqual(input.value as? String, "Keep this introduction.\nPlease summarize the next step.")
+        XCTAssertFalse(app.staticTexts["Sent by voice"].exists, "Stopping must not send the draft")
+        XCTAssertEqual(mic.label, "Start voice dictation")
+        try capture("dictation-draft-review", app)
+        app.buttons["first-mate-send"].tap()
         XCTAssertTrue(app.staticTexts["Sent by voice"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Sent by voice"].isHittable, "Sending reveals the new message above the composer")
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Please summarize the next step.")).firstMatch.exists)
         try capture("phase5-voice-sent", app)
     }

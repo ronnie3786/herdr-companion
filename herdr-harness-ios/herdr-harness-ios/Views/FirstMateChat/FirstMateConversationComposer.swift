@@ -54,7 +54,12 @@ struct FirstMateConversationComposer: View {
     private var covered: Bool { showsPhotos || showsFiles || sheet != nil }
     private var text: Binding<String> {
         let context = store.operationContext
-        return Binding(get: { store.composerDraft(for: context) }, set: { material.edit($0, store: store, context: context) })
+        return Binding(get: { store.composerDraft(for: context) }, set: { updated in
+            // Losing keyboard focus can write the same value again. That is not
+            // a new edit that should divert an in-flight dictation to recovery.
+            guard updated != store.composerDraft(for: context) else { return }
+            material.edit(updated, store: store, context: context)
+        })
     }
     private var contextPresentation: FirstMateCoordinatorContextPresentation? {
         store.snapshots[target.featureID].map { .init(feature: $0.feature, capabilityAvailable: store.contextSupported) }
@@ -110,7 +115,7 @@ struct FirstMateConversationComposer: View {
             }
             FirstMateMessageComposer(text: text, placeholder: placeholder,
                 canControl: ownerAvailable, isSending: busy || material.blocksSending || preparation.blocksSending,
-                send: { _ = send() }, openDocuments: openDocuments,
+                send: { if send() { voice.clearHint() } }, openDocuments: openDocuments,
                 attachmentActions: store.attachmentsSupported ? .init(
                     photos: { importTicket = captureImport(); showsPhotos = true },
                     files: { importTicket = captureImport(); showsFiles = true },
@@ -118,8 +123,8 @@ struct FirstMateConversationComposer: View {
                 hasAttachments: material.hasAttachments, voice: voice, beginVoice: beginVoice,
                 composerHint: voice.hint,
                 focusedHint: store.attachmentsSupported
-                    ? "Type @ to tag a feature. Hold the mic to talk."
-                    : "Update this machine's companion server to attach files. Hold the mic to talk.")
+                    ? "Type @ to tag a feature. Tap the mic to dictate."
+                    : "Update this machine's companion server to attach files. Tap the mic to dictate.")
         }
         .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize)
         .photosPicker(isPresented: $showsPhotos, selection: $photos,
@@ -150,13 +155,13 @@ struct FirstMateConversationComposer: View {
         .onChange(of: store.lifecycle) { _, _ in invalidate() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { invalidate() } }
         .onChange(of: voice.capture.recorderStatus) { _, status in
-            if status == .finished { voice.finish(explicitSend: false) }
+            if status == .finished { voice.finish() }
         }
         .onDisappear { invalidate(); presentationChanged(false) }
         .sensoryFeedback(.impact(weight: .light), trigger: voice.startPulse)
     }
 
-    /// One compact line above the pill, like the Mac composer's context line
+    /// One compact line above the input card, like the Mac composer's context line
     /// and model pill: the context ring, then model and thinking.
     private var accessories: some View {
         HStack(spacing: 8) {
@@ -245,12 +250,11 @@ struct FirstMateConversationComposer: View {
             && model.firstMateCanControl(machineID: ticket.target.machineID) && ticket.store.controlAvailable
             && model.selectedTab == .firstMate
     }
-    private func beginVoice(_ locked: Bool) {
+    private func beginVoice() {
         let ticket = captureImport()
         guard ownerAvailable, !busy, !preparation.isPreparing else { return }
-        voice.begin(store: store, material: material, locked: locked,
-            isCurrent: { current(ticket) && !FirstMateMobileTranscriptPolicy.isClosed(ticket.store.snapshot(for: ticket.context)) },
-            submit: send)
+        voice.begin(store: store, material: material,
+            isCurrent: { current(ticket) && !FirstMateMobileTranscriptPolicy.isClosed(ticket.store.snapshot(for: ticket.context)) })
     }
     private func invalidate() {
         voice.cancel(preserveRecognizedText: true)

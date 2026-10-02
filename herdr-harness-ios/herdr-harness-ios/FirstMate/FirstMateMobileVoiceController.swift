@@ -2,7 +2,8 @@ import Foundation
 import Observation
 
 /// The recorder does not own its transcription Task. This controller owns the
-/// cancellation chain and the one explicit authorization to submit its result.
+/// cancellation chain and returns recognized text to the original draft.
+/// Sending always remains a separate composer action.
 @MainActor @Observable
 final class FirstMateMobileVoiceController {
     let capture = HerdrQuickVoiceCapture()
@@ -12,7 +13,6 @@ final class FirstMateMobileVoiceController {
     private(set) var hint: String?
     private(set) var startPulse = 0
     @ObservationIgnored private var task: Task<Void, Never>?
-    @ObservationIgnored private var lockTask: Task<Void, Never>?
     @ObservationIgnored private var session: Session?
 
     @MainActor private final class Session {
@@ -23,43 +23,33 @@ final class FirstMateMobileVoiceController {
         let revision: Int
         let initialText: String
         let isCurrent: @MainActor () -> Bool
-        let submit: @MainActor () -> Bool
-        var allowsSend = true
         var retainsResult = true
         init(store: FirstMateStore, material: FirstMateMobileComposerDraft,
-             isCurrent: @escaping @MainActor () -> Bool, submit: @escaping @MainActor () -> Bool) {
+             isCurrent: @escaping @MainActor () -> Bool) {
             self.store = store; self.material = material; context = store.operationContext
             revision = material.revision; initialText = store.composerDraft(for: context)
-            self.isCurrent = isCurrent; self.submit = submit
+            self.isCurrent = isCurrent
         }
     }
 
     var phase: HerdrQuickVoiceCapture.Phase { demo ? demoPhase : capture.phase }
     var samples: [CGFloat] { demo ? [0.2, 0.45, 0.7, 0.4, 0.9, 0.6, 0.3, 0.5] : capture.samples }
 
-    func begin(store: FirstMateStore, material: FirstMateMobileComposerDraft, locked: Bool = false,
-               isCurrent: @escaping @MainActor () -> Bool, submit: @escaping @MainActor () -> Bool) {
+    func begin(store: FirstMateStore, material: FirstMateMobileComposerDraft,
+               isCurrent: @escaping @MainActor () -> Bool) {
         guard phase == .idle, task == nil, isCurrent(), !material.blocksSending else { return }
-        session = Session(store: store, material: material, isCurrent: isCurrent, submit: submit)
+        session = Session(store: store, material: material, isCurrent: isCurrent)
         demo = store.isDemo; hint = nil; startPulse &+= 1
         if demo {
-            demoStarted = .now; demoPhase = locked ? .locked : .recording
-            if !locked {
-                lockTask = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(2.65))
-                    guard !Task.isCancelled, let self, self.demoPhase == .recording else { return }
-                    self.demoPhase = .locked
-                }
-            }
-        } else if locked { capture.beginLocked() } else { capture.beginHold() }
+            demoStarted = .now
+            demoPhase = .locked
+        } else {
+            capture.beginLocked()
+        }
     }
 
-    func quickTap() { hint = "Hold the mic to talk." }
-
-    func finish(explicitSend: Bool) {
+    func finish() {
         guard let session, phase == .recording || phase == .locked, task == nil else { return }
-        session.allowsSend = session.allowsSend && explicitSend
-        lockTask?.cancel(); lockTask = nil
         if demo { demoPhase = .transcribing }
         task = Task { [weak self] in
             guard let self else { return }
@@ -83,21 +73,18 @@ final class FirstMateMobileVoiceController {
                 guard session.retainsResult else { return }
                 let attached = session.material.receiveVoice(transcript.text, initialRevision: session.revision,
                     initialText: session.initialText, store: session.store, context: session.context)
-                // Even a transport that ignores cancellation cannot authorize a send.
-                if attached && session.allowsSend && !Task.isCancelled && session.isCurrent() {
-                    if !session.submit() { self.hint = "Transcript saved in this conversation's draft." }
-                } else if attached { self.hint = "Transcript saved in this conversation's draft." }
-            case .tooShort: self.hint = "Nothing heard. Hold the mic a little longer."
+                if attached { self.hint = "Dictation added. Review your message, then tap Send." }
+            case .tooShort: self.hint = "Nothing heard. Tap the mic and speak a little longer."
             case .failure(let message): self.hint = message
             case .cancelled: self.hint = "Recording cancelled."
             }
         }
     }
 
+    func clearHint() { hint = nil }
+
     func cancel(preserveRecognizedText: Bool = false) {
-        session?.allowsSend = false
         session?.retainsResult = preserveRecognizedText
-        lockTask?.cancel(); lockTask = nil
         task?.cancel()
         capture.cancel()
         if task == nil { session = nil; demoPhase = .idle }

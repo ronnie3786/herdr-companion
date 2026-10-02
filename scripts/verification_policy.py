@@ -19,7 +19,7 @@ from typing import Callable, Iterable
 # The commit status local-verify.py posts; publication and landing require it.
 LOCAL_CONTEXT = "Mac tests (local)"
 # Anything the iOS app builds from. Other changes cannot break its tests.
-IOS_PATHS = re.compile(r"^(herdr-harness-ios/|HerdrFirstMateShared/|HerdrFirstMateSharedTests/)")
+IOS_PATHS = re.compile(r"^(herdr-harness-ios/|HerdrFirstMateShared/|HerdrFirstMateSharedTests/|HerdrNotesShared/)")
 # Files no build, package or test reads. release/macos.json is read only by the
 # release script, which stamps the version into the app it builds.
 UNTESTED_PATHS = re.compile(r"^(docs/|design/|release/notes/|release/macos\.json$|[^/]+\.md$)")

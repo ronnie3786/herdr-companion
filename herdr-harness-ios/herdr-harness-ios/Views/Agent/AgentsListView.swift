@@ -4,6 +4,8 @@ struct AgentsListView: View {
     @Bindable var model: HerdrAppModel
     let selectPane: (HerdrPane) -> Void
     let openHudChats: () -> Void
+    var embedded = false
+    var showsHudChats = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var query = ""
     @State private var sessionAction: AgentSessionAction?
@@ -15,52 +17,60 @@ struct AgentsListView: View {
         let sessionCount = groups.reduce(0) { $0 + $1.sessionCount }
 
         ZStack {
-            HerdrBackground()
+            if !embedded { HerdrBackground() }
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    AgentsHeader(model: model)
+            VStack(spacing: 0) {
+                if embedded {
+                    AgentsSidebarHeader(model: model)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if !embedded { AgentsHeader(model: model) }
 
-                    HudChatsDestinationButton(open: openHudChats)
+                        HudChatsDestinationButton(open: openHudChats, compact: embedded, isSelected: showsHudChats)
 
-                    WorkspaceSearchField(
-                        text: $query,
-                        placeholder: "Search agents",
-                        clearAccessibilityLabel: "Clear agent search",
-                        monospaced: false
-                    )
-
-                    AgentsListSummary(
-                        sessionCount: sessionCount,
-                        workspaceCount: groups.count,
-                        connectionState: model.connectionState
-                    )
-
-                    if groups.isEmpty {
-                        ContentUnavailableView(
-                            query.isEmpty ? "No Pi sessions" : "No matching agents",
-                            systemImage: "bubble.left.and.bubble.right",
-                            description: Text(query.isEmpty
-                                ? "Open the navigator to start a Pi chat in a workspace."
-                                : "Search by agent, machine, workspace, tab, or status.")
+                        WorkspaceSearchField(
+                            text: $query,
+                            placeholder: "Search agents",
+                            clearAccessibilityLabel: "Clear agent search",
+                            monospaced: false
                         )
-                    } else {
-                        ForEach(groups) { group in
-                            AgentWorkspaceSection(
-                                model: model,
-                                group: group,
-                                selectPane: selectPane,
-                                confirmAction: { sessionAction = $0 }
+
+                        AgentsListSummary(
+                            sessionCount: sessionCount,
+                            workspaceCount: groups.count,
+                            connectionState: model.connectionState
+                        )
+
+                        if groups.isEmpty {
+                            ContentUnavailableView(
+                                query.isEmpty ? "No Pi sessions" : "No matching agents",
+                                systemImage: "bubble.left.and.bubble.right",
+                                description: Text(query.isEmpty
+                                    ? "Open the navigator to start a Pi chat in a workspace."
+                                    : "Search by agent, machine, workspace, tab, or status.")
                             )
+                        } else {
+                            ForEach(groups) { group in
+                                AgentWorkspaceSection(
+                                    model: model,
+                                    group: group,
+                                    selectPane: selectPane,
+                                    confirmAction: { sessionAction = $0 },
+                                    sidebar: embedded,
+                                    highlightsSelection: !showsHudChats
+                                )
+                            }
                         }
                     }
+                    .padding(.horizontal, embedded ? 14 : HerdrTheme.pagePadding)
+                    .padding(.top, 8)
+                    .padding(.bottom, 34)
                 }
-                .padding(.horizontal, HerdrTheme.pagePadding)
-                .padding(.top, 8)
-                .padding(.bottom, 34)
+                .scrollIndicators(.hidden)
+                .refreshable { await model.refresh() }
             }
-            .scrollIndicators(.hidden)
-            .refreshable { await model.refresh() }
         }
         .navigationTitle("Agents")
         .toolbar(.hidden, for: .navigationBar)

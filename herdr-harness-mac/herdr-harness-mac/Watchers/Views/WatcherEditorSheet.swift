@@ -38,14 +38,22 @@ struct WatcherEditorSheet: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            HStack { Text(entry == nil ? "Set up a watcher" : "Edit watcher").font(.headline); Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) }.padding(20)
-            Divider()
+            HStack(spacing: 10) {
+                Text(entry == nil ? "Set up a watcher" : "Edit watcher").font(.system(size: 15, weight: .semibold)); Spacer()
+                Text("Runs on").font(.system(size: 12)).foregroundStyle(HerdrTheme.secondaryText)
+                WatcherMachineMenu(store: store, selection: $machineID).disabled(entry != nil)
+                Button("Cancel") { dismiss() }.buttonStyle(HerdrButtonStyle(kind: .outline)).keyboardShortcut(.cancelAction)
+            }.padding(.vertical, 14).padding(.horizontal, 18)
+            Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
+            if entry == nil, !store.state(for: machineID).isOn {
+                WatcherMachineSetupPanel(store: store, machineID: machineID).frame(maxWidth: .infinity).padding(20)
+                Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
+            }
             HSplitView {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         section("The basics") {
                             TextField("Watcher name", text: $name)
-                            Picker("Runs on", selection: $machineID) { ForEach(store.sources.filter { store.enabledMachines.contains($0.machineID) }, id: \.machineID) { Text($0.machineName).tag($0.machineID) } }.disabled(entry != nil)
                             TextField("Time zone", text: $timezone).help("An IANA timezone, such as America/Chicago")
                             HStack { WatcherAvatar(avatar: avatar, size: 52); Button("Choose avatar") { chooseAvatar = true }; Button("Shuffle", systemImage: "shuffle") { avatar = (hasAgent ? WatcherAvatar.characters : WatcherAvatar.instruments).randomElement() ?? avatar } }.popover(isPresented: $chooseAvatar) { WatcherAvatarPicker(character: hasAgent, selection: $avatar) }
                         }
@@ -99,15 +107,15 @@ struct WatcherEditorSheet: View {
                     }.padding(22).textFieldStyle(.roundedBorder)
                 }.frame(minWidth: 420, maxWidth: .infinity)
             }
-            Divider()
-            HStack { if let error { Text(error).font(.caption).foregroundStyle(.pink).lineLimit(3).textSelection(.enabled) }; Spacer(); if saving || loading { ProgressView().controlSize(.small) }; Button(entry == nil ? "Save draft" : "Save changes") { Task { await save() } }.buttonStyle(.borderedProminent).tint(HerdrTheme.controlAccent).disabled(saving || loading || !scriptsLoaded || name.trimmingCharacters(in: .whitespaces).isEmpty || steps.isEmpty || client == nil) }.padding(18)
-        }.frame(width: 1000, height: 740).herdrPaneBackground().task { await load() }
+            Rectangle().fill(HerdrTheme.hairline).frame(height: 1)
+            HStack { if let error { Text(error).font(.caption).foregroundStyle(WatchersStyle.rose).lineLimit(3).textSelection(.enabled) }; Spacer(); if saving || loading { ProgressView().controlSize(.small) }; Button(entry == nil ? "Save draft" : "Save changes") { Task { await save() } }.buttonStyle(HerdrButtonStyle(kind: .primary)).disabled(!store.state(for: machineID).isOn || saving || loading || !scriptsLoaded || name.trimmingCharacters(in: .whitespaces).isEmpty || steps.isEmpty || client == nil) }.padding(18)
+        }.frame(width: 1000, height: 740).watchersSheetChrome().task { await load() }
         .onChange(of: hasAgent) { _, agent in avatar = (agent ? WatcherAvatar.characters : WatcherAvatar.instruments).first ?? "gauge" }
     }
     @ViewBuilder private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View { VStack(alignment: .leading, spacing: 12) { Text(title).font(.system(size: 13, weight: .semibold)); content() } }
     private func moveStep(_ id: String, by delta: Int) { guard let index = steps.firstIndex(where: { $0.id == id }), steps.indices.contains(index + delta) else { return }; steps.swapAt(index, index + delta) }
     private func load() async {
-        machineID = entry?.machineID ?? store.sources.first(where: { store.enabledMachines.contains($0.machineID) })?.machineID ?? ""
+        machineID = entry?.machineID ?? store.sources.first(where: { store.enabledMachines.contains($0.machineID) })?.machineID ?? store.sources.first?.machineID ?? ""
         defer { loading = false }
         guard let w = entry?.watcher else { scriptsLoaded = true; return }
         name = w.name; summary = w.summary; timezone = w.timezone; avatar = w.avatar; missedRuns = w.fields.text("missed_runs", fallback: "skip")

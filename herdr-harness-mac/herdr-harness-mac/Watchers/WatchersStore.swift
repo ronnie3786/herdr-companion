@@ -6,10 +6,42 @@ struct WatchersSource: Sendable {
     let machineName: String
     let client: any WatchersClient
 }
+/// Whether a machine can host watchers right now. Only `unreachable` is a
+/// problem worth a banner; the rest is setup the Runs on picker explains.
+enum WatcherMachineState: Equatable, Sendable {
+    case checking
+    case on(supervised: Bool)
+    /// `canTurnOn`: the companion accepts the app's setting. `lockedOff`: its
+    /// configuration pins HERDR_WATCHERS_ENABLED to 0.
+    case off(canTurnOn: Bool, lockedOff: Bool)
+    case needsUpdate
+    case unreachable(String)
+
+    var isOn: Bool { if case .on = self { true } else { false } }
+    /// A short word for the Runs on menu.
+    var label: String {
+        switch self {
+        case .checking: "Checking…"
+        case .on: "On"
+        case .off: "Watchers off"
+        case .needsUpdate: "Needs update"
+        case .unreachable: "Offline"
+        }
+    }
+    init(capabilities: [String: PiJSONValue]) {
+        if capabilities.flag("enabled") { self = .on(supervised: capabilities.flag("supervised")); return }
+        let settings = capabilities["settings"]?.objectValue
+        self = .off(canTurnOn: settings?.flag("changeable") ?? false, lockedOff: settings.map { !$0.flag("changeable") } ?? false)
+    }
+}
 @MainActor @Observable final class WatchersStore {
     private(set) var entries: [WatcherEntry] = []
     private(set) var notices: [String: String] = [:]
     private(set) var enabledMachines: Set<String> = []
+    private(set) var machineStates: [String: WatcherMachineState] = [:]
+    /// Machines whose setting is being changed, and the last failure per machine.
+    private(set) var changingMachines: Set<String> = []
+    private(set) var settingErrors: [String: String] = [:]
     private(set) var unreadCount = 0
     private(set) var loaded = false
     private(set) var refreshing = false
@@ -23,6 +55,8 @@ struct WatchersSource: Sendable {
     @ObservationIgnored private var refreshAgain = false
     @ObservationIgnored private var actionRequestIDs: [String: String] = [:]
     @ObservationIgnored private var inboxCounts: [String: Int] = [:]
+    /// Machines seen hosting watchers this session; only their outages earn a banner.
+    @ObservationIgnored private var seenOn: Set<String> = []
 
     var pollingInterval: Duration { entries.contains { $0.watcher.live != nil } ? .seconds(5) : .seconds(30) }
     var nextToWake: WatcherEntry? { Self.nextToWake(entries) }
@@ -41,6 +75,7 @@ struct WatchersSource: Sendable {
         guard self.identity != identity else { return }
         generation &+= 1; self.identity = identity; self.sources = sources; self.demo = demo
         entries = demo ? WatchersDemo.entries : []; notices = [:]; inboxCounts = [:]; enabledMachines = []; unreadCount = 0; loaded = demo; refreshing = false; busy = []; actionRequestIDs = [:]; refreshAgain = false
+        machineStates = Dictionary(sources.map { ($0.machineID, demo ? WatcherMachineState.on(supervised: true) : .checking) }, uniquingKeysWith: { first, _ in first }); changingMachines = []; settingErrors = [:]; seenOn = []
     }
     func client(for machineID: String) -> (any WatchersClient)? { sources.first { $0.machineID == machineID }?.client }
     func refresh() async {
@@ -53,31 +88,57 @@ struct WatchersSource: Sendable {
                 if refreshAgain { refreshAgain = false; Task { await refresh() } }
             }
         }
-        await withTaskGroup(of: (String, String, [String: PiJSONValue]?, [String: PiJSONValue]?, String?).self) { group in
+        await withTaskGroup(of: (String, String, WatcherMachineState, [String: PiJSONValue]?, [String: PiJSONValue]?).self) { group in
             for source in sources { group.addTask {
                 do {
-                    let capabilities = try await source.client.watchersGet(["capabilities"])
-                    guard capabilities.flag("enabled") else { return (source.machineID, source.machineName, nil, nil, "Watchers is off on this machine. Enable HERDR_WATCHERS_ENABLED in its private companion configuration.") }
+                    let state = WatcherMachineState(capabilities: try await source.client.watchersGet(["capabilities"]))
+                    guard state.isOn else { return (source.machineID, source.machineName, state, nil, nil) }
                     async let list = source.client.watchersGet()
                     async let inbox = source.client.watchersGet(["inbox"], query: [.init(name: "unread", value: "1")])
-                    return try await (source.machineID, source.machineName, list, inbox, nil)
+                    return try await (source.machineID, source.machineName, state, list, inbox)
                 } catch {
-                    let message: String
-                    if case APIError.server(let status, _) = error, status == 404 || status == 501 { message = "Update this companion to add Watchers (watchers-v1)." }
-                    else { message = "Machine unavailable: \(error.localizedDescription)" }
-                    return (source.machineID, source.machineName, nil, nil, message)
+                    if case APIError.server(let status, _) = error, status == 404 || status == 501 { return (source.machineID, source.machineName, .needsUpdate, nil, nil) }
+                    return (source.machineID, source.machineName, .unreachable(error.localizedDescription), nil, nil)
                 }
             } }
-            for await (machineID, machineName, list, inbox, failure) in group {
+            for await (machineID, machineName, state, list, inbox) in group {
                 guard token == generation, revision == mutationRevision, !Task.isCancelled else { group.cancelAll(); continue }
-                if let failure { notices[machineID] = "\(machineName): \(failure)"; enabledMachines.remove(machineID); continue }
-                notices.removeValue(forKey: machineID); enabledMachines.insert(machineID)
+                machineStates[machineID] = state
+                guard state.isOn else {
+                    enabledMachines.remove(machineID); inboxCounts[machineID] = nil; unreadCount = inboxCounts.values.reduce(0, +)
+                    if case .unreachable = state, seenOn.contains(machineID) { notices[machineID] = "\(machineName) isn’t reachable right now, so its watchers aren’t shown. They keep running on that machine." }
+                    else { notices.removeValue(forKey: machineID) }
+                    if case .off = state { entries.removeAll { $0.machineID == machineID } }
+                    continue
+                }
+                notices.removeValue(forKey: machineID); enabledMachines.insert(machineID); seenOn.insert(machineID)
                 entries.removeAll { $0.machineID == machineID }
                 entries += list?["watchers"]?.arrayValue?.compactMap { $0.objectValue.map { WatcherEntry(machineID: machineID, machineName: machineName, watcher: Watcher($0)) } } ?? []
                 inboxCounts[machineID] = inbox?["unread_count"].map { if case let .number(value) = $0 { return Int(value) }; return 0 } ?? (inbox?["items"] ?? inbox?["inbox"])?.arrayValue?.count ?? 0
                 unreadCount = inboxCounts.values.reduce(0, +)
                 entries = Self.ordered(entries)
             }
+        }
+    }
+    func state(for machineID: String) -> WatcherMachineState { machineStates[machineID] ?? .checking }
+    func machineName(for machineID: String) -> String { sources.first { $0.machineID == machineID }?.machineName ?? machineID }
+    /// Turns Watchers on or off for one machine through its companion's
+    /// setting. The person confirms by clicking; agents cannot reach this path.
+    func setWatchersEnabled(_ enabled: Bool, machineID: String) async {
+        guard let client = client(for: machineID), changingMachines.insert(machineID).inserted else { return }
+        let token = generation
+        defer { if token == generation { changingMachines.remove(machineID) } }
+        do {
+            let response = try await client.watchersMutate(["settings"], body: ["enabled": .bool(enabled), "confirmed_by": .string("user"), "changed_via": .string("mac")])
+            guard token == generation else { return }
+            settingErrors[machineID] = nil; machineStates[machineID] = WatcherMachineState(capabilities: response)
+            mutationRevision &+= 1; await refresh()
+        } catch {
+            guard token == generation else { return }
+            if case APIError.server(let status, _) = error, status == 404 || status == 405 {
+                settingErrors[machineID] = "This companion can’t be turned on from the app yet. Update it, or use its configuration."
+                machineStates[machineID] = .off(canTurnOn: false, lockedOff: false)
+            } else { settingErrors[machineID] = error.localizedDescription }
         }
     }
     func action(_ action: String, entry: WatcherEntry) async {

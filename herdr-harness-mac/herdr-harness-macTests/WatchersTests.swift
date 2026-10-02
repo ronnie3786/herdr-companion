@@ -64,8 +64,47 @@ struct WatchersStoreTests {
         store.configure([source("a", a), source("b", b), source("c", offline)], identity: 1, demo: false)
         await store.refresh()
         #expect(Set(store.entries.map(\.id)) == ["a:same", "b:same"])
-        #expect(store.notices["c"] != nil)
+        // Setup states are explained in Runs on, not as banners on the grid.
+        #expect(store.notices["c"] == nil)
+        #expect(store.state(for: "c") == (status == 503 ? .unreachable("Synthetic unavailable") : .needsUpdate))
         #expect(store.enabledMachines == ["a", "b"])
+    }
+    @Test("A machine with Watchers off shows no banner and turns on from the app with the person's confirmation")
+    func turnOnFromApp() async {
+        let off = SettingsStub(enabled: false, changeable: true)
+        let store = WatchersStore(); store.configure([source("devbox", off)], identity: 1, demo: false)
+        await store.refresh()
+        #expect(store.notices.isEmpty)
+        #expect(store.state(for: "devbox") == .off(canTurnOn: true, lockedOff: false))
+        #expect(store.enabledMachines.isEmpty)
+
+        await store.setWatchersEnabled(true, machineID: "devbox")
+
+        let request = await off.settingsRequest
+        #expect(request?["enabled"] == .bool(true))
+        #expect(request?["confirmed_by"] == .string("user"))
+        #expect(request?["changed_via"] == .string("mac"))
+        #expect(request?["request_id"]?.stringValue?.isEmpty == false)
+        #expect(store.state(for: "devbox") == .on(supervised: true))
+        #expect(store.enabledMachines == ["devbox"])
+        #expect(store.changingMachines.isEmpty && store.settingErrors.isEmpty)
+    }
+    @Test("Configuration-pinned and older companions explain the fix instead of offering the switch")
+    func lockedAndLegacy() {
+        #expect(WatcherMachineState(capabilities: ["enabled": .bool(false), "settings": .object(["changeable": .bool(false)])]) == .off(canTurnOn: false, lockedOff: true))
+        #expect(WatcherMachineState(capabilities: ["enabled": .bool(false)]) == .off(canTurnOn: false, lockedOff: false))
+        #expect(WatcherMachineState(capabilities: ["enabled": .bool(true), "supervised": .bool(false)]) == .on(supervised: false))
+    }
+    @Test("An outage earns a banner only for a machine that has hosted watchers")
+    func outageBanner() async {
+        let flaky = SettingsStub(enabled: true, changeable: true)
+        let store = WatchersStore(); store.configure([source("work", flaky)], identity: 1, demo: false)
+        await store.refresh()
+        #expect(store.notices.isEmpty)
+        await flaky.setFailing(true)
+        await store.refresh()
+        #expect(store.notices["work"]?.contains("isn’t reachable") == true)
+        #expect(store.state(for: "work") == .unreachable("Synthetic outage"))
     }
     @Test("A late response cannot repopulate a replaced roster")
     func generationGuard() async {
@@ -110,7 +149,7 @@ struct WatchersStoreTests {
         #expect(await client.listReads == 2)
         #expect(store.busy.isEmpty)
     }
-    private func source(_ id: String, _ client: WatchersStub) -> WatchersSource { .init(machineID: id, machineName: id.uppercased(), client: client) }
+    private func source(_ id: String, _ client: any WatchersClient) -> WatchersSource { .init(machineID: id, machineName: id.uppercased(), client: client) }
     private func entry(_ id: String, machine: String = "a", state: String = "active", next: String? = nil, live: [String: PiJSONValue]? = nil, attention: String? = nil) -> WatcherEntry {
         var value: [String: PiJSONValue] = ["id": .string(id), "name": .string(id), "state": .string(state)]
         if let next { value["next_fire_at"] = .string(next) }; if let live { value["live"] = .object(live) }; if let attention { value["attention"] = .object(["reason": .string(attention)]) }
@@ -138,6 +177,28 @@ private actor WatchersStub: WatchersClient {
         if path == ["capabilities"] { return ["enabled": .bool(true)] }
         if path.isEmpty { if let gate { await gate.wait() }; return ["watchers": .array(watchers.map(PiJSONValue.object))] }
         return ["items": .array([])]
+    }
+}
+
+/// A companion whose Watchers setting the app can change.
+private actor SettingsStub: WatchersClient {
+    private var enabled: Bool
+    private let changeable: Bool
+    private var failing = false
+    private(set) var settingsRequest: [String: PiJSONValue]?
+    init(enabled: Bool, changeable: Bool) { self.enabled = enabled; self.changeable = changeable }
+    func setFailing(_ value: Bool) { failing = value }
+    private var capabilities: [String: PiJSONValue] {
+        ["ok": .bool(true), "enabled": .bool(enabled), "supervised": .bool(true),
+         "settings": .object(["enabled": .bool(enabled), "source": .string(changeable ? "app" : "config"), "changeable": .bool(changeable)])]
+    }
+    func watchersRequest(_ path: [String], method: String, body: [String: PiJSONValue]?, query: [URLQueryItem]) async throws -> [String: PiJSONValue] {
+        if failing { throw APIError.server(status: 502, message: "Synthetic outage") }
+        if method == "POST", path == ["settings"] { settingsRequest = body; enabled = body?["enabled"] == .bool(true); return capabilities }
+        if path == ["capabilities"] { return capabilities }
+        guard enabled else { throw APIError.server(status: 503, message: "Watchers is off") }
+        if path.isEmpty { return ["watchers": .array([])] }
+        return ["items": .array([]), "unread_count": .number(0)]
     }
 }
 

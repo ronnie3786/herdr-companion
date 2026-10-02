@@ -34,6 +34,48 @@ struct WatchersWindowRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Create a watcher on dusk glass, with the chosen machine's Watchers turned off")
+    func builderMachineOff() async throws {
+        let store = WatchersStore()
+        store.configure([WatchersSource(machineID: "devbox", machineName: "DevBox", client: WatchersRenderClient(machine: "DevBox", enabled: false))], identity: UUID(), demo: false)
+        await store.refresh()
+        #expect(store.state(for: "devbox") == .off(canTurnOn: true, lockedOff: false))
+        let result = try await HerdrRenderHarness.render("watchers-builder-machine-off.png", size: CGSize(width: 1080, height: 740)) {
+            WatcherBuilderSheet(store: store, entry: nil).environment(\.herdrGlassActive, true)
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("Set up a watcher manually on dusk glass")
+    func editor() async throws {
+        let store = try await Self.store(working: false)
+        let result = try await HerdrRenderHarness.render("watchers-editor.png", size: CGSize(width: 1000, height: 740), settlePasses: 12) {
+            WatcherEditorSheet(store: store, entry: nil).environment(\.herdrGlassActive, true)
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("The first visit asks where watchers should run")
+    func firstVisit() async throws {
+        let store = WatchersStore()
+        store.configure(["Desktop", "Laptop"].map { WatchersSource(machineID: $0.lowercased(), machineName: $0, client: WatchersRenderClient(machine: $0, enabled: false)) }, identity: UUID(), demo: false)
+        await store.refresh()
+        #expect(store.notices.isEmpty)
+        let result = try await HerdrRenderHarness.render("watchers-first-visit.png", size: CGSize(width: 1190, height: 760)) {
+            ZStack { HerdrGlassBackground(level: HerdrTheme.Glass.pane, drawsDusk: true); WatchersView(store: store) }.environment(\.herdrGlassActive, true)
+        }
+        result.expectSubstantial()
+    }
+
+    @Test("The Watcher inbox lists read and unread results on dusk glass")
+    func inbox() async throws {
+        let store = try await Self.store(working: false)
+        let result = try await HerdrRenderHarness.render("watchers-inbox.png", size: CGSize(width: 720, height: 620), settlePasses: 14) {
+            WatcherInboxSheet(store: store).environment(\.herdrGlassActive, true)
+        }
+        result.expectSubstantial()
+    }
+
     private static func store(working: Bool) async throws -> WatchersStore {
         let store = WatchersStore()
         store.configure(["Desktop", "Laptop"].map { WatchersSource(machineID: $0.lowercased(), machineName: $0, client: WatchersRenderClient(machine: $0, working: working)) }, identity: UUID(), demo: false)
@@ -57,11 +99,14 @@ struct WatchersWindowRenderTests {
 private struct WatchersRenderClient: WatchersClient {
     var machine: String
     var working = false
+    var enabled = true
 
     func watchersRequest(_ path: [String], method: String, body: [String: PiJSONValue]?, query: [URLQueryItem]) async throws -> [String: PiJSONValue] {
-        switch path.first {
-        case "capabilities": ["ok": .bool(true), "enabled": .bool(true)]
-        case "inbox": ["ok": .bool(true), "unread_count": .number(0), "items": .array([])]
+        if path.first != "capabilities" && !enabled { throw APIError.server(status: 503, message: "Watchers is off") }
+        return switch path.first {
+        case "capabilities": ["ok": .bool(true), "enabled": .bool(enabled), "supervised": .bool(machine != "Laptop"),
+                              "settings": .object(["enabled": .bool(enabled), "source": .string("default"), "changeable": .bool(true)])]
+        case "inbox": ["ok": .bool(true), "unread_count": .number(machine == "Desktop" ? 1 : 0), "items": .array(machine == "Desktop" ? WatchersRenderFixture.inbox : [])]
         default: ["ok": .bool(true), "watchers": .array(WatchersRenderFixture.watchers(machine: machine, working: working).map(PiJSONValue.object))]
         }
     }
@@ -119,6 +164,13 @@ enum WatchersRenderFixture {
             return value
         }
     }
+
+    static let inbox: [PiJSONValue] = [
+        .object(["id": .string("inbox-1"), "watcher_id": .string("render-2"), "run_id": .string("run-1"), "title": .string("Main is red"), "created_at": .string("2030-01-07T15:45:00Z"), "read_at": .null,
+                 "body_md": .string("The **Companion** build failed on `main` after the last merge.\n\n- 1 failing check: UI tests\n- 2 pull requests waiting more than 3 days")]),
+        .object(["id": .string("inbox-2"), "watcher_id": .string("render-6"), "run_id": .string("run-2"), "title": .string("Handoff for tomorrow"), "created_at": .string("2030-01-06T23:00:00Z"), "read_at": .string("2030-01-07T08:00:00Z"),
+                 "body_md": .string("Four tasks done. One decision is waiting on you. Tomorrow starts with the release checklist.")]),
+    ]
 
     /// Mirrors the companion's `summary_tokens`: text runs and chips, `{time}` filled and capitalized at a sentence start.
     private static func tokens(_ summary: String, schedule: String) -> [PiJSONValue] {

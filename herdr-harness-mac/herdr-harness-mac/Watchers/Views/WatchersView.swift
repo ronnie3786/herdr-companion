@@ -9,6 +9,7 @@ struct WatchersView: View {
     @State private var selected: WatcherEntry?
     @State private var history: WatcherEntry?
     @State private var inbox = false
+    @State private var machines = false
     @FocusState private var searchFocused: Bool
     static func columnCount(width: CGFloat) -> Int { WatchersMetrics.forWidth(width).columns }
     private var filtered: [WatcherEntry] {
@@ -49,11 +50,21 @@ struct WatchersView: View {
     }
     @ViewBuilder private func content(_ metrics: WatchersMetrics) -> some View {
         if !store.loaded { ProgressView("Finding your watchers…").frame(maxWidth: .infinity).padding(50) }
-        else if store.entries.isEmpty {
+        else if store.entries.isEmpty && store.enabledMachines.isEmpty && !store.sources.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Choose where your watchers run").font(.system(size: 17, weight: .semibold))
+                Text("A watcher lives on one computer’s companion and keeps running when this Mac is asleep or the app is closed. Turn Watchers on where you want them; nothing runs until you create one.")
+                    .font(.system(size: 12.5)).foregroundStyle(HerdrTheme.proseText).lineSpacing(4).frame(maxWidth: 560, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                WatchersMachinesList(store: store).frame(maxWidth: 560)
+            }
+            .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            .background(HerdrTheme.cardFill, in: .rect(cornerRadius: 15))
+            .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(HerdrTheme.outline, lineWidth: 1))
+        } else if store.entries.isEmpty {
             ContentUnavailableView {
-                Label(store.enabledMachines.isEmpty ? "Watchers needs a companion" : "A little help, on your schedule.", systemImage: "eye")
+                Label(store.sources.isEmpty ? "Watchers needs a companion" : "A little help, on your schedule.", systemImage: "eye")
             } description: {
-                Text(store.enabledMachines.isEmpty ? "Update a companion with watchers-v1 and enable Watchers to get started." : "Describe what to keep an eye on. Review the draft and next runs before you create it.")
+                Text(store.sources.isEmpty ? "Connect a computer running the Herdr companion to get started." : "Describe what to keep an eye on. Review the draft and next runs before you create it.")
             }
         } else if filtered.isEmpty {
             VStack(spacing: 8) {
@@ -144,6 +155,17 @@ struct WatchersView: View {
     /// Inbox and New watcher live in the title bar, like the prototype's toolbar.
     private var titleActions: some View {
         HStack(spacing: 8) {
+            Button { machines = true } label: { Label("Computers", systemImage: "desktopcomputer") }
+                .buttonStyle(HerdrIconButtonStyle(tint: HerdrTheme.secondaryText)).help("Where Watchers runs")
+                .popover(isPresented: $machines, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Where Watchers runs").font(.system(size: 13, weight: .semibold))
+                        Text("Each watcher lives on one computer’s companion.").font(.system(size: 11.5)).foregroundStyle(HerdrTheme.secondaryText)
+                        WatchersMachinesList(store: store)
+                    }
+                    .padding(16).frame(width: 380).preferredColorScheme(.dark)
+                }
+                .disabled(store.sources.isEmpty)
             Button { inbox = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "tray")
@@ -157,7 +179,7 @@ struct WatchersView: View {
                 Button("Set up manually") { selected = nil; editor = true }
             } label: { Label("New watcher", systemImage: "plus") }
                 .menuStyle(.button).buttonStyle(HerdrButtonStyle(kind: .primary, height: HerdrTheme.ControlHeight.regular)).menuIndicator(.hidden).fixedSize()
-                .disabled(store.enabledMachines.isEmpty)
+                .disabled(store.sources.isEmpty)
         }
     }
     private var createPrompt: some View {
@@ -176,7 +198,7 @@ struct WatchersView: View {
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(HerdrTheme.accent.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.herdrPlain).disabled(store.enabledMachines.isEmpty)
+        .buttonStyle(.herdrPlain).disabled(store.sources.isEmpty)
     }
     /// Rows stretch every card to the tallest, as the prototype's CSS grid does.
     @ViewBuilder private func grid(_ entries: [WatcherEntry], metrics: WatchersMetrics) -> some View {

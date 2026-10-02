@@ -28,7 +28,7 @@ struct WatcherRunsSheet: View {
                                     if let date = WatchersDate.parse(run.fields["started_at"]?.stringValue) { Text(date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(HerdrTheme.secondaryText) }
                                     Text(run.summary).font(.system(size: 12)).foregroundStyle(HerdrTheme.secondaryText).multilineTextAlignment(.leading)
                                 }.padding(14).background(selected?.id == run.id ? HerdrTheme.selectedFill : HerdrTheme.cardFill, in: .rect(cornerRadius: 9))
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.herdrPlain)
                         }
                     }.padding(16)
                 }.frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
@@ -38,7 +38,10 @@ struct WatcherRunsSheet: View {
                         Text(selected.summary).font(.system(size: 13)).textSelection(.enabled)
                         HStack {
                             Picker("Step", selection: $step) { Text("All steps").tag(""); ForEach(Array(selected.steps.enumerated()), id: \.offset) { _, value in Text(value.text("title", fallback: value.text("step_id"))).tag(value.text("step_id", fallback: value.text("id"))) } }
-                            Picker("Stream", selection: $stream) { Text("Output").tag("stdout"); Text("Errors").tag("stderr") }.pickerStyle(.segmented).frame(width: 160)
+                            Picker("Stream", selection: $stream) { Text("Output").tag("stdout"); Text("Errors").tag("stderr") }
+                            .pickerStyle(.segmented)
+                            .tint(HerdrTheme.controlAccent)
+                            .frame(width: 160)
                         }
                         ScrollView([.horizontal, .vertical]) { Text(logs.isEmpty ? "No output for this step." : logs).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .topLeading).padding(14) }.background(HerdrTheme.codeFill, in: .rect(cornerRadius: 8))
                     } else { ContentUnavailableView("Choose a run", systemImage: "clock.arrow.circlepath") }

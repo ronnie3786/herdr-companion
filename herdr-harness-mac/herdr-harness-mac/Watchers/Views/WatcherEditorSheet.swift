@@ -100,7 +100,7 @@ struct WatcherEditorSheet: View {
                 }.frame(minWidth: 420, maxWidth: .infinity)
             }
             Divider()
-            HStack { if let error { Text(error).font(.caption).foregroundStyle(.pink).lineLimit(3).textSelection(.enabled) }; Spacer(); if saving || loading { ProgressView().controlSize(.small) }; Button(entry == nil ? "Save draft" : "Save changes") { Task { await save() } }.buttonStyle(.borderedProminent).tint(HerdrTheme.accent).disabled(saving || loading || !scriptsLoaded || name.trimmingCharacters(in: .whitespaces).isEmpty || steps.isEmpty || client == nil) }.padding(18)
+            HStack { if let error { Text(error).font(.caption).foregroundStyle(.pink).lineLimit(3).textSelection(.enabled) }; Spacer(); if saving || loading { ProgressView().controlSize(.small) }; Button(entry == nil ? "Save draft" : "Save changes") { Task { await save() } }.buttonStyle(.borderedProminent).tint(HerdrTheme.controlAccent).disabled(saving || loading || !scriptsLoaded || name.trimmingCharacters(in: .whitespaces).isEmpty || steps.isEmpty || client == nil) }.padding(18)
         }.frame(width: 1000, height: 740).herdrPaneBackground().task { await load() }
         .onChange(of: hasAgent) { _, agent in avatar = (agent ? WatcherAvatar.characters : WatcherAvatar.instruments).first ?? "gauge" }
     }

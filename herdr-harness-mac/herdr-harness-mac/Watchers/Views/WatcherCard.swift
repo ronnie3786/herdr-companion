@@ -46,7 +46,7 @@ struct WatcherCard: View {
                     }
                     Spacer(minLength: 0)
                     Button { history() } label: { Label("Past runs \(w.runsCount)", systemImage: "clock.arrow.circlepath") }
-                }.font(.system(size: 10.5)).foregroundStyle(HerdrTheme.secondaryText).buttonStyle(.plain).padding(.top, 15).disabled(busy)
+                }.font(.system(size: 10.5)).foregroundStyle(HerdrTheme.secondaryText).buttonStyle(.herdrPlain).padding(.top, 15).disabled(busy)
             }
         }
         .padding(.horizontal, 24).padding(.vertical, 16).frame(maxWidth: .infinity, minHeight: preview ? 340 : 380, alignment: .top)

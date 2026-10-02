@@ -91,7 +91,7 @@ struct WatchersSource: Sendable {
             if action == "stop", let id = entry.watcher.live?.text("run_id"), !id.isEmpty { _ = try await client.watchersMutate(["runs", id, "stop"], requestID: requestID) }
             else {
                 var body: [String: PiJSONValue] = ["action": .string(action)]
-                if action == "activate" { body["confirmed_by"] = .string("user"); body["activated_via"] = .string("mac") }
+                if action == "activate" || action == "resume" { body["confirmed_by"] = .string("user"); body["activated_via"] = .string("mac") }
                 _ = try await client.watchersMutate([entry.watcher.id, "actions"], body: body, requestID: requestID)
             }
             guard token == generation else { return }; actionRequestIDs.removeValue(forKey: requestKey); error = nil; await refresh()

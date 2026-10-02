@@ -53,7 +53,7 @@ struct WatcherAvatarPicker: View {
             Text(character ? "A face means an agent thinks during the run." : "An instrument means scripts do the work.").font(.caption).foregroundStyle(HerdrTheme.secondaryText)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 70))], spacing: 16) {
                 ForEach(character ? WatcherAvatar.characters : WatcherAvatar.instruments, id: \.self) { id in
-                    Button { selection = id } label: { VStack(spacing: 6) { WatcherAvatar(avatar: id, size: 52); Text(id.capitalized).font(.caption) }.padding(6).background(selection == id ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: 10)) }.buttonStyle(.plain)
+                    Button { selection = id } label: { VStack(spacing: 6) { WatcherAvatar(avatar: id, size: 52); Text(id.capitalized).font(.caption) }.padding(6).background(selection == id ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: 10)) }.buttonStyle(.herdrPlain)
                 }
             }
         }.padding(22).frame(width: 400)

@@ -43,7 +43,7 @@ struct WatchersView: View {
                         if !store.entries.isEmpty && filtered.isEmpty { ContentUnavailableView.search(text: search) }
                         Button { selected = nil; builder = true } label: {
                             HStack { Image(systemName: "sparkles"); Text("What would you like someone to keep an eye on?"); Spacer(); Image(systemName: "arrow.up.right") }.font(.system(size: 12)).foregroundStyle(HerdrTheme.accent).padding(20).frame(maxWidth: .infinity).background(HerdrTheme.accent.opacity(0.035), in: .rect(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(HerdrTheme.accent.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4, 5])))
-                        }.buttonStyle(.plain).disabled(store.enabledMachines.isEmpty)
+                        }.buttonStyle(.herdrPlain).disabled(store.enabledMachines.isEmpty)
                     }.padding(.horizontal, 30).padding(.top, 28).padding(.bottom, 36)
                 }
             }
@@ -63,7 +63,7 @@ struct WatchersView: View {
             if let next = store.nextToWake {
                 Button { withAnimation { scroll.scrollTo(next.id, anchor: .center) } } label: {
                     HStack(spacing: 10) { WatcherAvatar(avatar: next.watcher.avatar, size: 30); VStack(alignment: .leading, spacing: 4) { Text("Next to wake up").font(.system(size: 9)).foregroundStyle(HerdrTheme.secondaryText); Text(next.watcher.name + " " + (next.watcher.nextFire.map { WatchersDate.relative($0) } ?? "")).font(.system(size: 11)) }; Image(systemName: "play").font(.system(size: 11)).foregroundStyle(HerdrTheme.accent) }.padding(12).background(HerdrTheme.cardFill, in: .rect(cornerRadius: 9)).overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(HerdrTheme.outline))
-                }.buttonStyle(.plain).help("Jump to \(next.watcher.name)")
+                }.buttonStyle(.herdrPlain).help("Jump to \(next.watcher.name)")
             }
         }
     }
@@ -76,7 +76,7 @@ struct WatchersView: View {
     private var filterButtons: some View {
         HStack(spacing: 3) {
             ForEach(["All watchers", "On watch", "Resting", "Scripts only"], id: \.self) { item in
-                Button { filter = item } label: { HStack(spacing: 6) { Text(item); if item == "All watchers" { Text("\(store.entries.count)").foregroundStyle(HerdrTheme.secondaryText) } }.font(.system(size: 11)).padding(.horizontal, 10).padding(.vertical, 9).background(filter == item ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: 7)) }.buttonStyle(.plain)
+                Button { filter = item } label: { HStack(spacing: 6) { Text(item); if item == "All watchers" { Text("\(store.entries.count)").foregroundStyle(HerdrTheme.secondaryText) } }.font(.system(size: 11)).padding(.horizontal, 10).padding(.vertical, 9).background(filter == item ? HerdrTheme.selectedFill : .clear, in: .rect(cornerRadius: 7)) }.buttonStyle(.herdrPlain)
             }
         }
     }

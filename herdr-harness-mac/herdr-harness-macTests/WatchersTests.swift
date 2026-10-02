@@ -87,6 +87,29 @@ struct WatchersStoreTests {
         #expect(request?.0 == ["wat_a", "actions"])
         #expect(request?.1["confirmed_by"] == .string("user"))
     }
+    @Test("Waking an unconfirmed imported watcher records the person's confirmation and refreshes its active state")
+    func resumeImportedWatcher() async throws {
+        let imported = entry("wat_imported", machine: "owner", state: "paused")
+        #expect(imported.watcher.fields["activated_by"] == nil)
+        let client = UnconfirmedWatcherStub(watcher: imported.watcher.fields)
+        let store = WatchersStore()
+        store.configure([.init(machineID: "owner", machineName: "Workstation", client: client)], identity: 1, demo: false)
+        await store.refresh()
+        let paused = try #require(store.entries.first)
+        #expect(paused.watcher.state == "paused")
+
+        await store.action("resume", entry: paused)
+
+        let request = await client.resumeRequest
+        #expect(request?["confirmed_by"] == .string("user"))
+        #expect(request?["activated_via"] == .string("mac"))
+        #expect(store.error == nil)
+        #expect(store.entries.first?.watcher.state == "active")
+        #expect(store.entries.first?.watcher.fields["activated_by"] == .string("user"))
+        #expect(store.entries.first?.watcher.fields["activated_via"] == .string("mac"))
+        #expect(await client.listReads == 2)
+        #expect(store.busy.isEmpty)
+    }
     private func source(_ id: String, _ client: WatchersStub) -> WatchersSource { .init(machineID: id, machineName: id.uppercased(), client: client) }
     private func entry(_ id: String, machine: String = "a", state: String = "active", next: String? = nil, live: [String: PiJSONValue]? = nil, attention: String? = nil) -> WatcherEntry {
         var value: [String: PiJSONValue] = ["id": .string(id), "name": .string(id), "state": .string(state)]
@@ -115,6 +138,27 @@ private actor WatchersStub: WatchersClient {
         if path == ["capabilities"] { return ["enabled": .bool(true)] }
         if path.isEmpty { if let gate { await gate.wait() }; return ["watchers": .array(watchers.map(PiJSONValue.object))] }
         return ["items": .array([])]
+    }
+}
+
+private actor UnconfirmedWatcherStub: WatchersClient {
+    private var watcher: [String: PiJSONValue]
+    private(set) var resumeRequest: [String: PiJSONValue]?
+    private(set) var listReads = 0
+    init(watcher: [String: PiJSONValue]) { self.watcher = watcher }
+    func watchersRequest(_ path: [String], method: String, body: [String: PiJSONValue]?, query: [URLQueryItem]) async throws -> [String: PiJSONValue] {
+        if method == "GET", path == ["capabilities"] { return ["enabled": .bool(true)] }
+        if method == "GET", path.isEmpty { listReads += 1; return ["watchers": .array([.object(watcher)])] }
+        if method == "GET", path == ["inbox"] { return ["items": .array([]), "unread_count": .number(0)] }
+        guard method == "POST", path == [watcher.text("id"), "actions"], body?["action"] == .string("resume") else { throw APIError.invalidResponse }
+        resumeRequest = body
+        guard body?["confirmed_by"] == .string("user"), body?["activated_via"] == .string("mac") else {
+            throw APIError.server(status: 409, message: "First activation requires the person's confirmation.")
+        }
+        watcher["state"] = .string("active")
+        watcher["activated_by"] = body?["confirmed_by"]
+        watcher["activated_via"] = body?["activated_via"]
+        return ["watcher": .object(watcher)]
     }
 }
 

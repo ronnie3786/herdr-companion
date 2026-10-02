@@ -44,7 +44,7 @@ struct WatcherBuilderSheet: View {
                             if messages.isEmpty {
                                 HStack(spacing: 10) { FirstMateFaceOrb(size: 38); Text("What should I keep an eye on?").font(.title3) }
                                 Text("Tell me what to check, when to check it, and where the results should go. I'll ask about anything unclear and prepare a draft for you to review.").font(.system(size: 13)).foregroundStyle(HerdrTheme.secondaryText)
-                                ForEach(["Check repository health every morning and put a summary in my Watcher inbox.", "Run my maintenance script every night at 1 AM."], id: \.self) { example in Button(example) { prompt = example }.buttonStyle(.plain).font(.system(size: 12)).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(HerdrTheme.cardFill, in: .rect(cornerRadius: 8)) }
+                                ForEach(["Check repository health every morning and put a summary in my Watcher inbox.", "Run my maintenance script every night at 1 AM."], id: \.self) { example in Button(example) { prompt = example }.buttonStyle(.herdrPlain).font(.system(size: 12)).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(HerdrTheme.cardFill, in: .rect(cornerRadius: 8)) }
                             }
                             ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
                                 VStack(alignment: .leading, spacing: 7) {
@@ -61,7 +61,7 @@ struct WatcherBuilderSheet: View {
                     if let error { Text(error).font(.caption).foregroundStyle(.pink).padding(.horizontal, 20) }
                     HStack(alignment: .bottom, spacing: 10) {
                         TextField("Describe a watcher, or refine this draft…", text: $prompt, axis: .vertical).lineLimit(2...6).textFieldStyle(.plain).font(.system(size: 13))
-                        Button { Task { await send() } } label: { Image(systemName: "arrow.up").font(.system(size: 13, weight: .semibold)) }.buttonStyle(.borderedProminent).tint(HerdrTheme.accent).disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending || working || client == nil).help("Send to the watcher builder")
+                        Button { Task { await send() } } label: { Image(systemName: "arrow.up").font(.system(size: 13, weight: .semibold)) }.buttonStyle(.borderedProminent).tint(HerdrTheme.controlAccent).disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending || working || client == nil).help("Send to the watcher builder")
                     }.padding(14).background(HerdrTheme.fieldFill, in: .rect(cornerRadius: 12)).padding([.horizontal, .bottom], 20)
                 }.frame(maxWidth: .infinity)
                 Divider()
@@ -90,7 +90,7 @@ struct WatcherBuilderSheet: View {
                 Text("\(draft?.timezone ?? TimeZone.current.identifier) · Nothing is scheduled until you create it.").font(.caption).foregroundStyle(HerdrTheme.secondaryText)
                 Spacer()
                 Button("Dry run") { Task { await runAction("dry_run") } }.disabled(draft == nil || sending || working)
-                Button(draft?.fields["edit_target_id"] == nil ? "Create watcher" : "Apply changes") { Task { await runAction("activate") } }.buttonStyle(.borderedProminent).tint(HerdrTheme.accent).disabled(draft?.state != "draft" || sending || working)
+                Button(draft?.fields["edit_target_id"] == nil ? "Create watcher" : "Apply changes") { Task { await runAction("activate") } }.buttonStyle(.borderedProminent).tint(HerdrTheme.controlAccent).disabled(draft?.state != "draft" || sending || working)
             }.padding(18)
         }.frame(width: 1080, height: 740).herdrPaneBackground()
         .sheet(item: $scriptStep) { step in
@@ -159,7 +159,7 @@ struct WatcherPipeline: View {
             ForEach(Array(watcher.steps.enumerated()), id: \.offset) { index, step in
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: step.symbol).font(.system(size: 13)).foregroundStyle(HerdrTheme.accent).frame(width: 26, height: 26).background(HerdrTheme.chipFill, in: .rect(cornerRadius: 7))
-                    VStack(alignment: .leading, spacing: 5) { Text("\(index + 1). \(step.title)").font(.system(size: 12, weight: .medium)); if !step.file.isEmpty { Button { inspectScript?(step) } label: { Label(step.file, systemImage: "doc.text").font(.system(size: 11, design: .monospaced)) }.buttonStyle(.plain).foregroundStyle(.mint).disabled(inspectScript == nil) }; if !step.fields.text("note").isEmpty { Text(step.fields.text("note")).font(.caption).foregroundStyle(HerdrTheme.secondaryText) } }
+                    VStack(alignment: .leading, spacing: 5) { Text("\(index + 1). \(step.title)").font(.system(size: 12, weight: .medium)); if !step.file.isEmpty { Button { inspectScript?(step) } label: { Label(step.file, systemImage: "doc.text").font(.system(size: 11, design: .monospaced)) }.buttonStyle(.herdrPlain).foregroundStyle(.mint).disabled(inspectScript == nil) }; if !step.fields.text("note").isEmpty { Text(step.fields.text("note")).font(.caption).foregroundStyle(HerdrTheme.secondaryText) } }
                 }
             }
         }

@@ -115,7 +115,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 self._secure_database_files()
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     @staticmethod
@@ -361,7 +362,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return public
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def _invalidate_instance_locked(self, client_id: str, instance_id: str, now: float) -> None:
@@ -403,7 +405,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return result
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def client(self, client_id: str) -> dict:
@@ -567,7 +570,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return self._command(row)
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def poll(
@@ -641,7 +645,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return command
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def command(self, request_id: str) -> dict:
@@ -659,7 +664,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return result
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def acknowledge(
@@ -738,7 +744,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return command
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     @staticmethod
@@ -793,7 +800,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return self._operation(row), True
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def finish_operation(
@@ -849,7 +857,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return finished
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def operation(self, request_id: str) -> dict:
@@ -993,7 +1002,8 @@ class ControlStore:
                 self._db.execute("COMMIT")
                 return public
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def chat_tab_color_publications(self) -> list[dict]:

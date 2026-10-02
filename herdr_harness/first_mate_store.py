@@ -427,7 +427,8 @@ class FirstMateStore:
                     self._db.execute("CREATE INDEX fm_visits_feature ON fm_visits(feature_id,created_at)")
                 self._db.execute("COMMIT")
             except BaseException:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
             finally:
                 self._db.execute("PRAGMA foreign_keys=ON")
@@ -634,7 +635,9 @@ class FirstMateStore:
                 yield
                 self._db.execute("COMMIT")
             except BaseException:
-                self._db.execute("ROLLBACK")
+                # SQLite already rolled back on errors such as SQLITE_FULL; keep that error visible.
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 self._committed_replies.clear()
                 raise
             replies, self._committed_replies = self._committed_replies, []
@@ -2112,6 +2115,18 @@ class FirstMateStore:
             row = self._db.execute("SELECT stage_key FROM fm_visits WHERE feature_id=? AND id=?",
                                    (feature_id, visit_id)).fetchone()
             return row[0] if row else None
+
+    def coordinator_replied_since(self, feature_id: str, visit_id: str, since: str | None) -> bool:
+        """Whether First Mate messaged the human at or after `since` (default: when the visit began)."""
+        with self._lock:
+            if since is None:
+                row = self._db.execute("SELECT created_at FROM fm_visits WHERE feature_id=? AND id=?",
+                                       (feature_id, visit_id)).fetchone()
+                if row is None:
+                    return False
+                since = row[0]
+            return self._db.execute("SELECT 1 FROM fm_messages WHERE feature_id=? AND role='assistant' AND created_at>=? LIMIT 1",
+                                    (feature_id, since)).fetchone() is not None
 
     def list_assignments(self, statuses: list[str] | tuple[str, ...] | None = None, feature_id: str | None = None) -> list[dict]:
         with self._lock:

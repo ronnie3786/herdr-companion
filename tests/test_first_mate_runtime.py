@@ -212,6 +212,25 @@ class FirstMateRuntimeTests(unittest.TestCase):
     def feature(self, goal='Plan the synthetic feature'):
         return self.store.create_feature({'title':'Synthetic feature','goal':goal,'cwd':str(self.cwd),'request_id':'create'})
 
+    def test_healthy_pass_clears_a_stale_runtime_error(self):
+        path = self.runtime.root / 'runtime-error.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"error": "Cannot operate on a closed database."}')
+        seen = []
+
+        def reconcile():
+            seen.append(path.exists())
+            if len(seen) == 2:
+                raise RuntimeError('synthetic reconciliation failure')
+            if len(seen) == 4:
+                self.runtime._stop.set()
+
+        with patch.object(self.runtime, 'reconcile', side_effect=reconcile):
+            self.runtime._loop()
+        # Left over from an earlier run, cleared; written by a failure, cleared again on recovery.
+        self.assertEqual(seen, [True, False, True, False])
+        self.assertFalse(path.exists())
+
     def test_coordinator_state_exposes_scoped_verification_and_run_references(self):
         snapshot = {
             "feature": {"id": "fmf_synthetic", "title": "T", "goal": "G", "status": "running",

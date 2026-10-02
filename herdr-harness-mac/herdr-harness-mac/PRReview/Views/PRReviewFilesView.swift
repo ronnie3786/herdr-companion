@@ -82,16 +82,29 @@ struct PRReviewFilesView: View {
                 }
                 controls
                 if presentation == .noFilterMatches {
-                    ContentUnavailableView {
-                        Label("No matching files", systemImage: "line.3.horizontal.decrease.circle")
-                    } description: {
-                        Text("Change the impact, viewed, or text filters.")
-                    } actions: {
-                        Button("Clear filters", action: clearFilters)
-                            .herdrProminentButton()
+                    if store.hideViewed && store.viewedProgress.isComplete {
+                        ContentUnavailableView {
+                            Label(PRReviewViewedProgress.allViewedTitle, systemImage: "checkmark.circle")
+                        } description: {
+                            Text(PRReviewViewedProgress.allViewedDetail)
+                        } actions: {
+                            Button(PRReviewViewedProgress.showViewedLabel) { store.hideViewed = false }
+                                .herdrProminentButton()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .accessibilityIdentifier("pr-review-all-viewed")
+                    } else {
+                        ContentUnavailableView {
+                            Label("No matching files", systemImage: "line.3.horizontal.decrease.circle")
+                        } description: {
+                            Text("Change the impact, viewed, or text filters.")
+                        } actions: {
+                            Button("Clear filters", action: clearFilters)
+                                .herdrProminentButton()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .accessibilityIdentifier("pr-review-no-filter-matches")
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .accessibilityIdentifier("pr-review-no-filter-matches")
                 } else {
                     ScrollViewReader { proxy in
                         ScrollView {
@@ -162,6 +175,19 @@ struct PRReviewFilesView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 8) {
+            let progress = store.viewedProgress
+            VStack(alignment: .leading, spacing: 4) {
+                Text(progress.summary)
+                    .herdrFont(.caption, monospacedDigit: true)
+                    .foregroundStyle(progress.isComplete ? HerdrTheme.text : HerdrTheme.mist)
+                ProgressView(value: progress.fraction)
+                    .progressViewStyle(.linear)
+                    .tint(HerdrTheme.controlAccent)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(progress.accessibilityLabel)
+            .accessibilityValue(progress.accessibilityValue)
+            .accessibilityIdentifier("pr-review-viewed-progress")
             Picker("Order", selection: $store.viewMode) {
                 Text("GitHub order").tag(PRReviewViewMode.github)
                 Text("Suggested").tag(PRReviewViewMode.guided)
@@ -403,6 +429,17 @@ struct PRReviewFileRow: View {
                     if file.isDeleted {
                         PRReviewDeletedIndicator(accessibilityIdentifier: "pr-review-file-deleted-\(index)")
                     }
+                    if file.viewed {
+                        Label(PRReviewViewedProgress.viewedBadgeLabel, systemImage: "checkmark")
+                            .herdrFont(.caption2, weight: .semibold)
+                            .foregroundStyle(HerdrTheme.text)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(HerdrTheme.elevated, in: .capsule)
+                            .fixedSize()
+                            .accessibilityIdentifier("pr-review-file-viewed-\(index)")
+                            .accessibilityHidden(true)
+                    }
                 }
                 Text(directoryHint).herdrFont(.caption2).foregroundStyle(HerdrTheme.mist).lineLimit(1).truncationMode(.head)
                 if guided, let order = file.guidedOrder {
@@ -413,6 +450,7 @@ struct PRReviewFileRow: View {
             Spacer(minLength: 4)
             Text("+\(file.additions) −\(file.deletions)").herdrFont(.caption2, monospacedDigit: true).foregroundStyle(HerdrTheme.mist)
             Toggle("Viewed", isOn: Binding(get: { file.viewed }, set: setViewed)).labelsHidden()
+                .accessibilityLabel("Viewed")
                 .accessibilityIdentifier("pr-review-viewed-\(index)")
         }
         .padding(8)
@@ -420,6 +458,8 @@ struct PRReviewFileRow: View {
         .background(selected ? HerdrTheme.selection : .clear, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .help(file.path)
         .onTapGesture(perform: select)
+        .accessibilityElement(children: .contain)
+        .accessibilityValue(PRReviewViewedProgress.rowAccessibilityValue(viewed: file.viewed))
         .accessibilityIdentifier("pr-review-file-\(index)")
     }
 

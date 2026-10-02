@@ -87,6 +87,16 @@ the **Guided** order, which lists files in the order the AI suggests for buildin
 and explains each position above the diff. ⌥↑ and ⌥↓ move between files; ⌥V or the checkbox
 marks a file viewed (also on GitHub when syncing is enabled). **Rank files** re-runs the ranking;
 `herdr-pr-review set-rankings` lets an agent supply its own.
+The file rail keeps a progress summary (`3 of 10 viewed · 7 unviewed`) and a progress bar
+above the filters, and viewed rows show a checkmark with a textual **Viewed** badge.
+Counts cover all changed files in the current PR or selected comparison, regardless of
+impact, search, or **Hide viewed** filters, and update immediately when viewed marks change.
+When complete, the summary says **All N files viewed** (**1 of 1 file viewed** for one file).
+If **Hide viewed** hides every file because all are viewed, an **All files viewed** state
+offers **Show viewed files** to turn that filter off; other empty results still say
+**No matching files**. VoiceOver announces review progress and each row's viewed state.
+This is Mac-only, available in both the main and popped-out review windows, and needs no
+companion update beyond existing `pr-review-v1` support.
 
 **Diff and Ask AI.** PR Review, Chat Git and First Mate Git use one shared code renderer and theme: syntax-highlighted code, roomier lines, old/new line numbers, full-width green/red row tints, stronger gutters and changed-word emphasis. The PR Review renderer is bundled in the Mac app; rendering a loaded patch does not fetch scripts, fonts or grammars from the network. Review-specific selection and navigation are adapters around that renderer; the existing Git workbench retains its split/unified and wrap controls.
 Deleted text files carry a textual **Deleted** label in the file rail and the selected-file header and start collapsed. The selected file shows its path and a compact removal summary with a **Show deleted content** control instead of its removed lines; **Show deleted content** mounts the shared renderer for the available removal hunks, and **Hide deleted content** unmounts it again. The choice is per file and held in memory for the current host, review, base SHA and head SHA in each window: it survives file navigation, viewed updates and unchanged polling, and resets for another host, review, revision, a newly opened window, or an app relaunch. It never syncs between clients and is independent between the main window and pop-outs. A modified file that only removes lines stays expanded normally; deletion is always the companion's explicit `deleted` status, never a removal count or an all-red hunk. A deleted binary or hunk-less diff keeps its honest message instead of offering a control with no effect. Long files scroll vertically

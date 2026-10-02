@@ -4,7 +4,7 @@ import SwiftUI
 struct PRReviewContainerView: View {
     @Bindable var store: PRReviewStore
     @Bindable var comments: PRReviewCommentsSession
-    @State private var discussions = PRReviewDiscussionSession()
+    @Bindable private var discussions: PRReviewDiscussionSession
     var canControl = false
     var openURL: (URL) -> Void = { _ in }
     var askAI: (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }
@@ -21,6 +21,7 @@ struct PRReviewContainerView: View {
     init(store: PRReviewStore, comments: PRReviewCommentsSession = PRReviewCommentsSession(), canControl: Bool = false, openURL: @escaping (URL) -> Void = { _ in }, askAI: @escaping (PRReviewSelection, NSView, CGRect) -> Void = { _, _, _ in }, questionDraftChanged: @escaping (Bool) -> Void = { _ in }, setCreating: @escaping (Bool) -> Void = { _ in }, openPane: @escaping (String, String?) -> Void = { _, _ in }, setAddingSkill: @escaping (Bool) -> Void = { _ in }, popOut: ((PRReviewWindowTarget) -> Void)? = nil, navigationTitle: String = "PR Review", documentHost: HerdrAppModel? = nil) {
         _store = Bindable(store)
         _comments = Bindable(comments)
+        _discussions = Bindable(store.discussions)
         self.canControl = canControl
         self.openURL = openURL
         self.askAI = askAI

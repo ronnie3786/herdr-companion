@@ -34,6 +34,7 @@ struct PRReviewDeletedDisclosureScope: Equatable {
 @Observable
 final class PRReviewStore {
     let guide: PRReviewGuideSession
+    let discussions = PRReviewDiscussionSession()
     var guideClient: (any PRReviewGuideClient)? { client as? any PRReviewGuideClient }
     var discussionClient: (any PRReviewDiscussionClient)? {
         if isDemo, let machineID { return PRReviewDiscussionDemoClient.client(machineID: machineID) }
@@ -194,6 +195,7 @@ final class PRReviewStore {
 
     /// A new host must discard every server-specific selection before a late response arrives.
     func configure(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
+        defer { discussions.configure(store: self) }
         guide.suspend()
         generation &+= 1
         settleInterruptedProgress()
@@ -238,6 +240,7 @@ final class PRReviewStore {
     }
 
     func select(_ id: String?) {
+        defer { discussions.configure(store: self) }
         guide.suspend()
         invalidateViewedWrites()
         isRefreshingReview = false
@@ -278,6 +281,7 @@ final class PRReviewStore {
     /// retryable state here instead of spinning forever. Nothing is resent; a
     /// following refresh reconciles uploads that did reach the server.
     func reconnect(client: (any PRReviewClient)?, machineID: String?, demo: Bool) {
+        defer { discussions.configure(store: self) }
         guide.suspend()
         generation &+= 1
         let machineChanged = self.machineID != machineID
@@ -305,6 +309,7 @@ final class PRReviewStore {
     /// install state, and a retained document window has nothing to retry
     /// through until the host returns and the window is re-activated.
     func invalidateConnection() {
+        defer { discussions.configure(store: self) }
         guide.suspend()
         generation &+= 1
         client = nil

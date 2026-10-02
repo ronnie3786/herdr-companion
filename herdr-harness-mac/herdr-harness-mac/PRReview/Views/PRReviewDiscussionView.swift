@@ -76,6 +76,7 @@ struct PRReviewDiscussionView: View {
                 Text("Resolved").tag("resolved")
                 Text("All").tag("all")
             }.pickerStyle(.segmented)
+                .tint(HerdrTheme.controlAccent)
         }
     }
 

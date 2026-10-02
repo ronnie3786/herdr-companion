@@ -32,6 +32,7 @@ final class PRReviewDiscussionSession {
     var filter = "open"
     @ObservationIgnored private var client: (any PRReviewDiscussionClient)?
     @ObservationIgnored private var loadGeneration = 0
+    @ObservationIgnored private var completedPoll = 0
 
     var openCount: Int { threads.filter { !$0.isResolved }.count }
     var canSave: Bool {
@@ -73,6 +74,7 @@ final class PRReviewDiscussionSession {
             let received = try await client.prReviewDiscussions(reviewID: scope.reviewID)
             guard token == loadGeneration, self.scope == scope, !Task.isCancelled else { return }
             threads = received
+            completedPoll &+= 1
             if !isSaving && draft == nil { error = nil }
         } catch {
             guard token == loadGeneration, self.scope == scope, !Task.isCancelled else { return }
@@ -133,6 +135,7 @@ final class PRReviewDiscussionSession {
         self.draft = draft
         isSaving = true
         error = nil
+        let pollAtStart = completedPoll
         defer { isSaving = false }
         do {
             let saved: PRReviewDiscussion
@@ -149,9 +152,9 @@ final class PRReviewDiscussionSession {
                 draftBody = ""
                 return
             }
-            receive(saved)
+            let retained = receive(saved, preservingRevision: completedPoll != pollAtStart)
             selectedThreadID = saved.id
-            if filter != "all", filter != saved.state { filter = "all" }
+            if filter != "all", filter != retained.state { filter = "all" }
             self.draft = nil
             draftBody = ""
         } catch {
@@ -163,12 +166,13 @@ final class PRReviewDiscussionSession {
         guard isAvailable, !isSaving, let client, let scope else { return }
         isSaving = true
         error = nil
+        let pollAtStart = completedPoll
         defer { isSaving = false }
         do {
             let saved = try await client.setPRReviewDiscussionState(reviewID: scope.reviewID, threadID: thread.id,
                 request: .init(state: thread.isResolved ? "open" : "resolved", expectedVersion: thread.version, requestID: UUID().uuidString))
             guard self.scope == scope else { return }
-            receive(saved)
+            receive(saved, preservingRevision: completedPoll != pollAtStart)
         } catch {
             guard self.scope == scope else { return }
             self.error = error.localizedDescription
@@ -177,14 +181,22 @@ final class PRReviewDiscussionSession {
         }
     }
 
-    private func receive(_ thread: PRReviewDiscussion) {
+    @discardableResult
+    private func receive(_ thread: PRReviewDiscussion, preservingRevision: Bool) -> PRReviewDiscussion {
         loadGeneration &+= 1
         isLoading = false
         if let index = threads.firstIndex(where: { $0.id == thread.id }) {
             // An idempotency receipt can describe an earlier version than a poll.
-            if threads[index].version <= thread.version { threads[index] = thread }
+            if threads[index].version < thread.version {
+                var updated = thread
+                // Revision age is computed separately from the thread's mutation version.
+                if preservingRevision { updated.outdated = threads[index].outdated }
+                threads[index] = updated
+            }
+            return threads[index]
         }
-        else { threads.append(thread) }
+        threads.append(thread)
+        return thread
     }
 
     func inlineThreads(path: String, store: PRReviewStore) -> [PRReviewInlineThread] {

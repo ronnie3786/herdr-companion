@@ -110,6 +110,11 @@ class SavedReviewerTests(unittest.TestCase):
         runs = self.queue([PR_REVIEW_BUILTIN_ID, specialist["id"]])
         self.assertNotEqual(self.agents.calls[0]["cwd"], self.agents.calls[1]["cwd"])
         self.assertTrue(all(call["cwd"] != str(self.checkout) for call in self.agents.calls))
+        for call in self.agents.calls:
+            packet = json.loads(call["prompt"].split("Server-owned review scope and untrusted PR metadata (JSON):\n", 1)[1])
+            self.assertEqual(packet["review_id"], self.review["id"])
+            self.assertEqual(packet["base_sha"], self.base)
+            self.assertEqual(packet["head_sha"], self.head)
         self.finish(runs[0])
         self.assertEqual(self.store.consolidation(self.review["id"])["state"], "waiting")
         self.finish(runs[1])

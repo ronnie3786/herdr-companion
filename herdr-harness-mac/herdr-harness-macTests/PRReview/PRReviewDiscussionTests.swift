@@ -168,6 +168,50 @@ struct PRReviewDiscussionTests {
         #expect(session.threads == [newer])
         #expect(session.draft == nil)
         #expect(!session.isSaving)
+        if operation == "reply" { #expect(session.visibleThreads == [newer]) }
+    }
+
+    @Test("A delayed receipt preserves revision age from a newer poll", arguments: [1, 2])
+    func mutationPreservesPolledRevisionAge(_ polledVersion: Int) async throws {
+        let original = discussionFixture()
+        let client = DiscussionTestClient(threads: [original])
+        let session = configuredSession(client: client)
+        await session.refresh()
+        let gate = DiscussionResponseGate()
+        await client.holdNextMutation(on: gate)
+        session.beginReply(to: original)
+        session.draftBody = "A reply before the PR changed."
+        let request = Task { await session.save() }
+        await gate.waitUntilWaiting()
+        var polled = discussionFixture(version: polledVersion)
+        polled.outdated = true
+        await client.replaceThreads([polled])
+        await session.refresh()
+        await gate.release()
+        await request.value
+        #expect(session.threads.first?.version == 2)
+        #expect(session.threads.first?.outdated == true)
+    }
+
+    @Test("Discussion drafts survive a pinned window losing and restoring its host")
+    func draftSurvivesHostUnavailability() async {
+        let target = PRReviewWindowTarget(machineID: "host-a", reviewID: PRReviewDemo.reviewID)
+        let window = PRReviewWindowSession(target: target)
+        defer { window.stop() }
+        await window.activate(identity: "demo", hostState: .demo, client: nil, seed: nil)
+        let session = window.store.discussions
+        session.beginComment(store: window.store)
+        session.draftBody = "Preserve this draft while credentials are updated."
+        let originalScope = session.draft?.scope
+        #expect(session.canSave)
+        await window.activate(identity: "missing", hostState: .missingHost, client: nil, seed: nil)
+        #expect(!session.isAvailable)
+        #expect(session.hasDraft)
+        await window.activate(identity: "restored", hostState: .demo, client: nil, seed: nil)
+        #expect(window.store.discussions.draftBody == "Preserve this draft while credentials are updated.")
+        #expect(session.draft?.scope == originalScope)
+        #expect(!session.canSave)
+        #expect(session.isPresented)
     }
 
     @Test("Reply text reaches the original thread unchanged and a successful save clears the draft")

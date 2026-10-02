@@ -67,6 +67,14 @@
 - With a feature selected, the inspector now has a trailing Git button beside its tabs. **Open Git in New Window** opens that feature's Git window on the recommended checkout, with the checkout picker; reopening brings the same window forward. My First Mate and the main-window inspector are unchanged.
 - This is Mac-only; no companion update is needed beyond existing First Mate Git support.
 
+## First Mate chat window header
+
+- In the standalone First Mate window, a feature chat's top bar now centers its
+  avatar vertically, with the title and status stacked closely beside it and
+  aligned on one edge, instead of being pushed to the top and bottom of the bar.
+  Clicking the avatar, title or status still opens **Rename or Change Emoji…**.
+  Mac-only; no companion update is needed.
+
 ## First Mate conversation names
 
 - In the standalone Mac First Mate chat window, right-click a conversation row, rail avatar, header, or transcript for **Rename or Change Emoji…**, or click the feature header's avatar or name. A sheet edits the display name and emoji with a quick palette and macOS Character Viewer. The new name appears in the row, header, mentions, composer and First Mate HUD; the feature's underlying title stays unchanged. Cancel leaves both fields alone, reset restores defaults, and a failed save keeps the sheet open with an error. Saved presentation survives reconnect and relaunch on its owning companion.

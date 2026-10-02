@@ -67,8 +67,9 @@ feature-only workflow/action controls. When no host advertises lead capability,
 an explicitly client-built briefing retains capsule readouts and a creation goal
 without discarding its draft on cancel/failure. A capable lead failure shows a
 retry/read-only state rather than pretending it is an older host. The composer
-uses a 1–7-line text pill and explicit send. Plus offers Photos, Files, Paste code
-and documents; hold the mic to dictate, or type @ for owned feature/crew mentions.
+uses a 1–7-line text field inside a glass input card with explicit Send. Plus offers Photos, Files, Paste code
+and documents; tap the mic to start dictation, tap Stop to review it, then Send.
+Type @ for owned feature/crew mentions.
 Expandable model/context controls preserve host capability and confirmation gates.
 Long-press a response to rate it. Draft attachments, picks and voice provenance
 stay with the original host and feature, including after a failed send. Swipe/context
@@ -98,7 +99,9 @@ Workspaces and tabs sort by their newest matching
 chat, and agents within each tab sort newest first. Workspaces with identical
 names on different machines stay separate. Search filters before grouping, so
 counts and ordering describe the matching chats. Tap any agent to open its
-session. Offline machines indicate that agent status is last known. Workspace
+session. On iPad, the app tabs remain visible while a chat is open, including in
+narrow windows. Switching tabs preserves the selected agent. Offline machines
+indicate that agent status is last known. Workspace
 browsing and creation remain in the navigator. Long-press any agent card for
 **Rename**, **Smart Rename**, star/unstar, tab color, its workspace, and copying
 its workspace pane ID. Mac focus/zoom and Interrupt are grouped under **Mac

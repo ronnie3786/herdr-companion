@@ -62,7 +62,7 @@ struct FirstMateChatScreen: View {
             if let snapshot {
                 FirstMateChatTranscript(store: store, snapshot: snapshot, conversation: conversation,
                     catalog: FirstMateMobileTranscriptPolicy.mentionCatalog(conversations: fleet.conversations, snapshot: snapshot, owner: target),
-                    canControl: controls && !busy && !closed, followsLatest: $followsLatest, readLayout: $readLayout, expandedReplies: $expandedReplies,
+                    canControl: controls && !busy && !closed, scrollToLatestRequest: sendPulse + choicePulse, followsLatest: $followsLatest, readLayout: $readLayout, expandedReplies: $expandedReplies,
                     openInfo: { openInfo($0, nil) }, sendReply: { send(reply: $0) },
                     presentationChanged: { id, shown in if shown { excerpts.insert(id) } else { excerpts.remove(id) } },
                     fleet: fleet, ownerMachineID: target.machineID,

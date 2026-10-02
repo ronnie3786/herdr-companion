@@ -41,7 +41,8 @@ struct PaneSessionView: View {
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(hidesAppTabBar ? .hidden : .automatic, for: .tabBar)
+        // iPad chats stay inside their tab, including narrow multitasking windows.
+        .toolbarVisibility(hidesAppTabBar && UIDevice.current.userInterfaceIdiom != .pad ? .hidden : .visible, for: .tabBar)
         .toolbar(removing: navigationContext.removesSystemSidebarToggle ? .sidebarToggle : nil)
         .toolbar {
             if navigationContext.showsNavigatorButton {

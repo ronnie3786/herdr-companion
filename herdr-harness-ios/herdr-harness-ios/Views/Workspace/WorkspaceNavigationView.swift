@@ -70,7 +70,7 @@ struct WorkspaceNavigationView: View {
                 PaneSessionView(
                     model: model,
                     pane: pane,
-                    hidesAppTabBar: true,
+                    hidesAppTabBar: false,
                     navigationContext: .splitDetail
                 )
                 .id(pane.id)

@@ -6,6 +6,7 @@ struct FirstMateChatTranscript: View {
     let conversation: FirstMateConversation?
     let catalog: FirstMateMentionCatalog
     let canControl: Bool
+    var scrollToLatestRequest = 0
     @Binding var followsLatest: Bool
     @Binding var readLayout: FirstMateMobileTranscriptPolicy.ReadLayout?
     @Binding var expandedReplies: Set<String>
@@ -147,6 +148,9 @@ struct FirstMateChatTranscript: View {
             .onChange(of: typing) { _, _ in
                 if followsLatest { proxy.scrollTo("first-mate-chat-end", anchor: .bottom) }
             }
+            .onChange(of: scrollToLatestRequest) { _, _ in
+                proxy.scrollTo("first-mate-chat-end", anchor: .bottom)
+            }
             .onChange(of: skimState.scrollRequest) { _, request in
                 guard let request else { return }
                 followsLatest = false
@@ -172,6 +176,7 @@ struct FirstMateChatTranscript: View {
                     Button(diagnostics) { diagnostics = FirstMateTranscriptPerformanceProbe.summary }
                         .font(.caption2).padding(8).background(HerdrTheme.base)
                         .accessibilityIdentifier("first-mate-transcript-metrics")
+                        .padding(.top, 80) // Keep the probe clear of the floating chat bar.
                 }
             }
             #endif

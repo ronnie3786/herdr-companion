@@ -54,6 +54,7 @@ final class HerdrFirstMateComposerUITests: XCTestCase {
         try capture("dictation-draft-review", app)
         app.buttons["first-mate-send"].tap()
         XCTAssertTrue(app.staticTexts["Sent by voice"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Sent by voice"].isHittable, "Sending reveals the new message above the composer")
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Please summarize the next step.")).firstMatch.exists)
         try capture("phase5-voice-sent", app)
     }

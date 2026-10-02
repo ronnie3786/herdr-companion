@@ -472,6 +472,17 @@ class FleetStoreTests(FleetStoreFixture, unittest.TestCase):
         self.assertNotIn("skim_say", entry["latest_message"])
         self.assertEqual(entry["now"], "Checkout holds stock after a declined card.")
 
+    def test_balanced_prompt_skims_join_legacy_grounded_previews(self):
+        reply = self.reply("A long synthetic reply about checkout holds.")
+        self.ready_skim(reply["id"])
+        # Existing v3 previews must survive an upgrade without regeneration.
+        self.assertEqual(self.entry()["latest_message"]["skim_say"], "Checkout holds stock after a declined card.")
+        self.store._db.execute("UPDATE fm_message_skims SET format='breath_balanced',prompt_version='skim-v4' WHERE message_id=?", (reply["id"],))
+        self.assertEqual(self.entry()["latest_message"]["skim_say"], "Checkout holds stock after a declined card.")
+        # Keep the existing exclusion of prompts predating source grounding.
+        self.store._db.execute("UPDATE fm_message_skims SET prompt_version='skim-v2' WHERE message_id=?", (reply["id"],))
+        self.assertNotIn("skim_say", self.entry()["latest_message"])
+
     def test_malformed_skim_blocks_do_not_break_the_fleet(self):
         first = self.reply("Reply with a stray string block.")
         self.ready_skim(first["id"], {"version": 1, "blocks": ["stray", {"kind": "say", "tokens": [{"t": "text", "v": "Kept."}]}]})

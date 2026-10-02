@@ -1167,7 +1167,8 @@ class FirstMateStore:
                     AND role IN ('user','human','assistant') AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
                 LEFT JOIN fm_messages m ON m.id=(SELECT id FROM fm_messages WHERE feature_id=f.id
                     AND role='assistant' AND visibility='conversation' ORDER BY created_at DESC,id DESC LIMIT 1)
-                LEFT JOIN fm_message_skims k ON k.message_id=m.id AND k.status='ready' AND k.prompt_version='{skim_format.PROMPT_VERSION}'
+                LEFT JOIN fm_message_skims k ON k.message_id=m.id AND k.status='ready'
+                    AND k.prompt_version IN ('skim-v3','{skim_format.PROMPT_VERSION}')
                 LEFT JOIN fm_events e ON e.sequence=(SELECT max(sequence) FROM fm_events WHERE feature_id=f.id
                     AND {JOURNAL_EVENT_SQL} AND type IN ('assignment.awaiting_human','reliability.blocked','visit.awaiting_direction'))
                 LEFT JOIN fm_feature_presentation p ON p.feature_id=f.id

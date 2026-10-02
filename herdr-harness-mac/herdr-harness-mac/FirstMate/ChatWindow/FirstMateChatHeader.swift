@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The chat column's 60 pt header: avatar, name, a status subtitle, and the
-/// inspector toggle. Empty space drags the window, like a title bar.
+/// The chat column's 60 pt header centers the avatar beside a stacked name and status.
+/// The inspector toggle stays alongside; empty space drags the window like a title bar.
 struct FirstMateChatHeader: View {
     let session: FirstMateChatWindowSession
     let inspectorVisible: Bool
@@ -9,32 +9,26 @@ struct FirstMateChatHeader: View {
     @State private var isNameHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             switch session.selection {
             case .lead:
                 avatar
-                VStack(alignment: .leading, spacing: 2) {
-                    nameText
-                    subtitle
-                }
-                .accessibilityElement(children: .combine)
+                titleColumn.accessibilityElement(children: .combine)
             case .feature(let id):
-                VStack(alignment: .leading, spacing: 2) {
-                    Button { session.requestPresentationEdit(id) } label: {
-                        HStack(spacing: 12) {
-                            avatar
-                            nameText
-                        }
-                        .padding(.trailing, 5)
-                        .background(isNameHovered ? HerdrTheme.inkFill(0.08) : .clear, in: .rect(cornerRadius: 8))
-                        .contentShape(.rect)
+                Button { session.requestPresentationEdit(id) } label: {
+                    HStack(alignment: .center, spacing: 12) {
+                        avatar
+                        titleColumn
                     }
-                    .buttonStyle(.herdrPlain)
-                    .onHover { isNameHovered = $0 }
-                    .help("Rename or change emoji")
-                    .accessibilityLabel("Rename or change emoji for \(title)")
-                    subtitle.padding(.leading, 50)
+                    .padding(.trailing, 5)
+                    .background(isNameHovered ? HerdrTheme.inkFill(0.08) : .clear, in: .rect(cornerRadius: 8))
+                    .contentShape(.rect)
                 }
+                .buttonStyle(.herdrPlain)
+                .onHover { isNameHovered = $0 }
+                .help("Rename or change emoji")
+                .accessibilityLabel("Rename or change emoji for \(title)")
+                .accessibilityValue(featureStatusSummary)
             }
             Spacer(minLength: 8)
             FirstMateInspectorToggle(isOpen: inspectorVisible, action: toggleInspector)
@@ -48,6 +42,26 @@ struct FirstMateChatHeader: View {
     }
 
     private var conversation: FirstMateConversation? { session.selectedConversation }
+
+    nonisolated static func statusSummary(word: String, step: String?, machineName: String?) -> String {
+        [word, step, machineName].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
+    private var featureStatusSummary: String {
+        guard let conversation else { return "" }
+        return Self.statusSummary(
+            word: FirstMateChatStatusStyle.word(for: conversation),
+            step: FirstMateChatStatusStyle.stepText(for: conversation),
+            machineName: session.showsMachineNames ? conversation.machineName : nil
+        )
+    }
+
+    private var titleColumn: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            nameText
+            subtitle
+        }
+    }
 
     private var nameText: some View {
         Text(title)

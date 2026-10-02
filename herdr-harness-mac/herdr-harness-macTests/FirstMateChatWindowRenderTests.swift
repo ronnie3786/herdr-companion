@@ -85,6 +85,32 @@ struct FirstMateChatWindowRenderTests {
         try await render("fmchat-chrome-renamed-1440.png", session: session)
     }
 
+    @Test("A feature header centers its avatar beside a stacked title and status")
+    func featureHeaderCentered() async throws {
+        let application = NSApplication.shared
+        let attribute = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
+        let previous = application.accessibilityAttributeValue(attribute) ?? false
+        application.accessibilitySetValue(true, forAttribute: attribute)
+        defer { application.accessibilitySetValue(previous, forAttribute: attribute) }
+        let session = try await session(selecting: .feature(Self.receipts))
+        #expect(await session.savePresentation(Self.receipts, label: "Synthetic launch", emoji: "🪁") == nil)
+        try await render("fmchat-chrome-header-centered-1440.png", session: session) { window in
+            let button = try #require(element(in: window, label: "Rename or change emoji for Synthetic launch"))
+            let toggle = try #require(element(in: window, label: "Show inspector") ?? element(in: window, label: "Hide inspector"))
+            let buttonFrame = try #require(elementFrame(button))
+            let toggleFrame = try #require(elementFrame(toggle))
+            #expect(abs(buttonFrame.midY - toggleFrame.midY) <= 1)
+            #expect(buttonFrame.height >= 38)
+            #expect(buttonFrame.height <= 46)
+            let conversation = try #require(session.selectedConversation)
+            #expect(resizeValue(button) == FirstMateChatHeader.statusSummary(
+                word: FirstMateChatStatusStyle.word(for: conversation),
+                step: FirstMateChatStatusStyle.stepText(for: conversation),
+                machineName: session.showsMachineNames ? conversation.machineName : nil
+            ))
+        }
+    }
+
     @Test("The editor content renders over dusk glass")
     func presentationEditor() async throws {
         let session = try await session(selecting: .feature(Self.receipts))
@@ -199,7 +225,17 @@ struct FirstMateChatWindowRenderTests {
         return handle.accessibilityValueDescription?() ?? (object.value(forKey: "accessibilityValue") as? String)
     }
 
+    private func elementFrame(_ element: AnyObject) -> CGRect? {
+        guard let object = element as? NSObject,
+              object.responds(to: #selector(NSAccessibilityElement.accessibilityFrame as (NSAccessibilityElement) -> () -> NSRect)) else { return nil }
+        return (object.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue
+    }
+
     private func resizeHandle(in window: NSWindow, label: String) -> AnyObject? {
+        element(in: window, label: label)
+    }
+
+    private func element(in window: NSWindow, label: String) -> AnyObject? {
         var visited = Set<ObjectIdentifier>()
         func find(_ object: AnyObject) -> AnyObject? {
             guard visited.insert(ObjectIdentifier(object)).inserted else { return nil }
@@ -240,6 +276,21 @@ struct FirstMateChatWindowRenderTests {
     func inspectorTab(_ tab: FirstMateInspector) async throws {
         let session = try await session(selecting: .feature(Self.receipts), inspector: tab)
         try await render("fmchat-chrome-tab-\(tab.id).png", session: session)
+    }
+}
+
+@Suite("First Mate chat header")
+struct FirstMateChatHeaderTests {
+    @Test("Status summaries join the word, optional step, and optional machine without empty parts")
+    func statusSummary() {
+        #expect(FirstMateChatHeader.statusSummary(word: "Your turn", step: nil, machineName: nil) == "Your turn")
+        #expect(FirstMateChatHeader.statusSummary(word: "Blocked", step: "Step 4 of 6, QA", machineName: "Machine B")
+                == "Blocked, Step 4 of 6, QA, Machine B")
+        #expect(FirstMateChatHeader.statusSummary(word: "Blocked", step: "", machineName: "Machine B") == "Blocked, Machine B")
+        #expect(FirstMateChatHeader.statusSummary(word: "Working", step: "QA", machineName: nil) == "Working, QA")
+        #expect(FirstMateChatHeader.statusSummary(word: "Your turn", step: nil, machineName: "") == "Your turn")
+        #expect(FirstMateChatHeader.statusSummary(word: "", step: "QA", machineName: "Machine B") == "QA, Machine B")
+        #expect(FirstMateChatHeader.statusSummary(word: "", step: "", machineName: "") == "")
     }
 }
 

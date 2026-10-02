@@ -281,10 +281,9 @@ struct HerdrMacCommands: Commands {
     private var firstMateHudEnabled = FirstMateHudPreferences.defaultEnabled
 
     var body: some Commands {
-        // On macOS ⌘B/⌘I/⌘U are Format ▸ Font key equivalents, not text-view
-        // key bindings. Without this menu nothing claims them and AppKit beeps,
-        // which is exactly what the rich-text note editor was doing.
-        TextFormattingCommands()
+        // Notes own their basic formatting toolbar and native ⌘B/⌘I/⌘U
+        // handling. The other editors are plain text, so no system font/size
+        // menu is needed.
 
         // Window ▸ First Mate (⇧⌘F; ⌥⌘F is Report a Bug), only while the
         // chat window preview is on.

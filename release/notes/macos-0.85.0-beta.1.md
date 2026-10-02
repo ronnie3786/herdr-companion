@@ -1,7 +1,10 @@
-# Herdr 0.85.0 preview
+# Notes, with simpler formatting
 
-Settings now uses the same purple dusk, haze, and glass as First Mate, with a clearer navigation rail, translucent sections, and polished Agent Roles controls. Your Glass, Haze, Desktop transparency, and text-size preferences still apply.
+- Notes now use a consistent, readable font and size, a quieter writing surface, and a compact toolbar for bold, italic, underline, and strikethrough.
+- Type `**bold**`, `*italic*`, `_italic_`, or `~~strikethrough~~`. Completing an inline phrase applies its styling and removes the markers. Use Command-B, Command-I, or Command-U to format selected text or the text you type next.
+- Pasted text and older notes adopt the same typography while preserving basic emphasis and links. There are no font-family, size, or color pickers in the Notes editor.
+- Text editing keeps native selection, undo/redo, and existing note persistence and sync.
 
-Agent Roles recognizes common skill folders in the current Mac user account. Missing optional folders no longer create warnings. Linked skills that require macOS permission are grouped into a single notice with an Allow Access action. Existing folder choices and role selections are preserved.
+Open Notes from the HUD or choose File → New Note. Try typing a formatted phrase, paste text from another document, and use the toolbar to underline a selection.
 
-Open Settings → Agent Roles → Skills to review your catalog. Use Skills from this Mac to allow folder access when macOS requires it. Companion 0.74.0 or newer supports Agent Roles; 0.74.2 adds precise per-role copy health so server catalog warnings do not appear as local folder errors. Publish and update the companion separately.
+This is a Mac-only update. It uses the existing Notes API and rich-text storage format; no companion server update or migration is required. The iPhone and iPad editor is unchanged and continues to sync compatible note content. The signed Mac updater installs only the Mac app.

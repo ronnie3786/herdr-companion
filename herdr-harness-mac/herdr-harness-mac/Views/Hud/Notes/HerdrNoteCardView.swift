@@ -8,8 +8,7 @@ struct HerdrNoteCardView: View {
     let noteID: UUID
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var isBodyFocused: Bool
-    @State private var bodySelection = AttributedTextSelection()
+    @State private var editorFocusRequest = UUID()
     @State private var resizeStart: CGSize?
     @State private var resizeMouseOrigin: CGPoint?
     @State private var isDeleteArmed = false
@@ -101,7 +100,7 @@ struct HerdrNoteCardView: View {
         .shadow(color: HerdrTheme.ink.opacity(0.45), radius: 16, y: 8)
         .clipShape(.rect(cornerRadius: 12))
         .animation(reduceMotion ? nil : .smooth(duration: 0.5), value: notes.revealRevision[note.id] ?? 0)
-        .task(id: controller.noteFocusRequest) { isBodyFocused = true }
+        .task(id: controller.noteFocusRequest) { editorFocusRequest = UUID() }
         .onChange(of: notes.revealRevision[note.id]) { _, _ in refocusAfterReveal() }
         .onChange(of: notes.isBusy(note.id)) { wasBusy, isBusy in
             if wasBusy && !isBusy { refocusAfterReveal() }
@@ -117,7 +116,7 @@ struct HerdrNoteCardView: View {
         HStack(spacing: 6) {
             TextField("Title", text: titleBinding(for: note), prompt: Text("Title").foregroundStyle(note.color.ink.opacity(0.5)))
                 .textFieldStyle(.plain)
-                .herdrFont(size: NSFont.preferredFont(forTextStyle: .subheadline).pointSize + 2, weight: .bold)
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(note.color.ink)
             Spacer(minLength: 0)
             Menu("Actions", systemImage: "ellipsis.circle") {
@@ -156,26 +155,14 @@ struct HerdrNoteCardView: View {
     }
 
     private func editor(_ note: HerdrNote, isCleaning: Bool) -> some View {
-        ZStack(alignment: .topLeading) {
-            if note.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text("Jot anything — the AI can tidy it later.")
-                    .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 2)
-                    .foregroundStyle(note.color.ink.opacity(0.45))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 8)
-                    .allowsHitTesting(false)
-            }
-            TextEditor(text: bodyBinding(for: note), selection: $bodySelection)
-                .scrollContentBackground(.hidden)
-                .herdrFont(size: NSFont.preferredFont(forTextStyle: .callout).pointSize + 2)
-                .foregroundStyle(note.color.ink)
-                .background(HerdrNoteEditorInk(color: note.color.ink))
-                .focused($isBodyFocused)
-                .allowsHitTesting(!isCleaning)
-                .padding(2)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(note.color.ink.opacity(0.045), in: .rect(cornerRadius: 8))
+        HerdrNoteRichEditor(
+            text: bodyBinding(for: note),
+            ink: note.color.ink,
+            isEditable: !isCleaning,
+            focusRequest: editorFocusRequest,
+            onEscape: { controller.closeNote() }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -441,9 +428,7 @@ struct HerdrNoteCardView: View {
     }
 
     private func refocusAfterReveal() {
-        bodySelection = AttributedTextSelection()
-        isBodyFocused = false
-        Task { @MainActor in isBodyFocused = true }
+        editorFocusRequest = UUID()
     }
 
     private static func compactRelativeTime(_ date: Date) -> String {

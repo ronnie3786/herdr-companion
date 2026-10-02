@@ -17,8 +17,7 @@ no native app update.
 - Code Factory, the Herdr app's own autofix pipeline, merges on its own again.
   PRs stay drafts through implementation, CI, and review; the daemon marks the
   PR ready only immediately before merging the exact head that passed Verify and
-  the Opus review. Set `[machines.<id>.code_factory] require_ready_approval =
-  true` to keep the per-PR **Approve ready PR** step. First Mate's draft-PR rule
+  the Opus review. Set `require_ready_approval = true` in `[code_factory]` to keep the per-PR **Approve ready PR** step. First Mate's draft-PR rule
   for agents is unchanged.
 
 Install the wheel in a new versioned runtime, back up private configuration and

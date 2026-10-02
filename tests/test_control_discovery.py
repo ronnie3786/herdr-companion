@@ -330,6 +330,21 @@ class ControlDiscoveryTests(unittest.TestCase):
         self.assertEqual(saved["results"][0]["kind"], "hud-chat")
         self.assertEqual(saved["results"][0]["target"]["hudChatId"], "agr_000000000001")
 
+    def test_only_records_the_mac_can_open_advertise_open_modes(self):
+        result = self.discovery.search(
+            kind="all", query="", ticket="", sort="updated", limit=100, offset=0
+        )
+        modes = {}
+        for item in result["results"]:
+            modes.setdefault(item["kind"], item["openModes"])
+        # The Mac opens chats, saved HUD chats and First Mate features. Workspace
+        # and tab records remain resource targets with no UI open mode.
+        self.assertEqual(modes["pane"], ["chat", "terminal", "git", "skills"])
+        self.assertEqual(modes["hud-chat"], ["hud"])
+        self.assertEqual(modes["first-mate"], ["first-mate"])
+        self.assertEqual(modes["workspace"], [])
+        self.assertEqual(modes["tab"], [])
+
     def test_unknown_snapshot_timestamp_is_not_reported_as_fresh(self):
         self.source.snapshot_response = lambda: {
             "ok": True,

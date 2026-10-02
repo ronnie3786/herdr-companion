@@ -70,7 +70,7 @@ herdr-control find chats --all-machines --ticket EXAMPLE-123 --sort updated --li
 herdr-control find chats --all-machines --query "upload retry"
 herdr-control --machine desktop find workspaces --query "Upload feature"
 
-# Save the chosen result's target, or the single result object, as target.json.
+# Save the chosen chat result's target, or the single result object, as target.json.
 herdr-control --machine desktop inspect --ref-file target.json
 herdr-control --machine desktop --control-machine desktop ui open \
   --ref-file target.json --view chat --wait 30
@@ -133,17 +133,20 @@ concurrent additions/removals can change subsequent pages.
 ```sh
 herdr-control --control-machine desktop ui segment git --wait 30
 herdr-control --control-machine desktop ui segment chat --wait 30
-herdr-control --control-machine desktop ui segment workspace --wait 30
 herdr-control --control-machine desktop ui segment active-work --wait 30
 herdr-control --control-machine desktop ui segment fleet --wait 30
 herdr-control --control-machine desktop ui back --wait 30
 herdr-control --control-machine desktop ui forward --wait 30
 ```
 
-Other segments are `terminal`, `skills`, `first-mate`, `pr-review`, `attention` and `activity`.
+Other segments are `terminal`, `skills`, `first-mate`, `pr-review`, `watchers` and `activity`.
 Chat/Git/Terminal/Skills require an appropriate selected pane; unavailable modes
-fail instead of silently selecting another view. Explicit tab navigation opens
-its workspace overview and highlights that tab, not an arbitrary pane in it.
+fail instead of silently selecting another view. The Mac app has no workspace
+overview or attention deck, so `workspace` and `attention` are not segments.
+`ui open` accepts chat (pane), First Mate and saved HUD chat targets. Workspace
+and tab search results advertise an empty `openModes` list: they identify Herdr
+resources for creation, renaming and tab colors, and `ui open` rejects them.
+Open a chat in that workspace or tab instead.
 The main window is reused, including reopening it after it was closed.
 
 Existing drafts and blocking dialogs are preserved. A blocked navigation returns
@@ -182,7 +185,7 @@ control from the [long-term plan](agent-control-plan.md).
 
 | Area | Control surface |
 | --- | --- |
-| Main shell | Exact pane/workspace/tab opening; main segments; back/forward; refresh; reveal in sidebar |
+| Main shell | Exact chat (pane) opening; main segments; back/forward; refresh; reveal in sidebar |
 | Chat | Chat/Terminal/Git/Skills modes, summary presentation, Smart Rename, exact model selection, local unread marking; tab colors are read-only discovery |
 | Sidebar | Supported query/category/recency filters through a typed action |
 | Other native surfaces | Settings window, HUD, HUD notes, saved HUD chat history, First Mate feature/inspector |
@@ -215,9 +218,9 @@ feature workspace first; do not create a second workspace merely because the
 human asked for another chat.
 
 ```sh
-herdr-control --machine desktop --control-machine desktop workspace create \
+herdr-control --machine desktop workspace create \
   --name "Upload feature" --cwd /projects/example \
-  --request-id workspace-example-1 --open --wait 30
+  --request-id workspace-example-1
 
 herdr-control --machine desktop --control-machine desktop chat create \
   --workspace w1 --name "Investigate retries" \
@@ -226,7 +229,10 @@ herdr-control --machine desktop --control-machine desktop chat create \
 
 Creation and UI opening have separate receipts. If creation succeeds but opening
 fails, keep the created target and retry **navigation only**. Never create again
-just to focus the result. New Pi chats can carry `--parent-session-id`; the CLI
+just to focus the result. The current Mac app opens only chats, so `--open` on
+`workspace create` or `tab create` completes the creation and reports an
+`unsupported_target` navigation error; create a chat in the new workspace or tab
+with `--open` instead. New Pi chats can carry `--parent-session-id`; the CLI
 otherwise uses the current Pi session context when available.
 
 ## Receipts, errors and retries

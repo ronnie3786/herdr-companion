@@ -13,9 +13,9 @@ compact controls and navigation from Quiet chrome.
    labeled Attach, Paste code, and Voice actions. More contains the remaining
    context tools. Terminal keys sit above the input and expand on demand. Model,
    effort, voice, playback, draft, and keyboard behavior remain available.
-3. **Remaining native surfaces:** sidebar, workspace and fleet summaries,
-   attention, activity, settings, onboarding, command palette, Ask Herdr, HUD,
-   quick voice, notes, and Active Work.
+3. **Remaining native surfaces:** sidebar, fleet summaries, activity, settings,
+   onboarding, command palette, Ask Herdr, HUD, quick voice, notes, and Active
+   Work.
 4. **Verification and delivery:** inspect synthetic renders at standard and large
    text sizes, run Mac tests and public-source checks, then publish through the
    verified Mac release workflow.
@@ -36,8 +36,8 @@ session-owned draft through changes in its utility controls.
 Quiet chrome removes the transcript's decorative turn rails and dots, including
 their reserved left gutter. The sidebar uses compact outline icons and one row
 for creating sessions and workspaces. Only machine groups receive separators;
-projects are distinguished by indentation, labels, and spacing. The toolbar uses
-a compact segment strip with a restrained selected state.
+projects are distinguished by indentation, labels, and spacing. The title bar
+has no segment strip; a single ⋯ menu holds navigation and chat actions.
 
 Recents uses regular-weight chat titles aligned to the leading edge. A single
 small, muted subtitle shows the computer icon, machine, workspace, and tab.

@@ -43,8 +43,8 @@ modifying another extension.
 Package installation alone does not label an external Pi session as managed.
 Known pane/run hints activate a compact identity on each turn; First Mate uses its
 validated scoped extension. Restricted contextual-question, PR-review-question,
-response-brief, and Smart Rename profiles stay unchanged. The bootstrap points to
-the installed guides instead of injecting their bodies.
+and Smart Rename profiles stay unchanged. The bootstrap points to the installed
+guides instead of injecting their bodies.
 
 Run `herdr-docs list`, then `herdr-docs read overview`, `control`, `first-mate`,
 or `api`. The CLI is offline and needs no companion configuration or token. For

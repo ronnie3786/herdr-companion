@@ -15,7 +15,7 @@ function harness(load) {
 test("only pane conversations load; managed jobs and restricted profiles never discover personal context", () => {
   assert.equal(profileEligible(pane), true);
   for (const env of [{}, { ...pane, HERDR_FIRST_MATE_MANAGED_ROLE: "worker" }, { ...pane, HERDR_AGENT_RUN_ID: "agr_000000000001" },
-    { ...pane, HERDR_AGENT_RUN_PROFILE: "response-brief-v1" }]) assert.equal(profileEligible(env), false);
+    { ...pane, HERDR_AGENT_RUN_PROFILE: "smart-rename-v1" }]) assert.equal(profileEligible(env), false);
 });
 
 test("profile stays pinned through turns, compaction, navigation before its entry and reload; injection deduplicates", async () => {

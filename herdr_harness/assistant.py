@@ -49,21 +49,11 @@ def capabilities() -> dict:
         MAX_TITLE_SCALARS,
         PROFILE as ISSUE_REPORT_DRAFT_PROFILE_V1,
     )
-    from .response_briefs import (
-        LENGTH_OPTIONS,
-        LENGTH_POLICY_VERSION,
-        MAX_OUTPUT_BYTES,
-        PROFILE as RESPONSE_BRIEF_PROFILE,
-    )
 
-    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, GIT_PROFILE, "hud-chat-v1", RESPONSE_BRIEF_PROFILE, SMART_RENAME_PROFILE, ISSUE_REPORT_DRAFT_PROFILE_V1], "contextVersions": [1],
+    return {"ok": True, "profiles": [PROFILE, PR_REVIEW_PROFILE, GIT_PROFILE, "hud-chat-v1", SMART_RENAME_PROFILE, ISSUE_REPORT_DRAFT_PROFILE_V1], "contextVersions": [1],
             "hudChats": {"retention": "indefinite", "tools": "normal-pi", "history": "/api/v1/hud-chats"},
             "hudChatWorkingDirectory": True,
             "prReviewQuestions": {"version": 1, "tools": "read-only-in-checkout", "scope": "reviewId"},
-            "responseBriefs": {"version": 1, "lengthPolicyVersion": LENGTH_POLICY_VERSION,
-                               "lengthOptions": list(LENGTH_OPTIONS),
-                               "tools": "none", "oneShot": True,
-                               "maxOutputBytes": MAX_OUTPUT_BYTES, "requiresParentSessionId": True},
             "smartRename": {"version": 1, "tools": "none", "oneShot": True},
             "issueReportDrafts": {"version": 1, "tools": "none", "oneShot": True,
                                  "kinds": list(ISSUE_REPORT_DRAFT_KINDS),
@@ -166,25 +156,12 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
     """One manager owns this store. Its lock serializes claim, append and promotion."""
     profile = request.get("profile")
     context = validate_context(request.get("context"))
-    brief_length: str | None = None
-    if profile in QUESTION_PROFILES:
-        if request.get("mode", "ask") != "ask":
-            fail("Contextual questions must use the question profile.")
-        if request.get("systemPrompt") is not None:
-            fail("Context cannot override the question policy.")
-        if "parentSessionId" in request:
-            fail("parentSessionId is only supported by response-brief-v1.")
-        if "responseBriefLength" in request:
-            fail(
-                "responseBriefLength is only supported by response-brief-v1.",
-                "invalid_response_brief_length",
-            )
-    else:
-        from .response_briefs import PROFILE as RESPONSE_BRIEF_PROFILE, validate_request
-
-        if profile != RESPONSE_BRIEF_PROFILE:
-            fail("This restricted Agent run profile is not supported.")
-        brief_length = validate_request(request, context)
+    if profile not in QUESTION_PROFILES:
+        fail("This restricted Agent run profile is not supported.")
+    if request.get("mode", "ask") != "ask":
+        fail("Contextual questions must use the question profile.")
+    if request.get("systemPrompt") is not None:
+        fail("Context cannot override the question policy.")
     expected = request.get("scope", {})
     allowed_scope = {"expectedRootPath", "reviewId"} | ({"firstMateFeatureId", "workspaceId", "comparison", "comparisonId"} if profile == GIT_PROFILE else set())
     if not isinstance(expected, dict) or set(expected) - allowed_scope:
@@ -247,17 +224,10 @@ def start(manager, *, request: dict, cwd: str, pane_id: str | None, workspace_id
                               "clientRequestId": request["clientRequestId"]}
         if git_inspection is not None:
             assistant_metadata["gitInspection"] = git_inspection
-        if profile in QUESTION_PROFILES:
-            assistant_metadata["assistantSequence"] = sequence
-            if profile == PR_REVIEW_PROFILE:
-                assistant_metadata["reviewId"] = expected.get("reviewId")
-            label = (request.get("label") or request["prompt"])[:120]
-        else:
-            # Captured source or prompt data must stay on stdin, never in argv.
-            assistant_metadata["responseBriefParentSessionId"] = request["parentSessionId"]
-            if brief_length is not None:
-                assistant_metadata["responseBriefLength"] = brief_length
-            label = "Response brief"
+        assistant_metadata["assistantSequence"] = sequence
+        if profile == PR_REVIEW_PROFILE:
+            assistant_metadata["reviewId"] = expected.get("reviewId")
+        label = (request.get("label") or request["prompt"])[:120]
         result = manager.start(
             prompt=request["prompt"], label=label,
             cwd=canonical, topology={}, mode="ask", model=request.get("model"),

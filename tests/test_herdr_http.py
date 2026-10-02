@@ -1374,7 +1374,7 @@ class HerdrHTTPTests(unittest.TestCase):
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload=request)
         self.assertEqual(status, 202)
         self.service.start_contextual_question.assert_called_once_with(request)
-        rejected = {**request, "clientRequestId": "fixture-request-00002", "responseBriefLength": "minimal"}
+        rejected = {**request, "clientRequestId": "fixture-request-00002", "unsupportedField": "synthetic"}
         self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=rejected)[0], 400)
         self.assertEqual(self.service.start_contextual_question.call_count, 1)
         status, _, _ = self.request("/api/v1/agent-runs", method="POST", payload={"prompt": "Explain", "context": {}})
@@ -1643,84 +1643,34 @@ class HerdrHTTPTests(unittest.TestCase):
         invalid = {**request, "clientRequestId": "fixture-pr-review-0002", "cwd": "/synthetic/checkout"}
         self.assertEqual(self.request("/api/v1/agent-runs", method="POST", payload=invalid)[0], 400)
 
-    def test_response_brief_profile_is_advertised_and_dispatches_with_valid_lineage(self):
+    def test_removed_response_brief_contract_is_not_advertised_or_accepted(self):
         status, _, capabilities = self.request("/api/v1/agent-runs/capabilities")
         self.assertEqual(status, 200)
-        self.assertIn("response-brief-v1", capabilities["profiles"])
-        self.assertTrue(capabilities["responseBriefs"]["requiresParentSessionId"])
-        self.assertEqual(capabilities["responseBriefs"]["lengthPolicyVersion"], 2)
-        self.assertEqual(
-            capabilities["responseBriefs"]["lengthOptions"],
-            ["minimal", "medium", "long"],
-        )
-
-        self.service.start_response_brief = Mock(
+        self.assertNotIn("response-brief-v1", capabilities["profiles"])
+        self.assertNotIn("responseBriefs", capabilities)
+        self.service.start_contextual_question = Mock(
             return_value={"ok": True, "run": {"id": "agr_0123456789ab"}}
         )
-        request = {
+        legacy = {
             "prompt": "Create the brief",
             "profile": "response-brief-v1",
             "mode": "ask",
-            "clientRequestId": "brief-request-0001",
-            "parentSessionId": "source-session-1",
-            "thinkingLevel": "high",
+            "clientRequestId": "legacy-request-0001",
             "context": {"version": 1},
         }
-        status, _, _ = self.request(
-            "/api/v1/agent-runs", method="POST", payload=request
-        )
-        self.assertEqual(status, 202)
-        self.service.start_response_brief.assert_called_once_with(request)
-
-        for length in ("minimal", "medium", "long"):
-            with self.subTest(length=length):
-                selected = {**request, "responseBriefLength": length}
-                status, _, _ = self.request(
-                    "/api/v1/agent-runs", method="POST", payload=selected
-                )
-                self.assertEqual(status, 202)
-                self.service.start_response_brief.assert_called_with(selected)
-
+        # The fields only that profile used are now unsupported everywhere.
         for invalid in (
-            {**request, "parentSessionId": "../source"},
-            {key: value for key, value in request.items() if key != "parentSessionId"},
-            {**request, "attachments": []},
-            {**request, "systemPrompt": "override"},
-            {**request, "continueFromRunId": "agr_0123456789ab"},
-            {**request, "cwd": "~"},
-            {**request, "mode": "act"},
-            {**request, "responseBriefLength": None},
-            {**request, "responseBriefLength": ""},
-            {**request, "responseBriefLength": "Minimal"},
-            {**request, "responseBriefLength": "compact"},
-            {**request, "responseBriefLength": "longer"},
-            {**request, "responseBriefLength": 2},
-            {**request, "responseBriefLength": ["minimal"]},
+            {**legacy, "parentSessionId": "source-session-1"},
+            {**legacy, "responseBriefLength": "minimal"},
+            {"prompt": "Question", "parentSessionId": "source-session-1"},
+            {"prompt": "Question", "profile": "contextual-question-v1", "responseBriefLength": "minimal"},
         ):
             with self.subTest(invalid=invalid):
                 invalid_status, _, _ = self.request(
                     "/api/v1/agent-runs", method="POST", payload=invalid
                 )
                 self.assertEqual(invalid_status, 400)
-        self.assertEqual(self.service.start_response_brief.call_count, 4)
-
-        for other_profile in (
-            {"prompt": "Question", "parentSessionId": "source-session-1"},
-            {"prompt": "Question", "responseBriefLength": "minimal"},
-            {"prompt": "Question", "profile": "contextual-question-v1", "responseBriefLength": "minimal"},
-            {
-                "prompt": "Question",
-                "profile": "hud-chat-v1",
-                "mode": "act",
-                "responseBriefLength": "minimal",
-            },
-        ):
-            with self.subTest(other_profile=other_profile):
-                other_status, _, _ = self.request(
-                    "/api/v1/agent-runs", method="POST", payload=other_profile
-                )
-                self.assertEqual(other_status, 400)
-        self.assertEqual(self.service.start_response_brief.call_count, 4)
+        self.service.start_contextual_question.assert_not_called()
 
     def test_agent_run_routes_use_async_start_and_stable_envelope(self):
         status, _, body = self.request(

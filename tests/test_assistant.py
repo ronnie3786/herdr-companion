@@ -98,11 +98,17 @@ class AssistantTests(unittest.TestCase):
             self.start()
         self.assertEqual(error.exception.code, 'assistant_promoted')
 
-    def test_response_brief_length_is_rejected_by_question_profiles(self):
-        self.request['responseBriefLength'] = 'minimal'
-        with self.assertRaises(AgentRunError) as error:
-            self.start()
-        self.assertEqual(error.exception.code, 'invalid_response_brief_length')
+    def test_removed_and_unknown_profiles_are_rejected_before_any_state(self):
+        # response-brief-v1 was removed; older clients may still send it.
+        self.assertNotIn('response-brief-v1', assistant.capabilities()['profiles'])
+        for profile in ('response-brief-v1', 'unknown-profile-v1'):
+            with self.subTest(profile=profile):
+                request = {**self.request, 'profile': profile}
+                with self.assertRaises(AgentRunError) as error:
+                    self.start(request)
+                self.assertEqual(error.exception.code, 'invalid_assistant_context')
+                self.assertEqual(error.exception.status, 400)
+                self.assertIn('not supported', str(error.exception))
         self.assertEqual(list(self.manager.runs_root.glob('agr_*')), [])
         receipts = self.manager.runs_root / 'requests'
         self.assertEqual(list(receipts.glob('*.json')) if receipts.exists() else [], [])

@@ -117,7 +117,6 @@
  "test_release_speed": 6.3,
  "test_remote_activity": 1.2,
  "test_response_audio": 0.1,
- "test_response_briefs": 2.0,
  "test_result_artifacts": 2.5,
  "test_review_watch_environment": 0.1,
  "test_session_activity": 0.1,

@@ -51,7 +51,10 @@ herdr-control --control-machine desktop ui receipt REQUEST_ID
 Resource creation is split from presentation. `workspace create`, `tab create`,
 and `chat create` return resource receipts; `--open` also requests separate UI
 navigation. If creation succeeds and opening fails, retry navigation rather than
-creating a duplicate.
+creating a duplicate. The Mac opens chat, First Mate, and saved HUD chat targets
+only: workspace and tab results advertise no `openModes`, so open a chat in them
+instead. `ui segment` accepts only the segments the receiver's `ui actions`
+schema lists.
 
 ## Limits and authority
 

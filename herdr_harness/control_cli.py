@@ -1523,6 +1523,14 @@ class ControlCLI:
         raise CLIError("Unknown command", "invalid_arguments")
 
 
+# Keep in sync with the Mac receiver's ui.segment registration
+# (tests/fixtures/agent-control-v1.json).
+UI_SEGMENTS = (
+    "chat", "terminal", "git", "skills", "active-work", "pr-review",
+    "watchers", "first-mate", "fleet", "activity",
+)
+
+
 def _add_target_arguments(parser: argparse.ArgumentParser) -> None:
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--ref-file", help="JSON target or discovery result; use - for stdin")
@@ -1647,12 +1655,12 @@ def _parser() -> JSONArgumentParser:
     segment.add_argument(
         "segment",
         nargs="?",
-        choices=("chat", "terminal", "git", "skills", "workspace", "active-work", "pr-review", "watchers", "first-mate", "fleet", "attention", "activity"),
+        choices=UI_SEGMENTS,
     )
     segment.add_argument(
         "--segment",
         dest="segment_option",
-        choices=("chat", "terminal", "git", "skills", "workspace", "active-work", "pr-review", "watchers", "first-mate", "fleet", "attention", "activity"),
+        choices=UI_SEGMENTS,
     )
     for name in ("back", "forward"):
         command = ui_commands.add_parser(name)

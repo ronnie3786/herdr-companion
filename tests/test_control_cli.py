@@ -178,14 +178,14 @@ def standard_ui_actions():
     return [
         ui_action(
             "ui.open",
-            target_kinds=("pane", "workspace", "tab", "first-mate", "hud-chat"),
+            target_kinds=("pane", "first-mate", "hud-chat"),
             properties={"view": {"type": "string", "enum": ["chat", "terminal", "git", "skills"]}},
         ),
         ui_action(
             "ui.segment",
             properties={"segment": {"type": "string", "enum": [
-                "chat", "terminal", "git", "skills", "workspace", "active-work", "pr-review",
-                "first-mate", "fleet", "attention", "activity",
+                "chat", "terminal", "git", "skills", "active-work", "pr-review",
+                "watchers", "first-mate", "fleet", "activity",
             ]}},
             required=("segment",),
         ),
@@ -1046,6 +1046,47 @@ url = "https://beta.example.test"
         self.assertIsNone(output)
         self.assertEqual(error["error"]["code"], "unsupported_target")
         self.assertEqual(opener.requests, [])
+
+    def test_removed_mac_segments_are_rejected_before_any_request(self):
+        for arguments in (
+            ["ui", "segment", "workspace"],
+            ["ui", "segment", "attention"],
+            ["ui", "segment", "--segment", "workspace"],
+            ["ui", "segment", "--segment", "attention"],
+        ):
+            with self.subTest(arguments=arguments):
+                status, output, error, opener = self.run_cli(
+                    ["--control-machine", "alpha", *arguments, "--client", "ui_one"]
+                )
+                self.assertEqual(status, 2)
+                self.assertIsNone(output)
+                self.assertEqual(error["error"]["code"], "invalid_arguments")
+                self.assertEqual(opener.requests, [])
+
+    def test_workspace_and_tab_targets_are_not_opened_by_a_current_receiver(self):
+        receiver = ui_client("ui_one")
+        for kind, field, identifier in (("workspace", "workspaceId", "w1"), ("tab", "tabId", "w1:t1")):
+            with self.subTest(kind=kind):
+                target = self.write_json(
+                    f"{kind}-target.json",
+                    {"kind": kind, "serverId": "srv_alpha", field: identifier},
+                )
+                inspected = resource(kind, identifier, serverId="srv_alpha")
+                status, output, error, opener = self.run_cli(
+                    [
+                        "--machine", "alpha", "--control-machine", "alpha", "ui", "open",
+                        "--ref-file", str(target), "--client", "ui_one",
+                        "--request-id", f"open-{kind}",
+                    ],
+                    FakeResponse({"ok": True, "result": inspected}),
+                    FakeResponse(clients(receiver)),
+                )
+                self.assertEqual(status, 2)
+                self.assertIsNone(output)
+                self.assertEqual(error["error"]["code"], "unsupported_target")
+                # Only inspection and receiver selection ran; nothing was enqueued.
+                self.assertEqual(len(opener.requests), 2)
+                self.assertFalse(any(request["url"].endswith("/commands") for request in opener.requests))
 
     def test_ui_dry_run_validates_registry_enabled_state_and_schema(self):
         receiver = ui_client("ui_one")

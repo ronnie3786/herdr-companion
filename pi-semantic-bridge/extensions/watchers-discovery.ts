@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export function watchersInstructions(environment: NodeJS.ProcessEnv): string | undefined {
 	if (!environment.HERDR_PANE_ID && !environment.HERDR_AGENT_RUN_ID && !environment.HERDR_FIRST_MATE_MANAGED_ROLE) return undefined;
 	const profile = environment.HERDR_AGENT_RUN_PROFILE;
-	if (profile && ["contextual-question-v1", "pr-review-question-v1", "git-question-v1", "pr-review-guide-v1", "response-brief-v1", "smart-rename-v1", "issue-report-draft-v1", "first-mate-skim-v1"].includes(profile)) return undefined;
+	if (profile && ["contextual-question-v1", "pr-review-question-v1", "git-question-v1", "pr-review-guide-v1", "smart-rename-v1", "issue-report-draft-v1", "first-mate-skim-v1"].includes(profile)) return undefined;
 	return "Herdr Watchers are scheduled routines hosted by one companion, independent of the Mac app. "
 		+ "When asked to set one up, read herdr-docs read watchers, then herdr-watchers capabilities, "
 		+ "herdr-watchers machines, herdr-watchers schema and herdr-watchers example. "

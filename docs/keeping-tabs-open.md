@@ -7,9 +7,9 @@ only the old pane. If another pane already exists in that tab, no shell is added
 Panes in other tabs do not count as replacements.
 
 When only the reserved shell remains, Companion shows **No open chats**, the
-folder path, **New Pi chat**, and **Open shell**. This appears both in the pane
-view and the workspace overview. The tab's add-Pi/add-shell actions reuse the
-reserved shell too, rather than adding an unnecessary split. Starting a quick Pi
+folder path, **New Pi chat**, and **Open shell** in the pane view. The tab's
+add-Pi/add-shell actions reuse the reserved shell too, rather than adding an
+unnecessary split. Starting a quick Pi
 session in an explicitly selected empty tab also reuses its reserved pane when
 the requested folder matches.
 

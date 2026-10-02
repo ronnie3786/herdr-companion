@@ -48,7 +48,7 @@ from .first_mate_routing import (
 )
 from . import first_mate_fleet
 from .first_mate_store import LEAD_KIND, FirstMateError, system_message_attention, validate_assignment_payload
-from .first_mate_usage import FirstMateUsage
+from .first_mate_usage_background import BackgroundFirstMateUsage
 from .first_mate_workspaces import FeatureWorkspaces, independent_path, lock_path as workspace_lock_path, path_key
 from .first_mate_verification import (
     VerificationValidationError,
@@ -891,7 +891,10 @@ class FirstMateRuntime:
         self._catalog_at = 0.0
         self._assessment_reads = AssessmentReadCache()
         self._verification_read_context = threading.local()
-        self.usage = FirstMateUsage(self.root / "sessions")
+        self._jobs_lock = threading.Lock()
+        self._jobs_cache = {}
+        self.usage = BackgroundFirstMateUsage(self.root / "sessions", enabled=
+            self.environ.get("HERDR_FIRST_MATE_USAGE_ENABLED", "true").lower() not in {"0", "false", "no"})
         self.context = FirstMateContext(self.jobs_root, self.context_target)
         from .first_mate_reliability import FirstMateReliability
         self.reliability = FirstMateReliability(self)
@@ -909,6 +912,7 @@ class FirstMateRuntime:
                 "workflow_policy_version": POLICY_VERSION, "lenient_verification_recording": True,
                 "durable_dispatch": True, "feature_workspaces": True, "context_handoff_target": self.context_target,
                 "max_workers": self.max_workers, "runtime_health": self.health(),
+                "usage_refresh": self.usage.health(),
                 "reason": ("Pi is not installed or executable on this host" if not self.pi_bin else
                            "The managed First Mate Pi extension is unavailable" if not self.extension or not self.extension.is_file() else None)}
 
@@ -1549,6 +1553,7 @@ class FirstMateRuntime:
                 return
             self._manager_lock = handle
             self._stop.clear()
+            self.usage.start()
             with self._health_lock:
                 self._last_progress = time.monotonic()
             self._thread = threading.Thread(target=self._loop, name="first-mate-runtime", daemon=True)
@@ -1592,6 +1597,7 @@ class FirstMateRuntime:
         """Stop reconciliation, preserving detached Pi workers for reattachment."""
         self._stop.set()
         self._wake.set()
+        self.usage.stop()
         if self._guardian and self._guardian is not threading.current_thread():
             self._guardian.join(timeout=2)
         if self._thread and self._thread is not threading.current_thread():
@@ -1702,8 +1708,46 @@ class FirstMateRuntime:
             self._wake.clear()
 
     def _jobs(self) -> list[dict]:
-        return [value for path in sorted(self.jobs_root.glob("*/job.json"))
-                if isinstance((value := _read_json(path)), dict)]
+        # Revalidate every file, including ctime, before reuse. This is a parse
+        # cache, not a TTL snapshot used to make scheduling/ownership decisions.
+        from copy import deepcopy
+        result, retained = [], {}
+        with self._jobs_lock:
+            for path in sorted(self.jobs_root.glob("*/job.json")):
+                value = None
+                for attempt in range(2):
+                    try:
+                        before = path.stat()
+                        signature = (before.st_dev, before.st_ino, before.st_size,
+                                     before.st_mtime_ns, before.st_ctime_ns)
+                        cached = self._jobs_cache.get(path)
+                        if cached and cached[0] == signature:
+                            value = cached[1]
+                            break
+                        value = _read_json(path)
+                        after = path.stat()
+                        if not isinstance(value, dict):
+                            raise FirstMateError("First Mate job inventory is temporarily unreadable")
+                        if signature == (after.st_dev, after.st_ino, after.st_size,
+                                         after.st_mtime_ns, after.st_ctime_ns):
+                            break
+                    except FileNotFoundError:
+                        value = None
+                        break
+                    except OSError:
+                        # An inaccessible existing dispatch cannot be interpreted
+                        # as an empty inventory by authoritative reconciliation.
+                        raise FirstMateError("First Mate job inventory is temporarily unavailable") from None
+                else:
+                    raise FirstMateError("First Mate job inventory changed while being read",
+                                         code="read_changed", status=409)
+                if isinstance(value, dict):
+                    result.append(deepcopy(value))
+                    # No unreadable values or unbounded historical versions.
+                    if len(retained) < 4096:
+                        retained[path] = (signature, value)
+            self._jobs_cache = retained
+        return result
 
     def _job_dir(self, job: dict) -> Path:
         return self.jobs_root / job["id"]
@@ -4394,8 +4438,8 @@ class FirstMateRuntime:
             elif started and not job.get("native_session_id"):
                 # Header discovery closes only the bind crash gap. Never let a
                 # header override a different stored native identity.
-                parsed = self.usage.session_usage(job.get("session_file", ""))
-                if parsed.get("_identity_valid") and parsed.get("_session_id") == native_session_id:
+                discovered = self.usage.discover_session_id(job.get("session_file", ""))
+                if discovered == native_session_id:
                     claims.append(("job", job, Path(job["session_file"]).resolve(), job["feature_id"], job["kind"]))
         for row in ledger_records:
             if row.get("native_session_id") == native_session_id:
@@ -4419,24 +4463,15 @@ class FirstMateRuntime:
         selected_source = next((claim for claim in reversed(claims) if claim[0] == "job"), claims[-1])
         source_kind, selected_record, path, feature_id, kind = selected_source
         path.relative_to((self.root / "sessions").resolve())
-        rows, _ = _records(path)
-        header = next((row for row in rows if row.get("type") == "session"), {})
-        if header.get("id") != native_session_id:
-            raise ValueError("Saved session identity does not match the retained assignment")
-        from .first_mate_transcript import session_messages
-        messages = session_messages(rows)
-        total = len(messages)
-        end = total if before is None else max(0, min(total, int(before)))
-        count = max(1, min(100, int(limit)))
-        start = max(0, end - count)
-        selected_messages = messages[start:end]
+        from .first_mate_transcript import session_page
+        page = session_page(path, native_session_id, before=before, limit=max(1, min(100, int(limit))),
+                            opener=self.usage.open_session)
         parsed_usage = self.usage.session_usage(path, native_session_id)
         usage = self.usage.public_summary(parsed_usage)
         model_selection = self._selection(selected_record if source_kind == "job" else {"kind": kind},
                                           parsed_usage)
-        return {"ok": True, "native_session_id": native_session_id, "messages": selected_messages,
+        return {"ok": True, "native_session_id": native_session_id, **page,
                 "is_running": source_kind == "job" and _locked(self._job_dir(selected_record) / "writer.lock"),
-                "next_before": start if start else None, "total_messages": total,
                 "usage": usage, "model_selection": model_selection,
                 "session": {"native_session_id": native_session_id, "feature_id": feature_id,
                             "session_file": str(path), "kind": kind, "usage": usage,

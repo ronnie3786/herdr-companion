@@ -35,6 +35,7 @@ class FirstMateReadViewTests(unittest.TestCase):
         self.runtime = FirstMateRuntime(
             self.store, environ={"PATH": "/usr/bin:/bin", "HERDR_FIRST_MATE_MODEL": "synthetic/coordinator"},
             runtime_root=self.root / "runtime")
+        self.addCleanup(self.runtime.stop)
 
     def insert_message(self, identity: str, role: str, timestamp: str, *, visibility: str = "conversation",
                        status: str = "done") -> None:
@@ -168,6 +169,12 @@ class FirstMateReadViewTests(unittest.TestCase):
         self.store.bind_coordinator_session(
             self.id, "coordinator-owner", "coordinator-session", str(session_file))
 
+        self.runtime.read_view(self.id)
+        # Transcript-derived model observations arrive with the optional refresh.
+        thread = self.runtime.usage._thread
+        if thread:
+            thread.join(timeout=5)
+            self.assertFalse(thread.is_alive())
         queued = self.runtime.read_view(self.id)
         self.assertTrue(queued["has_queued_work"])
         self.assertEqual(len(queued["sessions"]), 1)

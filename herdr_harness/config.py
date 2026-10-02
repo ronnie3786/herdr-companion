@@ -90,6 +90,7 @@ ENVIRONMENT_FIELDS = {
         "research_scout_thinking": "HERDR_FIRST_MATE_RESEARCH_SCOUT_THINKING",
         "research_scout_instructions_file": "HERDR_FIRST_MATE_RESEARCH_SCOUT_INSTRUCTIONS_FILE",
         "max_workers": "HERDR_FIRST_MATE_MAX_WORKERS",
+        "usage_enabled": "HERDR_FIRST_MATE_USAGE_ENABLED",
         "context_target": "HERDR_FIRST_MATE_CONTEXT_TARGET", "stall_seconds": "HERDR_FIRST_MATE_STALL_SECONDS",
         "coordinator_timeout_seconds": "HERDR_FIRST_MATE_COORDINATOR_TIMEOUT_SECONDS",
         "coordinator_max_seconds": "HERDR_FIRST_MATE_COORDINATOR_MAX_SECONDS",

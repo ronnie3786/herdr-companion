@@ -67,6 +67,12 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		F07E00000000000000000001 /* HerdrNotesShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = HerdrNotesShared;
+			path = ../HerdrNotesShared;
+			sourceTree = "<group>";
+		};
 		F17A7E000000000000000001 /* HerdrFirstMateShared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			name = HerdrFirstMateShared;
@@ -146,6 +152,7 @@
 			children = (
 				3C0541782F9E6F0100621813 /* herdr-harness-ios */,
 				F17A7E000000000000000001 /* HerdrFirstMateShared */,
+				F07E00000000000000000001 /* HerdrNotesShared */,
 				E40000022FABC00000000001 /* HerdrPulseShared */,
 				E40000032FABC00000000001 /* HerdPulseWidgets */,
 				3C0541862F9E6F0200621813 /* herdr-harness-iosTests */,
@@ -186,6 +193,7 @@
 			fileSystemSynchronizedGroups = (
 				3C0541782F9E6F0100621813 /* herdr-harness-ios */,
 				F17A7E000000000000000001 /* HerdrFirstMateShared */,
+				F07E00000000000000000001 /* HerdrNotesShared */,
 				E40000022FABC00000000001 /* HerdrPulseShared */,
 			);
 			name = "herdr-harness-ios";
@@ -402,7 +410,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = "$(HERDR_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HerdPulseWidgets/Info.plist;
@@ -412,7 +420,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.18.1;
+				MARKETING_VERSION = 0.19.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(HERDR_WIDGET_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -432,7 +440,7 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = "$(HERDR_DEVELOPMENT_TEAM)";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HerdPulseWidgets/Info.plist;
@@ -442,7 +450,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.18.1;
+				MARKETING_VERSION = 0.19.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(HERDR_WIDGET_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -589,7 +597,7 @@
 				HERDR_DEMO_SERVER_URL = "http://localhost:9092";
 				CODE_SIGN_ENTITLEMENTS = "$(HERDR_CODE_SIGN_ENTITLEMENTS)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = "$(HERDR_DEVELOPMENT_TEAM)";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -605,7 +613,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.18.1;
+				MARKETING_VERSION = 0.19.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(HERDR_IOS_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -628,7 +636,7 @@
 				HERDR_DEMO_SERVER_URL = "";
 				CODE_SIGN_ENTITLEMENTS = "$(HERDR_CODE_SIGN_ENTITLEMENTS)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 51;
 				DEVELOPMENT_TEAM = "$(HERDR_DEVELOPMENT_TEAM)";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -644,7 +652,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.18.1;
+				MARKETING_VERSION = 0.19.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(HERDR_IOS_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

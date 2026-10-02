@@ -165,6 +165,43 @@ struct HerdrNoteEditorTests {
         }
     }
 
+    @Test("The complete note card keeps the editor on the same paper surface")
+    func fullNoteCard() async throws {
+        let suite = "NoteCardRender-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        let model = HerdrAppModel(arguments: ["Tests", "-HerdrDemoMode"], userDefaults: defaults)
+        let controller = HerdrHudController(userDefaults: defaults)
+        let notes = HerdrHudNotesState(userDefaults: defaults, agentSettings: AgentModelSettingsStore(defaults: defaults), promptSettings: HerdrPromptSettingsStore(defaults: defaults), persistenceURL: directory.appendingPathComponent("notes.json"), saveDelay: .seconds(60))
+        await notes.waitForPersistenceRestoreForTesting()
+        let id = notes.createNote()
+        notes.updateTitle("Room to think", for: id)
+        var body = AttributedString("A little more clarity\n\nOne font. Room to think.\n\nBold, italic, and underline, right where you need them.")
+        body[body.range(of: "Bold")!].font = .body.bold()
+        body[body.range(of: "italic")!].font = .body.italic()
+        body[body.range(of: "underline")!].underlineStyle = .single
+        notes.updateBody(body, for: id)
+        let host = NSHostingView(rootView: HerdrNoteCardView(model: model, controller: controller, notes: notes, noteID: id))
+        let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -10000, y: -10000), size: controller.noteCardSize), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        let editor = try #require(descendants(host).compactMap { $0 as? HerdrNoteTextView }.first)
+        #expect(!editor.drawsBackground)
+        #expect(editor.textContainerInset.width == 0)
+        #expect(editor.textContainer?.lineFragmentPadding == 0)
+        #expect(editor.visibleRect.height > 150)
+        if let folder = ProcessInfo.processInfo.environment["HERDR_NOTE_PREVIEW_DIR"], let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: folder).appendingPathComponent("mac-note-card.png"))
+        }
+    }
+
     private func makeEditor() -> (NSWindow, HerdrNoteTextView) {
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 360, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false

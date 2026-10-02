@@ -322,7 +322,11 @@ enum DemoData {
         lastActivityAt: Date? = nil,
         workingSince: Date? = nil
     ) -> HerdrPane {
-        HerdrPane(
+        var semantic: PiSemanticCapability?
+        #if DEBUG
+        if agent == "Pi", PiChatUITestFixture.isEnabled { semantic = PiChatUITestFixture.capability }
+        #endif
+        return HerdrPane(
             paneID: id,
             terminalID: "term_\(id.replacing(":", with: "_"))",
             workspaceID: String(id.split(separator: ":").first ?? "w1"),
@@ -338,6 +342,7 @@ enum DemoData {
             displayAgent: agent,
             terminalTitle: title,
             terminalTitleStripped: title,
+            piSemantic: semantic,
             firstSeenAt: firstSeenAt,
             lastActivityAt: lastActivityAt,
             workingSince: workingSince

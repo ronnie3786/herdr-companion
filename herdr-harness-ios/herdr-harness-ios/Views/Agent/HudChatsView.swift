@@ -35,6 +35,7 @@ struct HudChatsView: View {
 
     @Bindable var model: HerdrAppModel
     let openPane: (String) -> Void
+    var embedded = false
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedMachineID = ""
@@ -44,21 +45,24 @@ struct HudChatsView: View {
     var body: some View {
         let store = model.hudChats
         ZStack {
-            HerdrBackground()
-            if store.isShowingConversation {
-                HudChatConversationView(
-                    model: model,
-                    store: store,
-                    thinkingLevel: $thinkingLevel,
-                    openPromotedPane: openPromotedPane
-                )
-            } else {
-                HudChatCatalogView(
-                    model: model,
-                    store: store,
-                    selectedMachineID: $selectedMachineID,
-                    searchText: $searchText
-                )
+            if !embedded { HerdrBackground() }
+            VStack(spacing: 0) {
+                if embedded { embeddedHeader }
+                if store.isShowingConversation {
+                    HudChatConversationView(
+                        model: model,
+                        store: store,
+                        thinkingLevel: $thinkingLevel,
+                        openPromotedPane: openPromotedPane
+                    )
+                } else {
+                    HudChatCatalogView(
+                        model: model,
+                        store: store,
+                        selectedMachineID: $selectedMachineID,
+                        searchText: $searchText
+                    )
+                }
             }
         }
         .navigationTitle(store.isShowingConversation ? "HUD Chat" : "HUD Chats")
@@ -103,6 +107,21 @@ struct HudChatsView: View {
         .onChange(of: store.isShowingConversation) { _, isShowing in
             if isShowing { searchText = "" }
         }
+    }
+
+    private var embeddedHeader: some View {
+        HStack {
+            if model.hudChats.isShowingConversation {
+                Button("All HUD chats", systemImage: "chevron.left") { model.hudChats.showCatalog() }
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+                    .accessibilityIdentifier("hud-chats-back")
+            }
+            Text(model.hudChats.isShowingConversation ? "HUD Chat" : "HUD Chats").font(.headline)
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: HerdrTheme.minHitTarget)
+        .padding(.horizontal, HerdrTheme.pagePadding).padding(.vertical, 8)
     }
 
     private var loadContext: String {

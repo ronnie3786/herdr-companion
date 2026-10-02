@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HerdPulseButton: View {
     var controlSize: CGFloat = 48
+    var showsBackground = true
     @Environment(HerdPulseCoordinator.self) private var pulse
 
     var body: some View {
@@ -15,11 +16,11 @@ struct HerdPulseButton: View {
         .font(.headline.bold())
         .foregroundStyle(pulse.isRunning ? HerdrTheme.signal : HerdrTheme.mist)
         .frame(width: controlSize, height: controlSize)
-        .background(HerdrTheme.elevated)
+        .background(showsBackground ? HerdrTheme.elevated : .clear)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(
-                    pulse.isRunning ? HerdrTheme.signal.opacity(0.5) : HerdrTheme.surface,
+                    showsBackground ? (pulse.isRunning ? HerdrTheme.signal.opacity(0.5) : HerdrTheme.surface) : .clear,
                     lineWidth: 1
                 )
         }

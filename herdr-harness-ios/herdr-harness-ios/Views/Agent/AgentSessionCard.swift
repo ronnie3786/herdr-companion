@@ -5,6 +5,8 @@ struct AgentSessionCard: View {
     let connectionState: ConnectionState
     let isUnread: Bool
     let isStarred: Bool
+    var sidebar = false
+    var isSelected = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -31,7 +33,21 @@ struct AgentSessionCard: View {
         .multilineTextAlignment(.leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .herdrCard(radius: HerdrTheme.Radius.row)
+        .modifier(AgentSessionSurface(sidebar: sidebar, selected: isSelected))
+        .contentShape(.rect)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct AgentSessionSurface: ViewModifier {
+    let sidebar: Bool
+    let selected: Bool
+    func body(content: Content) -> some View {
+        if sidebar {
+            content.herdrRowBackground(selected: selected, pressed: false)
+        } else {
+            content.herdrCard(radius: HerdrTheme.Radius.row)
+        }
     }
 }

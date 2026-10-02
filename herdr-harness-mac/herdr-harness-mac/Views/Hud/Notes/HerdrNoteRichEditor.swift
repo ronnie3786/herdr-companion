@@ -8,15 +8,16 @@ struct HerdrNoteRichEditor: View {
     let focusRequest: UUID
     var onEscape: () -> Void = {}
     @State private var controls = Controls()
+    @State private var showsFormattingHelp = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 2) {
             HStack(spacing: 2) {
                 ForEach(HerdrNoteTextStyle.Format.allCases, id: \.self) { format in
                     Button { controls.editor?.toggle(format) } label: {
                         Image(systemName: format.symbol)
                             .font(.system(size: 13, weight: .semibold))
-                            .frame(width: 32, height: 30)
+                            .frame(width: 30, height: 28)
                             .background(ink.opacity(controls.active.contains(format) ? 0.14 : 0), in: .rect(cornerRadius: 5))
                     }
                     .buttonStyle(.herdrPlain)
@@ -26,30 +27,37 @@ struct HerdrNoteRichEditor: View {
                     .help(format.label + shortcut(for: format))
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "textformat")
-                    .foregroundStyle(ink.opacity(0.45))
-                    .help("Type **bold**, *italic*, _italic_, or ~~strikethrough~~ to format as you write. Underline: ⌘U.")
-                    .accessibilityLabel("Markdown shortcuts: double stars for bold, stars or underscores for italic, double tildes for strikethrough. Command U for underline.")
+                Button("Formatting help", systemImage: "questionmark.circle") { showsFormattingHelp.toggle() }
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 12))
+                    .buttonStyle(.herdrPlain)
+                    .frame(width: 28, height: 28)
+                    .help("Markdown shortcuts")
+                    .popover(isPresented: $showsFormattingHelp) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Format as you write").font(.headline)
+                            Text("**bold**   *italic*   ~~strikethrough~~")
+                                .font(.system(.body, design: .monospaced))
+                            Text("Underline: ⌘U. Use ⌘B or ⌘I for bold or italic.")
+                                .font(.callout)
+                        }
+                        .padding(16)
+                    }
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
             .disabled(!isEditable)
-            Rectangle().fill(ink.opacity(0.10)).frame(height: 1)
             NativeEditor(text: $text, ink: NSColor(ink), isEditable: isEditable, focusRequest: focusRequest, controls: controls, onEscape: onEscape)
                 .overlay(alignment: .topLeading) {
                     if text.characters.isEmpty {
                         Text("Jot something down…")
                             .font(.system(size: HerdrNoteTextStyle.fontSize))
                             .foregroundStyle(ink.opacity(0.45))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
+                            .padding(.horizontal, 0)
+                            .padding(.vertical, 8)
                             .allowsHitTesting(false)
                     }
                 }
         }
         .foregroundStyle(ink)
-        .background(ink.opacity(0.035), in: .rect(cornerRadius: 8))
-        .clipShape(.rect(cornerRadius: 8))
     }
 
     private func shortcut(for format: HerdrNoteTextStyle.Format) -> String {
@@ -97,7 +105,8 @@ struct HerdrNoteRichEditor: View {
             editor.isHorizontallyResizable = false
             editor.autoresizingMask = [.width]
             editor.textContainer?.widthTracksTextView = true
-            editor.textContainerInset = NSSize(width: 9, height: 12)
+            editor.textContainerInset = NSSize(width: 0, height: 8)
+            editor.textContainer?.lineFragmentPadding = 0
             editor.setAccessibilityLabel("Note body")
             editor.setAccessibilityIdentifier("hud-note-body")
             editor.delegate = context.coordinator

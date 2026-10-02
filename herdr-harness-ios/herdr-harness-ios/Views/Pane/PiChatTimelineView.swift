@@ -91,6 +91,8 @@ struct PiChatTimelineView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 24)
+                .frame(maxWidth: HerdrTheme.chatReadingWidth)
+                .frame(maxWidth: .infinity)
                 .animation(
                     revealState.phase == .revealed
                         ? PiChatMotion.structuralAnimation(reduceMotion: reduceMotion)

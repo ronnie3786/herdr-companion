@@ -6,6 +6,7 @@ struct PaneSessionView: View {
     let pane: HerdrPane
     let hidesAppTabBar: Bool
     let navigationContext: PaneNavigationContext
+    var embedded = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var output = "Connecting to terminal…"
@@ -32,9 +33,10 @@ struct PaneSessionView: View {
 
     var body: some View {
         ZStack {
-            HerdrBackground()
+            if !embedded { HerdrBackground() }
 
             VStack(spacing: 0) {
+                if embedded { embeddedHeader }
                 modeContent
             }
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selectedMode)
@@ -57,17 +59,7 @@ struct PaneSessionView: View {
                 PaneNavigationTitle(title: currentPane.displayTitle)
             }
             ToolbarItem(placement: .topBarTrailing) {
-                PaneActionsMenu(
-                    model: model,
-                    pane: currentPane,
-                    selectedMode: modeSelection,
-                    gitIsAvailable: gitIsAvailable,
-                    isPiCompacting: isPiCompacting,
-                    lastPrompt: lastPrompt,
-                    presentLastPrompt: { lastPromptPresentation.present(lastPrompt) },
-                    showsPiSessionSummary: summaryRequest != nil,
-                    summarizePiSession: presentPiSessionSummary
-                )
+                actionsMenu
             }
         }
         .task(id: followTaskID) {
@@ -88,6 +80,9 @@ struct PaneSessionView: View {
                   selectedMode == .chat,
                   currentPane.supportsPiSemanticChat
             else { return }
+            #if DEBUG
+            if model.isDemoMode, PiChatUITestFixture.isEnabled { PiChatUITestFixture.install(on: piConversationStore) }
+            #endif
             await piConversationStore.follow(model: model, pane: currentPane)
         }
         .task(id: gitProbeTaskID) {
@@ -155,6 +150,27 @@ struct PaneSessionView: View {
                     .accessibilityLabel("Terminal error: \(outputError)")
             }
         }
+    }
+
+    private var embeddedHeader: some View {
+        HStack(spacing: 12) {
+            PaneNavigationTitle(title: currentPane.displayTitle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            actionsMenu
+                .labelStyle(.iconOnly)
+                .frame(minWidth: HerdrTheme.minHitTarget, minHeight: HerdrTheme.minHitTarget)
+        }
+        .padding(.horizontal, HerdrTheme.pagePadding)
+        .padding(.vertical, 8)
+    }
+
+    private var actionsMenu: some View {
+        PaneActionsMenu(
+            model: model, pane: currentPane, selectedMode: modeSelection,
+            gitIsAvailable: gitIsAvailable, isPiCompacting: isPiCompacting,
+            lastPrompt: lastPrompt, presentLastPrompt: { lastPromptPresentation.present(lastPrompt) },
+            showsPiSessionSummary: summaryRequest != nil, summarizePiSession: presentPiSessionSummary
+        )
     }
 
     private var currentPane: HerdrPane {
@@ -261,6 +277,8 @@ struct PaneSessionView: View {
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
                 .padding(.bottom, 10)
+                .frame(maxWidth: HerdrTheme.chatReadingWidth)
+                .frame(maxWidth: .infinity)
             }
         }
     }

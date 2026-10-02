@@ -517,7 +517,9 @@ final class HerdrPRReviewCommentUITests: HerdrUITestCase {
             NSPredicate(format: "title == %@ OR label == %@", windowTitle, windowTitle)
         ).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), "Window menu must offer \(windowTitle)")
-        item.click()
+        // Use the visible menu row directly. XCUI's menu-item click routine
+        // can re-hover a stale item after AppKit has already dismissed the menu.
+        item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
     }
 }
 

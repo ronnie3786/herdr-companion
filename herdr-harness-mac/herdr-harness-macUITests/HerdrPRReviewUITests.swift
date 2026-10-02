@@ -862,7 +862,9 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
             format: "title == %@ OR label == %@", windowTitle, windowTitle
         )).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), "Window menu must offer \(windowTitle)")
-        item.click()
+        // Click the visible row without XCUI's additional menu hover routine,
+        // which can requery the item after AppKit has dismissed the menu.
+        item.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
     }
 
     // MARK: - Synthetic evidence

@@ -378,6 +378,21 @@ def load_configuration(
             raise ConfigurationError("environment contains an invalid variable name")
         if name not in environment:
             resolved[name] = _scalar(value, f"environment.{name}", root, environment)
+    first_mate = _section(data, "first_mate")
+    if "skill_sources" in first_mate and "HERDR_FIRST_MATE_SKILL_SOURCES" not in environment:
+        sources = _section(data, "first_mate.skill_sources")
+        if len(sources) > 32:
+            raise ConfigurationError("first_mate.skill_sources supports at most 32 folders")
+        normalized_sources = {}
+        for name, value in sources.items():
+            if (not name.strip() or len(name) > 120 or not isinstance(value, str)
+                    or not value.strip() or "\x00" in value):
+                raise ConfigurationError("first_mate.skill_sources requires names and nonempty folder paths")
+            if value == "~" or value.startswith("~/"):
+                value = str(Path(environment.get("HOME") or Path.home())) + value[1:]
+            source_path = Path(value)
+            normalized_sources[name] = str(source_path if source_path.is_absolute() else root / source_path)
+        resolved["HERDR_FIRST_MATE_SKILL_SOURCES"] = json.dumps(normalized_sources)
     destinations = _section(data, "fleet.skill_destinations")
     if destinations and "HERDR_FLEET_SKILL_DESTINATIONS" not in environment:
         normalized_destinations = {}

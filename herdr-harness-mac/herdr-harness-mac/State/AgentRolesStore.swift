@@ -1,0 +1,251 @@
+import Foundation
+import Observation
+
+@MainActor
+@Observable
+final class AgentRolesStore {
+    enum Status: Equatable {
+        case loading, loaded, needsUpdate, unavailable(String)
+    }
+
+    let machines: [HerdrMachine]
+    let catalog: any AgentRoleSkillCatalog
+    private(set) var selectedMachineID: String?
+    private(set) var overview: AgentRolesOverview?
+    private(set) var status = Status.loading
+    private(set) var isSaving = false
+    private(set) var errorMessage: String?
+    private(set) var savedMessage: String?
+    private(set) var hasConflict = false
+    var draft: AgentRole?
+    var search = ""
+    var sourceFilter = ""
+
+    private let clients: [String: any AgentRolesClient]
+    private var baseline: AgentRole?
+    private var baselineRevision = 0
+    private var generation: UInt64 = 0
+
+    convenience init(model: HerdrAppModel) {
+        var clients: [String: any AgentRolesClient] = [:]
+        if !model.isDemoMode {
+            for machine in model.machines {
+                guard let configuration = model.firstMateConfiguration(machineID: machine.id) else { continue }
+                clients[machine.id] = HerdrAPIClient(configuration: configuration)
+            }
+        }
+        self.init(machines: model.machines, clients: clients, catalog: AgentRoleLocalCatalog())
+    }
+
+    init(machines: [HerdrMachine], clients: [String: any AgentRolesClient],
+         catalog: any AgentRoleSkillCatalog, initiallySelectedMachineID: String? = nil) {
+        self.machines = machines
+        self.clients = clients
+        self.catalog = catalog
+        selectedMachineID = machines.first(where: { $0.id == initiallySelectedMachineID })?.id ?? machines.first?.id
+    }
+
+    var selectedMachine: HerdrMachine? { machines.first { $0.id == selectedMachineID } }
+    var hasUnsavedChanges: Bool { draft != baseline }
+    var isLoading: Bool { status == .loading }
+    var canEdit: Bool { status == .loaded && draft?.locked == false && !isSaving }
+    var canSave: Bool {
+        canEdit && hasUnsavedChanges && !hasConflict && !catalog.isLoading && validationMessage == nil
+    }
+    var canUpdateCopies: Bool {
+        canEdit && !hasUnsavedChanges && !hasConflict && !catalog.isLoading
+            && draft?.skillIds != nil && skills.contains { selectedIDs.contains($0.id) }
+    }
+    var validationMessage: String? {
+        guard let draft else { return nil }
+        let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "Give this role a name before saving." }
+        if name.utf8.count > 120 || name.contains(where: \.isNewline) || name.contains("\t") {
+            return "Use a single-line role name of at most 120 bytes."
+        }
+        if draft.whenToUse.utf8.count > 4096 { return "Shorten the when-to-use description to at most 4,096 bytes." }
+        if draft.systemPrompt.utf8.count > 32768 { return "Shorten the system prompt to at most 32,768 bytes." }
+        if selectedIDs.count > 2000 { return "Select no more than 2,000 skills per role." }
+        return nil
+    }
+    var roles: [AgentRole] {
+        var roles = (overview?.roles ?? []).map { $0.id == draft?.id ? draft ?? $0 : $0 }
+        if let draft, !roles.contains(where: { $0.id == draft.id }) { roles.append(draft) }
+        return roles
+    }
+    var skills: [AgentRoleSkill] { catalog.skills }
+    var selectedIDs: Set<String> { Set(draft?.skillIds ?? []) }
+    var selectedTokens: Int {
+        skills.filter { selectedIDs.contains($0.id) }.reduce(0) { $0 + max(0, $1.estimatedTokens) }
+    }
+    var allTokens: Int { skills.reduce(0) { $0 + max(0, $1.estimatedTokens) } }
+    var missingIDs: [String] {
+        selectedIDs.subtracting(Set(skills.map(\.id))).sorted()
+    }
+    var filteredSkills: [AgentRoleSkill] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return skills.filter { skill in
+            (sourceFilter.isEmpty || skill.source == sourceFilter)
+                && (query.isEmpty || skill.name.localizedStandardContains(query)
+                    || skill.description.localizedStandardContains(query))
+        }.sorted { lhs, rhs in
+            if lhs.letter != rhs.letter { return lhs.letter < rhs.letter }
+            let order = lhs.name.localizedStandardCompare(rhs.name)
+            return order == .orderedSame ? lhs.id < rhs.id : order == .orderedAscending
+        }
+    }
+    var letters: [String] { Array(Set(filteredSkills.map(\.letter))).sorted() }
+    var canChangeSkills: Bool { canEdit && draft?.skillIds != nil }
+    var unsavedEditsText: String {
+        guard let draft, let data = try? JSONEncoder().encode(draft) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func sourceName(_ id: String) -> String { catalog.sources.first { $0.id == id }?.name ?? id }
+    func missingSkillName(_ id: String) -> String { overview?.skills.first { $0.id == id }?.name ?? id }
+
+    func loadIfNeeded() async {
+        guard overview == nil, !isSaving else { return }
+        await load()
+    }
+
+    func load() async {
+        guard !isSaving, let machineID = selectedMachineID else { return }
+        generation &+= 1
+        let currentGeneration = generation
+        status = .loading
+        guard let client = clients[machineID] else {
+            status = .unavailable("No saved connection for this machine. Add its connection in Settings › Machines.")
+            return
+        }
+        do {
+            let response = try await client.fetchAgentRoles().validated()
+            guard generation == currentGeneration, selectedMachineID == machineID else { return }
+            overview = response
+            status = .loaded
+            if !hasUnsavedChanges { adopt(response.roles.first { $0.id == draft?.id } ?? response.roles.first) }
+        } catch {
+            guard generation == currentGeneration, selectedMachineID == machineID else { return }
+            if case APIError.server(404, _) = error { status = .needsUpdate }
+            else { status = .unavailable(error.localizedDescription) }
+        }
+    }
+
+    /// Navigation callers confirm any discard first. The store also refuses to
+    /// discard implicitly, so keyboard or future navigation cannot lose edits.
+    func selectMachine(_ id: String) async {
+        guard !isSaving, !hasUnsavedChanges, id != selectedMachineID,
+              machines.contains(where: { $0.id == id }) else { return }
+        generation &+= 1
+        selectedMachineID = id
+        overview = nil
+        adopt(nil)
+        await load()
+    }
+
+    func selectRole(_ id: String) {
+        guard !isSaving, !hasUnsavedChanges, let role = overview?.roles.first(where: { $0.id == id }) else { return }
+        adopt(role)
+    }
+
+    func newRole() {
+        guard status == .loaded, !isSaving, !hasUnsavedChanges else { return }
+        baseline = nil
+        baselineRevision = overview?.revision ?? 0
+        draft = .custom()
+        clearError()
+    }
+
+    func discard() {
+        guard !isSaving else { return }
+        adopt(overview?.roles.first { $0.id == draft?.id } ?? overview?.roles.first)
+    }
+
+    func configureSelection() {
+        guard canEdit, draft?.skillIds == nil else { return }
+        draft?.skillIds = []
+    }
+
+    func toggleSkill(_ id: String) {
+        guard canChangeSkills else { return }
+        var ids = selectedIDs
+        if !ids.insert(id).inserted { ids.remove(id) }
+        draft?.skillIds = ids.sorted()
+    }
+
+    func selectShown() {
+        guard canChangeSkills else { return }
+        draft?.skillIds = selectedIDs.union(filteredSkills.map(\.id)).sorted()
+    }
+
+    func clearSkills() {
+        guard canChangeSkills else { return }
+        draft?.skillIds = []
+    }
+
+    func copySkills(from role: AgentRole) {
+        guard canChangeSkills, !role.locked, let ids = role.skillIds else { return }
+        draft?.skillIds = ids
+    }
+
+    func save() async {
+        guard canSave, var role = draft else { return }
+        role.name = role.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        await mutate(role: role, deleting: false)
+    }
+
+    func updateCopies() async {
+        guard canUpdateCopies, let role = draft else { return }
+        await mutate(role: role, deleting: false)
+    }
+
+    func deleteRole() async {
+        guard canEdit, let role = draft, !role.builtin else { return }
+        if baseline == nil { discard(); return }
+        await mutate(role: role, deleting: true)
+    }
+
+    private func mutate(role: AgentRole, deleting: Bool) async {
+        guard let machineID = selectedMachineID, let client = clients[machineID] else { return }
+        isSaving = true
+        clearError()
+        let currentGeneration = generation
+        defer { if generation == currentGeneration { isSaving = false } }
+        do {
+            let bundles = deleting ? [] : try await catalog.bundles(for: Set(role.skillIds ?? []).intersection(skills.map(\.id)))
+            let mutation = AgentRoleMutation(action: deleting ? "delete" : "save",
+                expectedRevision: baselineRevision, role: deleting ? nil : role,
+                roleId: deleting ? role.id : nil, skillBundles: bundles)
+            let response = try await client.mutateAgentRoles(mutation).validated()
+            guard generation == currentGeneration, selectedMachineID == machineID else { return }
+            guard response.revision > baselineRevision,
+                  deleting ? !response.roles.contains(where: { $0.id == role.id }) : response.roles.first(where: { $0.id == role.id }) == role
+            else { throw APIError.invalidResponse }
+            overview = response
+            status = .loaded
+            adopt(deleting ? response.roles.first : response.roles.first { $0.id == role.id })
+            savedMessage = "Saved to \(selectedMachine?.name ?? "the execution computer"). Applies to new sessions."
+        } catch {
+            guard generation == currentGeneration else { return }
+            if case APIError.server(409, _) = error {
+                hasConflict = true
+                errorMessage = "These roles changed elsewhere. Your edits are still here. Copy your edits, then reload to get the latest version."
+            } else {
+                errorMessage = "The change wasn't confirmed. Your edits are still here. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func adopt(_ role: AgentRole?) {
+        baseline = role
+        draft = role
+        baselineRevision = overview?.revision ?? 0
+        clearError()
+    }
+
+    private func clearError() {
+        errorMessage = nil
+        hasConflict = false
+        savedMessage = nil
+    }
+}

@@ -2,6 +2,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case general
     case machines
     case agents
+    case agentRoles
     case agentProfiles
     case hud
     case alerts
@@ -16,6 +17,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: "General"
         case .machines: "Machines"
         case .agents: "Agents"
+        case .agentRoles: "Agent Roles"
         case .agentProfiles: "Agent Profiles"
         case .hud: "HUD"
         case .alerts: "Alerts"
@@ -30,6 +32,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .machines: "server.rack"
         case .agents: "cpu"
+        case .agentRoles: "person.2.badge.gearshape"
         case .agentProfiles: "person.text.rectangle"
         case .hud: "sparkles"
         case .alerts: "bell.badge"

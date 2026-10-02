@@ -33,6 +33,7 @@ from .network import network_payload
 from .normalization import composite_workspaces, pane_index
 from .notes import NotesStore
 from .agent_profiles import AgentProfiles, configured_remote_fetch
+from .agent_roles import AgentRoles
 from .pi_semantic import PiSemanticError, PiSemanticManager, valid_pi_session_id
 from .panes_seen import PaneFirstSeenStore
 from .pane_lifecycle import PaneLifecycle
@@ -161,6 +162,8 @@ class HerdrService:
                         if production_environment or self.environ.get("HERDR_STATE_DIR") else ":memory:")
         self.agent_profiles = AgentProfiles(profile_path, machine_id=self.environ.get("HERDR_MACHINE", ""),
                                            remote_fetch=configured_remote_fetch(self.environ))
+        roles_path = str(Path(profile_path).parent / "agent-roles.sqlite3") if profile_path != ":memory:" else ":memory:"
+        self.agent_roles = AgentRoles(roles_path, machine_id=self.environ.get("HERDR_MACHINE", ""), environ=self.environ)
         self._result_artifact_store = result_artifact_store
         self._result_artifact_store_lock = threading.Lock()
         self.push = push or APNsManager(environ=self.environ)
@@ -558,6 +561,7 @@ class HerdrService:
             self._pr_review_runtime.stop()
         self.notes.close()
         self.agent_profiles.close()
+        self.agent_roles.close()
         self.unread_notifications.stop()
         self.session_labels.stop()
         if self._quick_voice is not None:
@@ -653,6 +657,7 @@ class HerdrService:
                     runtime_root = self._first_mate_transient_root.name
                 self._first_mate_runtime = FirstMateRuntime(self.first_mate_store, environ=self.environ, runtime_root=runtime_root,
                                                            profile_snapshot=self.agent_profiles.snapshot,
+                                                           agent_roles=self.agent_roles,
                                                            simulator_previews=self.simulator_previews)
             return self._first_mate_runtime
 

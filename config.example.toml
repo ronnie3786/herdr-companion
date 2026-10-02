@@ -134,6 +134,12 @@ thinking_level = "high"
 # research_scout_model = "your-provider/your-research-model" # Required for explicit Research Scout assignments.
 # research_scout_thinking = "high"
 # research_scout_instructions_file = "~/.config/herdr-companion/agents/research-scout.md" # Private company/tool instructions, never commit the contents.
+# Agent Roles in the Mac app copies selected local skill packages to this host.
+# Role names, prompts, and strict skill selections are private server state.
+# Existing roles inherit Pi discovery until explicitly changed; custom roles start empty.
+# Optional host-side catalogs for API clients (paths are relative to this config):
+# skill_sources = { Personal = "~/.pi/agent/skills", Project = "~/projects/example/.agents/skills" }
+# Omit to discover ~/.pi/agent/skills and ~/.agents/skills; {} disables host scanning.
 # Role defaults belong in the operator's private configuration. A feature can
 # override only its coordinator selection for the next coordinator turn.
 max_workers = 8

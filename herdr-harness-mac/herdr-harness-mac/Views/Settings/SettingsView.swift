@@ -41,6 +41,8 @@ struct SettingsView: View {
     /// can never write state over the current one.
     @State private var smartRenameCatalogGeneration = 0
     @State private var selectedPane: SettingsPane
+    // Keep drafts alive when navigating to another Settings pane.
+    @State private var agentRoles: AgentRolesStore
 
     init(
         model: HerdrAppModel,
@@ -65,6 +67,7 @@ struct SettingsView: View {
         self.updates = updates
         self.agentControl = agentControl
         _selectedPane = State(initialValue: initialPane)
+        _agentRoles = State(initialValue: AgentRolesStore(model: model))
         _smartRenameCatalogMachineID = State(initialValue: initialSmartRenameCatalogMachineID)
     }
 
@@ -144,7 +147,10 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var settingsDetail: some View {
-        if selectedPane == .agentProfiles {
+        if selectedPane == .agentRoles {
+            AgentRolesView(store: agentRoles)
+                .background(HerdrBackground())
+        } else if selectedPane == .agentProfiles {
             AgentProfilesView(model: model)
                 .background(HerdrBackground())
         } else {
@@ -177,7 +183,7 @@ struct SettingsView: View {
             smartRenameSection
             promptsSection
             cleanupSection
-        case .agentProfiles:
+        case .agentProfiles, .agentRoles:
             EmptyView()
         case .hud:
             hudSection

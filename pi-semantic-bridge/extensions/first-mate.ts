@@ -166,8 +166,28 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     // The lead First Mate is a coordinator-kind conversation across every
     // feature, with fleet tools instead of any one feature's workflow tools.
     const lead = role === "coordinator" && job.lead === true;
+    const mayDelegate = job.agent_role_snapshot?.allowDelegation !== false;
+    const selectedSkills = job.agent_role_snapshot?.skillPaths;
     const awareness = firstMateAwarenessInstructions(job, lead ? "lead" : role!);
     pi.on("before_agent_start", (event) => {
+      if (Array.isArray(selectedSkills)) {
+        const allowed = new Set<string>();
+        for (const path of selectedSkills) {
+          try { allowed.add(realpathSync(path)); } catch { /* Missing selections remain excluded. */ }
+        }
+        // Filter before the lazy systemPrompt getter renders the skill section.
+        // Extensions may discover additional skills after Pi reads CLI flags.
+        const options = (event as any).systemPromptOptions;
+        if (!options || !Array.isArray(options.skills)) {
+          // Pi catches extension exceptions and continues the model turn. Stop
+          // this dedicated managed process instead of silently losing the list.
+          process.stderr.write("Agent Roles cannot enforce skill selection: update Pi to a compatible version.\n");
+          process.exit(78);
+        }
+        options.skills = options.skills.filter((skill: { filePath: string }) => {
+          try { return allowed.has(realpathSync(skill.filePath)); } catch { return false; }
+        });
+      }
       const systemPrompt = appendWorkflowPolicy(appendCompanionAwareness(event.systemPrompt, awareness));
       if (systemPrompt !== event.systemPrompt) return { systemPrompt };
     });
@@ -191,6 +211,9 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
       "fm_recovery_brief",
     ]);
+    if (!mayDelegate) {
+      for (const name of ["fm_delegate", "fm_relay", "fm_create_feature"]) roleTools.delete(name);
+    }
     // Only machines whose companion has SimPortal configured expose simulator checkpoints.
     const simulatorCheckpoints = !lead && job.simulator_previews === true && (role === "coordinator" || role === "worker");
     if (simulatorCheckpoints) roleTools.add("fm_register_simulator_build");
@@ -241,7 +264,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
       }));
       return { content: [{ type: "text" as const, text: JSON.stringify(response.result) }], details: response.result };
     };
-    const register = (name: string, description: string, parameters: any) => pi.registerTool({
+    const register = (name: string, description: string, parameters: any) => roleTools.has(name) && pi.registerTool({
       name, label: name.replace(/^fm_/, "").replaceAll("_", " "), description, parameters,
       async execute(toolCallId, params, signal, _update, ctx) {
         const result = await request(toolCallId, name, params, signal, ctx);
@@ -283,6 +306,7 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
         title: text("Assignment title"), role: text("Specialist role"),
         prompt: text("Complete assignment including scope, required deliverables, acceptance criteria and explicit human gates"),
         model: Type.Optional(Type.String()),
+        agent_role_id: Type.Optional(text("Exact configured Agent Role ID from the system prompt's available roles. Omit model_profile to use this role's configured model profile. Never infer IDs from display names.")),
         model_profile: Type.Optional(Type.Union([Type.Literal("planning"), Type.Literal("execution"), Type.Literal("architect"), Type.Literal("research_scout")], { description: "Explicit routing profile. Use research_scout for explicitly requested Research Scout, ticket/API research, or company-platform investigation. It requires the host-pinned model and private instructions; never substitute another profile when unavailable. Interpret natural-language intent: use architect for an architecture/design review, architect audit, or a second opinion on an implementation, independent of stage (for example, `Give me an architect review`). Use planning for ordinary planning and execution for implementation, routine code review, testing, or other execution. Omit to use only the current stage key: planning maps to planning, every other stage maps to execution. A model name or worker title alone does not override host pins; use this typed model_profile. An unavailable or mismatched requested architect is blocked and must NEVER be re-routed through planning or execution. Acknowledge the requested role/pin, and claim an actual model only from model_selection actual evidence." })),
         workspace_mode: Type.Union([Type.Literal("read_only"), Type.Literal("isolated"), Type.Literal("independent")], { description: "read_only inspects the live checkout and waits behind writers; isolated edits the continuing feature worktree. independent uses a private scratch directory with no checkout, allowing external research or an authorized PR-body update alongside code work. It creates no Git worktree and must not inspect/edit the live checkout or depend on unfinished results. Supply exact skill paths, project instructions and external repository/PR identifiers in the prompt. Serialize conflicting external writes." }),
         independence_reason: Type.Optional(Type.String({ minLength: 1, maxLength: 1000, description: "Required only for independent: explain why the task needs no live checkout or unfinished result. Omit source_assignment_id, workspace_strategy and fork_reason in this mode." })),

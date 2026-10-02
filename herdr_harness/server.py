@@ -49,6 +49,7 @@ from .fleet import FleetError, FleetManager
 from .network import public_base_url
 from .notes import NotesError, MAX_NOTE_BYTES, MAX_NOTES
 from .agent_profiles import ProfileError
+from .agent_roles import AgentRoleError
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError, valid_pi_session_id
 from .secret_file import (
     SecretFileError,
@@ -483,6 +484,7 @@ def api_description() -> dict:
             "pi-readable-history-v1",
             "agent-control-v1",
             "agent-profiles-v1",
+            "agent-roles-v1",
             "discovery-v1",
             "chat-tab-colors-v1",
             "issue-reports-v1",
@@ -550,6 +552,7 @@ def api_description() -> dict:
             "responseAudioCaptionedSpeech": "/api/v1/response-audio/captioned-speech",
             "resultArtifacts": "/api/v1/result-artifacts",
             "agentProfiles": "/api/v1/agent-profiles",
+            "agentRoles": "/api/v1/agent-roles",
             "notes": "/api/v1/notes",
             "note": "/api/v1/notes/{noteId}",
             "notesImport": "/api/v1/notes/import",
@@ -591,6 +594,7 @@ def api_description() -> dict:
         },
         "mutations": [
             "POST /api/v1/agent-profiles",
+            "POST /api/v1/agent-roles",
             "POST /api/v1/notes|notes/import",
             "POST /api/v1/first-mate/features/{featureId}/attachments",
             "POST /api/v1/first-mate/feedback-categories",
@@ -650,6 +654,7 @@ def api_description() -> dict:
         "sseEvents": [
             "notes.changed",
             "agent_profiles.changed",
+            "agent_roles.changed",
             "pr_review.updated",
             "pr_review.walkthrough",
             "snapshot.updated",
@@ -997,6 +1002,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     maximum = issue_reports.MAX_ISSUE_REPORT_JSON_BYTES
                 elif voice_upload:
                     maximum = voice.MAX_VOICE_JSON_BYTES
+                elif method == "POST" and segments == ["api", "v1", "agent-roles"]:
+                    maximum = 16 * 1024 * 1024  # 8 MiB skill bundles plus base64 and bounded metadata.
                 elif method == "POST" and segments[2:] == ["notes", "import"]:
                     maximum = MAX_NOTE_BYTES * MAX_NOTES
                 else:
@@ -1013,7 +1020,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self._error(exc.status, exc.code, str(exc))
             except ControlError as exc:
                 self._error(exc.status, exc.code, str(exc))
-            except ProfileError as exc:
+            except (ProfileError, AgentRoleError) as exc:
                 self._error(exc.status, exc.code, str(exc))
             except NotesError as exc:
                 self._json_response({"ok": False, "error": {"code": exc.code, "message": str(exc)},
@@ -2039,6 +2046,15 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 return service.issue_reports.capabilities()
             if method == "POST" and tail == ["issue-reports"]:
                 return service.issue_reports.submit(body), 201
+            if tail == ["agent-roles"]:
+                if self._authorization_scope != "main":
+                    return self._error(403, "agent_roles_scope_forbidden", "Agent Roles require full authentication")
+                if method == "GET":
+                    return service.agent_roles.overview()
+                if method == "POST":
+                    result = service.agent_roles.mutate(body)
+                    service.broker.publish("agent_roles.changed", {"generatedAt": utc_now()})
+                    return result
             if tail and tail[0] == "agent-profiles":
                 if self._authorization_scope != "main":
                     return self._error(403, "agent_profiles_scope_forbidden", "Agent profiles require full authentication")

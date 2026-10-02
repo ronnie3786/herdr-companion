@@ -5,6 +5,7 @@ Pi JSONL framing, scoped requests, persisted sessions, manager restarts and DB
 transactions. No provider credentials or production data are needed.
 """
 import hashlib
+import base64
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,9 @@ from herdr_harness.first_mate_store import FirstMateStore, FirstMateError
 FAKE_PI = r'''#!PYTHON
 import hashlib,json,os,sys,time,uuid
 from pathlib import Path
+if sys.argv[1:]==['--version']:
+ print('0.87.1')
+ sys.exit(0)
 root=Path(os.environ['HERDR_FIRST_MATE_JOB_DIR'])
 job=json.loads((root/'job.json').read_text())
 if job.get('safety_ledger_version')==1 and not (root/'effects.jsonl').exists():
@@ -647,6 +651,33 @@ class FirstMateRuntimeTests(unittest.TestCase):
             commands = _records(self.runtime._job_dir(job) / 'commands.jsonl')[0]
             self.assertNotIn('set_auto_compaction', [command['type'] for command in commands],
                              'Managed sessions must never persist shared Pi compaction settings')
+
+    def test_real_process_uses_copied_role_skills_and_private_prompt(self):
+        from herdr_harness.agent_roles import AgentRoles
+        roles = AgentRoles(self.root / 'agent-roles.sqlite3')
+        self.addCleanup(roles.close)
+        sid = 'skill_' + hashlib.sha256(b'synthetic-planning').hexdigest()
+        planner = next(role for role in roles.overview()['roles'] if role['id'] == 'planner')
+        planner.update(skillIds=[sid], systemPrompt='Use the synthetic checklist for planning.')
+        roles.mutate({'action': 'save', 'expectedRevision': 0, 'role': planner,
+                      'skillBundles': [{'id': sid, 'name': 'synthetic-planning',
+                          'description': 'Plan a synthetic change.', 'source': 'synthetic',
+                          'files': [{'path': 'SKILL.md', 'content': base64.b64encode(
+                              b'---\nname: synthetic-planning\ndescription: Plan a synthetic change.\n---\n').decode()}]}]})
+        self.runtime.agent_roles = roles
+        feature = self.feature()
+        self.until(lambda: self.store.get_feature(feature['id'])['status'] == 'awaiting_direction')
+        snapshot = self.store.snapshot(feature['id'])
+        self.assertEqual(snapshot['assignments'][0]['verdict'], 'success')
+        worker = next(job for job in self.runtime._jobs() if job['kind'] == 'worker')
+        command = _read_json(self.runtime._job_dir(worker) / 'argv.json')
+        self.assertIn('--no-skills', command)
+        copied = Path(command[command.index('--skill') + 1])
+        self.assertTrue(copied.is_relative_to(self.root / 'agent-role-skills'))
+        self.assertIn('synthetic-planning', copied.read_text())
+        self.assertNotIn('Use the synthetic checklist', str(command))
+        self.assertIn('Use the synthetic checklist',
+                      Path(command[command.index('--append-system-prompt') + 1]).read_text())
 
     def test_nested_workers_yield_and_resume_exact_parent_session_without_polling(self):
         feature = self.feature('Plan nested review of the synthetic feature')

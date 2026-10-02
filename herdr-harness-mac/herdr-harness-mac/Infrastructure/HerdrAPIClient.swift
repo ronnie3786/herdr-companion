@@ -177,7 +177,7 @@ private struct PRReviewEventsResponse: Decodable, Sendable {
     let events: [PRReviewEvent]
 }
 
-actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRReviewGuideClient, AgentProfilesClient {
+actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRReviewGuideClient, AgentProfilesClient, AgentRolesClient {
     /// Nonisolated so the model can bind refreshed topology to the endpoint
     /// that produced it without another actor hop.
     nonisolated let configuration: ServerConfiguration
@@ -642,6 +642,14 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
 
     func fetchAgentProfiles() async throws -> AgentProfilesOverview {
         try await request(path: "/api/v1/agent-profiles")
+    }
+
+    func fetchAgentRoles() async throws -> AgentRolesOverview {
+        try await request(path: "/api/v1/agent-roles")
+    }
+
+    func mutateAgentRoles(_ mutation: AgentRoleMutation) async throws -> AgentRolesOverview {
+        try await request(path: "/api/v1/agent-roles", method: "POST", body: mutation)
     }
 
     func fetchAgentProfile(id: String) async throws -> AgentProfileHistoryResponse {

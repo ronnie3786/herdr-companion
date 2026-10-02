@@ -1,0 +1,48 @@
+import AppKit
+import SwiftUI
+
+struct AgentRoleSaveBar: View {
+    let store: AgentRolesStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let error = store.errorMessage ?? store.validationMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(HerdrTheme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if store.errorMessage != nil {
+                        Button("Copy Edits", systemImage: "doc.on.doc", action: copyEdits)
+                            .buttonStyle(.borderless)
+                    }
+                }
+                .herdrFont(.caption)
+                .accessibilityIdentifier("agent-role-save-error")
+            }
+            HStack(spacing: 10) {
+                Text(store.isSaving ? "Saving role and skill packages…" : store.hasUnsavedChanges ? "Unsaved changes" : store.savedMessage ?? "Changes apply to new sessions.")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Button("Discard", action: store.discard)
+                    .disabled(!store.hasUnsavedChanges || store.isSaving)
+                    .accessibilityIdentifier("agent-role-discard")
+                Button("Save", action: save)
+                    .herdrProminentButton()
+                    .disabled(!store.canSave)
+                    .accessibilityIdentifier("agent-role-save")
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(HerdrTheme.railBackground.opacity(0.7))
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private func save() { Task { await store.save() } }
+    private func copyEdits() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(store.unsavedEditsText, forType: .string)
+    }
+}

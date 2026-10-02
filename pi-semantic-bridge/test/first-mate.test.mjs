@@ -4,6 +4,7 @@ import test from "node:test";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 const jiti = createJiti(import.meta.url);
 const { FIRST_MATE_EXTENSION_PATH, createFirstMateExtension, spoolRequestId, observationalShellCommand } = await jiti.import("../extensions/first-mate.ts");
 const { COMPANION_AWARENESS_MARKER } = await jiti.import("../lib/companion-awareness.ts");
@@ -33,6 +34,70 @@ function fixture(role = "worker", overrides = {}) {
 
 test("ordinary Pi sessions gain no First Mate tools", () => {
   createFirstMateExtension({})({registerTool() { assert.fail("unexpected tool"); }, on() { assert.fail("unexpected session hook"); }});
+});
+
+test("configured skills filter extension-discovered skills before the prompt renders", () => {
+  const f = fixture("worker", {agent_role_snapshot:{skillPaths:[]}});
+  try {
+    const options = {skills:[{filePath:join(f.root,"unchecked","SKILL.md"),name:"unchecked"}]};
+    const event = {systemPromptOptions:options, get systemPrompt() {
+      return "Worker charter " + options.skills.map(skill => skill.name).join(",");
+    }};
+    const result = f.handlers.get("before_agent_start")(event);
+    assert.deepEqual(options.skills, []);
+    assert.doesNotMatch(result.systemPrompt, /unchecked/);
+  } finally { f.cleanup(); }
+});
+
+test("incompatible prompt hooks stop only the dedicated managed Pi process", () => {
+  const f = fixture("worker", {agent_role_snapshot:{skillPaths:[]}});
+  try {
+    const script = `
+      import { createJiti } from "jiti";
+      const jiti = createJiti(import.meta.url);
+      const { createFirstMateExtension } = await jiti.import(${JSON.stringify(FIRST_MATE_EXTENSION_PATH)});
+      let before;
+      createFirstMateExtension({HERDR_FIRST_MATE_JOB_DIR:${JSON.stringify(f.root)},HERDR_FIRST_MATE_MANAGED_ROLE:"worker"})({
+        registerTool() {}, on(name, handler) { if (name === "before_agent_start") before = handler; }
+      });
+      before({systemPrompt:"Unsupported Pi"});
+      process.stdout.write("MODEL REQUEST MUST NOT START");
+    `;
+    const result = spawnSync(process.execPath,["--input-type=module","-e",script],{
+      cwd:new URL("..",import.meta.url),encoding:"utf8",timeout:10000,
+    });
+    assert.equal(result.status,78,result.stderr);
+    assert.match(result.stderr,/cannot enforce skill selection/);
+    assert.doesNotMatch(result.stdout,/MODEL REQUEST MUST NOT START/);
+  } finally { f.cleanup(); }
+});
+
+test("selected skill identities accept aliases but exclude unrelated and missing packages", () => {
+  const root = mkdtempSync(join(tmpdir(),"herdr-role-skills-"));
+  const selected = join(root,"SKILL.md"), alias = join(root,"alias.md"), other = join(root,"other.md");
+  writeFileSync(selected,"Synthetic skill");
+  writeFileSync(other,"Synthetic other skill");
+  symlinkSync(selected,alias);
+  const f = fixture("worker",{agent_role_snapshot:{skillPaths:[selected,join(root,"missing.md")]}});
+  try {
+    const options = {skills:[{filePath:alias,name:"selected"},{filePath:other,name:"other"}]};
+    f.handlers.get("before_agent_start")({systemPrompt:"Worker charter",systemPromptOptions:options});
+    assert.deepEqual(options.skills.map(skill => skill.name),["selected"]);
+  } finally { f.cleanup(); rmSync(root,{recursive:true,force:true}); }
+});
+
+test("disabled role delegation hides and blocks worker and lead dispatch tools", () => {
+  for (const role of ["worker","coordinator"]) {
+    const f = fixture(role,{lead:role==="coordinator",agent_role_snapshot:{allowDelegation:false}});
+    try {
+      for (const name of ["fm_delegate","fm_relay","fm_create_feature"]) {
+        assert.equal(f.tools.has(name),false);
+        const result = f.handlers.get("tool_call")({toolName:name,input:{}},f.ctx);
+        assert.equal(result.block,true);
+      }
+      assert.ok(f.tools.has(role==="worker" ? "fm_status" : "fm_fleet"));
+    } finally { f.cleanup(); }
+  }
 });
 
 test("every managed role cancels compaction even when telemetry is unavailable", () => {

@@ -13,10 +13,12 @@ update or run a skill.
 3. In **Profile**, edit the name, when-to-use guidance, optional system prompt,
    and whether this role may delegate. Custom roles choose one of the existing
    model profiles; the execution computer's model and thinking pins still apply.
-4. In **Skills**, choose local folders if macOS requests access. The default
-   locations are `~/.agents/skills` and `~/.pi/agent/skills`. Add other folders for
-   project or shared skills. Folder access is saved as a read-only security-scoped
-   bookmark on this Mac.
+4. In **Skills**, connect local folders if macOS requests access. Herdr checks
+   the current user's `~/.agents/skills`, `~/.codex/skills`, `~/.claude/skills`,
+   `~/.config/dox-agent/skills`, `~/.pfw/skills`, and `~/.pi/agent/skills`.
+   Missing optional locations are quiet. **Connect folders** suggests conventional
+   locations when access is needed; **Add folders** accepts other project or shared
+   locations. Access is saved as a read-only security-scoped bookmark on this Mac.
 5. Configure the selection, search or filter by source, and toggle skill tiles.
    **Select shown** adds the filtered results. **Clear** removes the whole
    selection. **Copy from role** copies a saved selection on this execution host.
@@ -48,6 +50,12 @@ Skill packages include `SKILL.md`, scripts, and references inside the package.
 Executable script permissions are retained. Hidden files, common credential
 files, and dependency/cache directories are excluded. A symlink to a whole skill
 folder is supported; a package cannot copy files outside that resolved folder.
+When a link points outside a granted folder, **Review folders** identifies its
+real target and offers **Grant access**. Several links to the same target folder
+produce one notice. All granted folders remain accessible together during both
+discovery and copying. Automatic-discovery roles can browse readable skill tiles
+before opting into a selection.
+
 Copying is bounded to 1,000 files and 8 MiB per save, with 2 MiB per file. A failed
 copy leaves the saved role unchanged and retains the editor draft.
 
@@ -95,7 +103,12 @@ Agent Roles is separate from Agent Profiles. Profile preferences continue to be
 appended alongside role instructions and do not grant new authority.
 
 The authenticated `GET /api/v1/agent-roles` returns the roles, global revision,
-and execution-host catalog. `POST` saves or deletes a role using
+and execution-host catalog. Its additive `missingRoleSkills` mapping identifies
+missing copied skill IDs by role, including when another role's current copy is
+still available. Native clients use this for execution-copy warnings, independently
+of local folder-access notices. Host discovery warnings do not populate the local
+picker. Older companions remain supported through their available-package catalog.
+`POST` saves or deletes a role using
 `expectedRevision`; a stale edit gets HTTP 409 instead of overwriting another
 client's changes. Optional `skillBundles` contain only selected packages, with
 relative file paths and base64 contents. Role contents and packages require full

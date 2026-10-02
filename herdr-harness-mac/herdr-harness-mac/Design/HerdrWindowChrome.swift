@@ -66,6 +66,7 @@ struct HerdrWindowChrome: NSViewRepresentable {
             }
             if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
             if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
+            guard window.styleMask.contains(.titled) else { return }
             if window.toolbar?.identifier != Self.toolbarIdentifier {
                 let toolbar = NSToolbar(identifier: Self.toolbarIdentifier)
                 toolbar.allowsUserCustomization = false

@@ -54,7 +54,7 @@ struct AgentProfilesView: View {
         }
         .frame(maxWidth: 960, maxHeight: .infinity, alignment: .topLeading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(HerdrBackground())
+        .background(HerdrBackground(followsGlass: true))
         .foregroundStyle(HerdrTheme.text)
         .tint(HerdrTheme.accent)
         .accessibilityIdentifier("agent-profiles-view")
@@ -80,7 +80,7 @@ struct AgentProfilesView: View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Agent Profiles")
-                    .herdrFont(.title2, weight: .semibold)
+                    .herdrFont(size: SettingsDesign.pageTitle, weight: .semibold)
                 Text("Give your agents a personality (Soul) and context about you (User). Each machine uses one profile.")
                     .herdrFont(.callout)
                     .foregroundStyle(HerdrTheme.mist)

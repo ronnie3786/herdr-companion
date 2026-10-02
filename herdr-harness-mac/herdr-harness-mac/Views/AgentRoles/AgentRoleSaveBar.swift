@@ -6,6 +6,14 @@ struct AgentRoleSaveBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if !store.missingExecutionSkillIDs.isEmpty {
+                Label("\(store.missingExecutionSkillIDs.count) selected \(store.missingExecutionSkillIDs.count == 1 ? "skill is" : "skills are") missing on \(store.selectedMachine?.name ?? "the execution computer"). Use Update Copies in Skills, or remove the unavailable selections.",
+                      systemImage: "externaldrive.badge.exclamationmark")
+                    .herdrFont(.caption)
+                    .foregroundStyle(HerdrTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("agent-role-execution-copy-warning")
+            }
             if let error = store.errorMessage ?? store.validationMessage {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(error, systemImage: "exclamationmark.triangle")
@@ -36,7 +44,7 @@ struct AgentRoleSaveBar: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .background(HerdrTheme.railBackground.opacity(0.7))
+        .background(HerdrTheme.inkFill(0.025))
         .overlay(alignment: .top) { Divider() }
     }
 

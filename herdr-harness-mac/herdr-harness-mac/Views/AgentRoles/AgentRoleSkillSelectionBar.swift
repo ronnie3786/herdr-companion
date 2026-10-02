@@ -30,7 +30,7 @@ struct AgentRoleSkillSelectionBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(HerdrTheme.railBackground.opacity(0.6))
+        .background(HerdrTheme.inkFill(0.015))
         .overlay(alignment: .top) { Divider() }
     }
 

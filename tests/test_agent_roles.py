@@ -218,8 +218,11 @@ class AgentRolesTests(unittest.TestCase):
         warnings = self.store.overview()["warnings"]
         self.assertTrue(any("First reviewer: 1 selected skill is unavailable" in w for w in warnings))
         self.assertFalse(any("Second reviewer" in w for w in warnings))
+        self.assertEqual(self.store.overview()["missingRoleSkills"], {role_a["id"]: [bundle["id"]]})
         self.assertIn(bundle["id"], {skill["id"] for skill in self.store.overview()["skills"]})
         latest.unlink()
+        self.assertEqual(self.store.overview()["missingRoleSkills"],
+                         {role_a["id"]: [bundle["id"]], role_b["id"]: [bundle["id"]]})
         self.assertTrue(any("Second reviewer: 1 selected skill is unavailable" in w for w in self.store.overview()["warnings"]))
 
     def test_update_copies_repairs_damaged_package_without_overwriting_pinned_path(self):

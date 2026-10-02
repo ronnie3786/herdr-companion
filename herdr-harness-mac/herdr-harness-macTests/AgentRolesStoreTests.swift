@@ -5,6 +5,21 @@ import Testing
 @Suite("Agent Roles state")
 @MainActor
 struct AgentRolesStoreTests {
+    @Test("Execution copy health uses per-role bindings without importing host discovery warnings")
+    func executionCopyHealth() async {
+        var response = AgentRoleTestFixtures.overview()
+        response.missingRoleSkills = ["worker": ["skill_bravo"]]
+        let store = makeStore(AgentRoleTestClient(overview: response))
+        await store.load()
+        #expect(store.missingExecutionSkillIDs.isEmpty)
+        store.selectRole("worker")
+        // The skill is still in the host's current catalog; this role's pinned copy is missing.
+        #expect(store.overview?.skills.contains { $0.id == "skill_bravo" } == true)
+        #expect(store.missingExecutionSkillIDs == ["skill_bravo"])
+        store.clearSkills()
+        #expect(store.missingExecutionSkillIDs.isEmpty)
+    }
+
     @Test("Opting in preserves the distinction between inherited and empty skills")
     func inheritedAndEmpty() async throws {
         let client = AgentRoleTestClient()

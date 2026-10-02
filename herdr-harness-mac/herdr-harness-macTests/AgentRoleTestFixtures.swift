@@ -3,6 +3,11 @@ import Observation
 @testable import herdr_harness_mac
 
 enum AgentRoleTestFixtures {
+    @MainActor
+    static func settingsStore() -> AgentRolesStore {
+        AgentRolesStore(machines: machines, clients: ["desktop": AgentRoleTestClient()], catalog: AgentRoleTestCatalog())
+    }
+
     static let machines = [
         HerdrMachine(id: "desktop", name: "Desktop", urlString: "http://localhost:9092"),
         HerdrMachine(id: "laptop", name: "Laptop", urlString: "http://localhost:9093"),
@@ -43,6 +48,8 @@ final class AgentRoleTestCatalog: AgentRoleSkillCatalog {
     ]
     var skills = AgentRoleTestFixtures.skills
     var errorMessage: String?
+    var issues: [AgentRoleSkillIssue] = []
+    var suggestedSources: [AgentRoleSkillSource] = []
     var isLoading = false
     var bundledIDs: Set<String> = []
     func refresh() async {}

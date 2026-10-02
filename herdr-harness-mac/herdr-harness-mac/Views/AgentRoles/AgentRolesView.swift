@@ -50,7 +50,7 @@ struct AgentRolesView: View {
                         AgentRolesRail(store: store, select: { request(.role($0)) }, newRole: { request(.newRole) })
                         Divider()
                         if let role = Binding($store.draft) {
-                            AgentRoleEditor(store: store, role: role, initialTab: initialTab)
+                            AgentRoleEditor(store: store, role: role, initialTab: initialTab, showSources: { showsSources = true })
                                 .id(role.wrappedValue.id)
                         } else {
                             ContentUnavailableView("No roles", systemImage: "person.2",
@@ -63,7 +63,7 @@ struct AgentRolesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(HerdrTheme.primaryText)
-        .background(HerdrBackground())
+        .background(HerdrBackground(followsGlass: true))
         .tint(HerdrTheme.accent)
         .accessibilityIdentifier("agent-roles-view")
         .task {

@@ -268,11 +268,15 @@ class AgentRoles:
                 catalog["sources"].append({"id": item["source"], "name": item["source"], "path": "", "available": True})
                 source_ids.add(item["source"])
         available = {item["id"] for item in catalog["skills"]}
+        catalog["missingRoleSkills"] = {}
         for role in state["roles"].values():
             bindings = state.get("rolePackages", {}).get(role["id"], {})
-            missing = sum(not (self._package_root / bindings[sid] / "SKILL.md").is_file() if sid in bindings
-                          else sid not in available for sid in role["skillIds"] or [])
-            if missing:
+            missing_ids = [sid for sid in role["skillIds"] or []
+                           if (not (self._package_root / bindings[sid] / "SKILL.md").is_file() if sid in bindings
+                               else sid not in available)]
+            if missing_ids:
+                catalog["missingRoleSkills"][role["id"]] = missing_ids
+                missing = len(missing_ids)
                 noun = "skill is" if missing == 1 else "skills are"
                 catalog["warnings"].append(f"{role['name']}: {missing} selected {noun} unavailable on this execution computer. "
                                            "Update Copies or remove unavailable selections.")

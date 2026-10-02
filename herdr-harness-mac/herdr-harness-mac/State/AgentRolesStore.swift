@@ -81,6 +81,14 @@ final class AgentRolesStore {
     var missingIDs: [String] {
         selectedIDs.subtracting(Set(skills.map(\.id))).sorted()
     }
+    var missingExecutionSkillIDs: [String] {
+        guard let overview, let roleID = draft?.id else { return [] }
+        if let missing = overview.missingRoleSkills {
+            return selectedIDs.intersection(missing[roleID] ?? []).sorted()
+        }
+        // Older companions expose their available packages without per-role bindings.
+        return selectedIDs.subtracting(Set(overview.skills.map(\.id))).sorted()
+    }
     var filteredSkills: [AgentRoleSkill] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return skills.filter { skill in

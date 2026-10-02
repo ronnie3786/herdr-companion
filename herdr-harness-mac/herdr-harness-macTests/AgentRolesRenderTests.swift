@@ -78,7 +78,9 @@ struct AgentRolesRenderTests {
     @Test("Source folders render with editable configuration and access status")
     func sources() async throws {
         let catalog = AgentRoleTestCatalog()
-        let result = try await HerdrRenderHarness.render("agent-roles-sources.png", size: CGSize(width: 580, height: 540)) {
+        catalog.issues = [.init(kind: .linkedFolderAccess, sourceName: "Personal",
+            path: "/example/linked-skills", skillNames: ["Atlas", "Compass"])]
+        let result = try await HerdrRenderHarness.render("agent-roles-sources.png", size: CGSize(width: 600, height: 580)) {
             AgentRoleSourcesSheet(catalog: catalog)
         }
         result.expectSubstantial()

@@ -35,7 +35,9 @@ struct SettingsRenderTests {
                     defaults: defaults,
                     secretStorage: TestAgentControlSecretStorage()
                 ),
-                initialPane: pane
+                agentRoles: AgentRoleTestFixtures.settingsStore(),
+                initialPane: pane,
+                initialAgentRoleTab: .skills
             )
             .environment(\.herdrFontScale, fontScale.scale)
             .background(HerdrTheme.ink)
@@ -73,6 +75,7 @@ struct SettingsRenderTests {
                     defaults: defaults,
                     secretStorage: TestAgentControlSecretStorage()
                 ),
+                agentRoles: AgentRoleTestFixtures.settingsStore(),
                 initialPane: .general
             )
             .environment(\.herdrFontScale, fontScale.scale)
@@ -133,6 +136,7 @@ struct SettingsRenderTests {
                         defaults: defaults,
                         secretStorage: TestAgentControlSecretStorage()
                     ),
+                    agentRoles: AgentRoleTestFixtures.settingsStore(),
                     initialPane: pane
                 )
                 .environment(\.herdrFontScale, fontScale.scale)
@@ -403,6 +407,7 @@ struct SettingsRenderTests {
                     defaults: defaults,
                     secretStorage: TestAgentControlSecretStorage()
                 ),
+                agentRoles: AgentRoleTestFixtures.settingsStore(),
                 initialPane: .agents,
                 initialSmartRenameCatalogMachineID: initialCatalogMachineID
             )

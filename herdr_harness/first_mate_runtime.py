@@ -273,9 +273,11 @@ feature.verification and retained verification run references. Reuse existing
 evidence, including predecessor results. Missing inventories or recording limits
 are advisory for stage completion, not a reason to restart finished workers.
 Pass the retained run IDs you select to fm_complete_stage. Keep the detailed coverage verdict, missing suites,
-and historical gate comparisons in Overview's Verification section and retained
-Documents. Do not append coverage inventories or boilerplate warnings to ordinary
-chat replies. Report a concrete failed test or verification limit briefly when
+and historical gate comparisons in retained Documents. Do not append coverage
+inventories or boilerplate warnings to ordinary chat replies. When chat mentions
+tests, use one plain line such as "Tests: 42 passed; UI tests not run because no
+simulator was free." Never use internal terms like verification coverage, gate
+set or inventory with the human. Report a concrete failed test or verification limit briefly when
 it changes the requested result or a decision the human must make. Do not claim
 unqualified verification from a test count or turn missing coverage into extra
 work outside the human's scope. It continues only to a
@@ -881,6 +883,8 @@ class FirstMateRuntime:
         self._last_error_kind: str | None = None
         self._error_serial = 0
         self._consecutive_failures = 0
+        # A file left by an earlier failure (or an earlier run) is cleared by the next healthy pass.
+        self._runtime_error_recorded = True
         self._last_watch = 0.0
         self._catalog_lock = threading.Lock()
         self._catalog_cache = None
@@ -1673,6 +1677,7 @@ class FirstMateRuntime:
                 self.reconcile()
             except Exception as exc:
                 self._record_runtime_error(exc, self.root / "runtime-error.json")
+                self._runtime_error_recorded = True
             with self._health_lock:
                 self._last_progress = time.monotonic()
                 failed = self._error_serial != errors_before
@@ -1683,6 +1688,12 @@ class FirstMateRuntime:
                     self._last_error_kind = None
                     self._consecutive_failures = 0
                 delay = min(30, 2 ** min(self._consecutive_failures - 1, 5)) if failed else 0.25
+            if not failed and self._runtime_error_recorded:
+                self._runtime_error_recorded = False
+                try:
+                    (self.root / "runtime-error.json").unlink(missing_ok=True)
+                except OSError:
+                    pass
             if failed:
                 # Ignore wake storms during storage failure, but stop promptly.
                 self._stop.wait(delay)

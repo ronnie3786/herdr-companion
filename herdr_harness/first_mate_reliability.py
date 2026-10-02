@@ -542,6 +542,11 @@ class FirstMateReliability:
             return
         if assignments and any(a['status'] not in TERMINAL for a in assignments):
             return
+        # A coordinator that already reported to the human after the last outcome settled is
+        # waiting on them, not stranded; waking it only ends in a 'did not settle' block.
+        settled_at = max((a['updated_at'] for a in assignments), default=None)
+        if self.store.coordinator_replied_since(feature['id'], feature['current_visit_id'], settled_at):
+            return
         previous = max((j for j in jobs if j['kind'] == 'coordinator' and j['feature_id'] == feature['id']), key=lambda j: j['created_at'], default=None)
         if previous and not self._effects_safe(previous):
             self._block(feature, 'The stranded coordinator has uncertain or missing effect receipts. Inspect its prior actions before another coordination turn.', 'coordinator-effects:' + previous['id'])

@@ -246,9 +246,8 @@ class PRReviewRuntime:
                 raise ValueError("Missing authenticated GitHub viewer")
         except Exception:
             for review in reviews:
-                if self._stop.is_set():
+                if self._stop.is_set() or not self._save_review_status_error(review["id"], error):
                     return
-                self.store.save_viewer_review(review["id"], error=error)
                 self._changed(review["id"])
             return
         for review in reviews:
@@ -269,8 +268,17 @@ class PRReviewRuntime:
                     return
                 # Never forward raw gh output, which can include private paths
                 # or auth diagnostics, and never advance the success timestamp.
-                self.store.save_viewer_review(review["id"], error=error)
+                if not self._save_review_status_error(review["id"], error):
+                    return
             self._changed(review["id"])
+
+    def _save_review_status_error(self, review_id: str, error: str) -> bool:
+        """False when the store itself can't be written (e.g. a full disk); the next scheduled refresh retries."""
+        try:
+            self.store.save_viewer_review(review_id, error=error)
+        except Exception:
+            return False
+        return True
 
     def _child_environment(self, *, pi_bin: str | None = None) -> dict[str, str]:
         environment = agent_environment(self.environ, integration=False)

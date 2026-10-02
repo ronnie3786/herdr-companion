@@ -21,6 +21,14 @@ class FirstMateStoreTests(unittest.TestCase):
         self.addCleanup(lambda: self.store.close())
         self.feature = self.store.create_feature({"title": "Garden schedule", "goal": "Plan a garden watering feature", "cwd": "/tmp/synthetic-garden", "work_item_id": "SYNTH-31", "request_id": "feature-create"})
 
+    def test_auto_rolled_back_transaction_keeps_the_original_error(self):
+        # SQLite ends the transaction itself on errors such as SQLITE_FULL.
+        with self.assertRaisesRegex(sqlite3.OperationalError, "database or disk is full"):
+            with self.store._transaction():
+                self.store._db.execute("ROLLBACK")
+                raise sqlite3.OperationalError("database or disk is full")
+        self.assertEqual(self.store.get_feature(self.feature["id"])["title"], "Garden schedule")
+
     def stage(self):
         message = self.store.claim_message(self.feature["id"], "coordinator")
         visit = self.store.start_visit(self.feature["id"], "plan", "Planning", "visit-1", 1, message["id"])

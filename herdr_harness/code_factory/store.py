@@ -235,7 +235,8 @@ class CodeFactoryStore:
                 yield
                 self._db.execute("COMMIT")
             except BaseException:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def _now(self) -> str:

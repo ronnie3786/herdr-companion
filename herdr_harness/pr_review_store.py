@@ -104,7 +104,8 @@ class PRReviewStore:
             try:
                 yield
             except BaseException:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
             else:
                 self._db.execute("COMMIT")

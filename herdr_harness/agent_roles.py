@@ -413,6 +413,7 @@ class AgentRoles:
                 self._db.execute("UPDATE agent_roles SET payload=? WHERE id=1", (json.dumps(state, ensure_ascii=False),))
                 self._db.execute("COMMIT")
             except Exception:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
         return self.overview()

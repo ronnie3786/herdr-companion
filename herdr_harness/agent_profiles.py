@@ -254,7 +254,8 @@ class AgentProfiles:
                     self._save(state)
                 self._db.execute("COMMIT")
             except BaseException:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def mutate(self, body):
@@ -285,7 +286,8 @@ class AgentProfiles:
                 self._db.execute("COMMIT")
                 return result
             except BaseException:
-                self._db.execute("ROLLBACK")
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
                 raise
 
     def _mutate(self, state, body):

@@ -20,19 +20,40 @@ and never creates a second active schedule.
 ## Enable and discover
 
 Install a matching companion package separately from the Mac app. The signed
-Mac updater never installs server packages. Watchers is off by default:
+Mac updater never installs server packages. Watchers is off by default. A person
+turns it on for a machine in the Mac app (**Watchers** → **New watcher** →
+**Runs on**) or with `herdr-watchers enable --machine example --i-confirm`.
+Neither needs a configuration edit or a restart; `disable` turns it off again.
+
+Configuration still wins. `HERDR_WATCHERS_ENABLED = "1"` pins Watchers on and
+`"0"` pins it off. While either is set, the app and CLI cannot change it:
 
 ```toml
 [machines.example.environment]
 HERDR_WATCHERS_ENABLED = "1"
 ```
 
+The companion decides in this order:
+
+1. `HERDR_WATCHERS_ENABLED` set to exactly `"1"` or `"0"`: source `config`, not
+   changeable. Any other value is ignored.
+2. The person's saved choice in `watchers-settings.json` under the private
+   state root: source `app`. The file holds `{enabled, changed_at, changed_by:
+   "user", changed_via}` and is replaced atomically with mode 0600.
+3. Otherwise off: source `default`. A missing or unreadable file means off.
+
+Turning Watchers on starts the scheduler at once. Turning it off stops the
+scheduler like a service stop: detached runners keep going and are never
+signalled. Turning it on again starts a fresh scheduler that reattaches to them.
+Definitions, runs and inbox items are kept while Watchers is off.
+
 The environment escape hatch is compatible with older configuration readers.
 The new `[watchers]` table is optional; older companions reject that table.
-State lives in `watchers.sqlite3` and `watchers/` under the private state root.
-Overrides are `HERDR_HARNESS_WATCHERS_STORE_PATH` and
-`HERDR_HARNESS_WATCHERS_ROOT`. Scripts, revisions, runs, logs and receipts are
-private local files, not source artifacts.
+State lives in `watchers.sqlite3`, `watchers/` and `watchers-settings.json` under
+the private state root. Overrides are `HERDR_HARNESS_WATCHERS_STORE_PATH`,
+`HERDR_HARNESS_WATCHERS_ROOT` and `HERDR_HARNESS_WATCHERS_SETTINGS_PATH`.
+Scripts, revisions, runs, logs and receipts are private local files, not source
+artifacts.
 
 The companion needs a supervisor that restarts it, such as a KeepAlive LaunchAgent
 or restart-enabled systemd unit. A bare tmux session is insufficient. launchd
@@ -42,12 +63,16 @@ verifying the installed supervisor. `herdr-watchers doctor` fails for disabled,
 stopped, stale or unsupervised schedulers and explains recovery.
 
 `GET /api/v1/watchers/capabilities` always responds, including when disabled:
-`{ok, enabled, capabilities, machine, timezone, steps, delivery, limits, assets,
-summary_tokens, scheduler, supervised}`. Disabled companions advertise no
+`{ok, enabled, capabilities, settings, machine, timezone, steps, delivery, limits,
+assets, summary_tokens, scheduler, supervised}`. `settings` is
+`{enabled, source: "config"|"app"|"default", changeable}`; `changeable` is false
+only when configuration pins the value. Older companions omit `settings`, and
+only their configuration can turn Watchers on. Disabled companions advertise no
 Watchers capability, construct no store or scheduler, and return 503
-`watchers_disabled` for other Watchers routes. Updated enabled companions expose
-`watchers-v1` in `GET /api/v1`. The health response also includes
-`scheduler: {running, last_tick_at, next_fire_at}`.
+`watchers_disabled` for other Watchers routes, except `POST /settings`.
+`GET /api/v1` always lists the `watchersCapabilities` and `watchersSettings`
+endpoints; updated enabled companions also expose `watchers-v1` there. The
+health response also includes `scheduler: {running, last_tick_at, next_fire_at}`.
 
 This version executes script, gate and inbox delivery steps. Agent and external
 delivery definitions can be saved as drafts, but activation, run now and dry run
@@ -72,6 +97,8 @@ host's capability is checked before operations. Local `schema`, `example`, and
 ```sh
 herdr-watchers machines
 herdr-watchers capabilities --machine example
+herdr-watchers enable --machine example --i-confirm
+herdr-watchers disable --machine example --i-confirm
 herdr-watchers draft create --definition-file definition.json --scripts-file scripts.json
 herdr-watchers script get WATCHER_ID --step check
 herdr-watchers schedule preview '{"kind":"interval","every_minutes":15}' --timezone UTC
@@ -92,6 +119,14 @@ clicks **Create watcher**, or uses `activate --i-confirm`. The API requires
 `confirmed_by: "user"` and stores `activated_by` and `activated_via`. Agents have
 the main token, so this is an audit convention, **not a security boundary**.
 Scoped scheduling credentials remain future work.
+
+Turning Watchers on or off is also the person's step and is absent from agent
+discovery. A person chooses **Runs on** in the Mac app or runs `enable` or
+`disable` with `--i-confirm`. `POST /settings` requires `confirmed_by: "user"`
+and records `changed_by` and `changed_via`. Like activation, this is an audit
+convention, not a security boundary. `machines` rows include `settings`, and
+`doctor`, `machines` and the disabled error say how to turn Watchers on, or that
+configuration pins it off.
 
 ## Definitions, schedules and smart chips
 
@@ -235,6 +270,7 @@ integer `expected_revision`; conflicts return 409 `revision_conflict`.
 | Method and route | Body or result |
 | --- | --- |
 | GET `/capabilities` | Discovery above, always available |
+| POST `/settings` | `{request_id,enabled,confirmed_by:"user",changed_via?}` → capabilities; available while disabled |
 | GET `/` | `{watchers:[…]}`, optional `state`, `source` |
 | POST `/` | `{request_id,definition,scripts?}` → `{watcher}` draft |
 | GET `/{id}` | `{watcher}` |
@@ -255,6 +291,19 @@ integer `expected_revision`; conflicts return 409 `revision_conflict`.
 | POST `/builder/sessions` | `{request_id,watcher_id?,timezone?}` (creator's IANA timezone) |
 | GET `/builder/sessions/{id}` | `{session_id,status,messages,tools,draft}` |
 | POST `/builder/sessions/{id}/messages` | `{request_id,text}` → snapshot plus `turn_id` |
+
+`POST /settings` accepts exactly those keys. `enabled` is a boolean,
+`confirmed_by` must be `"user"`, and `changed_via` is 1 to 40 characters (default
+`api`; the CLI sends `cli`). Other shapes return 400 `invalid_request`. It returns
+the full capabilities payload with 200. Asking for the value configuration pins
+is a no-op; asking for the other value returns 409 `watchers_setting_locked`
+("HERDR_WATCHERS_ENABLED is set in this companion's configuration. Change it
+there and restart the companion."). Repeating the current choice changes
+nothing, so `request_id` is required but stores no receipt: a replay simply
+applies the same value. A start failure, such as invalid `HERDR_WATCHERS_MAX_RUNS`, keeps the
+previous choice and returns its error. An unwritable settings file returns 500
+`watchers_setting_unsaved`. Each change publishes `watchers.updated` with
+`{machine, settings}`.
 
 Actions are `activate`, `pause`, `resume`, `run_now`, `dry_run`, and `duplicate`.
 List/detail payloads carry the flattened definition plus `state`, `kind`,

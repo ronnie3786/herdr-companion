@@ -1,5 +1,27 @@
 # Next companion update, unreleased
 
+## Turn Watchers on from the app
+
+- A person can turn Watchers on or off per machine without editing
+  configuration or restarting the companion. `POST /api/v1/watchers/settings`
+  takes `{request_id, enabled, confirmed_by: "user", changed_via?}`, works while
+  Watchers is off, returns the capabilities payload, and starts or stops the
+  scheduler at once. Turning it off never signals detached runners. Each change
+  publishes `watchers.updated` with `settings`; `GET /api/v1` lists
+  `watchersSettings`.
+- Capabilities add `settings: {enabled, source: config|app|default, changeable}`.
+  `HERDR_WATCHERS_ENABLED` set to `"1"` or `"0"` still wins and makes the
+  setting read-only (409 `watchers_setting_locked`); other values are now
+  ignored. Otherwise the choice lives in a private `watchers-settings.json`
+  under the state root (`HERDR_HARNESS_WATCHERS_SETTINGS_PATH` overrides it).
+- `herdr-watchers enable|disable --i-confirm` are person-only verbs, like
+  `activate`. `doctor`, `machines` and the disabled error point to the app or
+  `enable`; `machines` rows include `settings`. Agents hold the main token, so
+  `confirmed_by: "user"` is an audit convention, not a security boundary.
+- Machines that set `HERDR_WATCHERS_ENABLED=1` behave as before, and older Mac
+  apps are unaffected. Install and restart this package separately from the Mac
+  app.
+
 ## Watchers
 
 - Adds the optional `watchers-v1` API, disabled until `HERDR_WATCHERS_ENABLED=1`.

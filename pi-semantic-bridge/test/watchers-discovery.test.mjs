@@ -10,6 +10,7 @@ test("Watchers discovery covers pane, agent run and lead without granting activa
 		assert.match(text, /herdr-watchers schema/);
 		assert.match(text, /ask for clarification/);
 		assert.match(text, /Never activate or resume/);
+		assert.match(text, /turn Watchers on or off/);
 		assert.match(text, /dry-run executes scripts/);
 	}
 });

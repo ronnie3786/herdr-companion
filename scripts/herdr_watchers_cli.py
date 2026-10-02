@@ -98,6 +98,10 @@ def parser():
     sources.add_argument("--cronboard-json")
     importing.add_argument("--dry-run", action="store_true", help="Preview only; executes nothing")
     importing.add_argument("--i-confirm", action="store_true", help="Import previously enabled jobs resting, with an activation audit record")
+    for name in ("enable", "disable"):
+        # Person-only, like activate: agents never turn Watchers on or off.
+        sub = commands.add_parser(name, help=f"Person-only: turn Watchers {'on' if name == 'enable' else 'off'} for the machine with --i-confirm")
+        sub.add_argument("--i-confirm", action="store_true")
     return p
 
 
@@ -110,15 +114,30 @@ def quote(value):
     return urllib.parse.quote(value, safe="")
 
 
-def execute(args, client, *, stdin, request_id, creator_timezone):
+def disabled_hint(caps, machine=None):
+    """What a person can do when Watchers is off on a machine."""
+    settings = caps.get("settings")
+    if not isinstance(settings, dict):
+        return "Watchers is off and this companion predates turning it on from the app. Update it, or set HERDR_WATCHERS_ENABLED=1 in its configuration and restart it."
+    if settings.get("source") == "config":
+        return "Watchers is turned off by HERDR_WATCHERS_ENABLED in this companion's configuration. Change it there and restart the companion."
+    command = "herdr-watchers enable" + (f" --machine {machine}" if machine else "") + " --i-confirm"
+    return f"Watchers is off on this machine. Turn it on in the Mac app (Watchers → New watcher → Runs on) or run `{command}`."
+
+
+def execute(args, client, *, stdin, request_id, creator_timezone, machine=None):
     command = args.command
     caps = client.request("GET", "/capabilities")
     if command == "capabilities":
         return caps
+    if command in {"enable", "disable"}:
+        if not isinstance(caps.get("settings"), dict):
+            raise CLIError("This companion predates turning Watchers on from the app. Update it, or set HERDR_WATCHERS_ENABLED in its configuration and restart it.", "watchers_settings_unsupported")
+        return client.request("POST", "/settings", {"request_id": request_id, "enabled": command == "enable", "confirmed_by": "user", "changed_via": "cli"})
     if command == "doctor":
         issues = []
         if not caps.get("enabled"):
-            issues.append("Enable HERDR_WATCHERS_ENABLED=1 on the selected companion.")
+            issues.append(disabled_hint(caps, machine))
         if not caps.get("supervised"):
             issues.append("Install the companion as a KeepAlive launchd or restart-enabled systemd service; verify it, then set HERDR_WATCHERS_SUPERVISED=1 if supervision is not auto-detected.")
         scheduler = caps.get("scheduler", {})
@@ -132,7 +151,7 @@ def execute(args, client, *, stdin, request_id, creator_timezone):
             raise CLIError(" ".join(issues), "watchers_unhealthy")
         return {"ok": True, "summary": "On watch. The scheduler is healthy and supervised.", **caps}
     if not caps.get("enabled") or "watchers-v1" not in caps.get("capabilities", []):
-        raise CLIError("Enable HERDR_WATCHERS_ENABLED=1 on an updated companion.", "watchers_disabled", 503)
+        raise CLIError(disabled_hint(caps, machine) if not caps.get("enabled") else "Update this companion to one that supports watchers-v1.", "watchers_disabled", 503)
     if command == "list":
         return client.request("GET", query(state=args.state, source=args.source))
     if command in {"get", "export"}:
@@ -216,6 +235,9 @@ def main(argv=None, *, environ=None, stdin=None, stdout=None, stderr=None, opene
         common.add_argument("--request-id", default=str(uuid.uuid4()))
         selected, remaining = common.parse_known_args(argv)
         args = parser().parse_args(remaining)
+        if args.command in {"enable", "disable"} and not args.i_confirm:
+            # Checked before any credential or connection is used.
+            raise CLIError(f"Turning Watchers {'on' if args.command == 'enable' else 'off'} is the person's step. Pass --i-confirm to confirm it.", "confirmation_required")
         creator_timezone = machine_timezone(environment)
         if args.command == "schema":
             result = {"ok": True, "schema": schema()}
@@ -247,12 +269,15 @@ def main(argv=None, *, environ=None, stdin=None, stdout=None, stderr=None, opene
                         continue
                     try:
                         caps = client_for(machine_id).request("GET", "/capabilities")
-                        rows.append({"id": machine_id, "name": machine.get("name", machine_id), "reachable": True, **{k: caps.get(k) for k in ("enabled", "capabilities", "timezone", "supervised", "steps")}})
+                        row = {"id": machine_id, "name": machine.get("name", machine_id), "reachable": True, **{k: caps.get(k) for k in ("enabled", "capabilities", "settings", "timezone", "supervised", "steps")}}
+                        if not caps.get("enabled"):
+                            row["hint"] = disabled_hint(caps, machine_id)
+                        rows.append(row)
                     except ValueError as exc:
                         rows.append({"id": machine_id, "name": machine.get("name", machine_id), "reachable": False, "error": getattr(exc, "code", "machine_unreachable")})
                 result = {"ok": True, "machines": rows}
             else:
-                result = execute(args, client_for(selected.machine), stdin=stdin, request_id=selected.request_id, creator_timezone=creator_timezone)
+                result = execute(args, client_for(selected.machine), stdin=stdin, request_id=selected.request_id, creator_timezone=creator_timezone, machine=selected.machine)
         print(json.dumps(result, ensure_ascii=False), file=stdout)
         return 0
     except (ValueError, OSError, WatchersError) as exc:

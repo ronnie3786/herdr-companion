@@ -118,6 +118,7 @@ ENVIRONMENT_FIELDS = {
         "max_runs": "HERDR_WATCHERS_MAX_RUNS", "supervised": "HERDR_WATCHERS_SUPERVISED",
         "builder_model": "HERDR_WATCHERS_BUILDER_MODEL",
         "store_path": "HERDR_HARNESS_WATCHERS_STORE_PATH", "root": "HERDR_HARNESS_WATCHERS_ROOT",
+        "settings_path": "HERDR_HARNESS_WATCHERS_SETTINGS_PATH",
     },
     "pr_review": {
         "workspace_label": "HERDR_PR_REVIEW_WORKSPACE_LABEL", "workspace_root": "HERDR_PR_REVIEW_WORKSPACE_ROOT",
@@ -457,6 +458,7 @@ def load_configuration(
             "FIRST_MATE_STORE_PATH": "first-mate.sqlite3", "FIRST_MATE_RUNS_ROOT": "first-mate-runs",
             "PR_REVIEW_STORE_PATH": "pr-review.sqlite3", "PR_REVIEW_RUNS_ROOT": "pr-review-runs",
             "WATCHERS_STORE_PATH": "watchers.sqlite3", "WATCHERS_ROOT": "watchers",
+            "WATCHERS_SETTINGS_PATH": "watchers-settings.json",
             "CLEANUP_RUNS_ROOT": "cleanup/runs", "AGENT_RUNS_ROOT": "agent-runs",
             "ATTACHMENTS_DIR": "uploads", "NOTES_STORE_PATH": "notes.sqlite3",
             "PANE_SEEN_STORE_PATH": "pane-first-seen.json", "SESSION_LABEL_STORE_PATH": "session-labels.json",

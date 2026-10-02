@@ -298,8 +298,11 @@ apns_environment = "development"
 
 [environment]
 # Escape hatch for any documented environment setting. Values are data, not shell.
-# Watchers is off unless exactly "1". Enable per machine after installing the
-# matching companion under a restart-enabled supervisor (see docs/watchers.md).
+# Watchers is off until a person turns it on for the machine in the Mac app
+# (Watchers > New watcher > Runs on) or with `herdr-watchers enable --i-confirm`;
+# no edit or restart is needed. Setting HERDR_WATCHERS_ENABLED pins it instead:
+# exactly "1" keeps it on and "0" keeps it off, and the app cannot change it.
+# Run the companion under a restart-enabled supervisor (see docs/watchers.md).
 # HERDR_WATCHERS_ENABLED = "1"
 # HERDR_WATCHERS_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # HERDR_WATCHERS_MAX_RUNS = "4"
@@ -315,7 +318,7 @@ apns_environment = "development"
 # New companions also accept this optional table. Older companions reject it;
 # prefer the environment entries above while machines run mixed versions.
 # [watchers]
-# enabled = "1"
+# enabled = "1" # Pins Watchers like HERDR_WATCHERS_ENABLED; omit to let the app decide.
 # max_runs = 4
 # supervised = "1"
 # path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"

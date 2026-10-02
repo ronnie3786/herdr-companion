@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+import stat
 import tempfile
 import threading
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
+from herdr_harness.events import EventBroker
 from herdr_harness.server import make_handler
 from herdr_harness.service import HerdrService
 from herdr_harness.watchers.store import WatchersStore
@@ -70,12 +72,14 @@ class WatchersHTTPTests(unittest.TestCase):
             self.assertEqual(code, 200)
             self.assertFalse(caps["enabled"])
             self.assertEqual(caps["capabilities"], [])
+            self.assertEqual(caps["settings"], {"enabled": False, "source": "config", "changeable": False})
             code, data = self.request()
             self.assertEqual(code, 503)
             self.assertEqual(data["error"]["code"], "watchers_disabled")
-            self.assertIn("HERDR_WATCHERS_ENABLED=1", data["error"]["message"])
+            self.assertIn("HERDR_WATCHERS_ENABLED", data["error"]["message"])
             _, root = self.request(api_root=True)
             self.assertNotIn("watchers-v1", root["capabilities"])
+            self.assertEqual(root["endpoints"]["watchersSettings"], "/api/v1/watchers/settings")
         self.assertIsNone(self.service._watchers_runtime)
 
     def test_discovery_lists_capability_and_events_only_when_enabled(self):
@@ -198,3 +202,232 @@ class WatchersHTTPTests(unittest.TestCase):
         _, unread = self.request('/inbox?limit=2&unread=1')
         self.assertEqual([row['id'] for row in unread['items']], ['inbox_224'])
         self.assertEqual(unread['unread_count'], 1)
+
+
+class WatchersSettingsHTTPTests(unittest.TestCase):
+    """A person turns Watchers on and off without a restart; configuration wins."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = Path(self.tmp.name)
+        self.service = self.make_service({})
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.service))
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
+        self.thread.start()
+        self.origin = f"http://127.0.0.1:{self.server.server_port}"
+
+    def make_service(self, extra):
+        service = HerdrService.__new__(HerdrService)
+        service.environ = {"HERDR_HARNESS_API_TOKEN": "synthetic-main-token", "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": "synthetic-ingest-token",
+                           "HERDR_MACHINE": "example", "HERDR_STATE_DIR": self.tmp.name, "HERDR_WATCHERS_SUPERVISED": "1", **extra}
+        service._lock = threading.RLock()
+        service._watchers_builder = None
+        service._watchers_runtime = None
+        service.broker = EventBroker()
+        return service
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        if self.service._watchers_runtime is not None:
+            self.service._watchers_runtime.stop()
+        self.tmp.cleanup()
+
+    def request(self, suffix="", body=None, method=None, token="synthetic-main-token", api_root=False):
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        path = "/api/v1" if api_root else "/api/v1/watchers" + suffix
+        request = Request(self.origin + path, data=json.dumps(body).encode() if body is not None else None, headers=headers, method=method)
+        try:
+            response = urlopen(request)
+        except HTTPError as exc:
+            response = exc
+        with response:
+            return response.status, json.loads(response.read())
+
+    def change(self, enabled, request_id="settings-example", **extra):
+        return self.request("/settings", {"request_id": request_id, "enabled": enabled, "confirmed_by": "user", **extra})
+
+    @property
+    def settings_file(self):
+        return self.state / "watchers-settings.json"
+
+    def settings_events(self):
+        return [item["data"] for item in self.service.broker.after(0) if item["event"] == "watchers.updated" and "settings" in item["data"]]
+
+    def test_default_is_off_with_default_source_and_settings_route_advertised(self):
+        code, caps = self.request("/capabilities")
+        self.assertEqual(code, 200)
+        self.assertFalse(caps["enabled"])
+        self.assertEqual(caps["capabilities"], [])
+        self.assertEqual(caps["settings"], {"enabled": False, "source": "default", "changeable": True})
+        code, error = self.request()
+        self.assertEqual(code, 503)
+        self.assertEqual(error["error"]["code"], "watchers_disabled")
+        self.assertIn("herdr-watchers enable --i-confirm", error["error"]["message"])
+        self.assertIn("Mac app", error["error"]["message"])
+        _, root = self.request(api_root=True)
+        self.assertEqual(root["endpoints"]["watchersSettings"], "/api/v1/watchers/settings")
+        self.assertNotIn("watchers-v1", root["capabilities"])
+        self.assertIsNone(self.service._watchers_runtime)
+        self.assertFalse(self.settings_file.exists())
+
+    def test_settings_route_requires_full_authentication(self):
+        for token in (None, "synthetic-ingest-token", "wrong"):
+            self.assertIn(self.request("/settings", {"request_id": "unauthorized", "enabled": True, "confirmed_by": "user"}, token=token)[0], (401, 403))
+        self.assertIsNone(self.service._watchers_runtime)
+        self.assertFalse(self.settings_file.exists())
+
+    def test_enable_persists_privately_starts_the_scheduler_and_publishes(self):
+        code, caps = self.change(True, changed_via="mac")
+        self.assertEqual(code, 200)
+        self.assertTrue(caps["ok"])
+        self.assertTrue(caps["enabled"])
+        self.assertEqual(caps["capabilities"], ["watchers-v1"])
+        self.assertEqual(caps["settings"], {"enabled": True, "source": "app", "changeable": True})
+        self.assertTrue(caps["scheduler"]["running"])
+        self.assertTrue({"machine", "timezone", "steps", "delivery", "limits", "assets", "summary_tokens", "supervised"} <= caps.keys())
+        self.assertEqual(stat.S_IMODE(self.settings_file.stat().st_mode), 0o600)
+        saved = json.loads(self.settings_file.read_text())
+        self.assertEqual({key: saved[key] for key in ("enabled", "changed_by", "changed_via")}, {"enabled": True, "changed_by": "user", "changed_via": "mac"})
+        self.assertTrue(datetime.fromisoformat(saved["changed_at"].replace("Z", "+00:00")).tzinfo)
+        code, fetched = self.request("/capabilities")
+        self.assertEqual(code, 200)
+        self.assertEqual({k: v for k, v in fetched.items() if k != "scheduler"}, {k: v for k, v in caps.items() if k != "scheduler"})
+        self.assertEqual(self.request()[0], 200)
+        _, root = self.request(api_root=True)
+        self.assertIn("watchers-v1", root["capabilities"])
+        self.assertEqual(self.settings_events(), [{"machine": {"id": "example", "name": "example"}, "settings": caps["settings"]}])
+        # Enabling again is a no-op that keeps the same scheduler and record.
+        runtime = self.service._watchers_runtime
+        code, again = self.change(True, request_id="settings-again")
+        self.assertEqual(code, 200)
+        self.assertTrue(again["scheduler"]["running"])
+        self.assertIs(self.service._watchers_runtime, runtime)
+        self.assertEqual(json.loads(self.settings_file.read_text()), saved)
+        self.assertEqual(len(self.settings_events()), 1)
+
+    def test_choice_survives_a_new_service_on_the_same_state_directory(self):
+        self.assertEqual(self.change(True)[0], 200)
+        service = HerdrService(environ={"HERDR_STATE_DIR": self.tmp.name, "HERDR_MACHINE": "example"})
+        try:
+            self.assertEqual(service.watchers_settings(), {"enabled": True, "source": "app", "changeable": True})
+            self.assertTrue(service.watchers_enabled)
+        finally:
+            service.stop()
+        self.assertEqual(self.change(False)[0], 200)
+        service = HerdrService(environ={"HERDR_STATE_DIR": self.tmp.name, "HERDR_MACHINE": "example"})
+        try:
+            self.assertEqual(service.watchers_settings(), {"enabled": False, "source": "app", "changeable": True})
+        finally:
+            service.stop()
+
+    def test_disable_stops_the_scheduler_and_other_routes_return_503(self):
+        self.assertEqual(self.change(True)[0], 200)
+        runtime = self.service._watchers_runtime
+        code, caps = self.change(False, request_id="settings-off")
+        self.assertEqual(code, 200)
+        self.assertFalse(caps["enabled"])
+        self.assertEqual(caps["capabilities"], [])
+        self.assertEqual(caps["settings"], {"enabled": False, "source": "app", "changeable": True})
+        self.assertFalse(caps["scheduler"]["running"])
+        self.assertIsNone(self.service._watchers_runtime)
+        self.assertFalse(runtime._thread.is_alive())
+        self.assertIsNone(runtime._lock_fd)
+        self.assertFalse(json.loads(self.settings_file.read_text())["enabled"])
+        code, error = self.request()
+        self.assertEqual(code, 503)
+        self.assertEqual(error["error"]["code"], "watchers_disabled")
+        self.assertEqual(self.request("/schedule/preview", {"schedule": {"kind": "daily", "at": "09:00"}, "timezone": "UTC"})[0], 503)
+        self.assertEqual([event["settings"]["enabled"] for event in self.settings_events()], [True, False])
+
+    def test_disable_never_signals_detached_runners(self):
+        self.assertEqual(self.change(True)[0], 200)
+        with patch("herdr_harness.watchers.runtime.signal_process", side_effect=AssertionError("signalled a runner")), \
+                patch("os.kill", side_effect=AssertionError("signalled a process")), \
+                patch("os.killpg", side_effect=AssertionError("signalled a group")):
+            self.assertEqual(self.change(False, request_id="off")[0], 200)
+
+    def test_enable_disable_enable_builds_a_fresh_scheduler_that_keeps_definitions(self):
+        self.assertEqual(self.change(True, request_id="first-on")[0], 200)
+        first = self.service._watchers_runtime
+        code, created = self.request(body={"request_id": "create-example", **example()})
+        self.assertEqual(code, 201)
+        self.assertEqual(self.change(False, request_id="off")[0], 200)
+        code, caps = self.change(True, request_id="second-on")
+        self.assertEqual(code, 200)
+        self.assertTrue(caps["scheduler"]["running"])
+        second = self.service._watchers_runtime
+        self.assertIsNotNone(second)
+        self.assertIsNot(second, first)
+        self.assertTrue(second._thread.is_alive())
+        _, listing = self.request()
+        self.assertEqual([watcher["id"] for watcher in listing["watchers"]], [created["watcher"]["id"]])
+
+    def test_failed_start_leaves_the_setting_unchanged(self):
+        self.service.environ["HERDR_WATCHERS_MAX_RUNS"] = "0"
+        code, error = self.change(True)
+        self.assertEqual(code, 400)
+        self.assertEqual(error["error"]["code"], "invalid_configuration")
+        self.assertFalse(self.settings_file.exists())
+        self.assertIsNone(self.service._watchers_runtime)
+        self.assertEqual(self.request("/capabilities")[1]["settings"], {"enabled": False, "source": "default", "changeable": True})
+        self.assertEqual(self.settings_events(), [])
+
+    def test_configuration_locks_the_setting(self):
+        for pinned in ("1", "0"):
+            with self.subTest(pinned=pinned):
+                self.service.environ["HERDR_WATCHERS_ENABLED"] = pinned
+                enabled = pinned == "1"
+                _, caps = self.request("/capabilities")
+                self.assertEqual(caps["settings"], {"enabled": enabled, "source": "config", "changeable": False})
+                code, error = self.change(not enabled, request_id="conflict-" + pinned)
+                self.assertEqual(code, 409)
+                self.assertEqual(error["error"], {"code": "watchers_setting_locked", "message": "HERDR_WATCHERS_ENABLED is set in this companion's configuration. Change it there and restart the companion."})
+                code, same = self.change(enabled, request_id="same-" + pinned)
+                self.assertEqual(code, 200)
+                self.assertEqual(same["settings"], caps["settings"])
+                self.assertEqual(same["enabled"], enabled)
+                self.assertFalse(self.settings_file.exists())
+                self.assertIsNone(self.service._watchers_runtime)
+                self.assertEqual(self.settings_events(), [])
+
+    def test_configuration_wins_over_a_saved_choice(self):
+        self.assertEqual(self.change(True)[0], 200)
+        self.service._watchers_runtime.stop()
+        self.service._watchers_runtime = None
+        service = self.make_service({"HERDR_WATCHERS_ENABLED": "0"})
+        self.assertEqual(service.watchers_settings(), {"enabled": False, "source": "config", "changeable": False})
+        self.assertFalse(service.watchers_enabled)
+
+    def test_request_shape_is_exact(self):
+        valid = {"request_id": "shape", "enabled": True, "confirmed_by": "user"}
+        bad = [
+            {key: value for key, value in valid.items() if key != "confirmed_by"},
+            {**valid, "confirmed_by": "agent"},
+            {**valid, "confirmed_by": None},
+            {**valid, "extra": True},
+            {key: value for key, value in valid.items() if key != "request_id"},
+            {**valid, "request_id": ""},
+            {**valid, "request_id": "x" * 201},
+            {key: value for key, value in valid.items() if key != "enabled"},
+            {**valid, "enabled": "yes"},
+            {**valid, "enabled": 1},
+            {**valid, "changed_via": ""},
+            {**valid, "changed_via": "x" * 41},
+            {**valid, "changed_via": 7},
+            [],
+        ]
+        for payload in bad:
+            with self.subTest(payload=payload):
+                code, error = self.request("/settings", payload)
+                self.assertEqual(code, 400)
+                self.assertEqual(error["error"]["code"], "invalid_request")
+        self.assertEqual(self.request("/settings")[0], 405)
+        self.assertFalse(self.settings_file.exists())
+        self.assertIsNone(self.service._watchers_runtime)
+        code, caps = self.request("/settings", {**valid, "changed_via": "x" * 40})
+        self.assertEqual(code, 200)
+        self.assertTrue(caps["enabled"])

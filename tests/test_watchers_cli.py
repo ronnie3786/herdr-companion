@@ -153,3 +153,62 @@ class WatchersCLITests(unittest.TestCase):
         self.assertTrue(row["reachable"])
         self.assertIn("watchers-v1", row["capabilities"])
         self.assertTrue(row["supervised"])
+
+    def test_enable_and_disable_are_person_steps(self):
+        for command in ("enable", "disable"):
+            with self.subTest(command=command):
+                code, stdout, error = self.run_cli([command, "--machine", "remote"])
+                self.assertEqual(code, 2)
+                self.assertIsNone(stdout)
+                self.assertEqual(error["error"]["code"], "confirmation_required")
+                self.assertIn("--i-confirm", error["error"]["message"])
+        self.assertEqual(self.calls, [])
+
+    def test_enable_and_disable_post_the_settings_body(self):
+        self.caps.update(enabled=False, capabilities=[], settings={"enabled": False, "source": "default", "changeable": True})
+        for command, enabled in (("enable", True), ("disable", False)):
+            with self.subTest(command=command):
+                self.assertEqual(self.run_cli([command, "--i-confirm"])[0], 0)
+                self.assertEqual(self.calls[-1][:3], ("POST", "http://127.0.0.1:9092/api/v1/watchers/settings",
+                                                     {"request_id": "synthetic-request", "enabled": enabled, "confirmed_by": "user", "changed_via": "cli"}))
+                self.assertEqual(self.calls[-1][3]["Authorization"], "Bearer synthetic-cli-token")
+
+    def test_enable_reports_an_older_companion_and_a_configuration_lock(self):
+        self.caps.update(enabled=False, capabilities=[])
+        code, _, error = self.run_cli(["enable", "--i-confirm"])
+        self.assertEqual(code, 2)
+        self.assertEqual(error["error"]["code"], "watchers_settings_unsupported")
+        self.assertTrue(all(call[0] == "GET" for call in self.calls))
+        self.caps["settings"] = {"enabled": False, "source": "config", "changeable": False}
+        message = "HERDR_WATCHERS_ENABLED is set in this companion's configuration. Change it there and restart the companion."
+        self.failure = HTTPError("http://127.0.0.1:9092", 409, "Conflict", {}, io.BytesIO(json.dumps({"ok": False, "error": {"code": "watchers_setting_locked", "message": message}}).encode()))
+        code, _, error = self.run_cli(["enable", "--i-confirm"])
+        self.assertEqual(code, 4)
+        self.assertEqual(error["error"]["code"], "watchers_setting_locked")
+
+    def test_disabled_guidance_points_to_the_app_or_configuration(self):
+        self.caps.update(enabled=False, capabilities=[], settings={"enabled": False, "source": "default", "changeable": True})
+        for args in (["doctor"], ["list"]):
+            with self.subTest(args=args):
+                code, _, error = self.run_cli(args)
+                self.assertEqual(code, 2)
+                self.assertIn("Mac app (Watchers → New watcher → Runs on)", error["error"]["message"])
+                self.assertIn("herdr-watchers enable --i-confirm", error["error"]["message"])
+                self.assertNotIn("HERDR_WATCHERS_ENABLED=1", error["error"]["message"])
+        with patch.object(cli, "machine_client", return_value=SimpleNamespace(base_url="https://example.invalid", token="synthetic-remote-token")):
+            self.assertIn("herdr-watchers enable --machine remote --i-confirm", self.run_cli(["doctor", "--machine", "remote"])[2]["error"]["message"])
+        self.caps["settings"] = {"enabled": False, "source": "config", "changeable": False}
+        message = self.run_cli(["doctor"])[2]["error"]["message"]
+        self.assertIn("HERDR_WATCHERS_ENABLED in this companion's configuration", message)
+        self.assertNotIn("enable --i-confirm", message)
+
+    def test_machines_rows_include_settings_and_a_hint_when_off(self):
+        self.caps["settings"] = {"enabled": True, "source": "app", "changeable": True}
+        with patch.object(cli, "machine_client", return_value=SimpleNamespace(base_url="https://example.invalid", token="synthetic-remote-token")):
+            row = self.run_cli(["machines"])[1]["machines"][0]
+            self.assertEqual(row["settings"], {"enabled": True, "source": "app", "changeable": True})
+            self.assertNotIn("hint", row)
+            self.caps.update(enabled=False, capabilities=[], settings={"enabled": False, "source": "default", "changeable": True})
+            row = self.run_cli(["machines"])[1]["machines"][0]
+        self.assertEqual(row["settings"]["source"], "default")
+        self.assertIn("herdr-watchers enable --machine remote --i-confirm", row["hint"])

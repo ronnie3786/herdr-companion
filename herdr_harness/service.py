@@ -224,6 +224,11 @@ class HerdrService:
         self._pr_review_runtime = pr_review_runtime
         self._watchers_runtime = None
         self._watchers_builder = None
+        # The person's on/off choice (when configuration does not pin it) is
+        # read once and cached; production services fall back to the home state root.
+        self._watchers_settings_home_default = production_environment
+        self._watchers_setting_loaded = False
+        self._watchers_setting_record = None
         self._owns_pr_review_store = pr_review_store is None
         self._owns_first_mate_store = first_mate_store is None
         self._control_store = control_store
@@ -672,9 +677,102 @@ class HerdrService:
             self.first_mate.wake()
         self.broker.publish("first_mate.updated", {"feature_id": feature_id, "generatedAt": utc_now()})
 
+    def _watchers_settings_file(self) -> Optional[Path]:
+        from .watchers import settings
+        return settings.settings_path(self.environ, home_default=getattr(self, "_watchers_settings_home_default", False))
+
+    def _watchers_saved_setting(self) -> Optional[dict]:
+        """The person's saved choice, read once and then served from memory."""
+        from .watchers import settings
+        with self._lock:
+            if not getattr(self, "_watchers_setting_loaded", False):
+                self._watchers_setting_record = settings.load(self._watchers_settings_file())
+                self._watchers_setting_loaded = True
+            return self._watchers_setting_record
+
+    def _watchers_save_setting(self, record: Optional[dict]) -> None:
+        """Write through to disk (None removes the file), then update the cache."""
+        from .watchers import settings
+        with self._lock:
+            path = self._watchers_settings_file()
+            if record is None:
+                settings.remove(path)
+            elif path is not None:
+                settings.save(path, record)
+            self._watchers_setting_record = record
+            self._watchers_setting_loaded = True
+
+    def watchers_settings(self) -> dict:
+        """{enabled, source: config|app|default, changeable}. Configuration wins."""
+        from .watchers import settings
+        if settings.configured(self.environ) is not None:
+            return settings.describe(self.environ, None)
+        return settings.describe(self.environ, self._watchers_saved_setting())
+
     @property
     def watchers_enabled(self) -> bool:
-        return self.environ.get("HERDR_WATCHERS_ENABLED") == "1"
+        return self.watchers_settings()["enabled"]
+
+    def set_watchers_enabled(self, enabled: bool, *, changed_via: str = "api") -> dict:
+        """Turn Watchers on or off for this companion without a restart.
+
+        A value pinned by HERDR_WATCHERS_ENABLED cannot be changed here; asking
+        for that same value is a no-op. Turning off stops the scheduler but never
+        signals detached runners (WatchersRuntime.stop's contract); a later turn-on
+        builds a fresh runtime that reattaches to them.
+        """
+        from .watchers import settings
+        from .watchers.errors import WatchersError
+        if not isinstance(enabled, bool):
+            raise WatchersError("invalid_request", "enabled must be a boolean.")
+        pinned = settings.configured(self.environ)
+        if pinned is not None:
+            if pinned != enabled:
+                raise WatchersError("watchers_setting_locked", settings.LOCKED_MESSAGE, 409)
+            return self.watchers_settings()
+        retired = None
+        with self._lock:
+            previous = self._watchers_saved_setting()
+            changed = previous is None or previous["enabled"] != enabled
+            if changed:
+                try:
+                    self._watchers_save_setting({"enabled": enabled, "changed_at": utc_now(),
+                                                 "changed_by": "user", "changed_via": changed_via})
+                except OSError:
+                    raise WatchersError("watchers_setting_unsaved", "This companion could not save the Watchers setting.", 500) from None
+            if enabled:
+                existing = self._watchers_runtime
+                try:
+                    runtime = self.watchers
+                    runtime.start()
+                except BaseException:
+                    # Nothing changes when the scheduler cannot start.
+                    if existing is None and self._watchers_runtime is not None:
+                        self._watchers_runtime.stop()
+                        self._watchers_runtime = None
+                    if changed:
+                        self._watchers_save_setting(previous)
+                    raise
+                runtime.wake()
+            else:
+                retired, self._watchers_runtime = self._watchers_runtime, None
+                # Stop while holding the lock so a quick turn-on cannot race the
+                # retiring scheduler for its manager lock.
+                if retired is not None:
+                    retired.stop()
+            current = self.watchers_settings()
+        if changed or retired is not None:
+            broker = getattr(self, "broker", None)
+            if broker is not None:
+                broker.publish("watchers.updated", {"machine": self.watchers_machine, "settings": current})
+        return current
+
+    def watchers_scheduler_status(self) -> dict:
+        # Read the reference once: turning Watchers off drops it concurrently.
+        runtime = self._watchers_runtime
+        if runtime is None:
+            return {"running": False, "last_tick_at": None, "next_fire_at": None}
+        return runtime.status()
 
     @property
     def watchers_machine(self) -> dict:
@@ -683,12 +781,14 @@ class HerdrService:
 
     @property
     def watchers(self):
+        from .watchers import settings
         from .watchers.errors import WatchersError
         from .watchers.store import WatchersStore
         from .watchers.runtime import WatchersRuntime
-        if not self.watchers_enabled:
-            raise WatchersError("watchers_disabled", "Set HERDR_WATCHERS_ENABLED=1 on this companion to use Watchers.", 503)
         with self._lock:
+            current = self.watchers_settings()
+            if not current["enabled"]:
+                raise WatchersError("watchers_disabled", settings.disabled_message(current), 503)
             if self._watchers_runtime is None:
                 state = Path(self.environ.get("HERDR_STATE_DIR") or Path(self.environ.get("HOME") or Path.home()) / ".local/share/herdr-companion")
                 root = Path(self.environ.get("HERDR_HARNESS_WATCHERS_ROOT") or state / "watchers")
@@ -2116,7 +2216,7 @@ class HerdrService:
                 "generatedAt": generated_at,
             },
             "alerts": {"unread": self.alerts.unread_count()},
-            "scheduler": self._watchers_runtime.status() if self._watchers_runtime is not None else {"running": False, "last_tick_at": None, "next_fire_at": None},
+            "scheduler": self.watchers_scheduler_status(),
             "generatedAt": utc_now(),
         }
 

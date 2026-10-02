@@ -11,22 +11,43 @@ from .errors import WatchersError
 from .schedule import machine_timezone, preview
 from .imports import bundle_entry, cronboard_entries
 from .assets import asset_catalog
+from .settings import CHANGED_VIA_LIMIT
 
 EVENTS = ["watchers.updated", "watchers.run", "watchers.inbox", "watchers.builder"]
 
 
 def capabilities(service):
-    enabled = service.watchers_enabled
-    scheduler = service._watchers_runtime.status() if service._watchers_runtime is not None else {"running": False, "last_tick_at": None, "next_fire_at": None}
+    settings = service.watchers_settings()
+    enabled = settings["enabled"]
+    scheduler = service.watchers_scheduler_status()
     environment = service.environ
     supervised = environment.get("HERDR_WATCHERS_SUPERVISED") == "1" or bool(environment.get("INVOCATION_ID")) or environment.get("XPC_SERVICE_NAME", "0") not in {"", "0"}
     return {"ok": True, "enabled": enabled, "capabilities": ["watchers-v1"] if enabled else [],
+            "settings": settings,
             "machine": service.watchers_machine, "timezone": machine_timezone(environment),
             "steps": ["script", "gate", "deliver"], "delivery": {"inbox": True, "slack": False, "notify": False},
             "limits": {"script_bytes": 262144, "timeout_seconds": 21600},
             "scheduler": scheduler, "supervised": supervised,
             "assets": asset_catalog(),
             "summary_tokens": ["time", "gh", "script", "agent", "skill", "slack", "inbox", "repo", "pc"]}
+
+
+def change_settings(service, body):
+    """POST /settings: the person's on/off choice for this companion.
+
+    Like activation, confirmed_by:"user" is a convention and audit trail; agents
+    hold the same main token.
+    """
+    keys(body, {"request_id", "enabled", "confirmed_by", "changed_via"}, {"request_id", "enabled", "confirmed_by"})
+    if not isinstance(body["enabled"], bool):
+        raise WatchersError("invalid_request", "enabled must be a boolean.")
+    if body["confirmed_by"] != "user":
+        raise WatchersError("invalid_request", "confirmed_by must be user: turning Watchers on or off is the person's step.")
+    changed_via = body.get("changed_via", "api")
+    if not isinstance(changed_via, str) or not 1 <= len(changed_via) <= CHANGED_VIA_LIMIT or not changed_via.isprintable():
+        raise WatchersError("invalid_request", f"changed_via must be a nonempty string of at most {CHANGED_VIA_LIMIT} characters.")
+    service.set_watchers_enabled(body["enabled"], changed_via=changed_via)
+    return capabilities(service)
 
 
 def keys(body, allowed, required=()):
@@ -75,6 +96,11 @@ def route(service, method, tail, query, body):
     q = lambda name, default=None: (query.get(name) or [default])[0]
     if method == "GET" and tail == ["capabilities"]:
         return capabilities(service)
+    if tail == ["settings"]:
+        # Reachable while Watchers is off, so a person can turn it on.
+        if method != "POST":
+            raise WatchersError("method_not_allowed", "Use POST to change the Watchers setting.", 405)
+        return change_settings(service, body)
     runtime = service.watchers
     store = runtime.store
     if tail == ["schedule", "preview"] and method == "POST":

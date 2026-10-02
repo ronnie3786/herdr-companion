@@ -2140,6 +2140,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             if method == "GET" and not tail:
                 description = api_description()
                 description["endpoints"]["watchersCapabilities"] = "/api/v1/watchers/capabilities"
+                description["endpoints"]["watchersSettings"] = "/api/v1/watchers/settings"
                 if getattr(service, "watchers_enabled", False):
                     description["capabilities"].append("watchers-v1")
                     description["endpoints"]["watchers"] = "/api/v1/watchers"

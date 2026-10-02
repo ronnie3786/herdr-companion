@@ -21,19 +21,29 @@ struct RemoteNoteEditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Title") {
-                    TextField("Untitled note", text: $title)
-                }
-                Section("Note") {
-                    TextEditor(text: $bodyText)
-                        .frame(minHeight: 240)
-                        .accessibilityLabel("Note body")
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Untitled note", text: $title)
+                    .font(.title3.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .accessibilityIdentifier("note-editor-title")
+                    .padding(.top, 8)
+                RemoteNoteRichEditor(text: $bodyText, isEditable: !isSaving)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if let errorMessage {
-                    Section { Text(errorMessage).foregroundStyle(.red).textSelection(.enabled) }
+                    Text(errorMessage)
+                        .font(.callout)
+                        .foregroundStyle(Color(red: 0.5059, green: 0.1765, blue: 0.2471))
+                        .textSelection(.enabled)
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+            .foregroundStyle(HerdrTheme.crust)
+            .background(note.color.fill)
+            .toolbarBackground(note.color.fill, for: .navigationBar)
+            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
+            .tint(HerdrTheme.crust)
             .disabled(isSaving)
             .navigationTitle("Edit note")
             .navigationBarTitleDisplayMode(.inline)
@@ -53,6 +63,7 @@ struct RemoteNoteEditorView: View {
                 Button("Discard edits", role: .destructive) { dismiss() }
             }
         }
+        .environment(\.colorScheme, .light)
         .interactiveDismissDisabled(hasChanges || isSaving)
     }
 

@@ -1,11 +1,27 @@
-import AppKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// The note editor has one typeface and size. Only emphasis and links travel
-/// between AppKit and the existing SwiftUI-attributed persistence/sync format.
+/// between the native editors and the existing SwiftUI note sync format.
 @MainActor
 enum HerdrNoteTextStyle {
+    #if os(macOS)
+    typealias NativeFont = NSFont
+    typealias NativeColor = NSColor
     static let fontSize: CGFloat = 15
+    #else
+    typealias NativeFont = UIFont
+    typealias NativeColor = UIColor
+    static var fontSize: CGFloat {
+        let category = UIApplication.shared.preferredContentSizeCategory
+        let capped: UIContentSizeCategory = category.isAccessibilityCategory ? .extraExtraExtraLarge : category
+        return UIFont.preferredFont(forTextStyle: .body, compatibleWith: UITraitCollection(preferredContentSizeCategory: capped)).pointSize
+    }
+    #endif
 
     enum Format: String, CaseIterable {
         case bold, italic, underline, strikethrough
@@ -14,17 +30,34 @@ enum HerdrNoteTextStyle {
         var label: String { rawValue.capitalized }
     }
 
-    static func font(bold: Bool = false, italic: Bool = false) -> NSFont {
+    static func font(bold: Bool = false, italic: Bool = false) -> NativeFont {
+        #if os(macOS)
         let base = NSFont.systemFont(ofSize: fontSize, weight: bold ? .bold : .regular)
         return italic ? NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask) : base
+        #else
+        let base = UIFont.systemFont(ofSize: fontSize, weight: bold ? .bold : .regular)
+        guard italic, let descriptor = base.fontDescriptor.withSymbolicTraits(base.fontDescriptor.symbolicTraits.union(.traitItalic)) else { return base }
+        return UIFont(descriptor: descriptor, size: fontSize)
+        #endif
     }
 
-    static func attributes(_ source: [NSAttributedString.Key: Any], ink: NSColor) -> [NSAttributedString.Key: Any] {
-        let traits = (source[.font] as? NSFont).map { NSFontManager.shared.traits(of: $0) } ?? []
+    private static func fontTraits(_ values: [NSAttributedString.Key: Any]) -> (bold: Bool, italic: Bool) {
+        guard let font = values[.font] as? NativeFont else { return (false, false) }
+        #if os(macOS)
+        let traits = NSFontManager.shared.traits(of: font)
+        return (traits.contains(.boldFontMask), traits.contains(.italicFontMask))
+        #else
+        let traits = font.fontDescriptor.symbolicTraits
+        return (traits.contains(.traitBold), traits.contains(.traitItalic))
+        #endif
+    }
+
+    static func attributes(_ source: [NSAttributedString.Key: Any], ink: NativeColor) -> [NSAttributedString.Key: Any] {
+        let traits = fontTraits(source)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 3
         var result: [NSAttributedString.Key: Any] = [
-            .font: font(bold: traits.contains(.boldFontMask), italic: traits.contains(.italicFontMask)),
+            .font: font(bold: traits.bold, italic: traits.italic),
             .foregroundColor: ink,
             .paragraphStyle: paragraph,
             .underlineStyle: 0,
@@ -37,7 +70,7 @@ enum HerdrNoteTextStyle {
         return result
     }
 
-    static func normalized(_ source: NSAttributedString, ink: NSColor) -> NSAttributedString {
+    static func normalized(_ source: NSAttributedString, ink: NativeColor) -> NSAttributedString {
         let result = NSMutableAttributedString(string: source.string)
         source.enumerateAttributes(in: NSRange(location: 0, length: source.length)) { values, range, _ in
             result.setAttributes(attributes(values, ink: ink), range: range)
@@ -45,7 +78,7 @@ enum HerdrNoteTextStyle {
         return result
     }
 
-    static func native(_ source: AttributedString, ink: NSColor) -> NSAttributedString {
+    static func native(_ source: AttributedString, ink: NativeColor) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
         let context = EnvironmentValues().fontResolutionContext
         for run in source.runs {
@@ -69,10 +102,11 @@ enum HerdrNoteTextStyle {
         var result = AttributedString()
         source.enumerateAttributes(in: NSRange(location: 0, length: source.length)) { values, range, _ in
             var part = AttributedString((source.string as NSString).substring(with: range))
-            let traits = (values[.font] as? NSFont).map { NSFontManager.shared.traits(of: $0) } ?? []
-            var font = Font.system(size: fontSize)
-            if traits.contains(.boldFontMask) { font = font.bold() }
-            if traits.contains(.italicFontMask) { font = font.italic() }
+            let traits = fontTraits(values)
+            // Store a semantic body font so iOS respects its Dynamic Type setting.
+            var font = Font.body
+            if traits.bold { font = font.bold() }
+            if traits.italic { font = font.italic() }
             part.font = font
             if (values[.underlineStyle] as? Int ?? 0) != 0 { part.underlineStyle = .single }
             if (values[.strikethroughStyle] as? Int ?? 0) != 0 { part.strikethroughStyle = .single }
@@ -83,16 +117,16 @@ enum HerdrNoteTextStyle {
     }
 
     static func contains(_ format: Format, in attributes: [NSAttributedString.Key: Any]) -> Bool {
-        let traits = (attributes[.font] as? NSFont).map { NSFontManager.shared.traits(of: $0) } ?? []
+        let traits = fontTraits(attributes)
         switch format {
-        case .bold: return traits.contains(.boldFontMask)
-        case .italic: return traits.contains(.italicFontMask)
+        case .bold: return traits.bold
+        case .italic: return traits.italic
         case .underline: return (attributes[.underlineStyle] as? Int ?? 0) != 0
         case .strikethrough: return (attributes[.strikethroughStyle] as? Int ?? 0) != 0
         }
     }
 
-    static func applying(_ format: Format, enabled: Bool, to values: [NSAttributedString.Key: Any], ink: NSColor) -> [NSAttributedString.Key: Any] {
+    static func applying(_ format: Format, enabled: Bool, to values: [NSAttributedString.Key: Any], ink: NativeColor) -> [NSAttributedString.Key: Any] {
         var result = attributes(values, ink: ink)
         switch format {
         case .bold, .italic:

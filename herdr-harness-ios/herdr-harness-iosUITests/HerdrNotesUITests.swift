@@ -64,6 +64,35 @@ final class HerdrNotesUITests: XCTestCase {
     }
 
     @MainActor
+    func testEditorFormatsMarkdownAndKeepsDraftAfterFailedSave() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-HerdrDemoMode"]
+        app.launch()
+        defer { app.terminate() }
+        let notes = app.tabBars.buttons["Notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 8))
+        notes.tap()
+        app.buttons["notes-card-demo1|11111111-1111-1111-1111-111111111111"].tap()
+        app.buttons["Edit"].tap()
+        let editor = app.textViews["note-editor-body"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Save"].isEnabled)
+        editor.tap()
+        editor.typeText("\n**Clear** *calm* ~~done~~ ")
+        XCTAssertTrue((editor.value as? String ?? "").contains("Clear calm done"))
+        XCTAssertFalse((editor.value as? String ?? "").contains("**Clear**"))
+        app.buttons["note-format-underline"].tap()
+        editor.typeText("Underlined")
+        saveScreenshot("notes-editor", app: app)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Couldn’t save your note.")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue((editor.value as? String ?? "").contains("Underlined"))
+        app.buttons["Cancel"].tap()
+        app.buttons["Discard edits"].tap()
+        XCTAssertTrue(app.staticTexts["note-full-body"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     private func saveScreenshot(_ name: String, app: XCUIApplication) {
         let screenshot = app.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)

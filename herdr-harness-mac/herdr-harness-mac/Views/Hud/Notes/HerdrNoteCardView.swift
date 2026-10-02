@@ -55,10 +55,6 @@ struct HerdrNoteCardView: View {
         .foregroundStyle(note.color.ink)
         .tint(note.color.ink)
         .background(note.color.fill, in: .rect(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(note.color.ink.opacity(0.14), lineWidth: 1)
-        }
         .overlay(alignment: .bottomLeading) {
             Image(systemName: "arrow.up.right.and.arrow.down.left")
                 .font(.caption)

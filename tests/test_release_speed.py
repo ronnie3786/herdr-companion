@@ -261,7 +261,7 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(policy.untested_only([]), "an empty change proves nothing")
 
     def test_ios_paths_cover_everything_the_ios_app_builds_from(self):
-        for path in ("herdr-harness-ios/App.swift", "HerdrFirstMateShared/Skim.swift", "HerdrFirstMateSharedTests/T.swift"):
+        for path in ("herdr-harness-ios/App.swift", "HerdrFirstMateShared/Skim.swift", "HerdrFirstMateSharedTests/T.swift", "HerdrNotesShared/HerdrNoteTextStyle.swift"):
             self.assertTrue(policy.IOS_PATHS.match(path))
         self.assertFalse(policy.IOS_PATHS.match("herdr-harness-mac/App.swift"))
 

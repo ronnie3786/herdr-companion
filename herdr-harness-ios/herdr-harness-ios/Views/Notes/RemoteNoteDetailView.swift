@@ -41,7 +41,7 @@ struct RemoteNoteDetailView: View {
                                 .font(.body)
                                 .foregroundStyle(HerdrTheme.mist)
                         } else {
-                            Text(note.richBody)
+                            Text(HerdrNoteTextStyle.rich(HerdrNoteTextStyle.native(note.richBody, ink: UIColor(HerdrTheme.crust))))
                                 .font(.body)
                                 .foregroundStyle(HerdrTheme.crust)
                                 .frame(maxWidth: .infinity, alignment: .leading)

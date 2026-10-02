@@ -480,6 +480,7 @@ struct WorkspaceNavigationView: View {
             generation: model.connectionGeneration,
             isDemo: model.isDemoMode
         )) {
+            await shell.prReview.refreshSelected()
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: shell.prReview.pollingInterval)

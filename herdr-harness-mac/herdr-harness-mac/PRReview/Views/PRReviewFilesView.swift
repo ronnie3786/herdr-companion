@@ -714,16 +714,22 @@ struct PRReviewDiffView: View {
 
     private func deletedContentDisclosureButton(_ file: PRReviewFile) -> some View {
         let expanded = store.isDeletedContentExpanded(path: file.path)
+        let canToggle = PRReviewDeletedFileDisclosure.canToggle(expanded: expanded, hasQuestionDraft: hasQuestionDraft)
         return Button(PRReviewDeletedFileDisclosure.actionLabel(expanded: expanded)) {
             store.setDeletedContentExpanded(!expanded, path: file.path)
         }
         .focusable()
+        .onKeyPress(.space, phases: .down) { _ in
+            guard canToggle else { return .ignored }
+            store.setDeletedContentExpanded(!expanded, path: file.path)
+            return .handled
+        }
         .help(expanded ? "Hide the removed lines for this deleted file" : "Show the removed lines for this deleted file")
         .accessibilityLabel(PRReviewDeletedFileDisclosure.actionLabel(expanded: expanded))
         .accessibilityValue(PRReviewDeletedFileDisclosure.stateDescription(expanded: expanded))
         .accessibilityHint("Toggles the removed lines for this deleted file")
         .accessibilityIdentifier(PRReviewDeletedFileDisclosure.accessibilityIdentifier)
-        .disabled(!PRReviewDeletedFileDisclosure.canToggle(expanded: expanded, hasQuestionDraft: hasQuestionDraft))
+        .disabled(!canToggle)
     }
 
     private func diffText(_ diffFile: PRReviewDiffFile) -> some View {

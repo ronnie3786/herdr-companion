@@ -255,11 +255,9 @@ final class HerdrPRReviewUITests: HerdrUITestCase {
             "The popped-out window should reach the Agents tab"
         )
 
-        selectTab("Skills", in: firstWindow, app: app)
-        XCTAssertTrue(
-            control("pr-review-skills", in: firstWindow).waitForExistence(timeout: 10),
-            "The popped-out window should reach the Skills tab"
-        )
+        let tabs = control("pr-review-mode-picker", in: firstWindow)
+        XCTAssertFalse(tabs.buttons["Skills"].exists || tabs.radioButtons["Skills"].exists,
+                       "Saved review agents replace the legacy Skills tab on capable hosts")
 
         selectTab("Files", in: firstWindow, app: app)
         XCTAssertTrue(

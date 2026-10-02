@@ -8,6 +8,8 @@ Select code and choose **Add comment** to start a discussion beneath its exact d
 
 Discussions persist on the review host and are shared with its `herdr-pr-review` CLI. New commits keep open findings, their original code and activity history, with **Earlier revision** labels for older anchors. Comments never post to GitHub. Existing Mac-only comments remain available under **Previous Mac comments**.
 
+Switching reviews loads the selected review immediately. Right-click anywhere in a review row to open its menu, and use Space on the focused deleted-file disclosure to show or hide removed code.
+
 ## Companion compatibility
 
 Install companion **0.77.0b1** separately on each review host to enable `pr-review-comments-v1`. Older companions show an upgrade notice. The Mac updater installs only the app; it does not install or restart the companion server.

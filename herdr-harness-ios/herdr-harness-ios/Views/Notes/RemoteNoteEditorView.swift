@@ -52,10 +52,12 @@ struct RemoteNoteEditorView: View {
                     Button("Cancel") {
                         if hasChanges { confirmsDiscard = true } else { dismiss() }
                     }
+                    .foregroundStyle(HerdrTheme.crust)
                     .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Saving…" : "Save") { Task { await saveChanges() } }
+                        .foregroundStyle(HerdrTheme.crust)
                         .disabled(isSaving || !hasChanges)
                 }
             }
@@ -64,6 +66,8 @@ struct RemoteNoteEditorView: View {
             }
         }
         .environment(\.colorScheme, .light)
+        .preferredColorScheme(.light)
+        .tint(HerdrTheme.crust)
         .interactiveDismissDisabled(hasChanges || isSaving)
     }
 

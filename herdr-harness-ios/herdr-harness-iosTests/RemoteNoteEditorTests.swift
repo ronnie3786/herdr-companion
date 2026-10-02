@@ -94,6 +94,8 @@ struct RemoteNoteEditorTests {
         let editor = try #require(descendants(host.view).compactMap { $0 as? RemoteNoteTextView }.first)
         #expect(editor.text == note.body)
         #expect(editor.backgroundColor == .clear)
+        #expect(editor.allowsEditingTextAttributes)
+        #expect(editor.textFormattingConfiguration?.groups.flatMap(\.components).map(\.componentKey) == [.fontAttributes])
         #expect(editor.textContainer.lineFragmentPadding == 0)
         #expect(editor.textContainerInset.left == 0)
         #expect(editor.bounds.width > width - 90)
@@ -104,6 +106,25 @@ struct RemoteNoteEditorTests {
         if let folder = ProcessInfo.processInfo.environment["HERDR_NOTE_PREVIEW_DIR"] {
             try image.pngData()?.write(to: URL(fileURLWithPath: folder).appendingPathComponent("ios-note-\(Int(width)).png"))
         }
+        let pasteboard = UIPasteboard.general
+        let previousItems = pasteboard.items
+        defer { pasteboard.items = previousItems }
+        let pasted = NSAttributedString(string: "Pasted basics", attributes: [
+            .font: UIFont.boldSystemFont(ofSize: 42), .foregroundColor: UIColor.white,
+            .backgroundColor: UIColor.red, .underlineStyle: NSUnderlineStyle.double.rawValue
+        ])
+        let rtf = try pasted.data(from: NSRange(location: 0, length: pasted.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        pasteboard.setData(rtf, forPasteboardType: "public.rtf")
+        editor.becomeFirstResponder()
+        editor.selectedRange = NSRange(location: 0, length: editor.textStorage.length)
+        editor.paste(nil)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(editor.text == "Pasted basics")
+        let values = editor.textStorage.attributes(at: 0, effectiveRange: nil)
+        #expect(HerdrNoteTextStyle.contains(.bold, in: values))
+        #expect(HerdrNoteTextStyle.contains(.underline, in: values))
+        #expect((values[.font] as? UIFont)?.pointSize == HerdrNoteTextStyle.fontSize)
+        #expect(values[.backgroundColor] == nil)
     }
 
     private func makeWindow() -> UIWindow {

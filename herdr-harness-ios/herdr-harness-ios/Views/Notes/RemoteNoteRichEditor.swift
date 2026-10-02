@@ -81,7 +81,10 @@ struct RemoteNoteRichEditor: View {
             editor.tintColor = editor.ink
             editor.isScrollEnabled = true
             editor.keyboardDismissMode = .interactive
-            editor.allowsEditingTextAttributes = false
+            editor.allowsEditingTextAttributes = true
+            editor.textFormattingConfiguration = .init(groups: [
+                .init(components: [.init(componentKey: .fontAttributes, preferredSize: .mini)])
+            ])
             editor.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 12, right: 0)
             editor.textContainer.lineFragmentPadding = 0
             editor.accessibilityLabel = "Note body"

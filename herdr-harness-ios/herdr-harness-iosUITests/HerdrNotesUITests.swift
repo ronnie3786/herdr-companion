@@ -12,8 +12,7 @@ final class HerdrNotesUITests: XCTestCase {
         app.launch()
         defer { app.terminate() }
 
-        let notesTab = app.tabBars.buttons["Notes"]
-        XCTAssertTrue(notesTab.waitForExistence(timeout: 8))
+        let notesTab = notesTab(in: app)
         notesTab.tap()
 
         let releaseNote = app.buttons["notes-card-demo1|11111111-1111-1111-1111-111111111111"]
@@ -28,8 +27,9 @@ final class HerdrNotesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Sample release checklist"].exists)
         saveScreenshot("notes-detail", app: app)
 
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars["Note"].buttons.element(boundBy: 0).tap()
         let search = app.searchFields["Search notes"]
+        if !search.exists, app.buttons["Search"].firstMatch.exists { app.buttons["Search"].firstMatch.tap() }
         if !search.isHittable { app.swipeDown() }
         XCTAssertTrue(search.waitForExistence(timeout: 3))
         search.tap()
@@ -49,8 +49,7 @@ final class HerdrNotesUITests: XCTestCase {
         ]
         app.launch()
         defer { app.terminate() }
-        let notesTab = app.tabBars.buttons["Notes"]
-        XCTAssertTrue(notesTab.waitForExistence(timeout: 8))
+        let notesTab = notesTab(in: app)
         notesTab.tap()
         let note = app.buttons["notes-card-demo1|11111111-1111-1111-1111-111111111111"]
         XCTAssertTrue(note.waitForExistence(timeout: 5))
@@ -69,8 +68,7 @@ final class HerdrNotesUITests: XCTestCase {
         app.launchArguments = ["-HerdrDemoMode"]
         app.launch()
         defer { app.terminate() }
-        let notes = app.tabBars.buttons["Notes"]
-        XCTAssertTrue(notes.waitForExistence(timeout: 8))
+        let notes = notesTab(in: app)
         notes.tap()
         app.buttons["notes-card-demo1|11111111-1111-1111-1111-111111111111"].tap()
         app.buttons["Edit"].tap()
@@ -90,6 +88,16 @@ final class HerdrNotesUITests: XCTestCase {
         app.buttons["Cancel"].tap()
         app.buttons["Discard edits"].tap()
         XCTAssertTrue(app.staticTexts["note-full-body"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    private func notesTab(in app: XCUIApplication) -> XCUIElement {
+        let candidates = [app.tabBars.buttons["Notes"], app.cells["Notes"].firstMatch, app.buttons["Notes"].firstMatch]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            candidates.contains { $0.exists && $0.isHittable }
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
+        return candidates.first { $0.exists && $0.isHittable } ?? candidates[0]
     }
 
     @MainActor

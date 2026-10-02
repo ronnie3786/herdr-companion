@@ -231,7 +231,8 @@ final class AgentRolesStore {
 
     func selectShown() {
         guard canChangeSkills else { return }
-        draft?.skillIds = selectedIDs.union(filteredSkills.map(\.id)).sorted()
+        let ids = selectedIDs.union(filteredSkills.map(\.id)).sorted()
+        draft?.skillIds = ids
     }
 
     func clearSkills() {

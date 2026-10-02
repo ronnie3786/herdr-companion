@@ -40,6 +40,7 @@ struct AgentRoleProfileEditor: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Delegation").herdrFont(.headline)
                     Toggle("Allow this role to delegate tasks", isOn: $role.allowDelegation)
+                        .tint(HerdrTheme.controlAccent)
                         .accessibilityIdentifier("agent-role-delegation")
                     Text("Existing First Mate limits still apply. Enabling delegation does not grant extra tool permissions.")
                         .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)

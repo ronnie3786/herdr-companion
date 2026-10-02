@@ -42,6 +42,7 @@ struct AgentRoleEditor: View {
                 ForEach(Tab.allCases) { tab in Text(tab.rawValue).tag(tab) }
             }
             .pickerStyle(.segmented)
+            .tint(HerdrTheme.controlAccent)
             .labelsHidden()
             .padding(.horizontal, 18)
             .padding(.bottom, 14)

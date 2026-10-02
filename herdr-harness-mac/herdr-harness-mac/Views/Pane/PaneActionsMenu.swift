@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// A chat's ⋯ menu in the window title bar: its views, chat and Pi session
+/// actions, focus and pane management, then the shell's destinations
+/// (`HerdrShellMenuSections`), and Close last.
 struct PaneActionsMenu: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
@@ -8,14 +11,22 @@ struct PaneActionsMenu: View {
     var isPiCompacting = false
     var isStartingNewPiChat = false
     var startNewPiChat: (() -> Void)? = nil
+    /// Opens the Pi session summary; nil when the pane has no Pi session.
+    var summarizeSession: (() -> Void)? = nil
     @State private var isConfirmingClose = false
     @State private var isConfirmingEndPiAndClose = false
     @State private var isRenaming = false
     @State private var renameText = ""
+    @State private var isShowingPromptHistory = false
 
     var body: some View {
         paneActionsMenu
-            .disabled(model.paneLifecycleBusyIDs.contains(pane.id))
+            .popover(isPresented: $isShowingPromptHistory, arrowEdge: .bottom) {
+                PromptHistoryView(entries: model.promptHistory.entries(for: pane.id)) { text in
+                    model.setComposerDraft(text, for: pane.id)
+                    isShowingPromptHistory = false
+                }
+            }
             .confirmationDialog(
                 "Close this pane?",
                 isPresented: $isConfirmingClose,
@@ -55,14 +66,39 @@ struct PaneActionsMenu: View {
 
     private var paneActionsMenu: some View {
         Menu("Pane actions", systemImage: "ellipsis") {
-            viewModeSection
-            Section("Focus and control") { focusActions }
-            Section("Pi session") { piSessionActions }
-            Section("Pane") { paneManagementActions }
-            Section("Close") { closeAction }
+            Group {
+                viewModeSection
+                Section("Chat") { chatActions }
+                Section("Pi session") { piSessionActions }
+                Section("Focus and control") { focusActions }
+                Section("Pane") { paneManagementActions }
+            }
+            // Pane mutations wait for a running close or end; the shell's
+            // destinations stay available.
+            .disabled(model.paneLifecycleBusyIDs.contains(pane.id))
+            HerdrShellMenuSections()
+            Section("Close") {
+                closeAction.disabled(model.paneLifecycleBusyIDs.contains(pane.id))
+            }
         }
         .herdrIconMenu()
-        .help("Pane actions")
+        .help("Views, chat actions and more")
+    }
+
+    @ViewBuilder
+    private var chatActions: some View {
+        Button("Prompt History…", systemImage: "text.bubble.badge.clock") {
+            isShowingPromptHistory = true
+        }
+        .help("Browse, search, copy, or reuse your submitted prompts")
+        .accessibilityIdentifier("pane-prompt-history")
+
+        if let summarizeSession {
+            Button("Summarize Session…", systemImage: "list.bullet.clipboard", action: summarizeSession)
+                .disabled(!model.canControl(machineID: pane.machineID))
+                .help("Summarize this Pi session and where you left off")
+                .accessibilityIdentifier("pane-summarize-pi-session")
+        }
     }
 
     private var viewModeSection: some View {

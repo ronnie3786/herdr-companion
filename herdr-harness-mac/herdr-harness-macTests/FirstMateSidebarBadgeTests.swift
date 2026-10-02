@@ -147,7 +147,6 @@ struct FirstMateSidebarBadgeTests {
             HerdrSidebarView(
                 model: model,
                 openPane: { _ in },
-                openWorkspace: { _ in },
                 openFirstMate: {},
                 firstMateAttentionCount: 0
             )
@@ -159,7 +158,6 @@ struct FirstMateSidebarBadgeTests {
             HerdrSidebarView(
                 model: model,
                 openPane: { _ in },
-                openWorkspace: { _ in },
                 openFirstMate: {},
                 firstMateAttentionCount: 3
             )

@@ -15,8 +15,8 @@ data, expand tool authority, or claim which client is frontmost.
 | First Mate coordinator/worker/advisor | Validated role plus bounded feature/job and applicable assignment identity |
 | External/unmanaged Pi | No Companion identity from package installation alone |
 
-Contextual questions, PR Review questions, response briefs, and Smart Rename keep
-their existing restricted profiles. They do not receive the awareness bootstrap,
+Contextual questions, PR Review questions, and Smart Rename keep their existing
+restricted profiles. They do not receive the awareness bootstrap,
 extra tools, or reference invitation. First Mate injection occurs only after the
 managed role, private job, and selected extension path validate; stale or foreign
 copies remain dormant.

@@ -25,10 +25,9 @@ struct MonoScreenRenderTests {
         let workspace = try #require(model.workspace(id: "demo1|w1"))
         let pane = try HerdrRenderFixtures.piCapablePane()
         let store = try await HerdrRenderFixtures.populatedPiStore()
-        let brief = ResponseBriefPresentation()
 
         let result = try await HerdrRenderHarness.renderWindow("mono-chat.png", size: Self.window) {
-            // Mirrors `PaneSessionView`: the pane's title and actions go to the
+            // Mirrors `PaneSessionView`: the pane's title and ⋯ menu go to the
             // window title bar; the chat fills the detail column.
             MonoRenderFixtures.window(model: model, shell: shell, detail: AnyView(
                 PiChatView(
@@ -42,13 +41,12 @@ struct MonoScreenRenderTests {
                     attachments: .constant([]),
                     focusRequest: 0,
                     interactionResponder: PiInteractionResponder(),
-                    modelFavorites: modelFavorites,
-                    briefPresentation: brief
+                    modelFavorites: modelFavorites
                 )
-                .herdrTitleBar {
+                .herdrTitleBar(hostsShellMenu: true) {
                     PaneSessionTitle(model: model, pane: pane, store: store)
                 } trailing: {
-                    PaneSessionActions(model: model, pane: pane, showsPiSessionSummary: true, briefPresentation: brief)
+                    PaneActionsMenu(model: model, pane: pane, selectedMode: .constant(.chat), summarizeSession: {})
                 }
             ))
         }
@@ -100,19 +98,18 @@ struct MonoScreenRenderTests {
         let workspace = try #require(model.workspace(id: "demo1|w1"))
         let pane = try HerdrRenderFixtures.piCapablePane()
         let store = try await HerdrRenderFixtures.populatedPiStore()
-        let brief = ResponseBriefPresentation()
         let chat = try await HerdrRenderHarness.renderWindow("mono-chat-160.png", size: size) {
             MonoRenderFixtures.window(model: model, shell: chatShell, detail: AnyView(
                 PiChatView(
                     model: model, store: store, paneID: pane.id, interactionResponseAvailable: true,
                     composerPane: pane, workspace: workspace, draft: .constant(""), attachments: .constant([]),
                     focusRequest: 0, interactionResponder: PiInteractionResponder(),
-                    modelFavorites: ModelFavoritesStore(), briefPresentation: brief
+                    modelFavorites: ModelFavoritesStore()
                 )
-                .herdrTitleBar {
+                .herdrTitleBar(hostsShellMenu: true) {
                     PaneSessionTitle(model: model, pane: pane, store: store)
                 } trailing: {
-                    PaneSessionActions(model: model, pane: pane, showsPiSessionSummary: true, briefPresentation: brief)
+                    PaneActionsMenu(model: model, pane: pane, selectedMode: .constant(.chat), summarizeSession: {})
                 }
             ), scale: .xxxLarge)
         }

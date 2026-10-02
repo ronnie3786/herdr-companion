@@ -55,8 +55,7 @@ struct DemoScreenshotRenderTests {
             HStack(spacing: 0) {
                 HerdrSidebarView(
                     model: model,
-                    openPane: { _ in },
-                    openWorkspace: { _ in }
+                    openPane: { _ in }
                 )
                     .frame(width: 280)
 
@@ -92,7 +91,7 @@ struct DemoScreenshotRenderTests {
         let expanded = try await HerdrRenderHarness.render(
             "02c-pi-session-families.png", size: CGSize(width: 280, height: 700)
         ) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+            HerdrSidebarView(model: model, openPane: { _ in })
         }
         expanded.expectSubstantial()
 
@@ -100,7 +99,7 @@ struct DemoScreenshotRenderTests {
         let collapsed = try await HerdrRenderHarness.render(
             "02d-pi-session-families-collapsed.png", size: CGSize(width: 280, height: 700)
         ) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+            HerdrSidebarView(model: model, openPane: { _ in })
         }
         collapsed.expectSubstantial()
         #expect(expanded.byteCount != collapsed.byteCount)
@@ -119,8 +118,7 @@ struct DemoScreenshotRenderTests {
         ) {
             HerdrSidebarView(
                 model: model,
-                openPane: { _ in },
-                openWorkspace: { _ in }
+                openPane: { _ in }
             )
         }
 
@@ -138,13 +136,13 @@ struct DemoScreenshotRenderTests {
         let regular = try await HerdrRenderHarness.render(
             "02e-recents-detail.png", size: CGSize(width: 280, height: 820)
         ) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+            HerdrSidebarView(model: model, openPane: { _ in })
         }
         regular.expectSubstantial()
         let large = try await HerdrRenderHarness.render(
             "02f-recents-detail-large.png", size: CGSize(width: 240, height: 1000)
         ) {
-            HerdrSidebarView(model: model, openPane: { _ in }, openWorkspace: { _ in })
+            HerdrSidebarView(model: model, openPane: { _ in })
                 .environment(\.herdrFontScale, .xxLarge)
         }
         large.expectSubstantial()
@@ -162,8 +160,7 @@ struct DemoScreenshotRenderTests {
         ) {
             HerdrSidebarView(
                 model: model,
-                openPane: { _ in },
-                openWorkspace: { _ in }
+                openPane: { _ in }
             )
         }
 
@@ -173,8 +170,7 @@ struct DemoScreenshotRenderTests {
         ) {
             HerdrSidebarView(
                 model: model,
-                openPane: { _ in },
-                openWorkspace: { _ in }
+                openPane: { _ in }
             )
                 .environment(\.herdrFontScale, .xxLarge)
         }
@@ -250,40 +246,6 @@ struct DemoScreenshotRenderTests {
             transcribeVoice: { _ in throw CancellationError() },
             askBoard: { _ in }
         )
-    }
-
-    // MARK: - 03 · Attention deck
-
-    @Test("Attention deck renders alerts and the live queue")
-    func rendersAttentionDeck() async throws {
-        let model = HerdrRenderFixtures.demoModel()
-
-        let result = try await HerdrRenderHarness.render(
-            "03-attention.png",
-            size: CGSize(width: 900, height: 760)
-        ) {
-            AttentionView(model: model) { _, _ in }
-        }
-
-        result.expectSubstantial()
-    }
-
-    // MARK: - 04 · Workspace overview
-
-    @Test("Workspace overview renders the fleet summary, hero, and pane cards")
-    func rendersWorkspaceOverview() async throws {
-        let model = HerdrRenderFixtures.demoModel()
-        let workspace = try #require(model.workspace(id: "demo1|w1"))
-        model.selectedPaneID = "demo1|w1:p1"
-
-        let result = try await HerdrRenderHarness.render(
-            "04-workspace.png",
-            size: CGSize(width: 900, height: 760)
-        ) {
-            WorkspacePaneListView(model: model, workspace: workspace) { _ in }
-        }
-
-        result.expectSubstantial()
     }
 
     @Test("Workspace Git renders a selected diff")

@@ -38,8 +38,8 @@ private struct PRReviewPollingIdentity: Equatable {
 /// The Mac shell. This is the iPad-regular `NavigationSplitView` branch of the
 /// iOS `WorkspaceNavigationView`, collapsed to two columns: the persistent
 /// navigator (which the iPhone build showed as an overlay drawer) and a detail
-/// column that swaps between the pane session, the workspace overview, and the
-/// attention deck. There is no compact branch — the Mac is always regular.
+/// column that swaps between the pane session and the app's other screens.
+/// There is no compact branch — the Mac is always regular.
 struct WorkspaceNavigationView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
@@ -230,7 +230,6 @@ struct WorkspaceNavigationView: View {
                     HerdrSidebarView(
                         model: model,
                         openPane: openSession,
-                        openWorkspace: { shell.showWorkspace(id: $0.id, model: model) },
                         openDashboard: { shell.goHome(model: model) },
                         openFirstMate: { shell.show(.firstMate, model: model) },
                         openPRReview: { shell.show(.prReview, model: model) },
@@ -857,24 +856,9 @@ struct WorkspaceNavigationView: View {
                     .id(pane.id)
             } else {
                 placeholder(
-                    "Choose a pane",
-                    symbol: "terminal",
-                    detail: "Open a terminal or agent session."
-                )
-            }
-        case .workspace:
-            if let workspace = model.workspace(id: model.selectedWorkspaceID) {
-                WorkspacePaneListView(
-                    model: model,
-                    workspace: workspace,
-                    highlightedTabID: shell.highlightedOverviewTabID,
-                    selectPane: openSession
-                )
-            } else {
-                placeholder(
-                    "Choose a workspace",
-                    symbol: "rectangle.3.group",
-                    detail: "Its tabs and panes will appear here."
+                    "Choose a chat",
+                    symbol: "bubble.left",
+                    detail: "Open a chat or terminal from the sidebar."
                 )
             }
         case .firstMate:
@@ -988,10 +972,6 @@ struct WorkspaceNavigationView: View {
             }
         case .fleet:
             FleetDestinationView(model: model)
-        case .attention:
-            AttentionView(model: model) { pane, _ in
-                openSession(pane)
-            }
         case .activity:
             ActivityFeedView(model: model, selectPane: openSession)
         }
@@ -1040,8 +1020,8 @@ struct WorkspaceNavigationView: View {
     }
 
     /// The detail column's 40pt title bar: navigation, the screen's own title
-    /// and actions (from `herdrTitleBar`), the scope picker, and the global
-    /// items (Agent, update badge, Herd Pulse, connection).
+    /// and actions (from `herdrTitleBar`), the ⋯ menu, and the global items
+    /// (update badge, Herd Pulse, connection).
     private func titleBar(_ items: HerdrTitleBarItems?) -> some View {
         HStack(spacing: 6) {
             if !isSidebarVisible {
@@ -1060,12 +1040,9 @@ struct WorkspaceNavigationView: View {
             if let trailing = items?.trailing {
                 trailing
             }
-            if showsScopePicker {
-                WorkspaceScopePicker(
-                    selection: scopeSelection,
-                    includesGit: model.currentPaneGitIsAvailable,
-                    unreadAlertCount: model.unreadAlertCount
-                )
+            // A chat's own ⋯ menu ends with these same sections.
+            if items?.hostsShellMenu != true {
+                HerdrShellMenu(tint: chromeIcon)
             }
             globalItems
         }
@@ -1073,18 +1050,23 @@ struct WorkspaceNavigationView: View {
         .padding(.trailing, 8)
         .herdrBar(hairline: .clear)
         .foregroundStyle(chromeTitle)
+        .environment(\.herdrShellMenu, shellMenuActions)
+    }
+
+    /// What every ⋯ menu in the title bar ends with: the app's destinations
+    /// and Ask Agent.
+    private var shellMenuActions: HerdrShellMenuActions {
+        let resolved = shell.resolvedScope(for: model)
+        return HerdrShellMenuActions(
+            current: HerdrDetailScope.menuDestinations.contains(resolved) ? resolved : nil,
+            show: { shell.show($0, model: model) },
+            askAgent: model.canControl ? { shell.isAgentPresented = true } : nil
+        )
     }
 
     private var titleBarLeadingPadding: CGFloat {
         guard !isSidebarVisible, !isFullScreen else { return isSidebarVisible ? 12 : 8 }
         return HerdrWindowChrome.trafficLightInset - 2
-    }
-
-    private var showsScopePicker: Bool {
-        switch shell.detailScope {
-        case .dashboard, .agentBoard, .firstMate, .prReview, .watchers: false
-        default: true
-        }
     }
 
     @ViewBuilder
@@ -1146,14 +1128,6 @@ struct WorkspaceNavigationView: View {
 
     private var globalItems: some View {
         HStack(spacing: 2) {
-            Button("Agent", systemImage: "sparkles") {
-                shell.isAgentPresented = true
-            }
-            .buttonStyle(HerdrIconButtonStyle(tint: chromeIcon))
-            .disabled(!model.canControl)
-            .help("Ask a one-off question without creating a chat")
-            .accessibilityIdentifier("open-headless-agent")
-
             // Appears only while a check has a newer release to offer, so updating
             // never requires the menu bar.
             HerdrUpdateToolbarItem(updates: updates)
@@ -1163,28 +1137,6 @@ struct WorkspaceNavigationView: View {
             ConnectionPill(state: model.connectionState)
                 .padding(.leading, 4)
         }
-    }
-
-    /// Reads the resolved scope when the picker has a matching segment, and
-    /// otherwise returns nil so dedicated destinations leave every segment
-    /// unselected. Writes are limited to actual picker cases.
-    private var scopeSelection: Binding<HerdrDetailScope?> {
-        Binding(
-            get: {
-                let resolved = shell.resolvedScope(for: model)
-                // Git is a pane sub-mode wearing a segment: it only reads as
-                // selected while the mounted session is actually showing Git.
-                if resolved == .session, model.currentPaneDetailMode == .git {
-                    return .git
-                }
-                return HerdrDetailScope.pickerSelection(for: resolved)
-            },
-            set: { scope in
-                guard let scope = scope,
-                      HerdrDetailScope.pickerSelection(for: scope) != nil else { return }
-                shell.show(scope, model: model)
-            }
-        )
     }
 
     private func historyButton(

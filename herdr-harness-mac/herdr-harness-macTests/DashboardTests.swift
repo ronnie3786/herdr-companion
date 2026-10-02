@@ -203,7 +203,7 @@ struct DashboardTests {
         #expect(shell.detailScope == .agentBoard)
         #expect(HerdrDestinationRecord(.dashboard)?.destination == .dashboard)
         #expect(HerdrDestinationRecord(.agentBoard)?.destination == .agentBoard)
-        #expect(HerdrDetailScope.pickerSelection(for: .dashboard) == nil)
+        #expect(!HerdrDetailScope.menuDestinations.contains(.dashboard))
         let pane = try #require(model.workspaces.first?.panes.first)
         shell.openPane(id: pane.id, model: model)
         #expect(shell.resolvedScope(for: model) == .session)

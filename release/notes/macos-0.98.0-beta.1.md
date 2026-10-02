@@ -1,6 +1,6 @@
-# macOS 0.96.0-beta.1
+# macOS 0.98.0-beta.1
 
-Preview channel, build 146.
+Preview channel, build 148.
 
 Watchers now matches its approved design. Cards, avatars and smart chips use the prototype's measurements, so the grid reads the way the design reference did.
 
@@ -10,4 +10,8 @@ Watchers now matches its approved design. Cards, avatars and smart chips use the
 - **States:** a running card shows "Sol is running docs-check" with a slim step bar. Resting cards say "I'm resting until you wake me.", and drafts say they are not scheduled yet. Next runs read "in 8 min", "Today at 6:00 PM", "Tomorrow at 2:00 AM" or a weekday.
 - **Screen:** **Inbox** and **New watcher** move to the title bar. Below the header sit the filters, search, the next-to-wake (or working-now) pill, a "Resting" divider and a two-line create prompt. Spacing and type scale at the design's narrow and wide breakpoints.
 
-This is a Mac-only update; no companion update is needed. With preview builds enabled, choose **Settings → Updates → Check for Updates…**, then open **Watchers** in the sidebar (**Command-9**).
+This build also contains everything in 0.97.0-beta.1. If you skipped that preview: the chat title bar now keeps its title, star and status on the left and puts everything else in one **⋯** menu. The segmented scope picker, the 30-second response brief, the Workspace overview screen and the Mac attention deck are gone. On launch the app deletes the saved brief settings.
+
+The Watchers changes are Mac-only and need no companion update. Companion **0.81.0b1** removes the matching response-brief API (see 0.97.0-beta.1); install it separately on each machine.
+
+With preview builds enabled, choose **Settings → Updates → Check for Updates…**, then open **Watchers** in the sidebar (**Command-9**).

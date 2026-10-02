@@ -1,29 +1,18 @@
 import SwiftUI
 
-/// The pane's identity strip as a standalone 40pt bar: the title-bar content
-/// (`PaneSessionTitle`) and its actions (`PaneSessionActions`) side by side.
-/// Inside the main window both parts go to the window's title bar instead
-/// (`PaneSessionView`); machine, location and folder live on the composer's
-/// context line.
+/// The pane's identity strip as a standalone 40pt bar (`PaneSessionTitle`).
+/// Inside the main window the title goes to the window's title bar instead,
+/// with the pane's actions in its ⋯ menu (`PaneSessionView`); machine,
+/// location and folder live on the composer's context line.
 struct PaneSessionHeader: View {
     @Bindable var model: HerdrAppModel
     let pane: HerdrPane
     let store: PiConversationStore
-    var showsPiSessionSummary = false
-    var summarizePiSession: () -> Void = { }
-    var briefPresentation: ResponseBriefPresentation? = nil
 
     var body: some View {
         HStack(spacing: 8) {
             PaneSessionTitle(model: model, pane: pane, store: store)
             Spacer(minLength: 8)
-            PaneSessionActions(
-                model: model,
-                pane: pane,
-                showsPiSessionSummary: showsPiSessionSummary,
-                summarizePiSession: summarizePiSession,
-                briefPresentation: briefPresentation
-            )
         }
         .padding(.leading, 16)
         .padding(.trailing, 8)
@@ -218,49 +207,6 @@ struct PaneSessionTitle: View {
             HerdrTheme.warning
         case .loading, .connected:
             showsCompaction ? HerdrTheme.working : pane.agentStatus.labelColor
-        }
-    }
-
-}
-
-/// The pane's actions at the title bar's trailing edge: Open brief, prompt
-/// history, Summarize, and Focus on Mac.
-struct PaneSessionActions: View {
-    @Bindable var model: HerdrAppModel
-    let pane: HerdrPane
-    var showsPiSessionSummary = false
-    var summarizePiSession: () -> Void = { }
-    var briefPresentation: ResponseBriefPresentation?
-
-    var body: some View {
-        HStack(spacing: 2) {
-            if let briefPresentation {
-                ResponseBriefToggleButton(presentation: briefPresentation)
-            }
-
-            PromptHistoryButton(
-                history: model.promptHistory,
-                paneID: pane.id,
-                reuse: { model.setComposerDraft($0, for: pane.id) }
-            )
-
-            if showsPiSessionSummary {
-                Button("Summarize", systemImage: "list.bullet.clipboard", action: summarizePiSession)
-                    .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.small))
-                    .disabled(!model.canControl(machineID: pane.machineID))
-                    .help("Summarize this Pi session and where you left off")
-                    .accessibilityIdentifier("pane-summarize-pi-session")
-                    .accessibilityHint("Opens a short summary generated in a separate headless Pi session")
-                    .padding(.horizontal, 2)
-            }
-
-            Button("Focus on Mac", systemImage: pane.focused ? "scope" : "macwindow") {
-                Task { await model.focus(pane) }
-            }
-            .buttonStyle(HerdrIconButtonStyle(tint: pane.focused ? HerdrTheme.accent : HerdrTheme.iconTint))
-            .disabled(!model.canControl(machineID: pane.machineID))
-            .help(pane.focused ? "This pane is focused in terminal" : "Focus this pane in terminal")
-            .accessibilityHint(pane.focused ? "This pane is focused on your Mac" : "Focuses this pane on your Mac")
         }
     }
 }

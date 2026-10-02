@@ -7,7 +7,6 @@ struct HerdrSidebarView: View {
     /// infer it from a selection change (clicking the already-selected chat has
     /// to work too).
     let openPane: (HerdrPane) -> Void
-    let openWorkspace: (HerdrWorkspace) -> Void
     var openDashboard: (() -> Void)? = nil
     var openFirstMate: (() -> Void)? = nil
     var openPRReview: (() -> Void)? = nil
@@ -609,7 +608,7 @@ struct HerdrSidebarView: View {
                 .accessibilityValue("\(snapshot.unreadCount)")
             let dividers = SidebarChatPresentation.dividerFlags(groupSizes: snapshot.unreadGroups.map { $0.chats.count })
             ForEach(Array(snapshot.unreadGroups.flatMap(\.chats).enumerated()), id: \.element.id) { index, pane in
-                chatRow(pane, showsDivider: dividers[index], showsWorkspaceAction: true)
+                chatRow(pane, showsDivider: dividers[index])
                     .padding(.bottom, 2)
             }
         }
@@ -624,7 +623,7 @@ struct HerdrSidebarView: View {
                 .accessibilityValue("\(snapshot.starredCount)")
             let dividers = SidebarChatPresentation.dividerFlags(groupSizes: snapshot.starredGroups.map { $0.chats.count })
             ForEach(Array(snapshot.starredGroups.flatMap(\.chats).enumerated()), id: \.element.id) { index, pane in
-                chatRow(pane, showsDivider: dividers[index], showsWorkspaceAction: true)
+                chatRow(pane, showsDivider: dividers[index])
                     .padding(.bottom, 2)
             }
         }
@@ -828,9 +827,6 @@ struct HerdrSidebarView: View {
 
     @ViewBuilder
     private func workspaceMenu(_ workspace: HerdrWorkspace) -> some View {
-        Button("Open workspace", systemImage: "arrow.right.square") {
-            openWorkspace(workspace)
-        }
         Button("Focus on Mac", systemImage: "scope") {
             Task { await model.focus(workspace) }
         }
@@ -1184,8 +1180,7 @@ struct HerdrSidebarView: View {
         _ pane: HerdrPane,
         showingLastActivity: Bool = false,
         hierarchy: PiSessionTree.Row? = nil,
-        showsDivider: Bool = false,
-        showsWorkspaceAction: Bool = false
+        showsDivider: Bool = false
     ) -> some View {
         SidebarLiveChatRow(model: model, paneID: pane.id) { pane in
             SidebarChatRow(
@@ -1211,13 +1206,6 @@ struct HerdrSidebarView: View {
             )
         }
         .contextMenu {
-            if showingLastActivity || hierarchy?.workspaceLabel != nil || showsWorkspaceAction,
-               let workspace = model.workspace(containing: pane) {
-                Button("Open \(workspace.label) workspace", systemImage: "folder") {
-                    openWorkspace(workspace)
-                }
-                Divider()
-            }
             if let destination = model.selectedPaneID.flatMap({ model.pane(id: $0) }),
                model.canAddConversationContext(from: pane, to: destination) {
                 Button("Add to current prompt", systemImage: "bubble.left.and.text.bubble.right") {

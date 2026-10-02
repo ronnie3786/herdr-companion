@@ -31,7 +31,7 @@ struct NavigationHistoryTests {
         var history = trail(.pane("a"), .pane("b"))
         _ = history.goBack(isAlive: alive)
 
-        history.record(.attention)
+        history.record(.fleet)
 
         #expect(!history.canGoForward)
         #expect(history.backward == [.pane("a")])
@@ -40,15 +40,15 @@ struct NavigationHistoryTests {
     @Test("Mixed scope and pane destinations round-trip")
     func mixedDestinationsRoundTrip() {
         let destinations: [HerdrDestination] = [
-            .pane("a"), .activeWork, .workspace("w1"), .activity,
+            .pane("a"), .activeWork, .git("a"), .activity,
         ]
         var history = trail(destinations)
 
-        #expect(history.goBack(isAlive: alive) == .workspace("w1"))
+        #expect(history.goBack(isAlive: alive) == .git("a"))
         #expect(history.goBack(isAlive: alive) == .activeWork)
         #expect(history.goBack(isAlive: alive) == .pane("a"))
         #expect(history.goForward(isAlive: alive) == .activeWork)
-        #expect(history.goForward(isAlive: alive) == .workspace("w1"))
+        #expect(history.goForward(isAlive: alive) == .git("a"))
         #expect(history.goForward(isAlive: alive) == .activity)
     }
 
@@ -186,13 +186,32 @@ struct NavigationHistoryTests {
         let snapshot = NavigationHistorySnapshot(
             version: NavigationHistorySnapshot.currentVersion,
             backward: [HerdrDestinationRecord(.pane("a"))!],
-            current: HerdrDestinationRecord(.workspace("w1")),
+            current: HerdrDestinationRecord(.fleet),
             forward: []
         )
         var restored = NavigationHistory(snapshot: snapshot)
 
         #expect(restored.canGoBack)
         #expect(restored.goBack(isAlive: alive) == .pane("a"))
+    }
+
+    @Test("Retired workspace and attention entries drop out of a restored snapshot")
+    func retiredDestinationsDropOut() {
+        let snapshot = NavigationHistorySnapshot(
+            version: NavigationHistorySnapshot.currentVersion,
+            backward: [
+                HerdrDestinationRecord(.pane("a"))!,
+                HerdrDestinationRecord(kind: "workspace", id: "w1"),
+                HerdrDestinationRecord(kind: "attention", id: nil),
+            ],
+            current: HerdrDestinationRecord(kind: "attention", id: nil),
+            forward: [HerdrDestinationRecord(kind: "workspace", id: "w2")]
+        )
+        let restored = NavigationHistory(snapshot: snapshot)
+
+        #expect(restored.backward == [.pane("a")])
+        #expect(restored.current == nil)
+        #expect(restored.forward.isEmpty)
     }
 
     private func trail(_ destinations: HerdrDestination...) -> NavigationHistory {

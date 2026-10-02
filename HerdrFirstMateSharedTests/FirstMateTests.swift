@@ -717,11 +717,11 @@ struct FirstMateTests {
     }
 
     #if os(macOS)
-    @Test("First Mate is a persistent shell destination outside the crowded picker")
+    @Test("First Mate is a persistent shell destination outside the ⋯ menu")
     func navigationRecord() throws {
         let record = try #require(HerdrDestinationRecord(.firstMate))
         #expect(record.destination == .firstMate)
-        #expect(HerdrDetailScope.pickerSelection(for: .firstMate) == nil)
+        #expect(!HerdrDetailScope.menuDestinations.contains(.firstMate))
     }
     #endif
 }

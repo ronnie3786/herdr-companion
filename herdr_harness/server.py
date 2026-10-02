@@ -3081,8 +3081,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         "continueFromRunId",
                         "systemPrompt",
                         "paneId",
-                        "cwd", "profile", "context", "scope", "clientRequestId", "parentSessionId",
-                        "responseBriefLength",
+                        "cwd", "profile", "context", "scope", "clientRequestId",
                     }
                     for key in body
                 ):
@@ -3117,7 +3116,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("continueFromRunId is invalid") from exc
                 profile = body.get("profile")
                 hud_chat = profile == "hud-chat-v1"
-                response_brief = profile == "response-brief-v1"
                 smart_rename = profile == SMART_RENAME_PROFILE
                 if smart_rename:
                     # Naming is one-shot and tool-free: no continuation, files,
@@ -3137,7 +3135,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             "context",
                             "scope",
                             "clientRequestId",
-                            "parentSessionId",
                         )
                     ):
                         raise HTTPValidationError(
@@ -3151,12 +3148,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         ),
                         202,
                     )
-                if "parentSessionId" in body and not response_brief:
-                    raise HTTPValidationError("parentSessionId requires response-brief-v1")
-                if "responseBriefLength" in body and not response_brief:
-                    raise HTTPValidationError("responseBriefLength requires response-brief-v1")
-                if response_brief and not valid_pi_session_id(body.get("parentSessionId")):
-                    raise HTTPValidationError("parentSessionId is invalid")
                 if hud_chat and mode != "act":
                     raise HTTPValidationError("HUD chats must use act mode")
                 if "cwd" in body and not hud_chat:
@@ -3168,15 +3159,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                         raise HTTPValidationError("cwd must be an absolute path or ~")
                     if pane_id is not None:
                         raise HTTPValidationError("A pane-scoped Agent run cannot change cwd")
-                if response_brief:
-                    if mode != "ask":
-                        raise HTTPValidationError("Response briefs must use ask mode")
-                    if any(key in body for key in ("attachments", "systemPrompt", "continueFromRunId")):
-                        raise HTTPValidationError("Response briefs do not accept attachments, systemPrompt, or continuation")
-                    from .response_briefs import LENGTH_OPTIONS
-                    if "responseBriefLength" in body and body.get("responseBriefLength") not in LENGTH_OPTIONS:
-                        raise HTTPValidationError("responseBriefLength must be minimal, medium, or long")
-                    return service.start_response_brief(body), 202
                 if profile is not None and not hud_chat:
                     return service.start_contextual_question(body), 202
                 if any(key in body for key in ("context", "scope", "clientRequestId")):

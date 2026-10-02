@@ -92,8 +92,8 @@ has no approve, direct-update, assignment, or sync mutation command.
 - First Mate jobs snapshot at dispatch creation. Coordinator conversations and
   retries of an assignment retain their original snapshot. New independent
   assignments resolve the current host profile.
-- Restricted contextual questions, PR-review questions, smart renames and response
-  briefs do not receive profiles.
+- Restricted contextual questions, PR-review questions and smart renames do not
+  receive profiles.
 
 A profile edit does not silently rewrite an active conversation or assignment.
 Start a **new conversation/assignment** to adopt it. Pi package upgrades require

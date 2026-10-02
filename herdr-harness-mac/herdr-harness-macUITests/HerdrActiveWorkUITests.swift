@@ -5,7 +5,7 @@ import XCTest
 /// The demo payload deliberately exercises the richer route relationships: an
 /// untracked Jira candidate on the board, plus a tracked item whose current
 /// phase owns both a Pi session and a Buzz thread. This test keeps those records
-/// read-only while proving the toolbar scope picker and the board's own
+/// read-only while proving the title bar's ⋯ menu and the board's own
 /// projection switch drive the real shell.
 final class HerdrActiveWorkUITests: HerdrUITestCase {
     private var extraLaunchArguments: [String] = []
@@ -24,28 +24,29 @@ final class HerdrActiveWorkUITests: HerdrUITestCase {
     }
 
     @MainActor
-    func testScopePickerOpensBoardAndSwitchesToFocusRoute() throws {
+    func testMoreMenuOpensBoardAndSwitchesToFocusRoute() throws {
         let app = launchLegacyDemoApp()
 
+        let menu = app.control(identifier: "shell-more-menu")
         XCTAssertTrue(
-            app.control(identifier: "detail-scope-picker").waitForExistence(timeout: 10),
-            "The detail toolbar should expose the scope picker that owns Active Work"
+            menu.waitForExistence(timeout: 10),
+            "The title bar should expose the ⋯ menu that owns Active Work"
         )
+        menu.click()
         guard let activeWork = waitForFirst(
             of: [
-                app.control(identifier: "detail-scope-picker").buttons["Active Work"],
-                app.control(identifier: "detail-scope-picker").radioButtons["Active Work"],
-                app.control(named: "Active Work"),
+                app.menuItems["shell-menu-activeWork"],
+                app.menuItems["Active Work"],
             ],
             timeout: 10
         ) else {
-            return XCTFail("The scope picker should carry an Active Work segment")
+            return XCTFail("The ⋯ menu should offer Active Work")
         }
         activeWork.click()
 
         XCTAssertTrue(
             app.control(identifier: "active-work-container").waitForExistence(timeout: 5),
-            "The Active Work segment should replace the detail column with Active Work"
+            "Active Work should replace the detail column"
         )
         XCTAssertTrue(
             app.control(identifier: "active-work-board").waitForExistence(timeout: 5),

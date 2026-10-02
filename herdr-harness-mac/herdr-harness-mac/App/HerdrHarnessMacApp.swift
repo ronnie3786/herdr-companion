@@ -379,11 +379,6 @@ struct HerdrMacCommands: Commands {
             }
             .accessibilityIdentifier("menu-first-mate-hud")
 
-            Button("Go to Attention") {
-                shell.show(.attention, model: model)
-            }
-            .keyboardShortcut("1", modifiers: .command)
-
             Button("Focus Chat") {
                 focusPane(mode: .chat)
             }
@@ -393,11 +388,6 @@ struct HerdrMacCommands: Commands {
                 focusPane(mode: .terminal)
             }
             .keyboardShortcut("3", modifiers: .command)
-
-            Button("Workspace Overview") {
-                shell.show(.workspace, model: model)
-            }
-            .keyboardShortcut("4", modifiers: .command)
 
             Button("Activity Feed") {
                 shell.show(.activity, model: model)

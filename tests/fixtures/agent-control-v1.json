@@ -58,7 +58,7 @@
           },
           "additionalProperties": false
         },
-        "targetKinds": ["pane", "workspace", "tab", "first-mate", "hud-chat"],
+        "targetKinds": ["pane", "first-mate", "hud-chat"],
         "effect": "navigation",
         "enabled": true
       },
@@ -75,13 +75,11 @@
                 "terminal",
                 "git",
                 "skills",
-                "workspace",
                 "active-work",
                 "pr-review",
                 "watchers",
                 "first-mate",
                 "fleet",
-                "attention",
                 "activity"
               ]
             }

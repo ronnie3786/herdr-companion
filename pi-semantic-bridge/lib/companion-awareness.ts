@@ -7,7 +7,6 @@ export type CompanionSurface = "pane" | "hud" | "agent-run";
 const RESTRICTED_AGENT_PROFILES = new Set([
   "contextual-question-v1",
   "pr-review-question-v1",
-  "response-brief-v1",
   "smart-rename-v1",
 ]);
 

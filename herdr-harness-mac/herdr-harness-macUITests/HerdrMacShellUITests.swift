@@ -70,24 +70,20 @@ final class HerdrMacShellUITests: HerdrUITestCase {
             "The demo fleet should be loaded before driving the menus"
         )
 
-        guard let attention = app.menuBarItem("View", item: "Go to Attention") else {
-            return XCTFail("View ▸ Go to Attention should exist")
+        XCTAssertNil(app.menuBarItem("View", item: "Go to Attention"), "The Mac has no attention deck")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertNil(app.menuBarItem("View", item: "Workspace Overview"), "The Mac has no workspace overview")
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+
+        guard let fleet = app.menuBarItem("View", item: "Fleet") else {
+            return XCTFail("View ▸ Fleet should exist")
         }
-        XCTAssertTrue(attention.isEnabled)
-        attention.click()
+        XCTAssertTrue(fleet.isEnabled)
+        fleet.click()
 
         XCTAssertTrue(
-            app.control(identifier: "attention-refresh").waitForExistence(timeout: 5),
-            "Go to Attention should show the attention deck"
-        )
-
-        guard let overview = app.menuBarItem("View", item: "Workspace Overview") else {
-            return XCTFail("View ▸ Workspace Overview should exist")
-        }
-        overview.click()
-        XCTAssertTrue(
-            app.control(identifier: "pane-demo1|w1:p1").waitForExistence(timeout: 5),
-            "Workspace Overview should show the selected workspace's pane cards"
+            app.control(identifier: "fleet-management-sheet").waitForExistence(timeout: 5),
+            "View ▸ Fleet should show Fleet in the detail column"
         )
     }
 
@@ -154,17 +150,17 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     }
 
     @MainActor
-    func testCommandOneReachesTheAttentionDeckFromTheKeyboard() throws {
+    func testCommandSevenReachesFleetFromTheKeyboard() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-pane-demo1|w1:p2"].waitForExistence(timeout: 10))
         app.buttons["sidebar-pane-demo1|w1:p2"].click()
         XCTAssertTrue(app.control(identifier: "terminal-demo1|w1:p2").waitForExistence(timeout: 5))
 
-        app.typeKey("1", modifierFlags: .command)
+        app.typeKey("7", modifierFlags: .command)
 
         XCTAssertTrue(
-            app.control(identifier: "attention-refresh").waitForExistence(timeout: 5),
-            "⌘1 should reach the attention deck without touching the menu"
+            app.control(identifier: "fleet-management-sheet").waitForExistence(timeout: 5),
+            "⌘7 should reach Fleet without touching the menu"
         )
     }
 
@@ -220,13 +216,17 @@ final class HerdrMacShellUITests: HerdrUITestCase {
     }
 
     @MainActor
-    func testDetailToolbarExposesTheScopePicker() throws {
+    func testDetailToolbarExposesTheMoreMenu() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
 
         XCTAssertTrue(
-            app.control(identifier: "detail-scope-picker").waitForExistence(timeout: 5),
-            "The detail toolbar should carry the session/workspace/attention picker"
+            app.control(identifier: "shell-more-menu").waitForExistence(timeout: 5),
+            "The title bar should carry the ⋯ menu with the app's destinations"
+        )
+        XCTAssertFalse(
+            app.control(identifier: "detail-scope-picker").exists,
+            "The segmented scope picker was folded into the ⋯ menu"
         )
         XCTAssertTrue(
             app.shellWindow.exists,
@@ -234,30 +234,30 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         )
     }
 
-    /// Fleet is a detail destination like every other, reached from the central
-    /// picker rather than a second affordance of its own in the window chrome.
+    /// Fleet is a detail destination like every other, reached from the title
+    /// bar's ⋯ menu rather than a second affordance of its own in the window chrome.
     @MainActor
-    func testScopePickerOpensFleetInTheDetailColumn() throws {
+    func testMoreMenuOpensFleetInTheDetailColumn() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
 
-        let picker = app.control(identifier: "detail-scope-picker")
-        XCTAssertTrue(picker.waitForExistence(timeout: 10))
+        let menu = app.control(identifier: "shell-more-menu")
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
 
         XCTAssertFalse(
             app.control(identifier: "fleet-toolbar-button").exists,
-            "Fleet lives in the picker, so it must not also carry a dedicated toolbar button"
+            "Fleet lives in the ⋯ menu, so it must not also carry a dedicated toolbar button"
         )
 
+        menu.click()
         guard let fleet = waitForFirst(
             of: [
-                picker.buttons["Fleet"],
-                picker.radioButtons["Fleet"],
-                app.control(named: "Fleet"),
+                app.menuItems["shell-menu-fleet"],
+                app.menuItems["Fleet"],
             ],
             timeout: 10
         ) else {
-            return XCTFail("The scope picker should carry a Fleet segment")
+            return XCTFail("The ⋯ menu should offer Fleet")
         }
         fleet.click()
 
@@ -271,8 +271,8 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         )
     }
 
-    /// The navigator used to carry an Active Work CTA above the tree. It moved
-    /// into the toolbar picker, which already owned every other destination.
+    /// The navigator used to carry an Active Work CTA above the tree. It lives
+    /// in the title bar's ⋯ menu with the app's other destinations.
     @MainActor
     func testSidebarNoLongerCarriesTheActiveWorkCTA() throws {
         let app = launchDemoApp()
@@ -280,7 +280,7 @@ final class HerdrMacShellUITests: HerdrUITestCase {
 
         XCTAssertFalse(
             app.control(identifier: "sidebar-active-work").exists,
-            "Active Work lives in the toolbar scope picker now, not the sidebar"
+            "Active Work lives in the title bar's ⋯ menu, not the sidebar"
         )
     }
 

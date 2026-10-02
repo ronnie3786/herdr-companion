@@ -145,8 +145,6 @@ def write_fake_pi(directory: Path) -> Path:
                     "herdrAgentRunId": os.environ.get("HERDR_AGENT_RUN_ID"),
                     "herdrAgentRunMode": os.environ.get("HERDR_AGENT_RUN_MODE"),
                     "herdrAgentRunProfile": os.environ.get("HERDR_AGENT_RUN_PROFILE"),
-                    "herdrPiSessionId": os.environ.get("HERDR_PI_SESSION_ID"),
-                    "herdrPiParentSessionId": os.environ.get("HERDR_PI_PARENT_SESSION_ID"),
                 }), encoding="utf-8")
             mode = os.environ.get("FAKE_AGENT_MODE", "success")
             if mode == "hang":
@@ -296,17 +294,6 @@ def write_fake_pi(directory: Path) -> Path:
                     },
                 }}), flush=True)
                 print(json.dumps({"type": "agent_end"}), flush=True)
-            elif mode in {"final-text-error", "final-text-aborted"}:
-                stop_reason = mode.removeprefix("final-text-")
-                message = {
-                    "role": "assistant",
-                    "text": "Partial response brief",
-                    "stopReason": stop_reason,
-                }
-                if stop_reason == "error":
-                    message["errorMessage"] = "provider failed after streaming text"
-                print(json.dumps({"event": {"type": "message_end", "message": message}}), flush=True)
-                print(json.dumps({"type": "agent_end", "messages": [message]}), flush=True)
             elif mode in {"naming-title-error", "naming-title-aborted"}:
                 # A valid-looking naming result streamed before the provider
                 # failed or aborted. The companion must still fail the run.
@@ -1000,63 +987,75 @@ class AgentRunManagerTests(unittest.TestCase):
             self.assertFalse(finished["run"]["response"])
             manager.stop()
 
-    def test_response_brief_charter_uses_captured_length_or_legacy_budgets(self):
+    def test_persisted_runs_from_a_retired_profile_stay_readable_history_only(self):
+        # Earlier versions recorded one-shot response-brief-v1 runs. Startup,
+        # reads, and history must tolerate them, but they can never resume.
+        from datetime import datetime, timezone
+        from herdr_harness import assistant
+
         with tempfile.TemporaryDirectory() as raw_directory:
             directory = Path(raw_directory)
-            capture = directory / "capture.json"
-            manager = self.manager(directory, FAKE_AGENT_CAPTURE=str(capture))
-            context = {
-                "version": 1,
-                "snapshotId": "legacy-brief-snapshot",
-                "capturedAt": "2026-09-17T00:00:00Z",
-                "source": {"feature": "chat.response-brief", "instanceId": "synthetic-legacy-response"},
-                "items": [
-                    {
-                        "id": "response-part-1",
-                        "kind": "text.v1",
-                        "label": "Original response part 1 of 1 (concatenate verbatim in order)",
-                        "priority": "required",
-                        "text": "a" * 100,
-                    }
-                ],
-            }
-            cases = (
-                (None, "at most 40 words", "at most 25 non-whitespace Unicode scalars"),
-                ("long", "at most 120 words", "at most 120 non-whitespace Unicode scalars"),
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            completed_id, interrupted_id = "agr_00000000000a", "agr_00000000000b"
+            for run_id, status in ((completed_id, "completed"), (interrupted_id, "running")):
+                run_dir = directory / "runs" / run_id
+                sessions = run_dir / "sessions"
+                sessions.mkdir(parents=True)
+                session_file = sessions / "synthetic-session.jsonl"
+                session_file.write_text("{}\n", encoding="utf-8")
+                (run_dir / "run.json").write_text(json.dumps({
+                    "id": run_id,
+                    "status": status,
+                    "mode": "ask",
+                    "prompt": "Synthetic source answer",
+                    "response": "Synthetic takeaway" if status == "completed" else None,
+                    "error": None,
+                    "createdAt": now,
+                    "finishedAt": now if status == "completed" else None,
+                    "threadRootRunId": run_id,
+                    "sessionId": "synthetic-session",
+                    "sessionFile": str(session_file) if status == "completed" else None,
+                    "sessionsDir": str(sessions),
+                    "cwd": str(directory),
+                    "label": "Synthetic legacy run",
+                    "profile": "response-brief-v1",
+                    "responseBriefParentSessionId": "synthetic-parent-session",
+                    "responseBriefLength": "medium",
+                    "clientRequestId": f"synthetic-legacy-{run_id}",
+                }), encoding="utf-8")
+            manager = self.manager(directory)
+            self.addCleanup(manager.stop)
+
+            completed = manager.get(completed_id)["run"]
+            self.assertEqual(completed["status"], "completed")
+            self.assertEqual(completed["response"], "Synthetic takeaway")
+            self.assertNotIn("responseBriefLength", completed)
+            self.assertEqual(manager.get(interrupted_id)["run"]["status"], "failed")
+            turns = assistant.history(manager, completed_id)["turns"]
+            self.assertEqual([turn["id"] for turn in turns], [completed_id])
+
+            attempts = (
+                lambda: manager.promotable(completed_id),
+                lambda: manager.mark_promoted(completed_id, workspace_id="w1", pane_id="w1:p1"),
+                lambda: manager.start(
+                    prompt="Continue the legacy run",
+                    label="Continue",
+                    cwd=str(directory / "home"),
+                    topology={},
+                    continue_from_run_id=completed_id,
+                ),
             )
-            for index, (length, words, characters) in enumerate(cases):
-                with self.subTest(length=length):
-                    metadata = {
-                        "profile": "response-brief-v1",
-                        "responseBriefParentSessionId": "legacy-source-session",
-                        "clientRequestId": f"legacy-brief-request-{index:08d}",
-                        "context": context,
-                        "assistantScope": {
-                            "paneId": None,
-                            "workspaceId": None,
-                            "rootPath": str((directory / "home").resolve()),
-                        },
-                    }
-                    if length is not None:
-                        metadata["responseBriefLength"] = length
-                    started = manager.start(
-                        prompt="Create the response brief.",
-                        label="Response brief",
-                        cwd=str(directory / "home"),
-                        topology={},
-                        mode="ask",
-                        _assistant=metadata,
-                    )
-                    wait_for_status(manager, started["run"]["id"], {"completed"})
-                    argv = json.loads(capture.read_text(encoding="utf-8"))["argv"]
-                    charter = argv[argv.index("--append-system-prompt") + 1]
-                    self.assertIn(words, charter)
-                    self.assertIn(characters, charter)
-                    if length is None:
-                        self.assertNotIn("The selected length option is", charter)
-                    else:
-                        self.assertIn(f"The selected length option is {length}.", charter)
-            manager.stop()
+            for attempt in attempts:
+                with self.assertRaises(AgentRunError) as error:
+                    attempt()
+                self.assertEqual(error.exception.code, "agent_run_profile_retired")
+                self.assertEqual(error.exception.status, 409)
+            self.assertEqual(manager.get(completed_id)["run"]["status"], "completed")
+            self.assertEqual(sorted(path.name for path in (directory / "runs").glob("agr_*")),
+                             [completed_id, interrupted_id])
+            deleted = manager.delete(completed_id)
+            self.assertTrue(deleted["ok"])
+            self.assertFalse((directory / "runs" / completed_id).exists())
 
     def test_empty_response_completion_is_marked_failed_with_no_output_error(self):
         with tempfile.TemporaryDirectory() as raw_directory:

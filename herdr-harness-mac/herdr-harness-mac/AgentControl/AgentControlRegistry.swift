@@ -19,9 +19,9 @@ enum AgentControlRegistry {
             descriptor("ui.open", "Open exact target", schema: schema(properties: [
                 "view": enumString(["chat", "terminal", "git", "skills"]),
                 "inspector": enumString(["overview", "agents", "documents", "workflow"]),
-            ]), targetKinds: ["pane", "workspace", "tab", "first-mate", "hud-chat"], effect: "navigation", enabled: enabled, reason: disabledReason),
+            ]), targetKinds: ["pane", "first-mate", "hud-chat"], effect: "navigation", enabled: enabled, reason: disabledReason),
             descriptor("ui.segment", "Open app segment", schema: schema(properties: [
-                "segment": enumString(["chat", "terminal", "git", "skills", "workspace", "active-work", "pr-review", "watchers", "first-mate", "fleet", "attention", "activity"]),
+                "segment": enumString(["chat", "terminal", "git", "skills", "active-work", "pr-review", "watchers", "first-mate", "fleet", "activity"]),
             ], required: ["segment"]), targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
             descriptor("ui.back", "Go back", schema: emptySchema, targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),
             descriptor("ui.forward", "Go forward", schema: emptySchema, targetKinds: [], effect: "navigation", enabled: enabled, reason: disabledReason),

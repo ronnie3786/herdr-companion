@@ -18,10 +18,10 @@ Example human requests:
 - “Find the latest chat for EXAMPLE-123 and open it here.”
 - “Find the conversation about retrying failed uploads.”
 - “Open this pane, then switch to Git.”
-- “Show this workspace / Active Work ticket / Fleet machine.”
+- “Show this Active Work ticket / Fleet machine.”
 - “Summarize this chat.”
 - “Find the feature's workspace, add a new chat there, and open it.”
-- “Create a separate workspace for this feature and open it.”
+- “Create a separate workspace for this feature and open a new chat in it.”
 
 **Completion means app-wide coverage, not just pane deep links.** Deliver the
 foundation first, then finish a tracked navigation/action inventory. Do not call
@@ -85,7 +85,7 @@ herdr-control chat create --workspace-ref-file selected-workspace.json \
 `selected-chat.json` and `selected-workspace.json` contain a returned target object,
 not prose or a credential. Convenience flags for exact machine/workspace/tab/pane
 IDs resolve to the same typed target. A tab request never silently chooses one of
-several chats: it opens/selects the tab overview or returns candidates.
+several chats: it returns candidates.
 
 Global conventions:
 
@@ -252,15 +252,15 @@ parity, including toolbar, context-menu, submenu, keyboard-only and sheet action
 
 | Surface | Navigation and action families |
 | --- | --- |
-| Shell | Chat/Session, Terminal, Git, Workspace, Active Work, First Mate, Fleet, Attention, Activity; back/forward; next/previous pane; palette; reveal in sidebar; refresh |
+| Shell | Chat/Session, Terminal, Git, Skills, Active Work, PR Review, Watchers, First Mate, Fleet, Activity; back/forward; next/previous pane; palette; reveal in sidebar; refresh |
 | Sidebar | Search and machine/recency/category/color filters; expand/collapse; workspace/tab/chat selection; starred/unread; tab colors and labels |
-| Workspaces/tabs | Inspect, create, rename, open, terminal focus; new shell/chat, split; cleanup preview; separately confirmed close/apply |
+| Workspaces/tabs | Inspect, create, rename, terminal focus; new shell/chat, split; cleanup preview; separately confirmed close/apply |
 | Chat | Exact live or saved conversation; summarize; smart/manual rename; new Pi session; model/thinking; compact/reload; draft vs send; attachments, quotes, results and prompt history; separate stop/close operations |
 | Git | Repository/file/section/commit selection, diff state, refresh; explicitly authorized staging/unstaging and other existing mutations |
 | Active Work | Board/item/path/stage/agent/evidence selection; existing revision-checked updates and lifecycle actions; preserve recorded human gates |
 | First Mate | Host/feature, conversation, workflow graph/timeline, agents, documents; existing create/send/model/lifecycle operations without implicit stage approval |
 | Fleet | Machine/catalog/item selection, status and refresh; explicit plan/sync/install/remove with existing safeguards |
-| Attention/activity | Filters, item selection, linked session navigation and acknowledgement/read state |
+| Activity | Filters, item selection, linked session navigation and acknowledgement/read state |
 | HUD/Notes/Agent window | Show/hide, saved chat selection, history, folders, note selection/editing, summary/question views, results, explicit promotion to workspace |
 | Settings and other windows | Open specific sections, inspect nonsecret settings, typed supported setters, update checks; credential entry and OS security prompts stay human-controlled |
 
@@ -309,7 +309,7 @@ separate explicit mutations. Never start a model turn merely to show a result.
 - Finalize identity, receiver authentication, command/receipt schemas and threat model.
 - Add `herdr-control`, live metadata discovery and existing saved-chat discovery.
 - Add registered Mac receiver, state inspection and the shared route dispatcher.
-- Open the exact pane/conversation/workspace/tab and all main segments; support
+- Open the exact pane/conversation and all main segments; support
   current-context Git/Chat/Terminal switching, closed-window recovery and history.
 - Explicitly report metadata-only or unsupported historical search on older hosts.
 

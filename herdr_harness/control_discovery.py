@@ -541,7 +541,9 @@ class DiscoveryService:
                         "serverId": self.server_id,
                         "workspaceId": workspace_id,
                     },
-                    "openModes": ["workspace"],
+                    # Workspaces and tabs are resource targets (create, rename,
+                    # tab colors); the Mac UI opens only their chats.
+                    "openModes": [],
                     "_fields": {
                         "title": title,
                         "cwd": cwd,
@@ -574,7 +576,7 @@ class DiscoveryService:
                     "workspaceId": workspace_id,
                     "tabId": tab_id,
                 },
-                "openModes": ["workspace"],
+                "openModes": [],
                 "_fields": {
                     "title": title,
                     "workspaceName": workspace_name,

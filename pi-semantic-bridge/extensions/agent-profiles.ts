@@ -5,7 +5,7 @@ export const PROFILE_MARKER = "<!-- herdr-agent-profile:v1 -->";
 const ENTRY = "herdr.agent-profile-snapshot";
 // Four 16KiB Markdown documents can expand when nested JSON escapes newlines.
 const MAX_BYTES = 512 * 1024;
-const RESTRICTED = new Set(["contextual-question-v1", "pr-review-question-v1", "response-brief-v1", "smart-rename-v1"]);
+const RESTRICTED = new Set(["contextual-question-v1", "pr-review-question-v1", "smart-rename-v1"]);
 
 type Snapshot = { prompt: string; [key: string]: unknown };
 function snapshot(value: unknown): Snapshot | undefined {

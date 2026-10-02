@@ -27,7 +27,7 @@ test("only known nonempty Companion runtime hints select a surface", () => {
   assert.equal(companionSurface({HERDR_PANE_ID:"w1:p1"}), "pane");
   assert.equal(companionSurface({HERDR_AGENT_RUN_ID:"agr_000000000001", HERDR_AGENT_RUN_PROFILE:"hud-chat-v1"}), "hud");
   assert.equal(companionSurface({HERDR_AGENT_RUN_ID:"agr_000000000002", HERDR_AGENT_RUN_MODE:"ask"}), "agent-run");
-  for (const profile of ["contextual-question-v1", "pr-review-question-v1", "response-brief-v1", "smart-rename-v1"]) {
+  for (const profile of ["contextual-question-v1", "pr-review-question-v1", "smart-rename-v1"]) {
     assert.equal(companionSurface({HERDR_AGENT_RUN_ID:"agr_000000000003", HERDR_AGENT_RUN_PROFILE:profile}), undefined);
   }
   assert.equal(companionSurface({

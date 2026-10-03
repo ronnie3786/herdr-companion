@@ -40,14 +40,14 @@ struct NavigationHistoryTests {
     @Test("Mixed scope and pane destinations round-trip")
     func mixedDestinationsRoundTrip() {
         let destinations: [HerdrDestination] = [
-            .pane("a"), .activeWork, .git("a"), .activity,
+            .pane("a"), .firstMate, .git("a"), .activity,
         ]
         var history = trail(destinations)
 
         #expect(history.goBack(isAlive: alive) == .git("a"))
-        #expect(history.goBack(isAlive: alive) == .activeWork)
+        #expect(history.goBack(isAlive: alive) == .firstMate)
         #expect(history.goBack(isAlive: alive) == .pane("a"))
-        #expect(history.goForward(isAlive: alive) == .activeWork)
+        #expect(history.goForward(isAlive: alive) == .firstMate)
         #expect(history.goForward(isAlive: alive) == .git("a"))
         #expect(history.goForward(isAlive: alive) == .activity)
     }
@@ -161,6 +161,23 @@ struct NavigationHistoryTests {
         let restored = NavigationHistory(snapshot: snapshot)
 
         #expect(restored.backward == [.pane("a"), .pane("c")])
+    }
+
+    @Test("Retired Active Work history is skipped while neighboring destinations survive")
+    func retiredActiveWorkHistoryIsSkipped() {
+        let retired = HerdrDestinationRecord(kind: "activeWork", id: nil)
+        let snapshot = NavigationHistorySnapshot(
+            version: NavigationHistorySnapshot.currentVersion,
+            backward: [HerdrDestinationRecord(.pane("a"))!, retired],
+            current: retired,
+            forward: [retired, HerdrDestinationRecord(.fleet)!]
+        )
+        var restored = NavigationHistory(snapshot: snapshot)
+        #expect(restored.current == nil)
+        #expect(restored.backward == [.pane("a")])
+        #expect(restored.forward == [.fleet])
+        #expect(restored.goBack(isAlive: alive) == .pane("a"))
+        #expect(HerdrDetailScope(rawValue: "activeWork") == nil)
     }
 
     @Test("Restoring caps backward to the entries nearest to current")

@@ -70,7 +70,7 @@ struct PRReviewWindowRoot: View {
             store: session.store,
             comments: session.comments,
             canControl: session.canControl,
-            openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
+            openURL: { url in Task { try? await HerdrExternalLinkOpener.open(url) } },
             askAI: { selection, view, rect in
                 guard let review = session.store.snapshot?.review ?? session.store.selectedReview else { return }
                 Task {

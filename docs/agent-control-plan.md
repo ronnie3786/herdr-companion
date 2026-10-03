@@ -1,5 +1,8 @@
 # Agent-driven Herdr Companion
 
+Active Work references below are historical. That feature has been removed;
+see [upgrade notes](active-work-removal.md).
+
 **Status: core v1 implementation plus longer-term parity plan.** The CLI names and
 API routes below describe the original proposed interface. Consult
 [the command guide](agent-control.md) for implemented syntax, capability coverage

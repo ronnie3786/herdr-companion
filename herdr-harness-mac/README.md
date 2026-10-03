@@ -20,11 +20,11 @@ pill:
 - **Chat:** **Prompt History…** and **Summarize Session…** (Pi chats).
 - **Pi session**, **Focus and control** (Focus on Mac, Focus on Mac + Zoom, Interrupt) and
   **Pane** actions, then **Close pane** last.
-- **Go to:** Active Work, Fleet and Activity, plus **Ask Agent…** for a one-off question.
+- **Go to:** Fleet and Activity, plus **Ask Agent…** for a one-off question.
 
-Screens without a chat (Dashboard, Agent view, Fleet, Active Work, Activity, First Mate, PR
+Screens without a chat (Dashboard, Agent view, Fleet, Activity, First Mate, PR
 Review, Watchers) get the same **⋯** menu with just **Go to** and **Ask Agent…**. The View menu
-keeps its shortcuts: Focus Chat (⌘2), Focus Terminal (⌘3), Activity Feed (⌘5), Active Work (⌘6),
+keeps its shortcuts: Focus Chat (⌘2), Focus Terminal (⌘3), Activity Feed (⌘5),
 Fleet (⌘7), PR Review (⌘8) and Watchers (⌘9).
 
 Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party dependencies · macOS 26.
@@ -86,7 +86,7 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
   snapshot fallback), plus real Mac keyboard routing: click the terminal to focus it and type;
   arrows/tab/esc/ctrl-C go straight through. The compact key deck stays for parity.
 - **Comfortable reading**: charcoal surfaces, lavender actions, readable secondary text,
-  and a consistent style across the sidebar, settings, HUD, menu bar, Git, and Active Work.
+  and a consistent style across the sidebar, settings, HUD, menu bar, and Git.
   Conversations in Chat and the HUD use 15-point system text at the default scale, generous spacing, and a
   bounded reading width. The app's text-size preference continues to apply.
 - **Prompt composer**: model, effort, and Terminal keys controls sit above a unified

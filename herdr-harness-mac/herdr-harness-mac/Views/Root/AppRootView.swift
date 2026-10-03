@@ -9,7 +9,6 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     case session
     /// Git shares the mounted pane with Chat, but is a distinct history stop.
     case git
-    case activeWork
     case prReview
     case watchers
     case firstMate
@@ -22,7 +21,6 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     /// Dashboard, First Mate, PR Review and Watchers have their own buttons.
     static let menuDestinations: [HerdrDetailScope] = [
         .session,
-        .activeWork,
         .fleet,
         .activity,
     ]
@@ -46,7 +44,6 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "Chat"
         case .git: "Git"
         case .firstMate: "First Mate"
-        case .activeWork: "Active Work"
         case .prReview: "PR Review"
         case .watchers: "Watchers"
         case .fleet: "Fleet"
@@ -61,7 +58,6 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .session: "bubble.left"
         case .git: "arrow.triangle.branch"
         case .firstMate: "sailboat"
-        case .activeWork: "square.grid.2x2"
         case .prReview: "arrow.triangle.pull"
         case .watchers: "eye"
         case .fleet: "desktopcomputer"
@@ -535,10 +531,6 @@ final class HerdrShellState {
         showSession()
     }
 
-    func showActiveWork() {
-        detailScope = .activeWork
-    }
-
     func presentAgent(prompt: String? = nil) {
         agentInitialPrompt = prompt
         isAgentPresented = true
@@ -580,7 +572,7 @@ final class HerdrShellState {
         preferences.set(visibility != .detailOnly, forKey: home ? "herdr.shell.sidebar.home" : "herdr.shell.sidebar.screens")
     }
 
-    /// Scope-only destinations (Active Work, Fleet, and Activity).
+    /// Scope-only destinations (Fleet and Activity).
     func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
         if scope == .prReview, detailScope != .prReview { prReviewScope = .all }
         if scope == .git {
@@ -604,8 +596,6 @@ final class HerdrShellState {
         case .session, .git: return .session
         case .firstMate:
             return .firstMate
-        case .activeWork:
-            return .activeWork
         case .prReview:
             return .prReview
         case .watchers:
@@ -626,7 +616,6 @@ final class HerdrShellState {
         case .dashboard: .dashboard
         case .agentBoard: .agentBoard
         case .firstMate: .firstMate
-        case .activeWork: .activeWork
         case .prReview: .prReview
         case .watchers: .watchers
         case .fleet: .fleet
@@ -728,7 +717,6 @@ final class HerdrShellState {
         case .dashboard: detailScope = .dashboard
         case .agentBoard: detailScope = .agentBoard
         case .firstMate: detailScope = .firstMate
-        case .activeWork: detailScope = .activeWork
         case .prReview:
             if detailScope != .prReview { prReviewScope = .all }
             detailScope = .prReview
@@ -742,7 +730,7 @@ final class HerdrShellState {
     private func isAlive(_ destination: HerdrDestination, model: HerdrAppModel) -> Bool {
         switch destination {
         case let .pane(id), let .git(id): model.pane(id: id) != nil
-        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .watchers, .fleet, .activity: true
+        case .dashboard, .agentBoard, .firstMate, .prReview, .watchers, .fleet, .activity: true
         }
     }
 
@@ -787,7 +775,6 @@ final class HerdrShellState {
         switch resolvedScope(for: model) {
         case .session, .git:
             return model.currentPaneDetailMode?.rawValue ?? "session"
-        case .activeWork: return "active-work"
         case .dashboard: return "dashboard"
         case .agentBoard: return "agent-board"
         case .prReview: return "pr-review"
@@ -809,7 +796,6 @@ final class HerdrShellState {
 struct AppRootView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
-    @Bindable var activeWorkStore: ActiveWorkStore
     let driver: HerdrConnectionDriver
     let hudController: HerdrHudController
     let quickVoiceController: QuickVoicePanelController
@@ -858,7 +844,6 @@ struct AppRootView: View {
                 WorkspaceNavigationView(
                     model: model,
                     shell: shell,
-                    activeWorkStore: activeWorkStore,
                     modelFavorites: modelFavorites,
                     updates: updates
                 )

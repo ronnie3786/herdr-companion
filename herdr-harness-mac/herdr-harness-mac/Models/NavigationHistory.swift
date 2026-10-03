@@ -15,7 +15,6 @@ enum HerdrDestination: Hashable, Sendable {
     case git(String)
     case dashboard
     case agentBoard
-    case activeWork
     case prReview
     case watchers
     case firstMate
@@ -130,9 +129,6 @@ extension HerdrDestinationRecord {
         case .firstMate:
             kind = "firstMate"
             id = nil
-        case .activeWork:
-            kind = "activeWork"
-            id = nil
         case .prReview:
             kind = "prReview"
             id = nil
@@ -159,7 +155,6 @@ extension HerdrDestinationRecord {
         case "dashboard": return .dashboard
         case "agentBoard": return .agentBoard
         case "firstMate": return .firstMate
-        case "activeWork": return .activeWork
         case "prReview": return .prReview
         case "watchers": return .watchers
         case "fleet": return .fleet

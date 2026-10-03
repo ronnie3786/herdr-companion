@@ -36,10 +36,6 @@ def hud_chats():
     return _run("herdr_hud_chats_cli")
 
 
-def active_work():
-    return _run("herdr_active_work_cli")
-
-
 def session_context():
     return _run("herdr_session_context_cli")
 

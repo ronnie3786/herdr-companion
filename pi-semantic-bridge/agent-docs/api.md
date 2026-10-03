@@ -33,7 +33,6 @@ the running server and are the API-root discovery response.
 ## Domain resources
 
 - notes: `/api/v1/notes`
-- Active Work: `/api/v1/active-work`, including items, workflows, paths, and stages
 - First Mate: `GET /api/v1/first-mate/capabilities`,
   `GET /api/v1/first-mate/models`, `GET /api/v1/first-mate/features`,
   `POST /api/v1/first-mate/features`,

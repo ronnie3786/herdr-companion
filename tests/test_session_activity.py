@@ -3,31 +3,27 @@ from unittest.mock import patch
 
 from herdr_harness.agent_activity import AgentActivityManager, LIVE_PANE_LIMIT, LIVE_TOOL_LIMIT
 from herdr_harness.service import HerdrService
-from tests.test_agent_activity import FakeBroker, FakeRepo, envelope
+from tests.test_agent_activity import envelope
 from tests.test_herdr_service import FakeClient, FakePush, snapshot_with_status
 
 
 class SessionActivityTests(unittest.TestCase):
     def setUp(self):
-        self.repo = FakeRepo()
-        self.repo.return_none = True
         self.updates = []
-        self.manager = AgentActivityManager(self.repo, FakeBroker(), environ={}, model_url="",
-                                            on_session_activity=self.updates.append)
+        self.manager = AgentActivityManager(on_session_activity=self.updates.append)
 
     def event(self, event_type, pane="p1", **payload):
         self.manager.handle_event(envelope(pane, {"type": event_type, **payload}))
 
     def test_unregistered_pi_sessions_have_truthful_current_tool_activity(self):
-        with patch.object(self.manager, "_model_phrase") as ai:
+        with patch("urllib.request.urlopen") as network:
             self.event("tool_execution_start", toolName="bash", args={"command": "git push origin main"})
             self.assertEqual(self.manager.session_activity("p1", status="working"), "pushing")
             self.event("tool_execution_start", toolName="read", args={"path": "app.swift"})
             self.assertEqual(self.manager.session_activity("p1", status="working"), "reading files")
             self.event("tool_execution_end")
             self.assertEqual(self.manager.session_activity("p1", status="working"), "working")
-            ai.assert_not_called()
-        self.assertEqual(self.repo.calls, [])
+            network.assert_not_called()
 
     def test_parallel_tool_completion_returns_to_the_tool_still_running(self):
         self.event("tool_execution_start", toolName="read", toolCallId="read-1")
@@ -124,14 +120,14 @@ class SessionActivityTests(unittest.TestCase):
             self.assertIsNone(self.manager.session_activity("p1", status="working"))
 
     def test_token_stream_updates_are_coalesced_without_ai_or_one_event_per_token(self):
-        with patch("herdr_harness.agent_activity.time.monotonic", return_value=100.0), patch.object(self.manager, "_model_phrase") as ai:
+        with patch("herdr_harness.agent_activity.time.monotonic", return_value=100.0), patch("urllib.request.urlopen") as network:
             self.event("agent_start")
             for _ in range(1000):
                 self.event("message_update", assistantMessageEvent={"type": "thinking_delta", "delta": "content"})
             self.event("message_update", assistantMessageEvent={"type": "text_start"})
             self.assertEqual(self.updates, ["p1"])
             self.assertEqual(self.manager.session_activity("p1", status="working"), "writing response")
-            ai.assert_not_called()
+            network.assert_not_called()
         with patch("herdr_harness.agent_activity.time.monotonic", return_value=101.0):
             self.manager._flush_live_activity()
         self.assertEqual(self.updates, ["p1", "p1"])

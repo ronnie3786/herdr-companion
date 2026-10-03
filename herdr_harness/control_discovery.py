@@ -113,24 +113,6 @@ def _record_fields(record: dict) -> dict[str, str]:
     return {key: str(value) for key, value in fields.items() if value is not None and str(value)}
 
 
-def _session_lookup_key(value: Any) -> Optional[str]:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return str(uuid.UUID(value))
-    except (ValueError, AttributeError):
-        return value
-
-
-def _external_native_session_id(value: Any) -> Optional[str]:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return str(uuid.UUID(value))
-    except (ValueError, AttributeError):
-        return None
-
-
 def _tab_color_entries(tab: Any) -> Optional[list[dict]]:
     """Return a tab's publisher entries, or None when it has no color metadata."""
 
@@ -432,7 +414,6 @@ class DiscoveryService:
                 "truncated": False,
                 "reason": "Historical closed Pi archives are not indexed by discovery-v1",
             },
-            "linkedTickets": {"searched": False, "truncated": False},
             "chatTabColors": {
                 "searched": False,
                 "staleAfterSeconds": CHAT_TAB_STALE_SECONDS,
@@ -498,7 +479,6 @@ class DiscoveryService:
                     ),
                 }
             )
-        tickets_by_identity, tickets_by_work_item = self._ticket_associations(coverage)
         workspaces = [item for item in snapshot.get("workspaces", []) if isinstance(item, dict)]
         tabs = [item for item in snapshot.get("tabs", []) if isinstance(item, dict)]
         panes = [item for item in snapshot.get("panes", []) if isinstance(item, dict)]
@@ -676,79 +656,7 @@ class DiscoveryService:
             ticket=ticket,
         )
         self._append_first_mate(records, coverage, include_text=include_expensive)
-        for record in records:
-            fields = record.get("_fields")
-            target = record.get("target")
-            if not isinstance(fields, dict) or not isinstance(target, dict):
-                continue
-            linked: set[str] = set()
-            session_identity = _session_lookup_key(target.get("sessionId"))
-            if session_identity is not None:
-                linked.update(tickets_by_identity.get(session_identity, set()))
-            work_item_id = fields.get("workItemId")
-            if work_item_id is not None:
-                linked.update(tickets_by_work_item.get(str(work_item_id), set()))
-            if linked:
-                fields["linkedTicket"] = " ".join(sorted(linked))
         return records, coverage, generated_at
-
-    def _ticket_associations(
-        self, coverage: dict
-    ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-        by_identity: dict[str, set[str]] = {}
-        by_work_item: dict[str, set[str]] = {}
-        try:
-            board = self.service.active_work.board_projection()
-            items = board.get("items", []) if isinstance(board, dict) else []
-            unverifiable_legacy = 0
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                tickets = {
-                    str(link.get("issue_key") or link.get("key"))
-                    for link in item.get("jira_links", [])
-                    if isinstance(link, dict) and (link.get("issue_key") or link.get("key"))
-                }
-                if not tickets:
-                    continue
-                work_item_id = _identifier(item, "id")
-                if work_item_id:
-                    by_work_item.setdefault(work_item_id, set()).update(tickets)
-                sessions = [
-                    session for session in item.get("pi_sessions", []) if isinstance(session, dict)
-                ]
-                for stage in item.get("stages", []):
-                    if isinstance(stage, dict):
-                        sessions.extend(
-                            session
-                            for session in stage.get("pi_sessions", [])
-                            if isinstance(session, dict)
-                        )
-                for session in sessions:
-                    native_id = _identifier(session, "native_session_id", "nativeSessionId")
-                    identity = _session_lookup_key(native_id)
-                    if identity is None:
-                        identity = _external_native_session_id(
-                            session.get("external_id") or session.get("externalId")
-                        )
-                    if identity is None:
-                        # The durable schema has no terminal identity with which to prove that a
-                        # legacy pane reference still denotes the same conversation. Raw pane IDs,
-                        # internal session_* row IDs, and machine aliases are therefore not joins.
-                        unverifiable_legacy += 1
-                        continue
-                    by_identity.setdefault(identity, set()).update(tickets)
-            coverage["linkedTickets"]["searched"] = True
-            if unverifiable_legacy:
-                coverage["linkedTickets"]["truncated"] = True
-                coverage["linkedTickets"]["unverifiableLegacyAssociations"] = unverifiable_legacy
-                coverage["linkedTickets"]["reason"] = (
-                    "Legacy ticket associations without a native session identity were excluded; "
-                    "pane identity cannot be verified from the stored record"
-                )
-        except Exception as exc:
-            coverage["linkedTickets"]["error"] = type(exc).__name__
-        return by_identity, by_work_item
 
     def _append_hud(
         self,

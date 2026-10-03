@@ -252,7 +252,7 @@ struct PRReviewWindowRoutingTests {
 
         shell.prReviewMachineID = "review-host"
         shell.prReview.select(PRReviewDemo.secondReviewID)
-        shell.showActiveWork()
+        shell.show(.firstMate, model: model)
 
         #expect(session.target.machineID == "review-host")
         #expect(session.store.currentMachineID == "review-host")

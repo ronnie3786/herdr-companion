@@ -129,7 +129,6 @@ final class HerdrAppModel {
     var lastSyncedAt: Date?
     var fleetRevision = 0
     var refreshTick = 0
-    var activeWorkRefreshTick = 0
     /// Changes whenever a companion publishes PR Review activity.
     var prReviewRefreshTick = 0
     var watchersRefreshTick = 0
@@ -173,7 +172,6 @@ final class HerdrAppModel {
     var apiToken: String
     var isDemoMode: Bool
     var hasCompletedSetup: Bool
-    let activeWorkLegacyUI: Bool
     var smartAlertsEnabled: Bool
     var preferPrivateTranscription: Bool
     var showSessionTitles: Bool
@@ -430,8 +428,6 @@ final class HerdrAppModel {
         apiToken = storedToken
         isDemoMode = uiTestServerURL == nil && (forcedDemo || defaults.bool(forKey: "herdr.demoMode"))
         hasCompletedSetup = forcedDemo || uiTestServerURL != nil || defaults.bool(forKey: "herdr.completedSetup")
-        activeWorkLegacyUI = arguments.contains("-HerdrActiveWorkLegacy")
-            || (defaults.object(forKey: "herdr.activeWork.legacy") as? Bool ?? false)
         smartAlertsEnabled = defaults.object(forKey: "herdr.smartAlerts") as? Bool ?? true
         preferPrivateTranscription = defaults.object(forKey: "herdr.preferPrivateTranscription") as? Bool ?? true
         showSessionTitles = defaults.object(forKey: "herdr.herdPulse.showSessionTitles") as? Bool ?? true
@@ -1341,102 +1337,6 @@ final class HerdrAppModel {
             throw APIError.noActiveConnection(machineID: machines.first?.name ?? "primary")
         }
         return try await client.fetchWorkInbox()
-    }
-
-    func fetchActiveWork() async throws -> ActiveWorkResponse {
-        if isDemoMode { return DemoData.activeWork }
-        guard let client = primaryClient else {
-            throw APIError.noActiveConnection(machineID: machines.first?.name ?? "primary")
-        }
-        return try await client.fetchActiveWork()
-    }
-
-    func setupActiveWorkJira(key: String) async throws -> ActiveWorkItem {
-        if isDemoMode {
-            guard let item = DemoData.activeWork.items.first else { throw APIError.invalidResponse }
-            return item
-        }
-        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
-        return try await client.setupActiveWorkJira(key: key).item
-    }
-
-    func createActiveWorkItem(
-        kind: String,
-        title: String,
-        summary: String
-    ) async throws -> ActiveWorkItem {
-        if isDemoMode {
-            guard let item = DemoData.activeWork.items.first else { throw APIError.invalidResponse }
-            return item
-        }
-        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
-        return try await client.createActiveWorkItem(
-            ActiveWorkCreateItemRequest(
-                kind: kind,
-                title: title,
-                summary: summary,
-                currentStageKey: nil
-            )
-        ).item
-    }
-
-    func transitionActiveWorkItem(
-        _ item: ActiveWorkItem,
-        to stage: ActiveWorkPipelineStage
-    ) async throws -> ActiveWorkItem {
-        if isDemoMode { return item }
-        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
-        let currentItem = try await approveActiveWorkCheckpoint(item, client: client)
-        let checkpoint = stage.checkpoint?.lowercased() ?? "none"
-        let isHumanCheckpoint = checkpoint.contains("human") || checkpoint.contains("owner")
-        let response = try await client.transitionActiveWorkItem(
-            id: item.id,
-            requestBody: ActiveWorkTransitionRequest(
-                toStageKey: stage.key,
-                expectedRevision: currentItem.revision,
-                note: "User selected \(stage.title) as the next step.",
-                attention: isHumanCheckpoint ? "human" : "none",
-                checkpointState: isHumanCheckpoint ? "pending" : nil
-            )
-        )
-        return response.item
-    }
-
-    func setActiveWorkLifecycle(
-        _ item: ActiveWorkItem,
-        lifecycle: String
-    ) async throws -> ActiveWorkItem {
-        if isDemoMode { return item }
-        guard canControlPrimary, let client = primaryClient else { throw APIError.invalidResponse }
-        let currentItem = lifecycle == "done" ? try await approveActiveWorkCheckpoint(item, client: client) : item
-        return try await client.patchActiveWorkItem(
-            id: item.id,
-            requestBody: ActiveWorkPatchItemRequest(
-                lifecycle: lifecycle,
-                expectedRevision: currentItem.revision
-            )
-        ).item
-    }
-
-    private func approveActiveWorkCheckpoint(
-        _ item: ActiveWorkItem,
-        client: HerdrAPIClient
-    ) async throws -> ActiveWorkItem {
-        guard let stageKey = item.currentStageKey,
-              let state = item.stages.first(where: { $0.stageKey == stageKey }),
-              state.attention == .human || ["pending", "changes_requested"].contains(state.checkpointState ?? "")
-        else { return item }
-        // Called after the legacy view's explicit approval confirmation.
-        return try await client.transitionActiveWorkItem(
-            id: item.id,
-            requestBody: ActiveWorkTransitionRequest(
-                toStageKey: stageKey,
-                expectedRevision: item.revision,
-                note: "User approved the current checkpoint.",
-                attention: "none",
-                checkpointState: "approved"
-            )
-        ).item
     }
 
     func fetchJiraTicket(query: String) async throws -> JiraTicket {
@@ -2764,89 +2664,6 @@ final class HerdrAppModel {
         }
     }
 
-    func spawnPrReviewSession(_ payload: ActiveWorkSpawnReviewPayload) async {
-        if isDemoMode {
-            toastMessage = "review spawns need a live connection"
-            return
-        }
-        guard let targetMachineID = machines.first?.id,
-              canControl(machineID: targetMachineID),
-              let client = client(forMachine: targetMachineID)
-        else {
-            toastMessage = "Reconnect before controlling Herdr"
-            return
-        }
-        noteUserInteraction(machineID: targetMachineID)
-        let requestID = UUID().uuidString
-        let prNumberText = payload.prNumber.map(String.init) ?? "review"
-        let label = "pr\(prNumberText)-\(payload.stageKey)"
-        let generation = connectionGeneration
-        do {
-            let response = try await createQuickPiSessionWithRetry(
-                client: client,
-                label: label,
-                requestID: requestID,
-                workspaceID: nil,
-                tabID: nil,
-                cwd: nil,
-                sessionFile: nil,
-                sessionID: nil,
-                workspaceLabel: "PR Reviews",
-                tabLabel: payload.tabLabel,
-                reuseNamedTab: true
-            )
-            guard generation == connectionGeneration else { return }
-            try await client.sendPiPrompt(
-                paneID: response.paneID,
-                text: payload.prompt,
-                disposition: .prompt,
-                waitForIdle: true
-            )
-            let sessionID = "spawn:\(payload.workID):\(payload.stageKey):\(response.paneID)"
-            let observation = ActiveWorkIngestionBody(
-                source: "pr-review-watch",
-                idempotencyKey: "pr-review-watch:\(sessionID)",
-                observedAt: ISO8601DateFormatter().string(from: Date()),
-                selector: .init(workItemID: payload.workID),
-                stages: [
-                    .init(
-                        stageKey: payload.stageKey,
-                        state: "active",
-                        piSessions: [
-                            .init(
-                                externalID: sessionID,
-                                title: "PR #\(prNumberText) · \(payload.skill)",
-                                provider: "pi",
-                                status: "running",
-                                machineID: targetMachineID,
-                                workspaceID: response.workspaceID,
-                                paneID: response.paneID,
-                                nativeSessionID: response.sessionID ?? "",
-                                role: "review",
-                                metadata: [
-                                    "workspace_label": "PR Reviews",
-                                    "tab": payload.tabLabel,
-                                    "skill": payload.skill,
-                                ]
-                            )
-                        ]
-                    )
-                ]
-            )
-            try await client.ingestActiveWork(observation)
-            toastMessage = "PR #\(prNumberText) — \(payload.skill) running in PR Reviews"
-            try? await refresh(
-                machineID: targetMachineID,
-                using: client,
-                showSpinner: false,
-                expectedGeneration: generation
-            )
-        } catch {
-            guard generation == connectionGeneration else { return }
-            toastMessage = "Review spawn failed — \(error.localizedDescription)"
-        }
-    }
-
     /// Waits for the normal connection driver on cold launch. The configured
     /// primary Mac is the default, independent of whichever chat was selected.
     func prepareExternalPiLaunch(_ request: ExternalPiRequest) async throws -> String {
@@ -3627,9 +3444,8 @@ final class HerdrAppModel {
 
     /// Resolves a pane the same way `openPane(id:)` does for an already-scoped
     /// id, but starting from a *raw* (unscoped) pane id plus an optional
-    /// machine id — the shape the JS board bridge and the legacy Active Work
-    /// tracked-session cards both hand back. An empty-string machine id (the
-    /// JS side's "no machine" convention) is treated the same as `nil`.
+    /// machine id, as supplied by PR Review and First Mate session links.
+    /// An empty-string machine id is treated the same as `nil`.
     func openPane(rawPaneID: String, machineID: String?) {
         let normalizedMachineID = (machineID?.isEmpty == false) ? machineID : nil
         let resolved: HerdrPane?
@@ -5399,8 +5215,6 @@ final class HerdrAppModel {
                             using: client,
                             expectedGeneration: expectedGeneration
                         )
-                    } else if event.event == "active_work.updated" {
-                        activeWorkRefreshTick &+= 1
                     } else if event.event.hasPrefix("watchers.") {
                         watchersRefreshTick &+= 1
                         if event.event == "watchers.inbox",

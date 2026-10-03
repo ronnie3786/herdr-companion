@@ -74,7 +74,7 @@ struct PRReviewHTMLReportView: View {
     }
 
     private func openExternal(_ url: URL) {
-        Task { try? await ActiveWorkLinkOpener.open(url) }
+        Task { try? await HerdrExternalLinkOpener.open(url) }
     }
 
     private func openDocument(_ id: String) {

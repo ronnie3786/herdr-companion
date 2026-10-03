@@ -1526,7 +1526,7 @@ class ControlCLI:
 # Keep in sync with the Mac receiver's ui.segment registration
 # (tests/fixtures/agent-control-v1.json).
 UI_SEGMENTS = (
-    "chat", "terminal", "git", "skills", "active-work", "pr-review",
+    "chat", "terminal", "git", "skills", "pr-review",
     "watchers", "first-mate", "fleet", "activity",
 )
 

@@ -9,11 +9,11 @@ Start with the repository [README](../README.md) and
 Herdr CLIs read the same private TOML, with shared and per-machine settings.
 
 The server owns Git operations, local files/skills, attachments, notes, Pi
-semantics, headless runs, result artifacts, Active Work, Fleet, cleanup, and optional
+semantics, headless runs, result artifacts, Fleet, cleanup, and optional
 voice/push providers. GitHub and Jira use configured local CLIs. Models and speech
 providers have no private defaults.
 
-`herdr-notes --help`, `herdr-active-work --help` and `herdr-pr-review --help` describe the agent commands.
+`herdr-notes --help` and `herdr-pr-review --help` describe the agent commands.
 They support `--config` and `--machine`, respect token scopes, reject redirects,
 and report concurrent-edit conflicts. Optional sync/review commands need explicit
 integration configuration. Release packages include board/web assets and Pi
@@ -72,7 +72,7 @@ uses `~/.agents/skills`; only additional destinations belong in
 
 If you enable workers that read local folders, verify directory enumeration with
 the new interpreter under the intended launcher identity before completing the
-update. Buzz sync reads `tickets/*/state.json` beneath `active_work.workflow_root`.
+update.
 On macOS, a background process can wait for a Documents-folder permission prompt
 even when an SSH shell can read that folder. Resolve the OS permission request and
 verify the worker completes; changing the code's location does not grant access to
@@ -85,9 +85,8 @@ use absolute executable/configuration paths; it does not expand `~`. If the TOML
 sets `PATH`, `/usr/bin/env -u PATH` before the installed command lets that value
 apply instead of an inherited default.
 
-Update wrappers or service definitions for `herdr-notes`, `herdr-active-work`, and
-any enabled `herdr-active-work-sync`, `herdr-pr-review-watch`, or `herdr-code-factory` jobs to the same
-runtime. Preserve the workers' existing schedule and flags, and give each the same
+Update wrappers or service definitions for `herdr-notes` and any enabled
+`herdr-code-factory` jobs to the same runtime. Preserve the workers' existing schedule and flags, and give each the same
 explicit configuration and machine selection. Replace only the matching Herdr
 entry in Pi's package settings, preserving other packages. Resolve its installed
 extension directory with:
@@ -96,10 +95,13 @@ extension directory with:
 "$runtime_python" -I -c 'from herdr_harness.resources import pi_extension_path; print(pi_extension_path({}))'
 ```
 
-Verify authenticated health, terminal connectivity, web assets, saved notes/board
+Verify authenticated health, terminal connectivity, web assets, saved notes and First Mate
 state, Fleet, and Pi integration. Check each enabled worker separately for a
 completed successful run; a healthy HTTP server does not prove its workers can
 read their inputs. Keep the previous runtime and service definitions until these
 checks pass. If the update fails, restore those definitions and the prior runtime,
 preserving current data unless a documented state migration requires restoring a
 consistent backup. A server-only update does not require replacing the Mac app.
+
+Active Work and its background jobs are retired. Follow the
+[removal and upgrade notes](../docs/active-work-removal.md) when replacing an older runtime.

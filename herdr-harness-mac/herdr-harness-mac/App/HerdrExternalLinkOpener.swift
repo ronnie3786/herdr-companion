@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 @MainActor
-enum ActiveWorkLinkOpener {
+enum HerdrExternalLinkOpener {
     static let buzzBundleIdentifier = "xyz.block.buzz.app"
 
     enum OpenError: LocalizedError {
@@ -65,9 +65,9 @@ enum ActiveWorkLinkOpener {
         openNormally: @MainActor (URL) -> Bool,
         openWithApplication: @MainActor ([URL], URL, NSWorkspace.OpenConfiguration) async throws -> Void
     ) async -> OpenRoute {
-        guard ActiveWorkURL.isOpenable(url) else { return .rejected }
+        guard HerdrExternalURL.isOpenable(url) else { return .rejected }
 
-        guard ActiveWorkURL.isBuzzMessageURL(url) else {
+        guard HerdrExternalURL.isBuzzMessageURL(url) else {
             return openNormally(url) ? .defaultApplication : .unavailable
         }
 

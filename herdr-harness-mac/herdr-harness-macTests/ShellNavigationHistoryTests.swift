@@ -7,7 +7,7 @@ import Testing
 struct ShellNavigationHistoryTests {
     @Test("The title bar's ⋯ menu offers Chat, Active Work, Fleet, and Activity")
     func shellMenuDestinations() {
-        #expect(HerdrDetailScope.menuDestinations == [.session, .activeWork, .fleet, .activity])
+        #expect(HerdrDetailScope.menuDestinations == [.session, .fleet, .activity])
         #expect(HerdrDetailScope.session.label == "Chat")
         // Git is a pane mode in the chat's own menu, not a destination.
         #expect(!HerdrDetailScope.menuDestinations.contains(.git))
@@ -45,7 +45,7 @@ struct ShellNavigationHistoryTests {
 
             shell.openPane(id: firstPane.id, model: model)
             shell.show(.fleet, model: model)
-            shell.show(.activeWork, model: model)
+            shell.show(.firstMate, model: model)
 
             #expect(shell.canGoBack)
             #expect(shell.goBack(model: model))
@@ -192,7 +192,7 @@ struct ShellNavigationHistoryTests {
     func pruneRemovesDeadPaneFromBackStack() throws {
         try withModel { model, shell, firstPane, _, firstWorkspace, _ in
             shell.openPane(id: firstPane.id, model: model)
-            shell.show(.activeWork, model: model)
+            shell.show(.firstMate, model: model)
             // Removing only the dead pane's workspace (not the whole fleet) keeps
             // model.workspaces non-empty, so this exercises genuine pruning
             // rather than pruneHistory's new pre-load early-return: an empty
@@ -215,7 +215,7 @@ struct ShellNavigationHistoryTests {
         let snapshot = NavigationHistorySnapshot(
             version: NavigationHistorySnapshot.currentVersion,
             backward: [HerdrDestinationRecord(.pane("machine-a|w1:p1"))!],
-            current: HerdrDestinationRecord(.activeWork),
+            current: HerdrDestinationRecord(.firstMate),
             forward: []
         )
         NavigationHistoryPersistenceStore(userDefaults: defaults).save(snapshot)

@@ -1022,7 +1022,6 @@ final class AgentControlController {
             showMainWindow()
             shell.openPane(id: pane.id, mode: mode, model: model)
             return .pane(id: pane.id, mode: mode)
-        case "active-work": showMainWindow(); shell.show(.activeWork, model: model)
         case "pr-review": showMainWindow(); shell.show(.prReview, model: model)
         case "watchers": showMainWindow(); shell.show(.watchers, model: model)
         case "first-mate": showMainWindow(); shell.show(.firstMate, model: model)
@@ -1074,7 +1073,7 @@ final class AgentControlController {
                 throw AgentControlCommandError.notFound("The history pane is no longer available.")
             }
             return .pane(id: id, mode: .git)
-        case .dashboard, .agentBoard, .firstMate, .activeWork, .prReview, .watchers, .fleet, .activity:
+        case .dashboard, .agentBoard, .firstMate, .prReview, .watchers, .fleet, .activity:
             return nil
         }
     }

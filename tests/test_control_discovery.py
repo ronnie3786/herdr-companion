@@ -30,54 +30,12 @@ class FakeFirstMateStore:
                 "cwd": "/synthetic/project",
                 "status": "awaiting_direction",
                 "updated_at": "2026-09-16T10:00:00Z",
-                "work_item_id": "work-control-7",
+                "work_item_id": "CONTROL-7",
             }
         ]
 
     def snapshot(self, feature_id):
         return {"feature": next(item for item in self.list_features() if item["id"] == feature_id)}
-
-
-class FakeActiveWork:
-    def board_projection(self):
-        return {
-            "items": [
-                {
-                    "id": "work-control-7",
-                    "jira_links": [{"issue_key": "CONTROL-7"}],
-                    "pi_sessions": [
-                        {
-                            "id": "session_internal_1",
-                            "external_id": "source-current",
-                            "machine_id": "work-mac",
-                            "workspace_id": "w1",
-                            "pane_id": "p1",
-                            "native_session_id": CURRENT_SESSION_ID,
-                        }
-                    ],
-                    "stages": [],
-                },
-                {
-                    "id": "work-control-8",
-                    "jira_links": [{"issue_key": "CONTROL-8"}],
-                    "pi_sessions": [],
-                    "stages": [
-                        {
-                            "pi_sessions": [
-                                {
-                                    "id": "session_internal_2",
-                                    "external_id": SECOND_SESSION_ID,
-                                    "machine_id": "other-machine-alias",
-                                    "workspace_id": "different-workspace",
-                                    "pane_id": "different-pane",
-                                    "native_session_id": "",
-                                }
-                            ]
-                        }
-                    ],
-                },
-            ]
-        }
 
 
 class FakePanesSeen:
@@ -90,7 +48,6 @@ class FakeDiscoverySource:
         self.agent_runs = object()
         self.panes_seen = FakePanesSeen()
         self.first_mate_store = FakeFirstMateStore()
-        self.active_work = FakeActiveWork()
         self.snapshot = {
             "workspaces": [{"workspace_id": "w1", "label": "Synthetic Project", "cwd": "/synthetic/project"}],
             "tabs": [
@@ -293,7 +250,6 @@ class ControlDiscoveryTests(unittest.TestCase):
         )()
         service._agent_runs = object()
         service._first_mate_store = FakeFirstMateStore()
-        service.active_work = FakeActiveWork()
 
         response = service.snapshot_response()
         self.assertEqual(response["generatedAt"], "2026-09-16T11:59:00Z")
@@ -316,7 +272,6 @@ class ControlDiscoveryTests(unittest.TestCase):
         self.assertIn(("first-mate", "fmf_1"), identities)
         self.assertNotIn(("pane", "p2"), identities)
         self.assertTrue(result["coverage"]["currentPiText"]["searched"])
-        self.assertTrue(result["coverage"]["linkedTickets"]["searched"])
         self.assertEqual(result["generatedAt"], "2026-09-16T12:00:01Z")
         pane = next(item for item in result["results"] if item["id"] == "p1")
         self.assertEqual(pane["target"]["sessionId"], CURRENT_SESSION_ID)
@@ -360,13 +315,13 @@ class ControlDiscoveryTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["liveTopology"]["freshness"], "unknown")
         self.assertNotIn("generatedAt", result["coverage"]["liveTopology"])
 
-    def test_ticket_matching_uses_exact_boundaries_and_stored_links(self):
+    def test_ticket_matching_uses_exact_boundaries_and_current_text(self):
         result = self.discovery.search(
             kind="chats", query="", ticket="CONTROL-7", sort="updated", limit=100, offset=0
         )
         self.assertNotIn("p2", [item["id"] for item in result["results"]])
         linked = next(item for item in result["results"] if item["id"] == "p1")
-        self.assertIn("linkedTicket", {item["field"] for item in linked["matchEvidence"]})
+        self.assertIn("currentPiText", {item["field"] for item in linked["matchEvidence"]})
 
     def test_hud_catalog_is_query_aware_and_exact_inspect_is_not_catalog_bounded(self):
         old_chat = {
@@ -459,92 +414,6 @@ class ControlDiscoveryTests(unittest.TestCase):
             )
         self.assertNotIn("agr_000000000070", [item["id"] for item in result["results"]])
 
-    def test_ticket_links_use_conversation_identity_not_recycled_or_cross_machine_panes(self):
-        self.source.active_work = type(
-            "Associations",
-            (),
-            {
-                "board_projection": staticmethod(
-                    lambda: {
-                        "items": [
-                            {
-                                "id": "work-stale",
-                                "jira_links": [{"issue_key": "CONTROL-STALE"}],
-                                "pi_sessions": [
-                                    {
-                                        "id": "session_internal_stale",
-                                        "external_id": "source-stale",
-                                        "machine_id": "work-mac",
-                                        "workspace_id": "w1",
-                                        "pane_id": "p1",
-                                        "native_session_id": OLD_SESSION_ID,
-                                    }
-                                ],
-                                "stages": [],
-                            },
-                            {
-                                "id": "work-cross-machine",
-                                "jira_links": [{"issue_key": "CONTROL-CROSS"}],
-                                "pi_sessions": [
-                                    {
-                                        "id": "session_internal_cross",
-                                        "external_id": "legacy:w1:p1",
-                                        "machine_id": "other-machine",
-                                        "workspace_id": "w1",
-                                        "pane_id": "p1",
-                                        "native_session_id": "",
-                                    }
-                                ],
-                                "stages": [],
-                            },
-                            {
-                                "id": "work-guid",
-                                "jira_links": [{"issue_key": "CONTROL-GUID"}],
-                                "pi_sessions": [
-                                    {
-                                        "id": "session_internal_guid",
-                                        "external_id": "source-current",
-                                        "machine_id": "renamed-machine-alias",
-                                        "workspace_id": "old-workspace",
-                                        "pane_id": "old-pane",
-                                        "native_session_id": CURRENT_SESSION_ID,
-                                    }
-                                ],
-                                "stages": [],
-                            },
-                        ]
-                    }
-                )
-            },
-        )()
-
-        stale = self.discovery.search(
-            kind="chats", query="", ticket="CONTROL-STALE", sort="updated", limit=100, offset=0
-        )
-        cross_machine = self.discovery.search(
-            kind="chats", query="", ticket="CONTROL-CROSS", sort="updated", limit=100, offset=0
-        )
-        exact_guid = self.discovery.search(
-            kind="chats", query="", ticket="CONTROL-GUID", sort="updated", limit=100, offset=0
-        )
-
-        self.assertNotIn("p1", [item["id"] for item in stale["results"]])
-        self.assertNotIn("p1", [item["id"] for item in cross_machine["results"]])
-        self.assertEqual([item["id"] for item in exact_guid["results"]], ["p1"])
-        self.assertTrue(cross_machine["coverage"]["linkedTickets"]["truncated"])
-        self.assertEqual(
-            cross_machine["coverage"]["linkedTickets"]["unverifiableLegacyAssociations"], 1
-        )
-
-    def test_valid_native_uuid_in_external_id_links_globally(self):
-        result = self.discovery.search(
-            kind="chats", query="", ticket="CONTROL-8", sort="updated", limit=100, offset=0
-        )
-        self.assertEqual([item["id"] for item in result["results"]], ["p2"])
-        self.assertEqual(
-            {item["field"] for item in result["results"][0]["matchEvidence"]},
-            {"linkedTicket"},
-        )
 
     def test_inspect_returns_exact_result_and_rejects_reused_pane_identity(self):
         target = {

@@ -70,11 +70,6 @@ ssh_user = "your-username"
 # thinking_level = "medium"
 # pi_binary = "/path/to/pi"
 
-[providers.activity]
-# url = "http://model.example.invalid:8000/v1"
-# model = "your-model-id"
-debounce_seconds = 20
-
 [providers.summary]
 # OpenAI-compatible endpoint, optional Pi provider lookup when provider is set.
 # url = "http://model.example.invalid:8000/v1"
@@ -111,14 +106,6 @@ thinking_level = "high"
 # Roots must not overlap each other or the standard agents/Pi install roots.
 [fleet.skill_destinations]
 # assistant = "~/.local/share/your-assistant/skills"
-
-[active_work]
-# url = "https://desktop.example.invalid"
-# token = { env = "HERDR_BOARD_TOKEN" }
-# manage_token_file = "~/.config/herdr-companion/secrets/manage-token"
-# ingest_token_file = "~/.config/herdr-companion/secrets/ingest-token"
-# workflow_root = "~/projects/your-workflows" # Optional Buzz integration.
-# workflows_dir = "~/.local/share/herdr-companion/workflows" # Local workflow JSON definitions; defaults to <state_dir>/workflows.
 
 [first_mate]
 # Each feature gets a saved Pi coordinator and independent worker sessions.
@@ -189,12 +176,6 @@ skim_min_words = 80 # Shorter replies are shown as they are.
 # idle_shutdown_minutes = 60 # Shut down a Herdr preview nobody has watched this long; 0 turns it off.
 # max_running_previews = 4 # Opening one more shuts down the least recently watched idle preview.
 # server_id = "" # Set only to accept a replaced SimPortal server explicitly.
-
-[remote_activity]
-# url = "https://worker.example.invalid"
-# token = { env = "WORKER_HERDR_TOKEN" }
-prefix = "worker"
-poll_seconds = 10
 
 [integrations]
 # github_repository = "YOUR-OWNER/YOUR-REPOSITORY" # Optional PR review watcher.
@@ -311,7 +292,6 @@ apns_environment = "development"
 # Headless agent runs (including HUD chat) default to one hour; range 1–86400 seconds.
 # HERDR_HARNESS_AGENT_TIMEOUT_SECONDS = "7200"
 # YOUR_PROVIDER_API_KEY = { file = "~/.config/herdr-companion/secrets/provider-api-key" } # For skim_model.
-# HERDR_HARNESS_ACTIVE_WORK_STORE_PATH = "~/.local/share/herdr-companion/active-work.sqlite3"
 # GH_HOST = "github.com"
 # PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 

@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from herdr_harness.client import HerdrClient
 from herdr_harness.control_cli import ControlClient
 from herdr_harness.pi_semantic import PiSemanticManager
-from herdr_harness.remote_activity import RemoteActivityPoller
 
 
 class NetworkTimeoutBudgetsTests(unittest.TestCase):
@@ -46,14 +45,6 @@ class NetworkTimeoutBudgetsTests(unittest.TestCase):
         self.assertGreater(connection.settimeout.call_args.args[0], 7)
         connection.sendall.assert_called_once()
 
-    def test_remote_activity_bootstrap_allows_slow_snapshot(self):
-        def slow(request, timeout=None):
-            if timeout <= 8:
-                raise TimeoutError('synthetic slow snapshot')
-            return io.BytesIO(b'{"latest_cursor":42}')
-        poller = RemoteActivityPoller(lambda: set(), lambda event: None, environ={
-            'HERDR_HARNESS_REMOTE_ACTIVITY_URL': 'https://synthetic.example.invalid'}, open_url=slow)
-        self.assertEqual(poller._latest_cursor('w1:p1'), 42)
 
     def test_native_agent_wait_outlives_its_requested_completion_window(self):
         for wait, expected in (({}, 125), ({"timeout_ms": 300000}, 305),

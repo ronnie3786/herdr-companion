@@ -119,6 +119,13 @@
 - Gradient stops and glow geometry, blur, saturation, the HUD crop, glass levels, Haze height, opacity, mask, and top-to-bottom fade, image caching, and the opaque Glass off, Haze off, Reduce Transparency, and First Mate light appearances are unchanged. Only the background channels darken: text, icons, status colors, and controls keep their existing colors, and the inactive surfaces look exactly as before.
 - This is Mac presentation only. No new setting and no companion update are required; the signed Mac feed installs only the app, and existing companion packages keep working unchanged.
 
+## Settings and Report glass
+
+- The Settings window's top bar now shows First Mate's purple dusk glass instead of a grey band.
+- Help → **Report a Bug or Request a Feature…** uses the same Glass and Haze across its header, form and footer.
+
+Glass off, Reduce Transparency and light appearance stay opaque. Presentation only; no companion update is needed.
+
 ## Sidebar and navigation
 
 - Recents and All (including priority lists and expanded families) now separate adjacent visible chats with inset theme hairlines, without doubling the rules around headings. Chat titles wrap naturally up to two lines and omit only a conventional leading `π - ` decoration in the sidebar; the stored title stays intact. The redundant Pi/terminal header is gone.

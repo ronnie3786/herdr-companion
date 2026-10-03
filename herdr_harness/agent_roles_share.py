@@ -42,7 +42,7 @@ _CHANGE_LABELS = (("name", "Name"), ("whenToUse", "When to use"), ("systemPrompt
                   ("avatar", "Avatar"), ("allowDelegation", "Delegation"), ("skillIds", "Skills"))
 _PRIVATE_KEY = re.compile(rb"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-[0-9]+:")
 # Bidirectional overrides and tag characters can hide instructions from a reviewer.
-_HIDDEN_TEXT = re.compile("[‪-‮⁦-⁩\U000e0000-\U000e007f]")
+_HIDDEN_TEXT = re.compile("[\u202a-\u202e\u2066-\u2069\U000e0000-\U000e007f]")
 _SKILL_ID = re.compile(r"skill[_-][0-9a-f]{64}")
 _HASH = re.compile(r"[0-9a-f]{64}")
 
@@ -61,8 +61,45 @@ def derived_skill_id(sid, digest):
     return "skill-" + hashlib.sha256(f"herdr-import\0{sid}\0{digest}".encode()).hexdigest()
 
 
-def _has_format_characters(text):
-    return any(unicodedata.category(char) == "Cf" for char in text)
+def _unsafe_label(text):
+    """Invisible formatting in a name can disguise it. Emoji joiners and subdivision flags stay allowed."""
+    for index, char in enumerate(text):
+        if unicodedata.category(char) != "Cf" or char == "\u200d":
+            continue
+        if "\U000e0020" <= char <= "\U000e007f":
+            start = index
+            while start > 0 and "\U000e0020" <= text[start - 1] <= "\U000e007e":
+                start -= 1
+            if start > 0 and text[start - 1] == "\U0001f3f4":
+                continue
+        return True
+    return False
+
+
+def _hidden_text(files):
+    """True when any text file carries bidirectional overrides or tag characters a reviewer can't see."""
+    for _, data, _ in files:
+        try:
+            if _HIDDEN_TEXT.search(data.decode("utf-8")):
+                return True
+        except UnicodeDecodeError:
+            continue
+    return False
+
+
+def _manifest_aliases(prepared):
+    """Hashes a Mac may report for this copy: the companion inserts a missing frontmatter name when it stores
+    a skill, so the Mac's own file can lack that one line and still be the same skill."""
+    aliases = {prepared["contentHash"]}
+    files = prepared["files"]
+    manifest = next(data for path, data, _ in files if path == "SKILL.md")
+    lines = manifest.decode("utf-8").splitlines(keepends=True)
+    inserted = "name: " + json.dumps(prepared["name"], ensure_ascii=False) + "\n"
+    if len(lines) > 1 and lines[0].strip() == "---" and lines[1] == inserted:
+        original = "".join(lines[:1] + lines[2:]).encode("utf-8")
+        aliases.add(content_hash([(path, original if path == "SKILL.md" else data, executable)
+                                  for path, data, executable in files]))
+    return aliases
 
 
 def _untouched_builtin(role):
@@ -107,14 +144,23 @@ def _read_package(directory: Path):
 
 def _package_stats(directory: Path):
     files = size = executable = 0
+    unsafe = False
     for current, folders, names in os.walk(directory, followlinks=False):
         folders.sort()
+        unsafe = unsafe or any(_unsafe_label(name) for name in folders + names)
         for name in names:
             meta = os.lstat(os.path.join(current, name))
             files += 1
             size += meta.st_size
             executable += bool(meta.st_mode & 0o100)
-    return files, size, executable
+    return files, size, executable, unsafe
+
+
+_UNSAFE_NOTE = "Its name, team or skills have invisible formatting characters. Rename them to share it."
+
+
+def _unsafe_role(role):
+    return _unsafe_label(role["name"]) or _unsafe_label(role.get("group", ""))
 
 
 def _skill_metadata(sid, state, catalog_rows):
@@ -150,17 +196,20 @@ def export_preview(roles_store):
         if role["id"] == LOCKED_ROLE:
             continue
         shareable, note = _shareable(role)
-        skills = []
+        skills, unsafe = [], _unsafe_role(role)
         for sid, directory in _role_skill_dirs(roles_store, state, role).items():
             metadata = _skill_metadata(sid, state, catalog_rows)
             files = size = executable = 0
             if directory is not None:
                 try:
-                    files, size, executable = _package_stats(directory)
+                    files, size, executable, unsafe_path = _package_stats(directory)
+                    unsafe = unsafe or unsafe_path or _unsafe_label(metadata["name"])
                 except OSError:
                     directory = None
             skills.append({"id": sid, "name": metadata["name"], "included": directory is not None,
                            "files": files, "bytes": size, "executable": executable})
+        if shareable and unsafe:
+            shareable, note = False, _UNSAFE_NOTE
         rows.append({"id": role["id"], "name": role["name"], "purpose": role["purpose"], "builtin": role["builtin"],
                      "group": role.get("group", ""), "avatar": role["avatar"],
                      "allowDelegation": role["allowDelegation"], "shareable": shareable, "note": note,
@@ -206,6 +255,9 @@ def export_document(roles_store, role_ids=None, *, now=None):
     total_files = total_bytes = 0
     sizes, packages = {}, {}
     for role in chosen:
+        if _unsafe_role(role):
+            raise AgentRoleError(f"‘{role['name']}’ has invisible formatting characters in its name or team. "
+                                 "Rename it to share it.", code="agent_roles_export_blocked", status=400)
         for field, label in _PROMPT_FIELDS:
             if _PRIVATE_KEY.search(role.get(field, "").encode("utf-8")):
                 raise _blocked(role, label)
@@ -228,6 +280,13 @@ def export_document(roles_store, role_ids=None, *, now=None):
             for path, data, _ in files:
                 if _PRIVATE_KEY.search(data):
                     raise _blocked(role, f"skill ‘{metadata['name']}’ file {path}")
+                if _unsafe_label(path):
+                    raise AgentRoleError(f"‘{role['name']}’ skill ‘{metadata['name']}’ has a file name with invisible "
+                                         "formatting characters. Rename it to share this role.",
+                                         code="agent_roles_export_blocked", status=400)
+            if _unsafe_label(metadata["name"]):
+                raise AgentRoleError(f"‘{role['name']}’ uses a skill whose name has invisible formatting characters. "
+                                     "Rename it to share this role.", code="agent_roles_export_blocked", status=400)
             identity = content_hash(files)
             versions[sid] = identity
             if (sid, identity) in skills:
@@ -299,7 +358,7 @@ def _parse_document(document):
             value = entry.get(key, "")
             if not isinstance(value, str) or len(value.encode("utf-8")) > limit:
                 raise _document_error("A skill has invalid metadata")
-            if _has_format_characters(value):
+            if key != "description" and _unsafe_label(value):
                 raise _document_error("A skill name or label contains invisible formatting characters")
         unknown += [f"skills.{key}" for key in set(entry) - {"id", "name", "description", "source", "contentHash", "files"}]
         if "files" not in entry:
@@ -315,7 +374,7 @@ def _parse_document(document):
             if isinstance(item, dict):
                 unknown += [f"skills.files.{key}" for key in set(item) - {"path", "content", "executable"}]
                 item = {key: item[key] for key in ("path", "content", "executable") if key in item}
-                if isinstance(item.get("path"), str) and _has_format_characters(item["path"]):
+                if isinstance(item.get("path"), str) and _unsafe_label(item["path"]):
                     raise _document_error("A skill file path contains invisible formatting characters")
             files.append(item)
         total_files += len(files)
@@ -331,7 +390,7 @@ def _parse_document(document):
             prepared["name"].encode("utf-8"), prepared["description"].encode("utf-8")
         except UnicodeEncodeError as exc:
             raise _document_error("A skill's SKILL.md contains text that isn't valid Unicode") from exc
-        if _has_format_characters(prepared["name"]):
+        if _unsafe_label(prepared["name"]):
             raise _document_error("A skill name contains invisible formatting characters")
         total_bytes += sum(len(data) for _, data, _ in prepared["files"])
         if total_bytes > MAX_BUNDLE_BYTES:
@@ -342,7 +401,9 @@ def _parse_document(document):
             raise _document_error(f"Skill ‘{prepared['name']}’ doesn't match its checksum. Export the file again.")
         if (sid, identity) in included:
             raise _document_error("A skill appears twice in this file")
-        included[(sid, identity)] = {**prepared, "id": sid, "contentHash": identity}
+        entry = {**prepared, "id": sid, "contentHash": identity, "hiddenText": _hidden_text(prepared["files"])}
+        entry["aliases"] = _manifest_aliases(entry)
+        included[(sid, identity)] = entry
     by_id = {}
     for (sid, identity), entry in included.items():
         by_id.setdefault(sid, []).append(entry)
@@ -406,7 +467,7 @@ class _Planner:
         """Return (final ID, outcome, digest, reason) without ever reusing an ID for different content."""
         identity = entry["contentHash"]
         local = (self.local_skills or {}).get(sid)
-        mac_differs = local is not None and local != identity
+        mac_differs = local is not None and local not in entry["aliases"]
         mac_unknown = self.local_skills is None and sid.startswith("skill_")
         candidates = self._candidates(sid, role_id)
         if not mac_differs:
@@ -428,7 +489,7 @@ class _Planner:
         self.new_packages.setdefault(derived, {**entry, "id": derived})
         return derived, "separate", entry["digest"], reason
 
-    def _note_skill(self, final_id, source_id, outcome, entry, role_id):
+    def _note_skill(self, final_id, source_id, outcome, entry, role_id, reason=None):
         row = self.skill_rows.get(final_id)
         if row is None:
             metadata = ({key: entry[key] for key in ("name", "description", "source")} if entry is not None
@@ -441,7 +502,12 @@ class _Planner:
                              for path, data, executable in files],
                    "bytes": sum(len(data) for _, data, _ in files),
                    "executableFiles": sum(1 for _, _, executable in files if executable),
-                   "skillText": manifest[:MAX_SKILL_TEXT].decode("utf-8", errors="replace"), "usedBy": []}
+                   # Cut on a character boundary; SKILL.md was validated as UTF-8.
+                   "skillText": manifest[:MAX_SKILL_TEXT].decode("utf-8", errors="ignore"),
+                   "skillTextTruncated": len(manifest) > MAX_SKILL_TEXT,
+                   "hiddenText": bool(entry and entry.get("hiddenText")), "usedBy": []}
+            if outcome == "separate":
+                row["separateReason"] = reason or "computer"
             self.skill_rows[final_id] = row
         if role_id not in row["usedBy"]:
             row["usedBy"].append(role_id)
@@ -483,7 +549,7 @@ class _Planner:
         if existing and existing["purpose"] != purpose:
             return {**base, "reason": "This computer already has a different kind of role with this ID."}
         for field in ("name", "group"):
-            if isinstance(raw.get(field), str) and _has_format_characters(raw[field]):
+            if isinstance(raw.get(field), str) and _unsafe_label(raw[field]):
                 return {**base, "reason": "The role's name or team contains invisible formatting characters."}
         notes, hidden = [], False
         for field, _ in _PROMPT_FIELDS:
@@ -501,7 +567,7 @@ class _Planner:
         if not isinstance(versions, dict) or any(not isinstance(value, str) or not _HASH.fullmatch(value)
                                                  for value in versions.values()):
             return {**base, "reason": "The role's skill versions are invalid."}
-        final_ids, bindings, missing, separate = None, {}, [], set()
+        final_ids, bindings, missing, separate, hidden_skills = None, {}, [], set(), []
         if skill_ids is not None:
             if (not isinstance(skill_ids, list) or len(skill_ids) > MAX_SKILLS
                     or any(not isinstance(sid, str) or not _SKILL_ID.fullmatch(sid) for sid in skill_ids)):
@@ -516,6 +582,7 @@ class _Planner:
                         return {**base, "reason": "The role refers to a skill version that isn't in this file."}
                 else:
                     entry = None if strict or len(entries) != 1 else entries[0]
+                reason = None
                 if entry is not None:
                     final, outcome, digest, reason = self._resolve_included(sid, entry, rid)
                     bindings[final] = digest
@@ -534,7 +601,9 @@ class _Planner:
                     continue
                 if final not in final_ids:
                     final_ids.append(final)
-                    self._note_skill(final, sid, outcome, entry, rid)
+                    self._note_skill(final, sid, outcome, entry, rid, reason)
+                    if entry is not None and entry.get("hiddenText"):
+                        hidden_skills.append(self.skill_rows[final]["name"])
                     base["skills"].append({"id": final, "sourceId": sid, "name": self.skill_rows[final]["name"],
                                            "outcome": outcome})
         value = {"id": rid, "name": raw.get("name"), "whenToUse": raw.get("whenToUse", ""),
@@ -563,8 +632,11 @@ class _Planner:
             names.add(label)
         if missing:
             notes.append("Imports without: " + ", ".join(missing) + ".")
+        for label in hidden_skills:
+            hidden = True
+            notes.append(f"Skill ‘{label}’ contains hidden formatting characters. Review it before importing.")
         if separate & {"computer", "mac"}:
-            notes.append("Some skills differ from copies with the same name on this computer or your Mac, "
+            notes.append("Some skills differ from copies with the same ID on this computer or your Mac, "
                          "so the shared copies are kept separate.")
         elif separate:
             notes.append("This file has more than one version of a skill, so this role's copy is kept separate.")

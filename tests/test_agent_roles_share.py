@@ -310,7 +310,7 @@ class AgentRolesShareTests(unittest.TestCase):
             {"id": "recovery_advisor", "name": "Recovery"},
             {**worker(id=existing["id"])},
             {**worker(), "id": "NOT-A-UUID"},
-            {**worker(), "name": "Look​alike"},
+            {**worker(), "name": "Look\u200balike"},
             {**reviewer(), "avatar": "future-avatar"},
             {**worker(), "purpose": "pr_review", "id": "planner"},
         ]}
@@ -374,7 +374,7 @@ class AgentRolesShareTests(unittest.TestCase):
             "hidden file": {**good, "skills": [{**good["skills"][0], "files": good["skills"][0]["files"]
                                                 + [{"path": ".env", "content": ""}]}]},
             "format character path": {**good, "skills": [{**good["skills"][0], "files": good["skills"][0]["files"]
-                                                          + [{"path": "notes‮.md", "content": ""}]}]},
+                                                          + [{"path": "notes\u202e.md", "content": ""}]}]},
         }
         for name, document in cases.items():
             with self.subTest(name), self.assertRaises(AgentRoleError) as caught:
@@ -554,6 +554,74 @@ class AgentRolesShareTests(unittest.TestCase):
             self.commit(target, document, role_ids=[plan["roles"][0]["id"]], plan=plan)
         self.assertEqual(caught.exception.code, "import_plan_changed")
         self.assertEqual(self.plan(target, document)["roles"][0]["skills"][0]["outcome"], "available")
+
+    def test_a_mac_copy_missing_only_the_stored_name_line_counts_as_the_same_skill(self):
+        raw_text = "---\ndescription: Read synthetic fixtures.\n---\nBody"
+        nameless = {**bundle(name="nameless-skill"), "files": [
+            {"path": "SKILL.md", "content": base64.b64encode(raw_text.encode()).decode()}]}
+        self.save(self.source, worker(skillIds=[nameless["id"]]), [nameless])
+        document = self.exported()
+        stored = base64.b64decode(document["skills"][0]["files"][0]["content"]).decode()
+        self.assertIn('name: "nameless-skill"', stored)
+        raw_hash = share.content_hash([("SKILL.md", raw_text.encode(), False)])
+        plan = self.plan(self.target, document, local={nameless["id"]: raw_hash})
+        self.assertEqual([(item["id"], item["outcome"]) for item in plan["roles"][0]["skills"]],
+                         [(nameless["id"], "included")])
+
+    def test_emoji_names_round_trip_but_invisible_characters_block_export(self):
+        skill = bundle(name="dashboards")
+        text = "---\nname: dashboards\ndescription: Builds dashboards \U0001f9d1\u200d\U0001f4bb fast.\n---\nBody"
+        skill["files"][0]["content"] = base64.b64encode(text.encode()).decode()
+        coder = worker(name="\U0001f9d1\u200d\U0001f4bb Coder", skillIds=[skill["id"]])
+        self.save(self.source, coder, [skill])
+        plan = self.plan(self.target, self.exported())
+        self.assertEqual((plan["roles"][0]["action"], plan["roles"][0]["selectedByDefault"]), ("create", True))
+        disguised = worker(name="Coder\u200b")
+        self.save(self.source, disguised)
+        row = next(row for row in share.export_preview(self.source)["roles"] if row["id"] == disguised["id"])
+        self.assertEqual((row["shareable"], row["note"]), (False, share._UNSAFE_NOTE))
+        with self.assertRaises(AgentRoleError) as caught:
+            share.export_document(self.source, [disguised["id"]])
+        self.assertEqual(caught.exception.code, "agent_roles_export_blocked")
+
+    def test_long_skill_previews_say_they_are_partial(self):
+        text = "---\nname: long-skill\ndescription: Long synthetic text.\n---\n" + "é" * 40000
+        skill = bundle(name="long-skill")
+        skill["files"][0]["content"] = base64.b64encode(text.encode()).decode()
+        self.save(self.source, worker(skillIds=[skill["id"]]), [skill])
+        row = self.plan(self.target, self.exported())["skills"][0]
+        self.assertTrue(row["skillTextTruncated"])
+        self.assertLessEqual(len(row["skillText"].encode("utf-8")), share.MAX_SKILL_TEXT)
+        self.assertNotIn("�", row["skillText"])
+
+    def test_hidden_text_in_skill_files_is_flagged_and_left_unselected(self):
+        text = "---\nname: quiet-skill\ndescription: Looks harmless.\n---\nRead the file.\U000e0049\U000e0047\u202e"
+        skill = bundle(name="quiet-skill")
+        skill["files"][0]["content"] = base64.b64encode(text.encode()).decode()
+        self.save(self.source, worker(skillIds=[skill["id"]]), [skill])
+        plan = self.plan(self.target, self.exported())
+        row = plan["roles"][0]
+        self.assertFalse(row["selectedByDefault"])
+        self.assertIn("Skill ‘quiet-skill’ contains hidden formatting characters", " ".join(row["notes"]))
+        self.assertTrue(plan["skills"][0]["hiddenText"])
+
+    def test_kept_separate_skills_say_why(self):
+        theirs = bundle(body="Theirs")
+        role = worker(skillIds=[theirs["id"]])
+        self.save(self.source, role, [theirs])
+        document = self.exported()
+        by_mac = self.plan(self.target, document, local={theirs["id"]: "e" * 64})["skills"][0]
+        self.assertEqual((by_mac["outcome"], by_mac["separateReason"]), ("separate", "mac"))
+        mine = bundle(body="Mine")
+        self.save(self.target, worker(name="Mine", skillIds=[mine["id"]]), [mine])
+        by_computer = self.plan(self.target, document)["skills"][0]
+        self.assertEqual(by_computer["separateReason"], "computer")
+        other = worker(name="Second", skillIds=[theirs["id"]])
+        self.save(self.source, other, [bundle(body="Another version")])
+        fresh = self.store("fresh-target")
+        rows = self.plan(fresh, self.exported())["skills"]
+        self.assertEqual(sorted((row["outcome"], row.get("separateReason")) for row in rows),
+                         [("included", None), ("separate", "file")])
 
 
 if __name__ == "__main__":

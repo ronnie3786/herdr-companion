@@ -107,8 +107,9 @@ name, guidance, prompts, delegation setting, model profile, avatar, team name,
 and the exact skill copies it runs on that computer, including scripts. A skill
 without a stored copy, such as one found in a host skill folder, is shared by
 name only. Agent Profiles, machine names, revisions, and file paths are not
-included. Export stops if a prompt or skill file contains a private key and names
-where it is. The file is plain JSON named `herdr-roles-<date>.json`, so it can be
+included. Export stops if a prompt or skill file contains a private key, or if a
+role, team, skill or file name contains invisible formatting characters, and
+names where it is. The file is plain JSON named `herdr-roles-<date>.json`, so it can be
 read before it is shared.
 
 **Import Roles…** checks the file, then shows a plan for the computer in **Runs
@@ -123,8 +124,9 @@ on** before anything changes:
 - Roles that already match are summarized in one line.
 - PR review agents join a team with the same name, ignoring case, or create it.
 - Each skill shows whether its copy is new, already on the computer, kept
-  separate, already available by name, or not available. Skill files and
-  `SKILL.md` can be read before importing.
+  separate, already available, or not available. Skill files and `SKILL.md` can
+  be read before importing. Prompts or skill files with hidden formatting
+  characters are flagged and start unselected.
 
 Skills are matched by their files, not by name. A shared copy identical to one
 the computer already has is reused. If the computer already uses that skill ID

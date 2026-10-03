@@ -75,6 +75,15 @@ Long-press a response to rate it. Draft attachments, picks and voice provenance
 stay with the original host and feature, including after a failed send. Swipe/context
 archive actions capture the exact owner and roll back optimistic removal on error.
 
+If microphone transcription fails, open **Transcription details** below the
+First Mate composer and tap **Copy diagnostics**. The report identifies the
+private recording/upload/response step and the Apple permission, device, language,
+model-download, or recognition step, with safe error codes and app/OS metadata.
+It contains no recording, transcript, credentials, private address, or raw server
+message. Quick recordings are discarded after a failed attempt; record again to
+retry. The details remain until another recording, a successful send, or leaving
+the conversation. The transcription providers and permissions are unchanged.
+
 The matching companion server with `first-mate-v1` is required. Work continues on
 that host when the phone app closes. The scope preference is versioned; a missing
 or legacy-only value opens on All Machines without changing the older machine

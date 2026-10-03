@@ -355,16 +355,25 @@ actor HerdrAPIClient: FirstMateClient {
     }
 
     func transcribeVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse {
-        let data = try VoiceRecordingPolicy.validatedData(at: fileURL)
-        return try await request(
-            path: "/api/v1/voice/transcriptions",
-            method: "POST",
-            body: VoiceTranscriptionRequest(
-                filename: fileURL.lastPathComponent,
-                mimeType: "audio/wav",
-                dataBase64: data.base64EncodedString()
+        let data: Data
+        do {
+            data = try VoiceRecordingPolicy.validatedData(at: fileURL)
+        } catch {
+            throw try VoiceTranscriptionFailure.wrapping(error, stage: .recording)
+        }
+        do {
+            return try await request(
+                path: "/api/v1/voice/transcriptions",
+                method: "POST",
+                body: VoiceTranscriptionRequest(
+                    filename: fileURL.lastPathComponent,
+                    mimeType: "audio/wav",
+                    dataBase64: data.base64EncodedString()
+                )
             )
-        )
+        } catch {
+            throw try VoiceTranscriptionFailure.wrapping(error, stage: error is DecodingError ? .response : .request)
+        }
     }
 
     func createWorkspace(label: String, cwd: String) async throws {

@@ -91,14 +91,7 @@ struct FirstMateMobileHTTPContractTests {
     func voiceWitness() async throws {
         let (client, session) = try makeClient(body: Data(#"{"ok":true,"text":"Synthetic dictation","backend":"synthetic","language":"en"}"#.utf8))
         defer { session.invalidateAndCancel() }
-        let file = FileManager.default.temporaryDirectory.appending(path: "synthetic-\(UUID()).wav")
-        var audio = Data("RIFF".utf8)
-        audio.append(contentsOf: [38, 0, 0, 0])
-        audio.append(Data("WAVEfmt ".utf8))
-        audio.append(contentsOf: [16, 0, 0, 0, 1, 0, 1, 0, 0x80, 0x3E, 0, 0, 0, 0x7D, 0, 0, 2, 0, 16, 0])
-        audio.append(Data("data".utf8))
-        audio.append(contentsOf: [2, 0, 0, 0, 0, 0])
-        try audio.write(to: file)
+        let (file, audio) = try voiceFile()
         defer { try? FileManager.default.removeItem(at: file) }
         #expect(try await client.transcribeFirstMateVoice(fileURL: file).text == "Synthetic dictation")
         let request = try #require(requests.first)
@@ -108,6 +101,52 @@ struct FirstMateMobileHTTPContractTests {
         let body = try JSONDecoder().decode([String: String].self, from: #require(request.httpBody))
         #expect(body["mime_type"] == "audio/wav")
         #expect(Data(base64Encoded: body["data_base64"] ?? "") == audio)
+    }
+
+    @Test("Voice rejects unreadable audio before a request and reports that stage")
+    func voiceValidationFailure() async throws {
+        let (client, session) = try makeClient(body: Data())
+        defer { session.invalidateAndCancel() }
+        let file = FileManager.default.temporaryDirectory.appending(path: "invalid-\(UUID()).wav")
+        try Data("not WAV".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            _ = try await client.transcribeFirstMateVoice(fileURL: file)
+            Issue.record("Expected recording validation failure")
+        } catch let failure as VoiceTranscriptionFailure {
+            #expect(failure.issues.map(\.stage) == [.recording])
+            #expect(requests.isEmpty)
+        }
+    }
+
+    @Test("Voice distinguishes server rejection from malformed response JSON", arguments: [200, 503])
+    func voiceResponseFailure(status: Int) async throws {
+        let body = status == 200 ? Data("not JSON".utf8)
+            : Data(#"{"error":{"code":"transcription_unavailable","message":"private upstream address"}}"#.utf8)
+        let (client, session) = try makeClient(status: status, body: body)
+        defer { session.invalidateAndCancel() }
+        let (file, _) = try voiceFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        do {
+            _ = try await client.transcribeFirstMateVoice(fileURL: file)
+            Issue.record("Expected transcription failure")
+        } catch let failure as VoiceTranscriptionFailure {
+            #expect(failure.issues.map(\.stage) == [status == 200 ? .response : .request])
+            #expect(requests.count == 1)
+            #expect(!failure.report.contains("private upstream address"))
+        }
+    }
+
+    private func voiceFile() throws -> (URL, Data) {
+        let file = FileManager.default.temporaryDirectory.appending(path: "synthetic-\(UUID()).wav")
+        var audio = Data("RIFF".utf8)
+        audio.append(contentsOf: [38, 0, 0, 0])
+        audio.append(Data("WAVEfmt ".utf8))
+        audio.append(contentsOf: [16, 0, 0, 0, 1, 0, 1, 0, 0x80, 0x3E, 0, 0, 0, 0x7D, 0, 0, 2, 0, 16, 0])
+        audio.append(Data("data".utf8))
+        audio.append(contentsOf: [2, 0, 0, 0, 0, 0])
+        try audio.write(to: file)
+        return (file, audio)
     }
 
     @Test("Server codes preserve two-value status catches and missing-code compatibility", arguments: [401, 404, 409, 501, 503])

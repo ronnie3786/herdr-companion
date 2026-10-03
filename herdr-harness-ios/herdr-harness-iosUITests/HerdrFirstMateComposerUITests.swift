@@ -59,6 +59,33 @@ final class HerdrFirstMateComposerUITests: XCTestCase {
         try capture("phase5-voice-sent", app)
     }
 
+    func testTranscriptionFailureDetailsCanBeReadAndCopied() throws {
+        let app = launch(extraArguments: ["-HerdrVoiceDiagnosticFailure"])
+        defer { app.terminate() }
+        let row = app.buttons["first-mate-feature-demo1-demo-receipts"]
+        for _ in 0..<8 where !row.isHittable { app.swipeUp() }
+        XCTAssertTrue(row.isHittable); row.tap()
+        let mic = app.buttons["first-mate-microphone"]
+        XCTAssertTrue(mic.waitForExistence(timeout: 5)); mic.tap()
+        XCTAssertTrue(app.staticTexts["Listening…"].waitForExistence(timeout: 3)); mic.tap()
+        let details = app.buttons["voice-transcription-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 5)); details.tap()
+        XCTAssertTrue(app.navigationBars["Transcription details"].waitForExistence(timeout: 5))
+        let report = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Herdr transcription diagnostics")).firstMatch
+        XCTAssertTrue(report.exists)
+        XCTAssertTrue(report.label.contains("HTTP 503, transcription_unavailable"))
+        XCTAssertTrue(report.label.contains("Apple Speech / device support"))
+        XCTAssertFalse(report.label.contains("recording is still here"))
+        let copy = app.buttons["voice-copy-diagnostics"]
+        XCTAssertTrue(copy.isHittable); copy.tap()
+        XCTAssertEqual(copy.label, "Copied diagnostics")
+        try capture("voice-diagnostic-details", app)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(mic.waitForExistence(timeout: 3)); mic.tap()
+        XCTAssertFalse(details.exists, "A new recording clears the previous report")
+        app.buttons["first-mate-cancel-dictation"].tap()
+    }
+
     func testMentionAndFeedbackEditorOnCanonicalResponse() throws {
         let app = launch(); defer { app.terminate() }
         let row = app.buttons["first-mate-feature-demo1-demo-receipts"]
@@ -97,9 +124,9 @@ final class HerdrFirstMateComposerUITests: XCTestCase {
         try capture("phase5-feedback-reaction", app)
     }
 
-    private func launch() -> XCUIApplication {
+    private func launch(extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["-HerdrFirstMateDemo", "-HerdrFirstMateComposerScenarios", "-HerdrResetFirstMateScope", "-herdr.smartAlerts", "NO"]
+        app.launchArguments = ["-HerdrFirstMateDemo", "-HerdrFirstMateComposerScenarios", "-HerdrResetFirstMateScope", "-herdr.smartAlerts", "NO"] + extraArguments
         app.launch(); XCTAssertTrue(app.buttons["first-mate-machine-picker"].waitForExistence(timeout: 10)); return app
     }
     private func capture(_ name: String, _ app: XCUIApplication) throws {

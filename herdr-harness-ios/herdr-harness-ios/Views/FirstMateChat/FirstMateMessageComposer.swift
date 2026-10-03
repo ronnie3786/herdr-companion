@@ -64,6 +64,9 @@ struct FirstMateMessageComposer: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("first-mate-composer-hint")
             }
+            if let report = voice?.diagnosticReport {
+                VoiceTranscriptionDiagnosticsView(report: report)
+            }
         }
         .foregroundStyle(HerdrTheme.primaryText)
         .dynamicTypeSize(...HerdrTheme.maximumDynamicTypeSize)

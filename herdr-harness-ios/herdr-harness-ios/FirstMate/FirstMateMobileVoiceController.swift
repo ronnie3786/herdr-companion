@@ -11,6 +11,7 @@ final class FirstMateMobileVoiceController {
     private var demoStarted: Date?
     private var demo = false
     private(set) var hint: String?
+    private(set) var diagnosticReport: String?
     private(set) var startPulse = 0
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var session: Session?
@@ -39,7 +40,7 @@ final class FirstMateMobileVoiceController {
                isCurrent: @escaping @MainActor () -> Bool) {
         guard phase == .idle, task == nil, isCurrent(), !material.blocksSending else { return }
         session = Session(store: store, material: material, isCurrent: isCurrent)
-        demo = store.isDemo; hint = nil; startPulse &+= 1
+        demo = store.isDemo; hint = nil; diagnosticReport = nil; startPulse &+= 1
         if demo {
             demoStarted = .now
             demoPhase = .locked
@@ -55,15 +56,23 @@ final class FirstMateMobileVoiceController {
             guard let self else { return }
             let outcome: HerdrQuickVoiceCapture.Outcome
             if self.demo {
-                if Date.now.timeIntervalSince(self.demoStarted ?? .now) < HerdrQuickVoiceCapture.minimumDuration {
+                if let failure = Self.diagnosticDemoFailure {
+                    self.diagnosticReport = failure.report
+                    outcome = .failure(failure.localizedDescription)
+                } else if Date.now.timeIntervalSince(self.demoStarted ?? .now) < HerdrQuickVoiceCapture.minimumDuration {
                     outcome = .tooShort
                 } else {
                     outcome = .transcript(.init(text: "Please summarize the next step.", provider: .demo, language: nil, usedFallback: false))
                 }
             } else {
                 outcome = await self.capture.endHold { url in
-                    try await Self.transcribe(url, store: session.store, context: session.context,
-                        isCurrent: session.isCurrent)
+                    do {
+                        return try await Self.transcribe(url, store: session.store, context: session.context,
+                            isCurrent: session.isCurrent)
+                    } catch let failure as VoiceTranscriptionFailure {
+                        self.diagnosticReport = failure.report
+                        throw failure
+                    }
                 }
             }
             guard self.session?.id == session.id else { return }
@@ -75,13 +84,26 @@ final class FirstMateMobileVoiceController {
                     initialText: session.initialText, store: session.store, context: session.context)
                 if attached { self.hint = "Dictation added. Review your message, then tap Send." }
             case .tooShort: self.hint = "Nothing heard. Tap the mic and speak a little longer."
-            case .failure(let message): self.hint = message
+            case .failure(let message):
+                self.hint = self.diagnosticReport == nil ? message
+                    : "Transcription failed. Open Transcription details for the failed steps. Record again to retry."
             case .cancelled: self.hint = "Recording cancelled."
             }
         }
     }
 
-    func clearHint() { hint = nil }
+    private static var diagnosticDemoFailure: VoiceTranscriptionFailure? {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("-HerdrVoiceDiagnosticFailure") else { return nil }
+        return try? .combined(
+            privateError: APIError.server(status: 503, message: "Synthetic provider failure", code: "transcription_unavailable"),
+            appleError: VoiceTranscriptionFailure.wrapping(VoiceTranscriptionError.deviceUnavailable, stage: .appleDevice))
+        #else
+        return nil
+        #endif
+    }
+
+    func clearHint() { hint = nil; diagnosticReport = nil }
 
     func cancel(preserveRecognizedText: Bool = false) {
         session?.retainsResult = preserveRecognizedText

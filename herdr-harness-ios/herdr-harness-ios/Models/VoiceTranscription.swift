@@ -176,7 +176,7 @@ enum VoiceTranscriptionError: LocalizedError, Equatable {
     case speechPermissionDenied
     case localeUnavailable
     case emptyTranscript
-    case privateAndAppleFailed
+    case deviceUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -190,8 +190,8 @@ enum VoiceTranscriptionError: LocalizedError, Equatable {
             "Apple Speech does not have a transcription model for this language."
         case .emptyTranscript:
             "No speech was found in the recording."
-        case .privateAndAppleFailed:
-            "Private transcription and the Apple Speech fallback were both unavailable. Your recording is still here."
+        case .deviceUnavailable:
+            "This device does not support the Apple speech engine used by this build."
         }
     }
 }
@@ -210,7 +210,9 @@ enum VoiceTranscriptionPipeline {
             return try await privateTranscription()
         } catch is CancellationError {
             throw CancellationError()
-        } catch {
+        } catch let privateError {
+            try Task.checkCancellation()
+            if (privateError as? URLError)?.code == .cancelled { throw CancellationError() }
             do {
                 let fallback = try await appleTranscription()
                 return VoiceTranscription(
@@ -221,8 +223,9 @@ enum VoiceTranscriptionPipeline {
                 )
             } catch is CancellationError {
                 throw CancellationError()
-            } catch {
-                throw VoiceTranscriptionError.privateAndAppleFailed
+            } catch let appleError {
+                try Task.checkCancellation()
+                throw try VoiceTranscriptionFailure.combined(privateError: privateError, appleError: appleError)
             }
         }
     }
@@ -236,53 +239,74 @@ enum AppleVoiceTranscriber {
 
     static func transcribe(fileURL: URL, locale requestedLocale: Locale = .current) async throws -> String {
         try Task.checkCancellation()
-        try await authorizeSpeechRecognition()
+        do {
+            try await authorizeSpeechRecognition()
+        } catch {
+            throw try VoiceTranscriptionFailure.wrapping(error, stage: .applePermission)
+        }
 
-        guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale)
-        else {
-            throw VoiceTranscriptionError.localeUnavailable
+        guard SpeechTranscriber.isAvailable else {
+            throw try VoiceTranscriptionFailure.wrapping(VoiceTranscriptionError.deviceUnavailable, stage: .appleDevice)
+        }
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale) else {
+            throw try VoiceTranscriptionFailure.wrapping(VoiceTranscriptionError.localeUnavailable, stage: .appleLocale)
         }
 
         let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
-        if let installation = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-            try Task.checkCancellation()
-            try await installation.downloadAndInstall()
+        do {
+            if let installation = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                try Task.checkCancellation()
+                try await installation.downloadAndInstall()
+            }
+        } catch {
+            throw try VoiceTranscriptionFailure.wrapping(error, stage: .appleAssets)
         }
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-        let transcript = try await withThrowingTaskGroup(of: ChildResult.self) { group in
-            group.addTask {
-                var passages: [String] = []
-                for try await result in transcriber.results {
-                    try Task.checkCancellation()
-                    let passage = String(result.text.characters)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !passage.isEmpty { passages.append(passage) }
+        let transcript: String
+        do {
+            transcript = try await withThrowingTaskGroup(of: ChildResult.self) { group in
+                group.addTask {
+                    var passages: [String] = []
+                    for try await result in transcriber.results {
+                        try Task.checkCancellation()
+                        let passage = String(result.text.characters)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !passage.isEmpty { passages.append(passage) }
+                    }
+                    return .transcript(passages)
                 }
-                return .transcript(passages)
-            }
-            group.addTask {
-                let audioFile = try AVAudioFile(forReading: fileURL)
-                if let lastSampleTime = try await analyzer.analyzeSequence(from: audioFile) {
-                    try await analyzer.finalizeAndFinish(through: lastSampleTime)
-                } else {
-                    await analyzer.cancelAndFinishNow()
+                group.addTask {
+                    let audioFile: AVAudioFile
+                    do {
+                        audioFile = try AVAudioFile(forReading: fileURL)
+                    } catch {
+                        throw try VoiceTranscriptionFailure.wrapping(error, stage: .appleAudio)
+                    }
+                    if let lastSampleTime = try await analyzer.analyzeSequence(from: audioFile) {
+                        try await analyzer.finalizeAndFinish(through: lastSampleTime)
+                    } else {
+                        await analyzer.cancelAndFinishNow()
+                    }
+                    return .analysisFinished
                 }
-                return .analysisFinished
-            }
 
-            var passages: [String] = []
-            for try await childResult in group {
-                if case let .transcript(value) = childResult {
-                    passages = value
+                var passages: [String] = []
+                for try await childResult in group {
+                    if case let .transcript(value) = childResult {
+                        passages = value
+                    }
                 }
+                return passages.joined(separator: " ")
             }
-            return passages.joined(separator: " ")
+        } catch {
+            throw try VoiceTranscriptionFailure.wrapping(error, stage: .appleRecognition)
         }
 
         let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { throw VoiceTranscriptionError.emptyTranscript }
+        guard !cleaned.isEmpty else {
+            throw try VoiceTranscriptionFailure.wrapping(VoiceTranscriptionError.emptyTranscript, stage: .appleRecognition)
+        }
         return cleaned
     }
 

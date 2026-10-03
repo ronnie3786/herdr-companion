@@ -52,12 +52,20 @@ struct FirstMateChatConversationView: View {
                 )
             } else {
                 VStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text(session.leadStore?.error ?? "Opening First Mate…")
+                    if session.leadUnavailableReason == nil { ProgressView().controlSize(.small) }
+                    Text(session.leadUnavailableReason ?? session.leadStore?.error ?? "Opening First Mate…")
                         .herdrFont(size: HerdrTheme.TextSize.small)
                         .foregroundStyle(HerdrTheme.tertiaryText)
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
+                    if let draft = session.unavailableHomeDraft {
+                        Text(draft)
+                            .herdrFont(size: HerdrTheme.TextSize.small)
+                            .foregroundStyle(HerdrTheme.secondaryText)
+                            .textSelection(.enabled)
+                            .padding(12)
+                            .background(HerdrTheme.fieldFill, in: .rect(cornerRadius: 10))
+                    }
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -200,15 +208,20 @@ private struct FirstMateFeatureChat: View {
 
     var body: some View {
         let typing = isTyping
+        let request = session.exactOpenRequest
+        let validateOwner: @MainActor () -> Bool = {
+            session.selection == .feature(id) && session.exactOpenRequest == request
+                && session.exactOwnerIsCurrent && model.canControl(machineID: id.machineID)
+        }
         VStack(spacing: 0) {
-            FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing)
+            FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing, validateOwner: validateOwner)
                 .id(id)
                 .contextMenu {
                     Button("Rename or Change Emoji…", systemImage: "pencil") { session.requestPresentationEdit(id) }
                     Button("Archive feature…", systemImage: "archivebox") { session.requestArchive(id) }
                 }
             FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
-            FirstMateSendErrorView(store: store, featureID: id.featureID)
+            FirstMateSendErrorView(store: store, featureID: id.featureID, validateOwner: validateOwner)
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .herdrFont(size: HerdrTheme.TextSize.small)
@@ -239,7 +252,8 @@ private struct FirstMateFeatureChat: View {
                         FirstMateSuggestionRow(
                             suggestions: FirstMateTranscriptLayout.suggestedReplies(messages: messages, needsYou: needsYou, isTyping: typing),
                             store: store,
-                            featureID: id.featureID
+                            featureID: id.featureID,
+                            validateOwner: validateOwner
                         ) { session.didMutate(machineID: id.machineID) }
                         FirstMatePromptComposer(
                             store: store,
@@ -248,7 +262,8 @@ private struct FirstMateFeatureChat: View {
                             canControl: store.controlAvailable && store.selectedFeatureID == id.featureID,
                             modelFavorites: modelFavorites,
                             placeholder: "Message \(conversation?.name ?? snapshot.feature.title)",
-                            focusRequest: focusRequest
+                            focusRequest: focusRequest,
+                            validateOwner: validateOwner
                         ) { session.didMutate(machineID: id.machineID) }
                     }
                     .id(id)
@@ -295,15 +310,26 @@ private struct FirstMateLeadChat: View {
 
     var body: some View {
         let typing = isTyping
+        let owner = session.homeLeadOwner
+        let validateOwner: @MainActor () -> Bool = {
+            session.selection == .lead && session.homeLeadOwner == owner && session.leadMachineID == machineID
+                && session.leadOwnerIsCurrent && model.canControl(machineID: machineID)
+        }
         VStack(spacing: 0) {
+            ForEach(session.homeContexts) { context in
+                HomeChatContextCard(context: context)
+                    .padding(.horizontal, FirstMateChatConversationView.gutter)
+                    .padding(.top, 10)
+            }
             if messages.isEmpty, !typing {
                 welcome
             } else {
-                FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing)
+                FirstMateChatTranscript(session: session, store: store, snapshot: snapshot, conversationID: id, isTyping: typing, validateOwner: validateOwner)
                     .id(id)
             }
             FirstMateExecutionStateNotice(snapshot: snapshot, health: store.runtimeHealth)
-            FirstMateSendErrorView(store: store, featureID: snapshot.feature.id)
+            FirstMateSendErrorView(store: store, featureID: snapshot.feature.id,
+                                   validateOwner: validateOwner)
             if let error = store.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .herdrFont(size: HerdrTheme.TextSize.small)
@@ -321,7 +347,8 @@ private struct FirstMateLeadChat: View {
                     snapshot: snapshot,
                     canControl: store.controlAvailable && store.selectedFeatureID == snapshot.feature.id,
                     modelFavorites: modelFavorites,
-                    focusRequest: focusRequest
+                    focusRequest: focusRequest,
+                    validateOwner: validateOwner
                 ) { session.didMutate(machineID: machineID) }
                 .id(id)
             }
@@ -365,6 +392,7 @@ private struct FirstMateSuggestionRow: View {
     let suggestions: [String]
     @Bindable var store: FirstMateStore
     let featureID: String
+    var validateOwner: (@MainActor () -> Bool)? = nil
     let didSend: @MainActor () -> Void
 
     var body: some View {
@@ -381,7 +409,7 @@ private struct FirstMateSuggestionRow: View {
 
     private func send(_ text: String) {
         let context = store.operationContext
-        guard context.matchesFeature(featureID), !store.isSending,
+        guard validateOwner?() ?? true, context.matchesFeature(featureID), !store.isSending,
               store.sendFailure(for: featureID)?.text != text,
               let handle = store.beginOutgoingMessage(text, expectedContext: context) else { return }
         Task {

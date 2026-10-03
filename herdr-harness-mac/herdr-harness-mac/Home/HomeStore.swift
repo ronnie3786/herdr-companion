@@ -146,7 +146,7 @@ final class HomeStore {
             let hidden = preferences.snoozes[item.id].map {
                 $0.fingerprint == item.fingerprint && ($0.expiresAt ?? .distantPast) > now
             } ?? false
-            return !hidden && matches("\(item.title) \(item.reason) \(item.body.plainText)")
+            return !hidden
         }
         let available = Set(eligible.map(\.id))
         // Preserve order through unrelated source refreshes; append genuinely new evidence.
@@ -154,14 +154,16 @@ final class HomeStore {
         let existing = Set(order)
         order.append(contentsOf: eligible.map(\.id).filter { !existing.contains($0) })
         let byID = Dictionary(eligible.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        visible.focus = order.compactMap { byID[$0] }
+        visible.focus = order.compactMap { byID[$0] }.filter {
+            matches("\($0.title) \($0.reason) \($0.body.plainText)")
+        }
         visible.radar = source.radar.filter { item in
             preferences.dismissals[item.id]?.fingerprint != item.fingerprint && matches(item.body.plainText)
         }
         visible.chats = source.chats.filter { matches("\($0.title) \($0.location) \($0.reason) \($0.quote)") }
         visible.recap = source.recap.filter { matches($0.body.plainText) }
         if !query.isEmpty { visible.summary = source.summary.filter { matches($0.plainText) } }
-        if !available.contains(selectedFocusID ?? "") {
+        if !visible.focus.contains(where: { $0.id == selectedFocusID }) {
             selectedFocusID = visible.focus.isEmpty ? nil : visible.focus[min(oldIndex, visible.focus.count - 1)].id
         }
         if visible != snapshot { snapshot = visible }

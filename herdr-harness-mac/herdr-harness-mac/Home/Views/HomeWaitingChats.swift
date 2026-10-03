@@ -4,6 +4,7 @@ struct HomeWaitingChats: View {
     var title: String
     var items: [HomeChatItem]
     var onCommand: (HomeCommand) -> Void
+    var onVisibilityChange: (String, Bool) -> Void = { _, _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -17,7 +18,11 @@ struct HomeWaitingChats: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: HomeGeometry.chatMinimum), spacing: 10, alignment: .top)],
                       alignment: .leading, spacing: 10) {
-                ForEach(items) { item in HomeChatCard(item: item, onCommand: onCommand) }
+                ForEach(items) { item in
+                    HomeChatCard(item: item, onCommand: onCommand)
+                        .onScrollVisibilityChange(threshold: 0.01) { onVisibilityChange(item.id, $0) }
+                        .onDisappear { onVisibilityChange(item.id, false) }
+                }
             }
         }
     }

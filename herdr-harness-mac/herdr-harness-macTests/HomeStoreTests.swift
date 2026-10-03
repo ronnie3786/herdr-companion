@@ -101,6 +101,19 @@ struct HomeStoreTests {
         #expect(store.selectedFocusID == "C")
     }
 
+    @Test("Search preserves the locally rotated stack through refresh and clearing")
+    func searchPreservesOrder() {
+        let store = HomeStore(defaults: defaults(), now: { start })
+        let snapshot = source([item("A"), item("B"), item("C")])
+        store.receive(snapshot)
+        store.skip()
+        store.search = "A"
+        store.receive(snapshot)
+        store.search = ""
+        #expect(store.snapshot.focus.map(\.id) == ["B", "C", "A"])
+        #expect(store.snapshot.focusCount == 3)
+    }
+
     @Test("Visit cutoff stays fixed throughout the visit and survives store replacement")
     func visitBoundary() {
         let preferences = defaults()

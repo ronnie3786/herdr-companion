@@ -9,35 +9,71 @@ struct HomeHostView: View {
     var onScroll: (Bool) -> Void
     var openWindow: (String) -> Void
     var openSettings: () -> Void
+    @State private var visibleChatIDs = Set<String>()
 
     var body: some View {
-        HomeContentView(snapshot: readOnlySnapshot, selectedFocusID: home.selectedFocusID,
+        let request = hydrationRequest
+        HomeContentView(snapshot: HomeActionPresentation.snapshot(home.snapshot, snoozedCount: home.snoozedCount),
+                        selectedFocusID: home.selectedFocusID,
                         recapExpanded: $home.recapExpanded, onSelectFocus: home.selectFocus,
                         onCommand: command, onScroll: onScroll,
-                        isVisible: shell.mainWindowAllowsPresentation)
+                        isVisible: shell.mainWindowAllowsPresentation,
+                        onChatVisibilityChange: chatVisibilityChanged)
+            .environment(\.homeActionsEnabled, true)
+            .environment(\.homeQuickReplyController, shell.homeQuickReply)
+            .task(id: request) {
+                await shell.homeQuickReply?.hydrate(focus: request.focus, chats: request.chats,
+                                                    enabled: request.enabled)
+            }
+            .onDisappear { shell.homeQuickReply?.pauseHydration() }
             .overlay(alignment: .bottom) {
                 if let text = home.status ?? searchStatus {
-                    Text(text).font(.system(size: 13)).foregroundStyle(HomePalette.secondary)
-                        .padding(.horizontal, 16).padding(.vertical, 10)
-                        .background(HomePalette.color(0x282631), in: .capsule)
-                        .padding(.bottom, 24)
-                        .accessibilityIdentifier("home-status")
+                    HStack(spacing: 12) {
+                        Text(text).herdrFont(size: 13).foregroundStyle(HomePalette.secondary)
+                        if home.canUndoSnooze {
+                            Button("Undo snooze", action: home.undoLastSnooze)
+                                .herdrFont(size: 13, weight: .semibold).foregroundStyle(HomePalette.accent)
+                                .buttonStyle(HomeButtonStyle())
+                                .accessibilityIdentifier("home-snooze-undo")
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(HomePalette.color(0x282631), in: .capsule)
+                    .padding(.bottom, 84)
+                    .accessibilityIdentifier("home-status")
                 }
             }
     }
 
-    private var readOnlySnapshot: HomeSnapshot {
-        var snapshot = home.snapshot
-        snapshot.focus = snapshot.focus.map { item in
-            var item = item; item.actions = item.actions.filter { $0.command.isNavigation }; return item
-        }
-        snapshot.radar = snapshot.radar.map { item in
-            var item = item; item.actions = item.actions.filter { $0.command.isNavigation }; return item
-        }
-        snapshot.chats = snapshot.chats.map { item in
-            var item = item; item.actions = item.actions.filter { $0.command.isNavigation }; return item
-        }
-        return snapshot
+    private struct HydrationRequest: Equatable {
+        var controllerID: ObjectIdentifier?
+        var enabled: Bool
+        var focus: HomeFocusItem?
+        var chats: [HomeChatItem]
+        var connectionGeneration: Int
+        var isDemo: Bool
+        var controllable: [Bool]
+    }
+
+    private var hydrationRequest: HydrationRequest {
+        let focus = home.selectedFocus
+        let chats = Array(home.snapshot.chats.filter { visibleChatIDs.contains($0.id) && $0.isWaiting && !$0.isStale }.prefix(3))
+        let routes = focus.map { [$0.route] } ?? []
+        return .init(controllerID: shell.homeQuickReply.map(ObjectIdentifier.init),
+                     enabled: shell.mainWindowAllowsPresentation && shell.detailScope == .home
+                        && shell.homeChat?.isPresented != true && HomeFixtures.requestedMoment == nil,
+                     focus: focus, chats: chats, connectionGeneration: model.connectionGeneration,
+                     isDemo: model.isDemoMode, controllable: (routes + chats.map(\.route)).map { route in
+                         switch route {
+                         case .firstMate(let machineID, _): model.canControl(machineID: machineID)
+                         case .chat(let paneID): MachineScopedID.split(paneID).map { model.canControl(machineID: $0.machineID) } ?? false
+                         default: false
+                         }
+                     })
+    }
+
+    private func chatVisibilityChanged(_ id: String, _ visible: Bool) {
+        if visible { visibleChatIDs.insert(id) } else { visibleChatIDs.remove(id) }
     }
 
     private var searchStatus: String? {
@@ -48,7 +84,23 @@ struct HomeHostView: View {
     }
 
     private func command(_ command: HomeCommand) {
-        guard case let .open(route) = command else { return }
-        HomeRouting.open(route, model: model, shell: shell, openWindow: openWindow, openSettings: openSettings)
+        switch command {
+        case .open(let route):
+            HomeRouting.open(route, model: model, shell: shell, openWindow: openWindow, openSettings: openSettings)
+        case .ask(let draft, let route):
+            let context = HomeActionContext.make(route: route, snapshot: home.snapshot)
+            guard route == nil || context != nil else {
+                home.showStatus("That item is no longer on Home. Open its conversation to ask about the latest state.")
+                return
+            }
+            guard let chat = shell.homeChat else {
+                home.showStatus("First Mate is getting ready. Try again in a moment.")
+                return
+            }
+            chat.open(context: context, draft: draft)
+        case .skip: home.skip()
+        case .snooze(let id): home.snooze(id)
+        case .dismiss(let id): home.dismissRadar(id)
+        }
     }
 }

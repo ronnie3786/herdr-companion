@@ -3,7 +3,7 @@ import Foundation
 /// Shared reply routing for the main First Mate screen, chat window, and lead HUD.
 @MainActor
 enum FirstMateSkimReplies {
-    static func context(snapshot: FirstMateSnapshot, store: FirstMateStore, canControl: Bool) -> SkimReplyContext? {
+    static func context(snapshot: FirstMateSnapshot, store: FirstMateStore, canControl: Bool, validateOwner: (@MainActor () -> Bool)? = nil) -> SkimReplyContext? {
         let featureID = snapshot.feature.id
         let operation = store.operationContext
         guard store.selectedFeatureID == featureID,
@@ -11,8 +11,8 @@ enum FirstMateSkimReplies {
               !["completed", "cancelled"].contains(snapshot.feature.status),
               let message = snapshot.messages.last(where: \.isConversation),
               FirstMateFeedbackEligibility.isEligible(message) else { return nil }
-        return SkimReplyContext(messageID: message.id, disabledReason: disabledReason(store: store, canControl: canControl)) { text in
-            guard operation == store.operationContext,
+        return SkimReplyContext(messageID: message.id, disabledReason: disabledReason(store: store, canControl: canControl && (validateOwner?() ?? true))) { text in
+            guard validateOwner?() ?? true, operation == store.operationContext,
                   disabledReason(store: store, canControl: canControl) == nil,
                   let current = store.snapshots[featureID],
                   !current.feature.isArchived,

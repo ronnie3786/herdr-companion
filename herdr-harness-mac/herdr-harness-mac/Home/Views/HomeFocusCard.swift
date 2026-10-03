@@ -50,6 +50,7 @@ struct HomeFocusCard: View {
                     }
                     .padding(.top, 16)
                 }
+                HomeQuickReplyView(route: item.route)
             }
         }
         .padding(.vertical, 22).padding(.leading, 22).padding(.trailing, 24)

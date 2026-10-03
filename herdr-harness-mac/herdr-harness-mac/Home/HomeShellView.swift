@@ -14,6 +14,23 @@ struct HomeShellView: View {
     private var tab: HomeTab { HomeTab(scope: shell.detailScope) }
 
     var body: some View {
+        Group {
+            if let controller = shell.homeChat {
+                surface.modifier(HomeChatPresentation(
+                    controller: controller, model: model, modelFavorites: modelFavorites,
+                    snapshot: shell.home.snapshot, isHomeVisible: shell.detailScope == .home,
+                    isActive: shell.mainWindowAllowsPresentation,
+                    query: Binding(get: { shell.home.search }, set: { shell.home.search = $0 }),
+                    searchPresented: $shell.homeSearchPresented, askRequest: shell.homeAskRequest,
+                    openWindow: { NSApp.activate(); openWindow(id: HerdrWindowID.firstMateChat) }))
+            } else {
+                surface
+            }
+        }
+        .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private var surface: some View {
         ZStack(alignment: .top) {
             HomePalette.base.ignoresSafeArea()
             if shell.detailScope == .home {
@@ -34,18 +51,15 @@ struct HomeShellView: View {
         }
         .ignoresSafeArea(.container, edges: .top)
         .task(id: shell.mainWindowAllowsPresentation) {
-            guard shell.mainWindowAllowsPresentation else { return }
             if let moment = HomeFixtures.requestedMoment {
                 shell.home.receive(HomeFixtures.snapshot(moment))
             } else {
+                guard shell.mainWindowAllowsPresentation else { return }
                 await shell.homeProjection.run(model: model, shell: shell, home: shell.home)
             }
         }
         .onChange(of: shell.detailScope, initial: true) { _, scope in
             if scope == .home { shell.home.beginVisit() } else { shell.home.endVisit() }
-        }
-        .onChange(of: shell.homeAskRequest) { _, _ in
-            FirstMateChatWindowOpening.openLead(shell: shell, openWindow: openWindow)
         }
         .background {
             if [.home, .reviews, .watchers, .chats].contains(tab) {

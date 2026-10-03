@@ -9,6 +9,7 @@ final class FirstMateComposerDraftStore {
     private var quotesByFeature: [String: [ChatQuote]] = [:]
     private var dictationByFeature: [String: Bool] = [:]
     private var editsByFeature: [String: Int] = [:]
+    private var textEditsByFeature: [String: Int] = [:]
     private struct Frozen {
         let handle: FirstMateOutgoingMessage.Handle
         let submission: FirstMateOutgoingMessage.Submission
@@ -19,7 +20,11 @@ final class FirstMateComposerDraftStore {
     }
     private var frozen: [String: Frozen] = [:]
 
-    func noteDraftEdit(for featureID: String) { noteEdit(for: featureID) }
+    func noteDraftEdit(for featureID: String) {
+        textEditsByFeature[featureID, default: 0] &+= 1
+        noteEdit(for: featureID)
+    }
+    func revision(for featureID: String) -> Int { textEditsByFeature[featureID, default: 0] }
 
     private func noteEdit(for featureID: String) {
         editsByFeature[featureID, default: 0] &+= 1
@@ -61,7 +66,7 @@ final class FirstMateComposerDraftStore {
               let revision = record.restoredRevision,
               editsByFeature[handle.featureID, default: 0] == revision else { return }
         store.setComposerDraft("", for: handle.context)
-        noteEdit(for: handle.featureID)
+        noteDraftEdit(for: handle.featureID)
         setAttachments([], for: handle.featureID)
         setQuotes([], for: handle.featureID)
         setContainsDictation(false, for: handle.featureID)
@@ -73,7 +78,7 @@ final class FirstMateComposerDraftStore {
     private func restore(_ record: Frozen, store: FirstMateStore) {
         let featureID = record.handle.featureID
         store.setComposerDraft(record.submission.draft, for: record.handle.context)
-        noteEdit(for: featureID)
+        noteDraftEdit(for: featureID)
         setAttachments(record.attachments, for: featureID)
         setQuotes(record.quotes, for: featureID)
         setContainsDictation(record.submission.containsDictation, for: featureID)
@@ -118,6 +123,7 @@ final class FirstMateComposerDraftStore {
         quotesByFeature = [:]
         dictationByFeature = [:]
         editsByFeature = [:]
+        textEditsByFeature = [:]
         frozen = [:]
     }
 }

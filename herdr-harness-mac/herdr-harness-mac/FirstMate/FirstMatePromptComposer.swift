@@ -21,6 +21,9 @@ struct FirstMatePromptComposer: View {
     /// Focuses the input once it appears (a composer that loads after its
     /// card opened, as in the HUD).
     var focusOnAppear = false
+    /// An optional external source guard for a store retained after a
+    /// connection changes. Presentation dismissal alone does not invalidate it.
+    var validateOwner: (@MainActor () -> Bool)? = nil
     /// Runs after the companion accepts a message (the chat window refreshes
     /// the other window and the fleet).
     var didSubmit: (@MainActor () -> Void)? = nil
@@ -60,7 +63,7 @@ struct FirstMatePromptComposer: View {
 
     private var destination: PromptComposerDestination {
         .firstMate(store: store, model: model, snapshot: snapshot, canControl: canControl,
-                   placeholder: placeholder, didSubmit: didSubmit)
+                   placeholder: placeholder, validateOwner: validateOwner, didSubmit: didSubmit)
     }
 
     private struct ContextKey: Equatable {

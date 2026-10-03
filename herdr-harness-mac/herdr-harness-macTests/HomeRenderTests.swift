@@ -12,17 +12,17 @@ struct HomeRenderTests {
     func moments(moment: HomeFixtures.Moment, width: Int) async throws {
         let size = CGSize(width: width, height: width == 1600 ? 1000 : width == 1280 ? 900 : 680)
         let snapshot = HomeFixtures.snapshot(moment)
-        let render = try await HerdrRenderHarness.renderWindow("home-\(moment.rawValue)-\(width).png", size: size) {
-            HomeRenderScene(snapshot: snapshot)
+        let render = try render("home-\(moment.rawValue)-\(width).png", size: size) {
+            HomeRenderScene(snapshot: snapshot, size: size)
         }
         render.expectSubstantial(minimumBytes: 24_000)
     }
 
     @Test("Morning and trouble respect motion and transparency preferences", arguments: [HomeFixtures.Moment.morning, .trouble])
     func accessibility(moment: HomeFixtures.Moment) async throws {
-        let render = try await HerdrRenderHarness.renderWindow("home-\(moment.rawValue)-accessibility.png",
+        let render = try render("home-\(moment.rawValue)-accessibility.png",
                                                               size: CGSize(width: 1280, height: 900)) {
-            HomeRenderScene(snapshot: HomeFixtures.snapshot(moment))
+            HomeRenderScene(snapshot: HomeFixtures.snapshot(moment), size: CGSize(width: 1280, height: 900))
                 .environment(\.homeReduceMotion, true)
                 .environment(\.homeReduceTransparency, true)
         }
@@ -31,8 +31,8 @@ struct HomeRenderTests {
 
     @Test("Expanded recap and scaled actions remain available at the minimum width")
     func recapAndScaledActions() async throws {
-        let render = try await HerdrRenderHarness.renderWindow("home-morning-expanded.png", size: CGSize(width: 1000, height: 1500)) {
-            HomeRenderScene(snapshot: HomeFixtures.snapshot(.morning), recapExpanded: true)
+        let render = try render("home-morning-expanded.png", size: CGSize(width: 1000, height: 1500)) {
+            HomeRenderScene(snapshot: HomeFixtures.snapshot(.morning), size: CGSize(width: 1000, height: 1500), recapExpanded: true)
                 .environment(\.herdrFontScale, .large)
         }
         render.expectSubstantial(minimumBytes: 40_000)
@@ -73,15 +73,41 @@ struct HomeRenderTests {
         #expect(stale.focus.allSatisfy { $0.isStale })
         #expect(stale.chats.allSatisfy { $0.isStale })
     }
+    /// AppKit's frame-view cache omits the layer-backed Home scroll surface and
+    /// distorts its glows. Render the shared SwiftUI grid at an explicit viewport
+    /// instead. Window controls, resizing and scrolling are covered by HomeUITests.
+    private func render(_ name: String, size: CGSize, @ViewBuilder content: () -> some View) throws -> HerdrRenderHarness.RenderResult {
+        let renderer = ImageRenderer(content: content()
+            .frame(width: size.width, height: size.height)
+            .environment(\.colorScheme, .dark)
+            .environment(\.homeReduceMotion, true))
+        renderer.scale = HerdrRenderHarness.scale
+        let image = try #require(renderer.cgImage)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+        let directory = HerdrRenderHarness.directory
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: name)
+        try data.write(to: url, options: .atomic)
+        return HerdrRenderHarness.RenderResult(name: name, url: url, byteCount: data.count,
+                                              pixelSize: CGSize(width: image.width, height: image.height), pointSize: size)
+    }
+
 }
 
 private struct HomeRenderScene: View {
     let snapshot: HomeSnapshot
+    let size: CGSize
     var recapExpanded = false
 
     var body: some View {
-        HomeContentView(snapshot: snapshot, selectedFocusID: snapshot.focus.first?.id,
-                        recapExpanded: .constant(recapExpanded), onSelectFocus: { _ in }, onCommand: { _ in }, isVisible: false)
+        HomeContentLayout(snapshot: snapshot, selectedFocusID: snapshot.focus.first?.id,
+                          recapExpanded: .constant(recapExpanded), width: size.width,
+                          onSelectFocus: { _ in }, onCommand: { _ in }, isVisible: false)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .clipped()
+            .background(HomeBackground())
             .overlay(alignment: .top) {
                 HomeTabStrip(selection: .home, snapshot: snapshot, query: .constant(""), isSearching: .constant(false),
                              isActive: false, onSelect: { _ in }, onSearch: {})

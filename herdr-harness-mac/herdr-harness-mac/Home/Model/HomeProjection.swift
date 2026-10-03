@@ -63,7 +63,7 @@ enum HomeProjection {
                                 reason: chat.isWaiting ? "Waiting for your input" : "New completed reply",
                                 location: chat.location, quote: chat.preview, colorHex: chat.colorHex,
                                 actions: [openAction(route, title: "Open chat")], route: route,
-                                isWaiting: chat.isWaiting, isStale: chat.isStale)
+                                isWaiting: chat.isWaiting, isStale: chat.isStale, evidenceID: chat.evidenceID)
         }
         snapshot.waitingChatCount = chats.count(where: \.isWaiting)
         snapshot.chatsTitle = snapshot.waitingChatCount > 0 ? "Chats waiting on you" : "Worth a look"

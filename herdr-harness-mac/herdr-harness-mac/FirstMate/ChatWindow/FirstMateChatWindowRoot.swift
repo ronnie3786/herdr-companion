@@ -222,6 +222,9 @@ struct FirstMateChatWindowRoot: View {
 
     private func routingObservers<Content: View>(_ content: Content) -> some View {
         content
+        .task(id: shell.homeChat?.pendingTransfer?.id) {
+            if let controller = shell.homeChat { await session.consumeHomeTransfer(from: controller) }
+        }
         .onChange(of: session.createStore.map(ObjectIdentifier.init), initial: true) { _, store in
             createOrigin = store == nil ? nil : session.createOrigin
         }

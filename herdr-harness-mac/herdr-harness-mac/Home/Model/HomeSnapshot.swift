@@ -77,6 +77,7 @@ struct HomeChatItem: Equatable, Identifiable, Sendable {
     var route: HomeRoute
     var isWaiting = true
     var isStale = false
+    var evidenceID = ""
 }
 
 struct HomeRecapItem: Equatable, Identifiable, Sendable {

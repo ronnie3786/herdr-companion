@@ -35,6 +35,12 @@ final class FirstMateChatWindowSession {
     /// Home feature actions carry an immutable source identity. They never
     /// use the Dock menu's fallback to another conversation.
     private(set) var exactOpenRequest: FirstMateChatExactOpenRequest?
+    /// Explicit Home transfers retain their exact lead independently of the
+    /// automatic policy, including when that owner becomes unavailable.
+    private(set) var homeLeadOwner: HomeChatOwner?
+    private var homeContextByID: [UUID: HomeChatContext] = [:]
+    @ObservationIgnored private var consumedHomeTransferIDs: Set<UUID> = []
+    @ObservationIgnored private var homeTransfersInFlight: Set<UUID> = []
     var search = ""
     var archiveCandidate: FirstMateFleetIndex.ArchiveTarget?
     var presentationEditTarget: FirstMateConversation?
@@ -55,6 +61,14 @@ final class FirstMateChatWindowSession {
     }
 
     @ObservationIgnored private var stores: [String: StoreEntry] = [:]
+    /// Keep the transferred draft even when explicit feature navigation needs
+    /// a new store for the same machine's replacement connection.
+    private struct HomeLeadConversation {
+        let owner: HomeChatOwner
+        let store: FirstMateStore
+        let draftContext: FirstMateStore.OperationContext
+    }
+    @ObservationIgnored private var retainedHomeLead: HomeLeadConversation?
     @ObservationIgnored private var skimStates: [FirstMateFleetFeatureID: SkimDisplayState] = [:]
     @ObservationIgnored private let configurationProvider: @MainActor (String) -> ServerConfiguration?
     @ObservationIgnored private let makeClient: @MainActor (ServerConfiguration) -> any FirstMateClient
@@ -174,9 +188,11 @@ final class FirstMateChatWindowSession {
     /// The window's store for a machine, created and configured on first use.
     /// A credential or connection change rebuilds it. Returns nil for a
     /// machine without a configuration.
-    func store(for machineID: String) -> FirstMateStore? {
-        if let request = exactOpenRequest, request.target.machineID == machineID,
+    func store(for machineID: String, overridingRoute: Bool = false) -> FirstMateStore? {
+        if !overridingRoute, let request = exactOpenRequest, request.target.machineID == machineID,
            !exactOwnerIsCurrent { return nil }
+        if !overridingRoute, selection == .lead, let owner = homeLeadOwner, owner.target.machineID == machineID,
+           !owner.target.isCurrent(model: model, configuration: configurationProvider) { return nil }
         if isDemo {
             guard machineID == Self.demoMachineID else { return nil }
             let identity = FirstMateConnectionIdentity(configuration: nil, generation: 0, isDemo: true)
@@ -189,7 +205,9 @@ final class FirstMateChatWindowSession {
         guard let configuration = configurationProvider(machineID) else { return nil }
         let identity = FirstMateConnectionIdentity(configuration: configuration, generation: model.connectionGeneration, isDemo: false)
         if let entry = stores[machineID], entry.identity == identity { return entry.store }
-        stores[machineID]?.store.configure(client: nil, demo: false)
+        if let previous = stores[machineID]?.store, previous !== retainedHomeLead?.store {
+            previous.configure(client: nil, demo: false)
+        }
         stores[Self.demoMachineID] = nil
         let store = FirstMateStore()
         store.configure(client: makeClient(configuration), demo: false)
@@ -227,6 +245,7 @@ final class FirstMateChatWindowSession {
     /// no machine has a lead: My First Mate then keeps the Phase 1 briefing
     /// and starts features.
     var leadMachineID: String? {
+        if let homeLeadOwner { return homeLeadOwner.target.machineID }
         if isDemo {
             return store(for: Self.demoMachineID)?.leadSupported == true ? Self.demoMachineID : nil
         }
@@ -259,7 +278,143 @@ final class FirstMateChatWindowSession {
         isDemo ? leadMachineID.map { [$0] } ?? [] : FirstMateLeadMachine.capable(hosts: hosts)
     }
 
-    var leadStore: FirstMateStore? { leadMachineID.flatMap { store(for: $0) } }
+    var leadStore: FirstMateStore? {
+        if let owner = homeLeadOwner {
+            guard owner.target.isCurrent(model: model, configuration: configurationProvider),
+                  let store = retainedHomeLead?.store ?? store(for: owner.target.machineID),
+                  store.leadFeatureID == nil || store.leadFeatureID == owner.featureID else { return nil }
+            return store
+        }
+        return leadMachineID.flatMap { store(for: $0) }
+    }
+
+    var leadOwnerIsCurrent: Bool {
+        guard let owner = homeLeadOwner else { return true }
+        return owner.target.isCurrent(model: model, configuration: configurationProvider)
+            && (retainedHomeLead?.store.leadFeatureID == nil
+                || retainedHomeLead?.store.leadFeatureID == owner.featureID)
+    }
+
+    var leadUnavailableReason: String? {
+        guard let owner = homeLeadOwner else { return nil }
+        if !owner.target.isCurrent(model: model, configuration: configurationProvider) {
+            return "The lead opened from Home is no longer on the same connection. Its draft stays with that conversation."
+        }
+        if let store = retainedHomeLead?.store,
+           let featureID = store.leadFeatureID, featureID != owner.featureID {
+            return "This machine's lead changed. The draft from Home has not been moved to another conversation."
+        }
+        return nil
+    }
+
+    var unavailableHomeDraft: String? {
+        guard leadUnavailableReason != nil, let retainedHomeLead else { return nil }
+        let draft = retainedHomeLead.store.composerDraft(for: retainedHomeLead.draftContext)
+        return draft.isEmpty ? nil : draft
+    }
+
+    var homeContexts: [HomeChatContext] {
+        guard let owner = homeLeadOwner, let store = retainedHomeLead?.store else { return [] }
+        return store.composerDrafts.quotes(for: owner.featureID).compactMap { homeContextByID[$0.id] }
+    }
+
+    /// Home's transcript reuses this presentation helper without starting the
+    /// window's polling loop or sharing the actual window's selected store.
+    func installHomeConversationStore(_ store: FirstMateStore, owner: HomeChatOwner) {
+        let identity = FirstMateConnectionIdentity(configuration: owner.target.configuration,
+            generation: owner.target.isDemo ? 0 : owner.target.generation, isDemo: owner.target.isDemo)
+        stores[owner.target.machineID] = StoreEntry(store: store, identity: identity)
+        homeLeadOwner = owner
+        retainedHomeLead = .init(owner: owner, store: store, draftContext: store.operationContext)
+    }
+
+    @discardableResult
+    func consumeHomeTransfer(from source: HomeChatController) async -> Bool {
+        guard let transfer = source.pendingTransfer else { return false }
+        if consumedHomeTransferIDs.contains(transfer.id) { source.acknowledgeTransfer(transfer); return true }
+        guard homeTransfersInFlight.insert(transfer.id).inserted else { return false }
+        defer { homeTransfersInFlight.remove(transfer.id) }
+        func reject(_ message: String) -> Bool { source.failTransfer(transfer.id, message: message); return false }
+        guard source.validates(transfer), transfer.owner.target.isCurrent(model: model, configuration: configurationProvider) else {
+            return reject("The lead's machine or connection changed. Your draft remains on Home.")
+        }
+        if let retainedHomeLead, retainedHomeLead.owner != transfer.owner,
+           retainedHomeLead.store.hasUnsentDrafts || retainedHomeLead.store.isSending
+                || retainedHomeLead.store.outgoingMessages(for: retainedHomeLead.owner.featureID).contains(where: {
+                    $0.state.isPending || $0.state.isFailure
+                }) {
+            return reject("The First Mate window still has a draft for a different lead connection. Resolve that draft before transferring this one.")
+        }
+        let target = transfer.owner.target
+        let identity = FirstMateConnectionIdentity(configuration: target.configuration,
+            generation: target.isDemo ? 0 : target.generation, isDemo: target.isDemo)
+        if let entry = stores[target.machineID], entry.identity != identity,
+           entry.store.hasUnsentDrafts || entry.store.isSending || entry.store.snapshots.keys.contains(where: {
+               entry.store.outgoingMessages(for: $0).contains { $0.state.isPending || $0.state.isFailure }
+           }) {
+            return reject("The First Mate window has a draft on an older connection. Keep or resolve that draft before transferring this one.")
+        }
+        guard let destination = store(for: target.machineID, overridingRoute: true) else {
+            return reject("That machine is unavailable in First Mate. Your draft remains on Home.")
+        }
+        let lifecycle = destination.lifecycle
+        guard !destination.isSending,
+              !destination.outgoingMessages(for: transfer.owner.featureID).contains(where: { $0.state.isPending || $0.state.isFailure }) else {
+            return reject("Resolve the current send in the First Mate window before transferring this draft.")
+        }
+        let navigationGeneration = selectionGeneration
+        _ = await destination.openLead()
+        guard !Task.isCancelled else {
+            return reject("Opening the First Mate window was cancelled. Your draft remains on Home; you can try again.")
+        }
+        guard source.validates(transfer), target.isCurrent(model: model, configuration: configurationProvider),
+              destination.lifecycle == lifecycle, selectionGeneration == navigationGeneration else {
+            return reject("The conversation changed while opening. Your draft remains on Home.")
+        }
+        // The window's normal refresh may have opened this same lead while
+        // our request was suspended. Verify the actual destination instead
+        // of treating that operation-context cancellation as a missing lead.
+        guard destination.leadFeatureID == transfer.owner.featureID,
+              destination.leadSnapshot?.feature.id == transfer.owner.featureID else {
+            return reject("The requested lead conversation is unavailable. Your draft remains on Home.")
+        }
+        guard !destination.isSending,
+              !destination.outgoingMessages(for: transfer.owner.featureID).contains(where: { $0.state.isPending || $0.state.isFailure }),
+              !destination.composerDrafts.attachments(for: transfer.owner.featureID).contains(where: { $0.status == .uploading }) else {
+            return reject("Wait for the First Mate window's send or upload to finish before transferring this draft.")
+        }
+        let wasShowingLead = selection == .lead
+        homeLeadOwner = transfer.owner
+        retainedHomeLead = .init(owner: transfer.owner, store: destination, draftContext: destination.operationContext)
+        select(.lead, focusComposer: true)
+        if wasShowingLead {
+            selectionGeneration &+= 1
+            wakeRefresh()
+        }
+        let featureID = transfer.owner.featureID
+        let context = destination.operationContext
+        let existing = destination.composerDraft(for: context)
+        destination.setComposerDraft(HomeChatController.appending(transfer.draft, to: existing), for: context)
+        destination.composerDrafts.noteDraftEdit(for: featureID)
+        var attachments = destination.composerDrafts.attachments(for: featureID)
+        let existingAttachmentIDs = Set(attachments.map(\.id))
+        attachments += transfer.attachments.filter { !existingAttachmentIDs.contains($0.id) }
+        destination.composerDrafts.setAttachments(attachments, for: featureID)
+        var quotes = destination.composerDrafts.quotes(for: featureID)
+        let existingQuoteIDs = Set(quotes.map(\.id))
+        quotes += transfer.quotes.filter { !existingQuoteIDs.contains($0.id) }
+        destination.composerDrafts.setQuotes(quotes, for: featureID)
+        destination.composerDrafts.setContainsDictation(destination.composerDrafts.containsDictation(for: featureID) || transfer.containsDictation, for: featureID)
+        for homeContext in transfer.contexts { homeContextByID[homeContext.id] = homeContext }
+        if let inspector = transfer.inspector {
+            destination.inspector = inspector
+            inspectorPreference = true
+        }
+        consumedHomeTransferIDs.insert(transfer.id)
+        // There is no suspension between destination mutation and source ack.
+        source.acknowledgeTransfer(transfer)
+        return true
+    }
 
     /// The lead's summary from the fleet index: its newest message and
     /// whether it is unread or replying.
@@ -278,6 +433,7 @@ final class FirstMateChatWindowSession {
     /// Automatic.
     func setLeadMachine(_ machineID: String?) {
         if let machineID, !leadMachineIDs.contains(machineID) { return }
+        homeLeadOwner = nil
         FirstMateLeadMachine.pin(machineID)
         leadPinRevision &+= 1
         if selection == .lead {
@@ -496,14 +652,15 @@ final class FirstMateChatWindowSession {
 
     var exactSelectionUnavailableReason: String? {
         guard let request = exactOpenRequest, selection == .feature(request.target) else { return nil }
+        let destination = "\(request.target.featureID) on \(request.target.machineID)"
         guard exactOwnerIsCurrent else {
-            return "This conversation's machine or connection is no longer available. Reopen it from Home after the source reconnects."
+            return "\(destination) is unavailable because its machine or connection changed. Reopen it from Home after the source reconnects."
         }
-        guard let store = selectedStore else { return "This conversation's machine is unavailable." }
+        guard let store = selectedStore else { return "\(destination) is unavailable because its machine cannot be reached." }
         if store.snapshots[request.target.featureID] != nil { return nil }
-        if let error = store.error { return "This conversation could not be opened: \(error)" }
+        if let error = store.error { return "\(destination) could not be opened: \(error)" }
         if store.hasLoaded || isDemo {
-            return "This conversation is no longer available on \(machineName(request.target.machineID))."
+            return "\(destination) is no longer available."
         }
         return nil
     }
@@ -583,14 +740,18 @@ final class FirstMateChatWindowSession {
     /// Marks the chat read when it shows in a key window, scrolled to its
     /// newest message. The marker is the newest First Mate message the
     /// transcript holds, which is what the dot compares against.
-    func markReadIfNeeded(featureID: String, machineID: String, newestMessageID: String?, isKeyWindow: Bool, isAtBottom: Bool) {
-        guard isKeyWindow, isAtBottom, let newestMessageID else { return }
+    func markReadIfNeeded(featureID: String, machineID: String, newestMessageID: String?, isKeyWindow: Bool, isAtBottom: Bool,
+                          validateOwner: (@MainActor () -> Bool)? = nil) {
+        guard validateOwner?() ?? true, isKeyWindow, isAtBottom, let newestMessageID else { return }
         if let lead = leadSummary, lead.feature.id == featureID, machineID == leadMachineID {
             guard lead.unread,
                   let through = store(for: machineID)?.snapshots[featureID]?.messages
                       .last(where: { $0.role == "assistant" && $0.isConversation })?.id else { return }
             let fleet = shell.firstMateFleet
-            Task { await fleet.markLeadRead(machineID: machineID, throughMessageID: through) }
+            Task {
+                guard validateOwner?() ?? true else { return }
+                await fleet.markLeadRead(machineID: machineID, throughMessageID: through)
+            }
             return
         }
         let id = FirstMateFleetFeatureID(machineID: machineID, featureID: featureID)
@@ -599,7 +760,10 @@ final class FirstMateChatWindowSession {
             .last { $0.role == "assistant" && $0.isConversation }?.id
         let through = newestFirstMate ?? newestMessageID
         let fleet = shell.firstMateFleet
-        Task { await fleet.markRead(machineID: machineID, featureID: featureID, throughMessageID: through) }
+        Task {
+            guard validateOwner?() ?? true else { return }
+            await fleet.markRead(machineID: machineID, featureID: featureID, throughMessageID: through)
+        }
     }
 
     /// After a send, action, archive, or read here, refreshes the main

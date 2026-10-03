@@ -10,6 +10,8 @@ struct FirstMateChatTranscript: View {
     let snapshot: FirstMateSnapshot
     let conversationID: FirstMateFleetFeatureID
     let isTyping: Bool
+    var openDocuments: (() -> Void)? = nil
+    var validateOwner: (@MainActor () -> Bool)? = nil
 
     @Environment(\.controlActiveState) private var controlActiveState
     @State private var followsLatest = true
@@ -83,7 +85,7 @@ struct FirstMateChatTranscript: View {
                     Color.clear.frame(height: 1).id(Self.endID)
                 }
                 .environment(\.skimDisplayState, session.skimState(for: conversationID))
-                .environment(\.skimReplyContext, FirstMateSkimReplies.context(snapshot: snapshot, store: store, canControl: store.controlAvailable || store.isDemo))
+                .environment(\.skimReplyContext, FirstMateSkimReplies.context(snapshot: snapshot, store: store, canControl: store.controlAvailable || store.isDemo, validateOwner: validateOwner))
                 .environment(\.skimScrollTo) { id in
                     withAnimation(nil) { proxy.scrollTo(id, anchor: .center) }
                 }
@@ -133,18 +135,25 @@ struct FirstMateChatTranscript: View {
         .task(id: feedbackLoadID) { await loadFeedback() }
         .onChange(of: store.operationContext) { _, _ in feedbackEditor = nil }
         .sheet(item: $feedbackEditor) { target in
-            FirstMateFeedbackEditor(store: store, target: target)
+            FirstMateFeedbackEditor(store: store, target: target, validateOwner: validateOwner)
         }
     }
 
     /// Read when this window is key and the newest message is on screen.
     private func markRead() {
+        markReadIfVisible(isKeyWindow: controlActiveState == .key, isAtBottom: followsLatest)
+    }
+
+    /// Shared by the mounted transcript and focused read-ownership tests.
+    func markReadIfVisible(isKeyWindow: Bool, isAtBottom: Bool) {
+        guard validateOwner?() ?? true else { return }
         session.markReadIfNeeded(
             featureID: conversationID.featureID,
             machineID: conversationID.machineID,
             newestMessageID: store.newestServerMessageID(for: snapshot),
-            isKeyWindow: controlActiveState == .key,
-            isAtBottom: followsLatest
+            isKeyWindow: isKeyWindow,
+            isAtBottom: isAtBottom,
+            validateOwner: validateOwner
         )
     }
 
@@ -158,7 +167,7 @@ struct FirstMateChatTranscript: View {
         let feedback: FirstMateResponseFeedbackPresentation? = row.speaker == .user ? nil : .make(
             message: message,
             supported: store.feedbackSupported,
-            writable: store.controlAvailable,
+            writable: store.controlAvailable && (validateOwner?() ?? true),
             isSaving: store.isSavingFeedback(featureID: message.featureID, messageID: message.id),
             record: store.feedback(for: message.featureID, messageID: message.id),
             saveErrorMessage: store.feedbackSaveError(featureID: message.featureID, messageID: message.id),
@@ -177,7 +186,7 @@ struct FirstMateChatTranscript: View {
             maxBubbleWidth: bubbleMaxWidth,
             feedback: feedback,
             feedbackActions: feedbackActions(for: message),
-            openDocuments: { session.showInspector(.documents) }
+            openDocuments: { if let openDocuments { openDocuments() } else { session.showInspector(.documents) } }
         )
     }
 
@@ -200,21 +209,32 @@ struct FirstMateChatTranscript: View {
         let store = store
         return FirstMateChatFeedbackActions(
             rate: { rating in
-                Task { await store.rateFeedback(rating, messageID: message.id, expectedContext: context) }
+                Task {
+                    guard validateOwner?() ?? true else { return }
+                    await store.rateFeedback(rating, messageID: message.id, expectedContext: context)
+                }
             },
             edit: { openFeedbackEditor(for: message, expectedContext: context) },
             remove: {
-                Task { await store.saveFeedback(FirstMateFeedbackDraft(rating: nil), messageID: message.id, expectedContext: context) }
+                Task {
+                    guard validateOwner?() ?? true else { return }
+                    await store.saveFeedback(FirstMateFeedbackDraft(rating: nil), messageID: message.id, expectedContext: context)
+                }
             },
             retry: {
                 // A failed thumbs-up or Remove keeps its attempted draft, so
                 // retry resubmits that exact payload and request identity.
                 let draft = store.feedbackDraft(for: message.featureID, messageID: message.id)
-                Task { await store.saveFeedback(draft, messageID: message.id, expectedContext: context) }
+                Task {
+                    guard validateOwner?() ?? true else { return }
+                    await store.saveFeedback(draft, messageID: message.id, expectedContext: context)
+                }
             },
             resolveConflict: {
                 Task {
-                    guard await store.resolveFeedbackConflict(messageID: message.id, expectedContext: context) else { return }
+                    guard validateOwner?() ?? true,
+                          await store.resolveFeedbackConflict(messageID: message.id, expectedContext: context),
+                          validateOwner?() ?? true else { return }
                     let draft = store.feedbackDraft(for: message.featureID, messageID: message.id)
                     await store.saveFeedback(draft, messageID: message.id, expectedContext: context)
                 }
@@ -224,7 +244,7 @@ struct FirstMateChatTranscript: View {
 
     private func openFeedbackEditor(for message: FirstMateMessage, expectedContext: FirstMateStore.OperationContext) {
         let currentContext = store.operationContext
-        guard expectedContext == currentContext,
+        guard validateOwner?() ?? true, expectedContext == currentContext,
               currentContext.matchesFeature(message.featureID),
               FirstMateFeedbackEligibility.isEligible(message),
               store.feedbackSupported else { return }

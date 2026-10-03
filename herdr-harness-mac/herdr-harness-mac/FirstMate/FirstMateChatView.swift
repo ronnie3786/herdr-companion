@@ -415,6 +415,7 @@ extension PromptComposerDestination {
         snapshot: FirstMateSnapshot,
         canControl: Bool,
         placeholder: String? = nil,
+        validateOwner: (@MainActor () -> Bool)? = nil,
         didSubmit: (@MainActor () -> Void)? = nil
     ) -> PromptComposerDestination {
         let context = store.operationContext
@@ -427,7 +428,8 @@ extension PromptComposerDestination {
                 reserve: { message, submission, attachments, quotes in
                     // A restored failed payload must use the visible explicit
                     // retry, never a fresh request identity from Return.
-                    guard store.sendFailure(for: featureID)?.text != message,
+                    guard validateOwner?() ?? true,
+                          store.sendFailure(for: featureID)?.text != message,
                           let handle = store.beginOutgoingMessage(message, expectedContext: context, submission: submission) else { return nil }
                     store.composerDrafts.freeze(handle, submission: submission, attachments: attachments, quotes: quotes)
                     return handle
@@ -461,16 +463,16 @@ extension PromptComposerDestination {
             supportsVoice: true,
             supportsPaneTools: false,
             isCurrent: {
-                context == store.operationContext && store.selectedFeatureID == featureID
+                (validateOwner?() ?? true) && context == store.operationContext && store.selectedFeatureID == featureID
             },
             acceptsCompletion: {
-                store.isDestinationAlive(context)
+                (validateOwner?() ?? true) && store.isDestinationAlive(context)
             },
             isReadyToSubmit: {
                 // Live owner state: neither the view value captured by a
                 // suspension nor this destination's snapshot flags receive
                 // re-renders while transcription runs.
-                store.controlAvailable
+                (validateOwner?() ?? true) && store.controlAvailable
                     && !store.isSending
                     && !store.isSubmitting(featureID: featureID)
                     && store.isDestinationAlive(context)
@@ -479,6 +481,7 @@ extension PromptComposerDestination {
                     } ?? false)
             },
             upload: { url, contentType in
+                guard validateOwner?() ?? true else { throw CancellationError() }
                 if store.isDemo {
                     return UploadedAttachment(
                         id: UUID().uuidString,
@@ -491,11 +494,18 @@ extension PromptComposerDestination {
                         createdAt: ISO8601DateFormatter().string(from: .now)
                     )
                 }
-                return try await store.uploadAttachment(at: url, contentType: contentType, expectedContext: context)
+                let attachment = try await store.uploadAttachment(at: url, contentType: contentType, expectedContext: context)
+                guard validateOwner?() ?? true else { throw CancellationError() }
+                return attachment
             },
             transcribe: { url in
-                if store.isDemo { return try await model.transcribeVoiceNote(at: url) }
-                return try await VoiceTranscriptionPipeline.run(
+                guard validateOwner?() ?? true else { throw CancellationError() }
+                if store.isDemo {
+                    let transcription = try await model.transcribeVoiceNote(at: url)
+                    guard validateOwner?() ?? true else { throw CancellationError() }
+                    return transcription
+                }
+                let transcription = try await VoiceTranscriptionPipeline.run(
                     preferPrivate: model.preferPrivateTranscription,
                     privateTranscription: {
                         let response = try await store.transcribeVoice(at: url, expectedContext: context)
@@ -518,8 +528,11 @@ extension PromptComposerDestination {
                         )
                     }
                 )
+                guard validateOwner?() ?? true else { throw CancellationError() }
+                return transcription
             },
             submit: { message in
+                guard validateOwner?() ?? true else { return false }
                 let sent = await store.sendPreparedMessage(message, expectedContext: context)
                 if sent { didSubmit?() }
                 return sent

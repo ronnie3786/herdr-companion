@@ -118,13 +118,15 @@ final class FirstMateFeedbackEditorSession {
         label: String,
         token capturedToken: UUID,
         store: FirstMateStore,
-        target: FirstMateFeedbackEditorTarget
+        target: FirstMateFeedbackEditorTarget,
+        validateOwner: (@MainActor () -> Bool)? = nil
     ) async -> Bool {
+        guard validateOwner?() ?? true else { return false }
         guard let category = await store.addFeedbackCategory(
             label: label,
             expectedContext: target.expectedContext
         ) else { return false }
-        guard capturedToken == token,
+        guard validateOwner?() ?? true, capturedToken == token,
               target.expectedContext == store.operationContext,
               store.hasLoadedFeedback(for: target.featureID),
               !store.isSavingFeedback(featureID: target.featureID, messageID: target.messageID) else {
@@ -152,20 +154,29 @@ final class FirstMateFeedbackEditorSession {
 struct FirstMateFeedbackEditor: View {
     @Bindable var store: FirstMateStore
     let target: FirstMateFeedbackEditorTarget
+    var validateOwner: (@MainActor () -> Bool)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     @State private var session: FirstMateFeedbackEditorSession
     @State private var newCategoryLabel = ""
 
-    init(store: FirstMateStore, target: FirstMateFeedbackEditorTarget) {
+    init(store: FirstMateStore, target: FirstMateFeedbackEditorTarget, validateOwner: (@MainActor () -> Bool)? = nil) {
         self.store = store
         self.target = target
+        self.validateOwner = validateOwner
         _session = State(initialValue: FirstMateFeedbackEditorSession())
     }
 
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
-    private var editorState: FirstMateFeedbackEditorState { .make(store: store, target: target) }
+    private var editorState: FirstMateFeedbackEditorState {
+        var state = FirstMateFeedbackEditorState.make(store: store, target: target)
+        if !(validateOwner?() ?? true) {
+            state.isWritable = false
+            state.hasControl = false
+        }
+        return state
+    }
 
     var body: some View {
         let state = editorState
@@ -507,6 +518,7 @@ struct FirstMateFeedbackEditor: View {
         let capturedSession = session
         let token = capturedSession.currentToken
         Task {
+            guard validateOwner?() ?? true else { return }
             // The category is confirmed in the shared catalog even when this
             // editor has already been cancelled, but only a still-current
             // editor may select it on its draft or clear its pending field.
@@ -514,7 +526,8 @@ struct FirstMateFeedbackEditor: View {
                 label: label,
                 token: token,
                 store: store,
-                target: target
+                target: target,
+                validateOwner: validateOwner
             ) {
                 newCategoryLabel = ""
             }
@@ -527,6 +540,7 @@ struct FirstMateFeedbackEditor: View {
         draft.rating = .down
         draft.comment = FirstMateFeedbackCommentLimit.limited(draft.comment)
         Task {
+            guard validateOwner?() ?? true else { return }
             if await store.saveFeedback(
                 draft,
                 messageID: target.messageID,

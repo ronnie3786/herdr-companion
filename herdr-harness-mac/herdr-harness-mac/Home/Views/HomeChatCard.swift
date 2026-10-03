@@ -41,6 +41,7 @@ struct HomeChatCard: View {
                 }
                 .padding(.leading, 17).padding(.top, 11)
             }
+            HomeQuickReplyView(route: item.route, compact: true)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(.vertical, 14).padding(.horizontal, 16)

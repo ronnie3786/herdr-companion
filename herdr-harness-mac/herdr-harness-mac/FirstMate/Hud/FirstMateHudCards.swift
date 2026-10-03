@@ -408,8 +408,9 @@ struct FirstMateHudLeadChatCard: View {
                     modelFavorites: favorites,
                     placeholder: "Message First Mate",
                     focusRequest: controller.focusRequest,
-                    focusOnAppear: true
-                ) { controller.leadMessageSent() }
+                    focusOnAppear: true,
+                    didSubmit: { controller.leadMessageSent() }
+                )
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
             } else {

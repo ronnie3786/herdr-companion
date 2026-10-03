@@ -77,6 +77,8 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .dashboard
     let home: HomeStore
+    var homeChat: HomeChatController?
+    var homeQuickReply: HomeQuickReplyController?
     let homeEnabled: Bool
     @ObservationIgnored let homeProjection = HomeProjectionCoordinator()
     var homeSearchPresented = false
@@ -959,6 +961,8 @@ struct AppRootView: View {
             driver.syncConnection(model: model)
         }
         .onAppear {
+            if shell.homeChat == nil { shell.homeChat = HomeChatController(model: model, shell: shell) }
+            if shell.homeQuickReply == nil { shell.homeQuickReply = HomeQuickReplyController(model: model, shell: shell) }
             driver.startPulse(model: model, pulse: herdPulse)
             // First Mate's fleet observation and Dock badge also belong to the
             // process, so the chat window keeps working after this one closes.

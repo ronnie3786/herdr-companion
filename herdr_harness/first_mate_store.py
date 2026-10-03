@@ -2173,6 +2173,39 @@ class FirstMateStore:
                         {"message_id": message["id"], "turn_id": turn_id})
             return self._save_receipt(scope, request_id, payload, message)
 
+    def report_stage_start_refusal(self, feature_id: str, turn_id: str, owner: str) -> None:
+        """Make an authorization refusal after this turn's checkpoint visible.
+
+        Closing prose is intentionally private after a checkpoint. A failed
+        transition is new information, so retain one service-authored correction
+        per claim without publishing arbitrary journal text or waking another turn.
+        """
+        with self._transaction():
+            feature = self._one("fm_features", feature_id)
+            turn = self._one("fm_messages", turn_id)
+            if (turn["feature_id"] != feature_id or turn["status"] != "processing"
+                    or turn["owner"] != owner or feature["coordinator_owner"] != owner
+                    or feature["status"] != "awaiting_direction"):
+                return
+            reports = [self._decode(row) for row in self._db.execute(
+                "SELECT * FROM fm_messages WHERE feature_id=? AND role='assistant' AND visibility=? "
+                "AND json_extract(metadata_json,'$.turn_id')=? AND created_at>=?",
+                (feature_id, CONVERSATION, turn_id, turn["updated_at"]))]
+            if (not any((m["metadata"] or {}).get("checkpoint") for m in reports)
+                    or any((m["metadata"] or {}).get("stage_start_refused") for m in reports)):
+                return
+            queued_direction = self._db.execute(
+                "SELECT 1 FROM fm_messages WHERE feature_id=? AND role='user' AND id<>? "
+                "AND status IN ('queued','processing') LIMIT 1", (feature_id, turn_id)).fetchone()
+            text = "The requested next stage did not start. " + (
+                "Your queued direction takes priority and will be handled next." if queued_direction else
+                "Send your direction for the next stage to continue.")
+            self._message(feature_id, "assistant", text, status="done",
+                          metadata={"notice": True, "turn_id": turn_id, "stage_start_refused": True},
+                          source={"source_kind": "notice", "in_reply_to": turn_id,
+                                  "visit_id": feature["current_visit_id"], "feature_revision": feature["revision"],
+                                  "native_session_id": None})
+
     def release_message(self, message_id: str, owner: str, reason: str, *, verified_stopped: bool = False, request_id: str | None = None) -> dict:
         if not verified_stopped:
             raise FirstMateError("Verify the coordinator stopped before releasing its message", code="writer_not_stopped")
@@ -2228,7 +2261,23 @@ class FirstMateStore:
                     raise FirstMateError("Yield to new human direction before continuing", code="human_direction_required")
                 followup_stages = current["followup_stages"][1:]
             elif feature["current_visit_id"] and current["status"] == "completed" and authorization["created_at"] <= current["updated_at"]:
-                raise FirstMateError("The next stage needs direction after the completed checkpoint", code="human_direction_required")
+                # Finishing a stage must not invalidate the new human direction
+                # the coordinator is still answering. This exception applies
+                # only to an unused, live turn received during this visit, never
+                # to an old answered message or a background continuation.
+                current_direction = (
+                    authorization["created_at"] > current["created_at"]
+                    and authorization["status"] == "processing"
+                    and authorization["owner"] is not None
+                    and authorization["owner"] == feature["coordinator_owner"]
+                    and not self._db.execute(
+                        "SELECT 1 FROM fm_messages WHERE feature_id=? AND role='user' "
+                        "AND id<>? AND status IN ('queued','processing') LIMIT 1",
+                        (feature_id, authorization_message_id)).fetchone()
+                )
+                if not current_direction:
+                    raise FirstMateError("The next stage needs current human direction received during this stage or after its checkpoint",
+                                         code="human_direction_required")
             visit_id, now = _id("fmv"), _now()
             self._db.execute("INSERT INTO fm_visits(id,feature_id,stage_key,title,status,revision,authorization_message_id,followup_stages_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (visit_id, feature_id, stage_key, title, "running", expected_revision, authorization_message_id, _json(followup_stages), now, now))
             self._db.execute("UPDATE fm_visits SET git_baselines_json=? WHERE id=?", (_json(git_baselines or []), visit_id))

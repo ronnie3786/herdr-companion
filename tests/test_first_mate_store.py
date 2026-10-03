@@ -52,6 +52,47 @@ class FirstMateStoreTests(unittest.TestCase):
             callback()
         self.assertEqual(error.exception.code, code)
 
+    def test_current_mid_stage_direction_can_start_only_the_next_requested_stage(self):
+        visit = self.stage()
+        assignment = self.running(self.assignment(visit))
+        direction = self.store.append_human_message(self.feature["id"], "Then review the design", "next-direction")
+        self.assertEqual(self.store.claim_message(self.feature["id"], "coordinator")["id"], direction["id"])
+        self.outcome(assignment)
+        self.store.complete_visit(visit["id"], "Plan verified.", "Review has not started yet.",
+                                  "complete", turn_id=direction["id"])
+        next_visit = self.store.start_visit(self.feature["id"], "review", "Review", "next", 1, direction["id"])
+        self.assertEqual(next_visit["authorization_message_id"], direction["id"])
+        self.assertEqual(self.store.get_feature(self.feature["id"])["status"], "running")
+        self.assertEqual(self.store.start_visit(self.feature["id"], "review", "Review", "next", 1, direction["id"]), next_visit)
+        self.store.finish_message(direction["id"], "coordinator")
+        self.outcome(self.running(self.assignment(next_visit, suffix="review"), suffix="review"), request_id="reviewed")
+        self.store.complete_visit(next_visit["id"], "Review verified.", "Choose the next step.", "review-complete")
+        self.assert_code("human_direction_required", lambda: self.store.start_visit(
+            self.feature["id"], "release", "Release", "unapproved", 1, direction["id"]))
+
+    def test_mid_stage_direction_exemption_requires_current_turn_and_no_newer_direction(self):
+        for state in ("done", "queued", "superseded", "before_start"):
+            with self.subTest(state=state):
+                feature = self.store.create_feature({"title": "Synthetic review", "goal": "Plan a change",
+                                                     "cwd": "/tmp/synthetic-review", "request_id": "create-" + state})
+                initial = self.store.claim_message(feature["id"], "coordinator")
+                if state == "before_start":
+                    direction = self.store.append_human_message(feature["id"], "Discuss review", "direction-" + state)
+                visit = self.store.start_visit(feature["id"], "plan", "Plan", "begin", 1, initial["id"])
+                self.store.finish_message(initial["id"], "coordinator")
+                if state != "before_start":
+                    direction = self.store.append_human_message(feature["id"], "Review next", "direction-" + state)
+                if state != "queued":
+                    self.store.claim_message(feature["id"], "coordinator")
+                if state == "done":
+                    self.store.finish_message(direction["id"], "coordinator", "Answered the question.")
+                if state == "superseded":
+                    self.store.append_human_message(feature["id"], "Wait, do not review", "stop")
+                self.outcome(self.running(self.assignment(visit, suffix=state), suffix=state), request_id=state)
+                self.store.complete_visit(visit["id"], "Plan verified.", "Choose next steps.", "complete")
+                self.assert_code("human_direction_required", lambda: self.store.start_visit(
+                    feature["id"], "review", "Review", "next", 1, direction["id"]))
+
     def test_reported_failure_advertises_internal_retry_instead_of_human_recovery(self):
         assignment = self.running()
         self.store.record_outcome(assignment["id"], assignment["generation"], assignment["native_session_id"],

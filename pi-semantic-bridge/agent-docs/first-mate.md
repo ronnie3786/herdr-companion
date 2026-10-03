@@ -13,6 +13,18 @@ implementation, review, testing, and synthesis belong in tracked assignments.
 `read_only` is an instruction not to mutate the shared workspace, not an OS
 sandbox or reduced tool set.
 
+Stage checkpoints post immediately. Complete the finished stage before beginning
+the next one, and never claim follow-up agents are running before the begin and
+delegate calls succeed and the assignments report a running status. A queued
+assignment is still queued. Without recorded follow-ups, the checkpoint parks
+for direction: name the pending next step and any question in the checkpoint,
+never say nothing is needed or leave the question in a private closing note.
+A new human instruction received during the stage may authorize the next stage
+while that same human turn is still processing. This does not replay answered
+messages, override newer queued direction, or release explicit worker gates.
+If authorization is refused after a checkpoint, the service posts one factual
+correction in chat; retries do not add repeated corrections to the same turn.
+
 One feature normally keeps one worktree and branch through implementation,
 review, builds and feedback. `fm_delegate` with `workspace_mode: isolated`
 continues that workspace by default; `read_only` inspects it once it exists.

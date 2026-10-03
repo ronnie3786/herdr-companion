@@ -31,8 +31,13 @@ turns**. They wake the coordinator, but its closing message becomes a private
 recent notes in **Overview → Journal**, and the full text stays in the
 coordinator's saved session.
 
-A coordinator turn never adds a second message when it already posted a stage
-result or a notice, including a turn answering your message. The closing text
+A coordinator's closing text never adds a second message when it already posted a stage
+result or a notice, including a turn answering your message. If an attempted next
+stage is refused for missing authorization after that turn's checkpoint, the
+service posts one factual correction: the stage did not start, and either new
+direction is needed or your queued direction takes priority. This correction is
+visible in chat and does not wake another coordinator turn. Retried start calls
+do not repeat it within the same turn. The closing text
 and any interrupted-turn diagnostics remain in the journal and saved session.
 An update that is released for your message and claimed
 again counts as a new turn. A delivered report records a fingerprint of the
@@ -41,6 +46,16 @@ status, verdict, and human gate); an escalation also records the assignment it i
 about. Until you send another message, a later report with the same fingerprint
 is kept as a note, so a stuck stage is reported once, not once per stability
 sweep.
+
+A new instruction received while a stage is running can authorize the immediately
+following stage when the coordinator completes the old stage in that same human
+turn. You do not need to repeat the instruction after the checkpoint. The message
+must still be processing, must not have authorized another stage, and must yield
+to other queued human direction. Already answered messages and explicit worker
+decision gates retain their existing restrictions. Checkpoint prose describes
+observed results; follow-up assignments are only running once their recorded
+status says so. These changes require the matching companion and bundled Pi
+extension; a Mac app update alone does not update the companion.
 
 Worker outcome updates are pointers: the verdict, a short excerpt, the assignment
 ID, and Document IDs. The coordinator reads the full summary from its router state,

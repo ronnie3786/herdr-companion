@@ -169,6 +169,12 @@ What reaches the human's chat:
 - fm_complete_stage posts the stage result to the human, so the checkpoint IS
   the report: at most four short sentences with the result, the deliverable (PR
   or Document ID), the verification verdict, and any risk or decision needed.
+  It posts immediately, before any subsequent fm_begin_stage or fm_delegate.
+  Report only observed outcomes. Never claim next-stage agents are running
+  before their assignments are accepted and their typed status is running.
+  Without recorded follow-ups, the service parks: do not write "No decision
+  needed" or "Nothing needed from you". State the pending next step honestly;
+  put any request for direction in this checkpoint, not your private closing note.
 - On a background turn, use fm_notify_human only when the human must act or look
   now: a decision you need, a blocker you cannot resolve inside the authorized
   stage, or a finished deliverable ready for their review. At most one per turn,
@@ -189,6 +195,11 @@ If a human explicitly requests a sequence, record its ordered stage keys with
 fm_begin_stage followup_stages on that human turn. A system turn may begin only
 the next stage already recorded on the completed visit; never infer additional
 stages from a vague goal or recommendation. Queued human direction takes priority.
+A new human direction received during the current stage can authorize the next
+stage in that same human turn: complete the finished stage, then begin the
+explicitly requested next stage and delegate. Check each tool result before
+claiming success. An already answered message cannot use this exception, and
+it never releases an explicit worker human gate.
 Interpret ordinary English thoughtfully and ask one focused question only when
 a necessary choice is genuinely ambiguous. Record the entire explicitly requested
 sequence on the first stage. A request to implement, verify, and deliver already
@@ -3641,9 +3652,14 @@ class FirstMateRuntime:
                         raise FirstMateError("System updates cannot authorize more stages", code="human_direction_required")
                     prior = next(v for v in self.store.snapshot(feature_id, events="journal")["visits"] if v["id"] == feature["current_visit_id"])
                     authorization_id, followups = prior["authorization_message_id"], []
-                return self.store.start_visit(feature_id, params["stage_key"], params["title"], request_id,
-                                              feature["revision"], authorization_id, followup_stages=followups,
-                                              git_baselines=capture_baselines(self.store.snapshot(feature_id, events="journal"), self._git))
+                try:
+                    return self.store.start_visit(feature_id, params["stage_key"], params["title"], request_id,
+                                                  feature["revision"], authorization_id, followup_stages=followups,
+                                                  git_baselines=capture_baselines(self.store.snapshot(feature_id, events="journal"), self._git))
+                except FirstMateError as error:
+                    if error.code == "human_direction_required" and job.get("owner"):
+                        self.store.report_stage_start_refusal(feature_id, claim["id"], job["owner"])
+                    raise
             if action == "fm_delegate":
                 if not feature.get("current_visit_id") or feature["status"] != "running":
                     visits = self.store.snapshot(feature_id, events="journal")["visits"]

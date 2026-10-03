@@ -1803,6 +1803,68 @@ class FirstMateRuntimeTests(unittest.TestCase):
             self.runtime._tool(job, 'fm_notify_human', {'text':'Draft PR is ready.'}, 'human-turn-notice')
         self.assertEqual(error.exception.code, 'notice_not_needed')
 
+    def test_mid_stage_human_turn_completes_then_begins_requested_work(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        original = {'feature_id':feature['id'], 'kind':'coordinator', 'claim':human, 'owner':self.runtime.owner}
+        self.settled_stage(feature, original)
+        self.store.finish_message(human['id'], self.runtime.owner)
+        self.store.append_human_message(feature['id'], 'Review the plan next', 'review-direction')
+        direction = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = {**original, 'claim':direction}
+        self.runtime._tool(job, 'fm_complete_stage', {
+            'summary':'Planning finished.', 'recommendation':'Requested review has not started yet.'}, 'complete')
+        next_visit = self.runtime._tool(job, 'fm_begin_stage', {'stage_key':'review', 'title':'Review'}, 'review')
+        # A real queued assignment, not a prose claim that a worker is running.
+        assignment = self.runtime._tool(job, 'fm_delegate', {
+            'title':'Review plan', 'role':'reviewer', 'prompt':'Review the completed plan',
+            'workspace_mode':'read_only'}, 'review-assignment')
+        self.assertEqual(assignment['visit_id'], next_visit['id'])
+        self.assertEqual(assignment['status'], 'queued')
+        self.assertEqual(next_visit['authorization_message_id'], direction['id'])
+        self.store.finish_message(direction['id'], self.runtime.owner, 'Review is queued.')
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'running')
+        self.assertFalse(any(m['metadata'].get('stage_start_refused')
+                             for m in self.store.snapshot(feature['id'])['messages']))
+
+    def test_refused_transition_after_checkpoint_posts_one_visible_correction(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = {'feature_id':feature['id'], 'kind':'coordinator', 'claim':human, 'owner':self.runtime.owner}
+        self.settled_stage(feature, job)
+        self.runtime._tool(job, 'fm_complete_stage', {
+            'summary':'Plan finished. No decision needed.', 'recommendation':'Review is running.'}, 'complete')
+        for request in ('refused', 'retry-refused'):
+            with self.assertRaises(FirstMateError) as error:
+                self.runtime._tool(job, 'fm_begin_stage', {'stage_key':'review', 'title':'Review'}, request)
+            self.assertEqual(error.exception.code, 'human_direction_required')
+        self.store.finish_message(human['id'], self.runtime.owner, 'Private closing note asking for a go-ahead.')
+        chat = self.store.board(feature['id'])['messages']
+        corrections = [m for m in self.store.snapshot(feature['id'])['messages'] if m['metadata'].get('stage_start_refused')]
+        self.assertEqual(len(corrections), 1)
+        self.assertEqual(corrections[0]['text'], 'The requested next stage did not start. Send your direction for the next stage to continue.')
+        self.assertEqual(corrections[0]['status'], 'done')
+        self.assertEqual(chat[-1]['id'], corrections[0]['id'])
+        self.assertEqual(self.store.get_feature(feature['id'])['status'], 'awaiting_direction')
+        self.assertEqual(len(self.store.snapshot(feature['id'])['visits']), 1)
+
+    def test_newer_direction_refusal_reports_queued_work_without_asking_again(self):
+        feature = self.feature()
+        human = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = {'feature_id':feature['id'], 'kind':'coordinator', 'claim':human, 'owner':self.runtime.owner}
+        self.settled_stage(feature, job)
+        self.store.finish_message(human['id'], self.runtime.owner)
+        self.store.append_human_message(feature['id'], 'Review next', 'review-direction')
+        job['claim'] = self.store.claim_message(feature['id'], self.runtime.owner)
+        self.runtime._tool(job, 'fm_complete_stage', {'summary':'Plan finished.', 'recommendation':'Review next.'}, 'complete')
+        newer = self.store.append_human_message(feature['id'], 'Wait, discuss the plan first', 'newer-direction')
+        with self.assertRaises(FirstMateError):
+            self.runtime._tool(job, 'fm_begin_stage', {'stage_key':'review', 'title':'Review'}, 'refused')
+        chat = self.store.board(feature['id'])['messages']
+        self.assertEqual(chat[-1]['text'], 'The requested next stage did not start. Your queued direction takes priority and will be handled next.')
+        self.store.finish_message(job['claim']['id'], self.runtime.owner)
+        self.assertEqual(self.store.claim_message(feature['id'], self.runtime.owner)['id'], newer['id'])
+
     def settled_stage(self, feature, job):
         self.runtime._tool(job, 'fm_begin_stage', {'title':'Plan','stage_key':'planning'}, 'stage')
         visit_id = self.store.get_feature(feature['id'])['current_visit_id']

@@ -1,5 +1,17 @@
 # Next macOS update, unreleased
 
+## First Mate checkpoint direction
+
+- A new instruction received during a stage can authorize the next stage when
+  First Mate completes the old stage while still answering that instruction.
+  You no longer need to repeat that direction after the checkpoint.
+- If the next stage is refused after a checkpoint, chat shows one factual
+  correction instead of leaving the request for direction in a private note.
+  Checkpoint guidance now requires observed status before claiming follow-up
+  agents are running. Existing worker decision gates remain in place.
+- Requires the matching companion server package and bundled Pi extension,
+  installed separately. The Mac updater alone does not deliver this fix.
+
 ## First Mate usage coverage
 
 - In a feature's **Overview → Full task usage**, a checked large image record

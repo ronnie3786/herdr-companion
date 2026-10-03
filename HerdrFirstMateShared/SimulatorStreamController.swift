@@ -50,6 +50,8 @@ final class SimulatorStreamController {
 
     /// Failures before H.264 is given up for JPEG, as SimPortal's browser viewer does.
     static let decodeFailureLimit = 4
+    /// A stalled writer must never accumulate seconds of taps or unbounded text.
+    static let maximumPendingMessages = 64
 
     private(set) var state: State = .idle
     private(set) var device: SimulatorDeviceSummary?
@@ -102,7 +104,7 @@ final class SimulatorStreamController {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var reconnectAttempt = 0
     @ObservationIgnored private var decodeFailures = 0
-    @ObservationIgnored private var lastReceivedAt: ContinuousClock.Instant?
+    @ObservationIgnored private var lastPongAt: ContinuousClock.Instant?
 
     /// - Parameters:
     ///   - requestFactory: Makes the upgrade request (a `ws`/`wss` URL with
@@ -110,7 +112,7 @@ final class SimulatorStreamController {
     ///     Throw `SimulatorStreamStop` to stop instead of retrying.
     ///   - transportFactory: The socket; tests pass a fake.
     ///   - pingInterval: How often to measure round trips. Three intervals
-    ///     without any message count as a dead connection.
+    ///     without a pong count as a dead connection, even if video still arrives.
     ///   - backoffSleep: Waits between reconnects; tests make it instant.
     init(requestFactory: @escaping RequestFactory,
          transportFactory: @escaping SimulatorStreamTransportFactory = URLSessionSimulatorStreamTransport.factory,
@@ -144,6 +146,17 @@ final class SimulatorStreamController {
         stop(becoming: .idle)
     }
 
+    /// Reopens this exact preview without restarting the simulator or replaying input.
+    func reconnect() {
+        stop(becoming: .idle)
+        lastNotice = nil
+        start()
+    }
+
+    func dismissNotice() {
+        lastNotice = nil
+    }
+
     /// Closes the socket without any effect on the simulator; `resume()` reconnects.
     func pause() {
         switch state {
@@ -163,7 +176,13 @@ final class SimulatorStreamController {
     /// input after a reconnect could repeat taps or typing.
     func send(_ message: SimulatorClientMessage) {
         guard let connection, connection.isOpen, message.isWithinRelayLimits else { return }
-        connection.outbox.yield(message.json)
+        guard !message.isInput || acceptsInput else { return }
+        if case .dropped = connection.outbox.yield(message.json) {
+            // Losing a touch/key release would leave held input on the server.
+            // Closing releases it there; the fresh socket starts with no queued actions.
+            reconnect()
+            lastNotice = "The controls fell behind. Reconnecting to clear pending input."
+        }
     }
 
     func pressButton(_ button: SimulatorHardwareButton) {
@@ -255,7 +274,8 @@ final class SimulatorStreamController {
         guard isCurrent(id) else { return .retry }
 
         let transport = transportFactory(request)
-        let (outbox, continuation) = AsyncStream.makeStream(of: String.self)
+        let (outbox, continuation) = AsyncStream.makeStream(
+            of: String.self, bufferingPolicy: .bufferingOldest(Self.maximumPendingMessages))
         connection = Connection(transport: transport, outbox: continuation)
         defer {
             if connection?.transport === transport { closeConnection() }
@@ -277,7 +297,8 @@ final class SimulatorStreamController {
         guard isCurrent(id), connection?.transport === transport else { return .retry }
 
         connection?.isOpen = true
-        lastReceivedAt = .now
+        lastPongAt = .now
+        rttMilliseconds = nil
         // SimPortal accepts hello at any time, so it goes first, right after the upgrade.
         send(.hello(codec: codec, quality: quality))
         send(.ping(t: elapsedMilliseconds()))
@@ -293,6 +314,7 @@ final class SimulatorStreamController {
 
     private func pump(_ outbox: AsyncStream<String>, to transport: any SimulatorStreamTransport) async {
         for await text in outbox {
+            guard !Task.isCancelled, connection?.transport === transport else { return }
             do {
                 try await transport.send(text)
             } catch {
@@ -306,8 +328,9 @@ final class SimulatorStreamController {
         while isCurrent(id) {
             do { try await Task.sleep(for: pingInterval) } catch { return }
             guard isCurrent(id) else { return }
-            if let lastReceivedAt, ContinuousClock.now - lastReceivedAt > pingInterval * 3 {
-                // Not even a pong for three pings: the path is gone even if the socket has not noticed.
+            if let lastPongAt, ContinuousClock.now - lastPongAt > pingInterval * 3 {
+                // Video alone cannot prove that commands reach the server.
+                lastNotice = "The controls stopped responding. Reconnecting…"
                 transport.close()
                 return
             }
@@ -320,7 +343,6 @@ final class SimulatorStreamController {
             while true {
                 let frame = try await transport.receive()
                 guard isCurrent(id) else { return .retry }
-                lastReceivedAt = .now
                 switch frame {
                 case .text(let text): handleText(text)
                 case .binary(let data): handleBinary(data)
@@ -375,7 +397,10 @@ final class SimulatorStreamController {
             if viewerCount != count { viewerCount = count }
         case .pong(let t):
             let rtt = elapsedMilliseconds() - t
-            if rtt >= 0, rtt < 60_000 { rttMilliseconds = rtt }
+            if rtt >= 0, rtt < 60_000 {
+                lastPongAt = .now
+                rttMilliseconds = rtt
+            }
         case .activity(let action):
             lastAgentActivity = SimulatorAgentActivity(action: action, receivedAt: .now)
         case .notice(_, let message), .error(let message):

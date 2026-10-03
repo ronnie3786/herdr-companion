@@ -25,7 +25,10 @@ struct FirstMateSimulatorCover: View {
                 FirstMateSimulatorBackdrop().ignoresSafeArea()
             }
         }
-        .onAppear { if session == nil { session = makeSession() } }
+        .onAppear {
+            if session == nil { session = makeSession() }
+            session?.setVisible(scenePhase != .background)
+        }
         .onDisappear { session?.close() }
         .onChange(of: scenePhase) { _, phase in session?.setVisible(phase != .background) }
         .accessibilityElement(children: .contain)
@@ -39,6 +42,7 @@ struct FirstMateSimulatorCover: View {
             target: target, machineName: model.machineName(target.machineID),
             api: isDemo ? nil : model.client(forMachine: target.machineID)?.simulatorPreviews,
             isDemo: isDemo,
+            hiddenPauseDelay: .zero,
             onChange: { [weak feed] in feed?.refreshSimulatorSoon() })
         if isDemo, let build = feed.simulator.builds.first(where: { $0.id == target.buildID }) {
             let snapshot = model.firstMateFleet.store(for: FirstMateFeatureTarget(machineID: target.machineID, featureID: target.featureID))?.snapshot
@@ -82,14 +86,7 @@ struct FirstMateSimulatorCoverContent: View {
                 FirstMateSimulatorDeviceStage(session: session)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .composerLayoutMeasurement(id: "first-mate-simulator-stage")
-                if let notice = session.notice {
-                    Text(notice)
-                        .herdrFont(.footnote).foregroundStyle(HerdrTheme.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(HerdrTheme.windowBackground.opacity(0.9), in: .capsule)
-                        .accessibilityIdentifier("first-mate-simulator-notice")
-                }
+                FirstMateSimulatorNotice(session: session)
                 FirstMateSimulatorControls(session: session)
                 Text(note)
                     .herdrFont(.footnote).foregroundStyle(HerdrTheme.tertiaryText)
@@ -339,6 +336,31 @@ private struct FirstMateSimulatorPill: View {
 
 // MARK: - Controls
 
+/// Input failures from the remote simulator must be visible even while video plays.
+private struct FirstMateSimulatorNotice: View {
+    let session: FirstMateSimulatorSession
+
+    var body: some View {
+        if let notice = session.stream?.lastNotice ?? session.notice {
+            HStack(spacing: 8) {
+                Text(notice)
+                    .herdrFont(.footnote).foregroundStyle(HerdrTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let stream = session.stream, stream.lastNotice != nil {
+                    Button { stream.dismissNotice() } label: {
+                        Label("Dismiss notice", systemImage: "xmark")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 44, height: 44)
+                    }
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(HerdrTheme.windowBackground.opacity(0.9), in: .rect(cornerRadius: 14))
+            .accessibilityIdentifier("first-mate-simulator-notice")
+        }
+    }
+}
+
 /// The buttons SimPortal's viewer protocol supports (Home and the side
 /// button), and typing for a device without a hardware keyboard.
 private struct FirstMateSimulatorControls: View {
@@ -353,16 +375,32 @@ private struct FirstMateSimulatorControls: View {
     var body: some View {
         HStack(spacing: 8) {
             Button { session.stream?.pressButton(.home) } label: { Label("Home", systemImage: "house") }
+                .disabled(!acceptsInput)
                 .accessibilityIdentifier("first-mate-simulator-home")
             Button { session.stream?.pressButton(.lock) } label: { Label("Lock", systemImage: "lock") }
+                .disabled(!acceptsInput)
                 .accessibilityLabel("Side button")
                 .accessibilityIdentifier("first-mate-simulator-lock")
             Button { typing = true } label: { Label("Type", systemImage: "keyboard") }
+                .disabled(!acceptsInput)
                 .accessibilityLabel("Type into the simulator")
                 .accessibilityIdentifier("first-mate-simulator-type")
+            if let stream = session.stream {
+                Menu {
+                    Button("Reconnect", systemImage: "arrow.clockwise") { stream.reconnect() }
+                    Picker("Video quality", selection: Binding(get: { stream.quality }, set: { stream.setQuality($0) })) {
+                        Text("High").tag(SimulatorStreamQuality.high)
+                        Text("Balanced").tag(SimulatorStreamQuality.balanced)
+                        Text("Low data").tag(SimulatorStreamQuality.low)
+                    }
+                } label: {
+                    Label("Stream options", systemImage: "slider.horizontal.3").labelStyle(.iconOnly)
+                }
+                .buttonStyle(FirstMateSimulatorPillStyle(iconOnly: true))
+                .accessibilityIdentifier("first-mate-simulator-stream-options")
+            }
         }
         .buttonStyle(FirstMateSimulatorPillStyle())
-        .disabled(!acceptsInput)
         .composerLayoutMeasurement(id: "first-mate-simulator-controls")
         .alert("Type into the simulator", isPresented: $typing) {
             TextField("Text", text: $text)
@@ -372,6 +410,7 @@ private struct FirstMateSimulatorControls: View {
                 session.stream?.send(.text(text))
                 text = ""
             }
+            .disabled(!acceptsInput || text.isEmpty)
             Button("Cancel", role: .cancel) { text = "" }
         } message: {
             Text("The text goes to the field that has focus in the simulator.")

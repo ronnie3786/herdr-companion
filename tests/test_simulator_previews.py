@@ -78,6 +78,8 @@ class FakeSimPortal:
         self.ws_headers: list[dict] = []
         # A real JPEG lets an actual client decode frames (scripts/simulator-preview-fixture.py).
         self.jpeg_frame: bytes | None = None
+        self.input_jpeg_frame: bytes | None = None
+        self.force_jpeg = False
         self.lock = threading.RLock()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -362,7 +364,7 @@ class FakeSimPortal:
                         message = json.loads(payload)
                         with fake.lock:
                             fake.ws_messages.append(message)
-                        if message.get("type") == "hello" and message.get("codec") == "jpeg" and fake.jpeg_frame:
+                        if message.get("type") == "hello" and (message.get("codec") == "jpeg" or fake.force_jpeg) and fake.jpeg_frame:
                             sock.send_text(json.dumps({"type": "ready", "width": 402, "height": 874, "codec": "jpeg"}))
                             for stamp in range(3):
                                 sock.send(ws.OP_BINARY, b"\x04" + (stamp * 16_000).to_bytes(8, "big")
@@ -373,6 +375,9 @@ class FakeSimPortal:
                             sock.send(ws.OP_BINARY, b"\x02" + len(codec).to_bytes(2, "big") + codec
                                       + (402).to_bytes(2, "big") + (874).to_bytes(2, "big") + b"\x01synthetic-avcc")
                             sock.send(ws.OP_BINARY, b"\x03\x01" + (1234).to_bytes(8, "big") + os.urandom(70_000))
+                        elif message.get("type") in {"touch", "button", "text"} and fake.input_jpeg_frame:
+                            sock.send(ws.OP_BINARY, b"\x04" + (len(fake.ws_messages) * 16_000).to_bytes(8, "big")
+                                      + (402).to_bytes(2, "big") + (874).to_bytes(2, "big") + fake.input_jpeg_frame)
                 except (ws.WebSocketClosed, ws.WebSocketProtocolError, OSError, ValueError):
                     pass
                 finally:

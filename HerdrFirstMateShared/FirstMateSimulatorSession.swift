@@ -58,10 +58,13 @@ final class FirstMateSimulatorSession {
     }
 
     @ObservationIgnored private let api: FirstMateSimulatorAPI?
+    @ObservationIgnored private let transportFactory: SimulatorStreamTransportFactory
+    @ObservationIgnored private let pauseDelay: Duration
     @ObservationIgnored private var openRequestID = UUID().uuidString.lowercased()
     @ObservationIgnored private var stopRequestID: String?
     @ObservationIgnored private var streamPreviewID: String?
     @ObservationIgnored private var hiddenTask: Task<Void, Never>?
+    @ObservationIgnored private var waitTask: Task<Void, Never>?
     /// Set by an action so the follow loop refreshes now instead of at its next tick.
     @ObservationIgnored private var refreshRequested = false
     @ObservationIgnored private let onChange: @MainActor () -> Void
@@ -69,10 +72,14 @@ final class FirstMateSimulatorSession {
     static let hiddenPauseDelay: Duration = .seconds(60)
 
     init(target: FirstMateSimulatorWindowTarget, machineName: String, api: FirstMateSimulatorAPI?, isDemo: Bool,
+         transportFactory: @escaping SimulatorStreamTransportFactory = URLSessionSimulatorStreamTransport.factory,
+         hiddenPauseDelay: Duration = FirstMateSimulatorSession.hiddenPauseDelay,
          onChange: @escaping @MainActor () -> Void = {}) {
         self.target = target
         self.machineName = machineName
         self.api = api
+        self.transportFactory = transportFactory
+        self.pauseDelay = hiddenPauseDelay
         self.isDemo = isDemo
         self.onChange = onChange
         if isDemo {
@@ -89,6 +96,10 @@ final class FirstMateSimulatorSession {
         guard !isDemo, api != nil else { return }
         if preview == nil, case .opening = phase { await open() }
         while !Task.isCancelled {
+            if isPausedWhileHidden {
+                await sleep(.seconds(86_400))
+                continue
+            }
             await refresh()
             let interval: Duration = switch phase {
             case .opening, .starting, .stopping: .seconds(1)
@@ -104,29 +115,41 @@ final class FirstMateSimulatorSession {
     func close() {
         hiddenTask?.cancel()
         hiddenTask = nil
+        waitTask?.cancel()
+        waitTask = nil
         stream?.disconnect()
         stream = nil
         streamPreviewID = nil
     }
 
     /// The window was hidden or shown. A hidden window stops streaming after a
-    /// minute, so a forgotten window never keeps a simulator busy.
+    /// minute on Mac, or immediately on iOS, to stop unnecessary network and decoding work.
     func setVisible(_ visible: Bool) {
         hiddenTask?.cancel()
         hiddenTask = nil
         if visible {
             if isPausedWhileHidden {
                 isPausedWhileHidden = false
-                stream?.resume()
+                stream?.connect()
+                wakeLoop()
             }
             return
         }
-        hiddenTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.hiddenPauseDelay)
-            guard !Task.isCancelled, let self else { return }
-            self.isPausedWhileHidden = true
-            self.stream?.pause()
+        if pauseDelay == .zero {
+            pauseWhileHidden()
+            return
         }
+        hiddenTask = Task { [weak self, pauseDelay] in
+            try? await Task.sleep(for: pauseDelay)
+            guard !Task.isCancelled, let self else { return }
+            self.pauseWhileHidden()
+        }
+    }
+
+    private func pauseWhileHidden() {
+        isPausedWhileHidden = true
+        stream?.pause()
+        wakeLoop()
     }
 
     // MARK: Actions
@@ -278,6 +301,7 @@ final class FirstMateSimulatorSession {
                 let featureID = target.featureID, previewID = preview.id
                 let controller = SimulatorStreamController(
                     requestFactory: { try api.streamRequest(featureID: featureID, previewID: previewID) },
+                    transportFactory: transportFactory,
                     quality: api.isLocal ? .high : .balanced)
                 stream = controller
                 streamPreviewID = preview.id
@@ -294,17 +318,26 @@ final class FirstMateSimulatorSession {
         }
     }
 
-    /// Waits up to `duration` in short steps, returning early after an action.
+    /// One cancellable sleep, woken by actions or visibility changes, without polling.
     private func sleep(_ duration: Duration) async {
-        let deadline = ContinuousClock.now + duration
-        while ContinuousClock.now < deadline, !refreshRequested, !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(250))
+        guard !refreshRequested, !Task.isCancelled else {
+            refreshRequested = false
+            return
         }
+        let task = Task<Void, Never> { try? await Task.sleep(for: duration) }
+        waitTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        waitTask = nil
         refreshRequested = false
     }
 
     private func wakeLoop() {
         refreshRequested = true
+        waitTask?.cancel()
     }
 
     // MARK: Demo

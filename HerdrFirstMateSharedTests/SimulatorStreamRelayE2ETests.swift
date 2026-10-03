@@ -1,6 +1,10 @@
 import Foundation
 import Testing
+#if os(macOS)
 @testable import herdr_harness_mac
+#else
+@testable import herdr_harness_ios
+#endif
 
 /// The real URLSession WebSocket client through the companion's relay, against
 /// scripts/simulator-preview-fixture.py (a synthetic SimPortal). Opt-in: run
@@ -40,6 +44,7 @@ struct SimulatorStreamRelayE2ETests {
         let controller = SimulatorStreamController(
             requestFactory: { try api.streamRequest(featureID: fixture.featureID, previewID: fixture.previewID) },
             codec: .jpeg)
+        defer { controller.disconnect() }
         controller.connect()
         for _ in 0..<150 where controller.framesShown == 0 {
             try await Task.sleep(for: .milliseconds(100))
@@ -49,7 +54,24 @@ struct SimulatorStreamRelayE2ETests {
         #expect(controller.pixelSize != nil)
         controller.send(.touch(SimulatorTouch(phase: .began, x: 0.25, y: 0.5)))
         controller.send(.touch(SimulatorTouch(phase: .ended, x: 0.25, y: 0.5)))
-        try await Task.sleep(for: .milliseconds(500))
+        controller.pressButton(.home)
+        controller.pressButton(.lock)
+        controller.send(.text("Synthetic input"))
+        // Assert at the far side of the real relay, not just at URLSession.send.
+        var received: [[String: Any]] = []
+        for _ in 0..<50 {
+            var request = URLRequest(url: URL(string: fixture.baseURL + "/fixture/viewer-messages")!)
+            request.setValue("Bearer " + fixture.token, forHTTPHeaderField: "Authorization")
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            received = object["messages"] as? [[String: Any]] ?? []
+            if received.contains(where: { $0["text"] as? String == "Synthetic input" }) { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let inputs = received.filter { ["touch", "button", "text"].contains($0["type"] as? String ?? "") }
+        #expect(inputs.suffix(5).compactMap { $0["type"] as? String } == ["touch", "touch", "button", "button", "text"])
+        #expect(inputs.suffix(5).compactMap { $0["phase"] as? String } == ["began", "ended"])
+        #expect(inputs.suffix(5).compactMap { $0["button"] as? String } == ["home", "lock"])
         controller.disconnect()
 
         // A refused upgrade stops instead of retrying: an unknown preview is a 404.

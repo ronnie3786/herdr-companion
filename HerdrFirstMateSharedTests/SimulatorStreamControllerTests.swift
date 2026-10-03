@@ -273,7 +273,7 @@ struct SimulatorStreamControllerTests {
         #expect(factory.transports.isEmpty)
     }
 
-    @Test("Three ping intervals without a message count as a dead connection")
+    @Test("Three ping intervals without a pong count as a dead connection")
     func deadConnection() async throws {
         let factory = FakeSimulatorTransportFactory()
         let controller = SimulatorStreamHarness.controller(factory, pingInterval: .milliseconds(40))
@@ -283,6 +283,79 @@ struct SimulatorStreamControllerTests {
         #expect(first.isClosed)
         #expect(first.sent.filter { $0.contains(#""type":"ping""#) }.count >= 2)
         controller.disconnect()
+    }
+
+    @Test("Continuing video cannot hide a broken command path")
+    func videoWithoutPongs() async throws {
+        let factory = FakeSimulatorTransportFactory()
+        let controller = SimulatorStreamHarness.controller(factory, codec: .jpeg, pingInterval: .milliseconds(40))
+        let first = try await SimulatorStreamHarness.live(controller, factory)
+        let image = try SimulatorWire.jpegImage(width: 40, height: 80,
+            top: CGColor(gray: 0.2, alpha: 1), bottom: CGColor(gray: 0.8, alpha: 1))
+        let frame = SimulatorWire.jpeg(timestampUs: 1, width: 40, height: 80, data: image)
+        let video = Task {
+            while !Task.isCancelled {
+                first.deliver(.binary(frame))
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        defer { video.cancel(); controller.disconnect() }
+        try await SimulatorStreamWait.until("a displayed frame") { controller.framesShown > 0 }
+        try await SimulatorStreamWait.until("recovery despite video") { factory.transports.count >= 2 }
+        #expect(first.isClosed)
+        #expect(controller.lastNotice == "The controls stopped responding. Reconnecting…")
+    }
+
+    @Test("Input waits for ready, while stream control can precede it")
+    func inputBeforeReady() async throws {
+        let factory = FakeSimulatorTransportFactory()
+        let controller = SimulatorStreamHarness.controller(factory)
+        defer { controller.disconnect() }
+        controller.connect()
+        try await SimulatorStreamWait.until("open") { factory.last?.sentTypes.first == "hello" }
+        let transport = try #require(factory.last)
+        controller.pressButton(.home)
+        controller.send(.text("not attached"))
+        controller.setQuality(.low)
+        try await SimulatorStreamWait.until("quality") { transport.sentTypes.contains("quality") }
+        #expect(transport.sentTypes == ["hello", "quality"])
+    }
+
+    @Test("A full outbox closes the old connection and never replays held input")
+    func boundedInput() async throws {
+        let factory = FakeSimulatorTransportFactory()
+        let controller = SimulatorStreamHarness.controller(factory)
+        let first = try await SimulatorStreamHarness.live(controller, factory)
+        defer { controller.disconnect() }
+        let sink = ResetCounter()
+        controller.inputSink = sink
+        // A synchronous burst fills the outbox before the sender gets another turn.
+        // One message may go straight to an already waiting consumer.
+        for _ in 0...(SimulatorStreamController.maximumPendingMessages + 1) {
+            controller.send(.key(usage: 0x04, phase: .down))
+        }
+        #expect(first.isClosed)
+        #expect(sink.resets == 1)
+        try await SimulatorStreamWait.until("fresh socket") { factory.transports.count == 2 && factory.last?.sentTypes.first == "hello" }
+        #expect(factory.last?.sentTypes == ["hello"])
+        #expect(controller.lastNotice == "The controls fell behind. Reconnecting to clear pending input.")
+    }
+
+    @Test("Manual reconnect retains quality and clears the previous error")
+    func manualReconnect() async throws {
+        let factory = FakeSimulatorTransportFactory()
+        let controller = SimulatorStreamHarness.controller(factory)
+        let first = try await SimulatorStreamHarness.live(controller, factory)
+        defer { controller.disconnect() }
+        controller.setQuality(.low)
+        first.deliverText(#"{"type":"notice","level":"error","message":"Input is unavailable"}"#)
+        try await SimulatorStreamWait.until("error") { controller.lastNotice != nil }
+        controller.reconnect()
+        #expect(first.isClosed)
+        #expect(controller.lastNotice == nil)
+        #expect(!controller.acceptsInput)
+        try await SimulatorStreamWait.until("new hello") { factory.transports.count == 2 && factory.last?.sentTypes.first == "hello" }
+        #expect(factory.last?.sent.first == SimulatorClientMessage.hello(codec: .h264, quality: .low).json)
     }
 
     @MainActor

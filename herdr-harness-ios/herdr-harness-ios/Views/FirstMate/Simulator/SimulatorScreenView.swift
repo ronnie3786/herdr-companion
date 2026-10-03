@@ -164,6 +164,8 @@ final class SimulatorScreenUIView: UIView {
     /// Any tracked finger lifting ends the whole gesture; a finger left on the
     /// glass is ignored until every finger is up and a new touch begins.
     private func finishGesture(_ phase: SimulatorTouchPhase) {
+        // A quick swipe may end before the display link's next tick.
+        if pendingMove, phase == .ended { send(.moved) }
         pendingMove = false
         send(phase)
         primary = nil

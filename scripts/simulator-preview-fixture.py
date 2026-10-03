@@ -35,10 +35,10 @@ from tests.test_simulator_previews import TOKEN, FakeSimPortal, make_app  # noqa
 API_TOKEN = "synthetic-fixture-token"
 
 
-def jpeg(root: Path) -> bytes | None:
+def jpeg(root: Path, color: tuple[int, int, int] = (110, 90, 200)) -> bytes | None:
     """A small solid-color JPEG made with the system's sips (macOS)."""
     width, height = 40, 80
-    rows = b"".join(b"\x00" + bytes((110, 90, 200)) * width for _ in range(height))
+    rows = b"".join(b"\x00" + bytes(color) * width for _ in range(height))
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack("!I", len(data)) + kind + data + struct.pack("!I", zlib.crc32(kind + data) & 0xFFFFFFFF)
     png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack("!IIBBBBB", width, height, 8, 2, 0, 0, 0))
@@ -63,6 +63,8 @@ def main() -> int:
     artifacts.mkdir()
     fake = FakeSimPortal(artifacts)
     fake.jpeg_frame = jpeg(root)
+    fake.input_jpeg_frame = jpeg(root, (40, 170, 100))
+    fake.force_jpeg = True
     store = FirstMateStore(root / "first-mate.sqlite3")
     workspace = root / "project"
     workspace.mkdir()
@@ -97,7 +99,22 @@ def main() -> int:
                               simulator_previews=previews,
                               first_mate=SimpleNamespace(capabilities=lambda: {}, health=lambda: {}),
                               first_mate_changed=lambda feature_id: None)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(service))
+    class FixtureHandler(make_handler(service)):
+        def do_GET(self):
+            if self.path != "/fixture/viewer-messages":
+                return super().do_GET()
+            if self.headers.get("Authorization") != "Bearer " + API_TOKEN:
+                self.send_error(401)
+                return
+            with fake.lock:
+                payload = json.dumps({"messages": fake.ws_messages}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), FixtureHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(json.dumps({"base_url": f"http://127.0.0.1:{server.server_port}", "token": API_TOKEN,
                       "feature_id": feature["id"], "build_id": build["build_id"], "preview_id": opened["id"],

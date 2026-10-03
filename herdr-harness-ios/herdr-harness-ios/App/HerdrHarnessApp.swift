@@ -13,6 +13,8 @@ struct HerdrHarnessApp: App {
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("-HerdrThemeDuskSample") {
                     HerdrThemeSampleView()
+                } else if ProcessInfo.processInfo.arguments.contains("-HerdrSimulatorInputFixture") {
+                    SimulatorInputUITestFixtureView()
                 } else if ProcessInfo.processInfo.arguments.contains("-HerdrPiOptionsFixture") {
                     PiOptionsUITestFixtureView()
                 } else {

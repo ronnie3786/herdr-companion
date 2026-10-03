@@ -4,6 +4,24 @@ The iPhone app connects directly to the standalone Herdr server. It includes
 terminal and Pi chat views, machine management, notes, and Herd Pulse Live Activities.
 No other orchestration server is required.
 
+## Simulator controls on iPad and iPhone
+
+Saved simulator builds open in a full-screen viewer with taps, swipes, two-finger
+gestures, hardware keys, Home, Lock and text entry. The stream-options button beside
+Type offers **Reconnect** for the same running simulator and High, Balanced or
+Low data video quality. SimPortal input errors appear below the picture.
+
+The client checks command round trips even while video continues, reconnects a
+stalled connection, and bounds pending input instead of replaying old actions.
+Fast swipes send their final movement before lifting. Backgrounding immediately
+pauses streaming and preview polling; returning opens a fresh connection. Done
+stops watching, while Stop shuts down the remote simulator.
+
+The opt-in `HerdrSimulatorInputUITests` suite uses
+`scripts/simulator-preview-fixture.py` and its `HERDR_SIMULATOR_RELAY_FIXTURE` JSON
+to check real iPad gestures, hardware controls, typing and reconnect through the
+companion WebSocket relay with entirely synthetic content.
+
 ## First Mate
 
 First Mate uses dark Mono chrome over a cached dusk background. The same dusk

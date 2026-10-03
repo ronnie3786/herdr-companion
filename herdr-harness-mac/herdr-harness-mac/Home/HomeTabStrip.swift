@@ -14,7 +14,7 @@ struct HomeTabStrip: View {
     var chatsTools: AnyView? = nil
     @State private var tabsWidth: CGFloat = 500
     @FocusState private var searchFocused: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.homeReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geometry in

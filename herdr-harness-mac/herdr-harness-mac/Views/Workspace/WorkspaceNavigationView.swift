@@ -211,6 +211,10 @@ struct WorkspaceNavigationView: View {
                             refreshFleetReview: { target in
                                 Task { await performPRReviewFleetAction(target) { try await shell.prReviewFleet.refreshReview(target) } }
                             },
+                            revealRequest: shell.homeReviewRevealRequest,
+                            onRevealHandled: { id in
+                                if shell.homeReviewRevealRequest?.id == id { shell.homeReviewRevealRequest = nil }
+                            },
                             searchFocusRequest: shell.surfaceSearchFocusRequest
                         )
                     }
@@ -789,7 +793,10 @@ struct WorkspaceNavigationView: View {
             .environment(\.firstMateMarkRead, markFirstMateRead)
             }
         case .watchers:
-            WatchersView(store: shell.watchers, searchFocusRequest: shell.surfaceSearchFocusRequest)
+            WatchersView(store: shell.watchers, revealRequest: shell.homeWatcherRevealRequest,
+                         onRevealHandled: { id in
+                             if shell.homeWatcherRevealRequest?.id == id { shell.homeWatcherRevealRequest = nil }
+                         }, searchFocusRequest: shell.surfaceSearchFocusRequest)
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,

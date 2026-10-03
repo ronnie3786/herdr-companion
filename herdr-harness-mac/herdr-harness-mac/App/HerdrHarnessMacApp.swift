@@ -234,7 +234,11 @@ struct HerdrHarnessMacApp: App {
                 modelFavorites: modelFavorites,
                 hudController: hudController,
                 updates: updates,
-                agentControl: agentControl
+                agentControl: agentControl,
+                revealRequest: shell.homeMachineRevealRequest,
+                onRevealHandled: { id in
+                    if shell.homeMachineRevealRequest?.id == id { shell.homeMachineRevealRequest = nil }
+                }
             )
                 .containerBackground(.clear, for: .window)
                 .environment(\.herdrFontScale, fontScale.scale)

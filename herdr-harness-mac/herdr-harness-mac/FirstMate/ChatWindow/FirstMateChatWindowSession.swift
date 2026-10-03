@@ -32,6 +32,9 @@ final class FirstMateChatWindowSession {
     @ObservationIgnored let shell: HerdrShellState
 
     var selection: Selection = .lead
+    /// Home feature actions carry an immutable source identity. They never
+    /// use the Dock menu's fallback to another conversation.
+    private(set) var exactOpenRequest: FirstMateChatExactOpenRequest?
     var search = ""
     var archiveCandidate: FirstMateFleetIndex.ArchiveTarget?
     var presentationEditTarget: FirstMateConversation?
@@ -172,6 +175,8 @@ final class FirstMateChatWindowSession {
     /// A credential or connection change rebuilds it. Returns nil for a
     /// machine without a configuration.
     func store(for machineID: String) -> FirstMateStore? {
+        if let request = exactOpenRequest, request.target.machineID == machineID,
+           !exactOwnerIsCurrent { return nil }
         if isDemo {
             guard machineID == Self.demoMachineID else { return nil }
             let identity = FirstMateConnectionIdentity(configuration: nil, generation: 0, isDemo: true)
@@ -369,6 +374,7 @@ final class FirstMateChatWindowSession {
     /// the ＋, an open request): the new chat's composer takes focus when it
     /// appears. A keyboard move leaves it false and cancels any pending focus.
     func select(_ selection: Selection, focusComposer: Bool = false) {
+        exactOpenRequest = nil
         if selection != self.selection {
             pendingComposerFocus = focusComposer
             self.selection = selection
@@ -458,6 +464,48 @@ final class FirstMateChatWindowSession {
 
     func wakeRefresh() {
         refreshWake?.yield(())
+    }
+
+    // MARK: Exact feature routing
+
+    /// Applies immediately, including before the fleet list loads. A new
+    /// request wakes hydration even if this feature is already selected.
+    func applyExactOpenRequest(_ request: FirstMateChatExactOpenRequest) {
+        pendingOpen = nil
+        exactOpenRequest = request
+        selection = .feature(request.target)
+        pendingComposerFocus = true
+        selectionGeneration &+= 1
+        if let store = selectedStore {
+            store.select(request.target.featureID)
+            store.inspector = .overview
+        }
+        wakeRefresh()
+    }
+
+    var exactOwnerIsCurrent: Bool {
+        guard let request = exactOpenRequest else { return true }
+        let target = request.target
+        let current = FirstMateConnectionIdentity(
+            configuration: isDemo ? nil : configurationProvider(target.machineID),
+            generation: model.connectionGeneration, isDemo: isDemo)
+        guard current == request.identity else { return false }
+        if isDemo { return target.machineID == Self.demoMachineID }
+        return current.configuration != nil && model.machines.contains { $0.id == target.machineID }
+    }
+
+    var exactSelectionUnavailableReason: String? {
+        guard let request = exactOpenRequest, selection == .feature(request.target) else { return nil }
+        guard exactOwnerIsCurrent else {
+            return "This conversation's machine or connection is no longer available. Reopen it from Home after the source reconnects."
+        }
+        guard let store = selectedStore else { return "This conversation's machine is unavailable." }
+        if store.snapshots[request.target.featureID] != nil { return nil }
+        if let error = store.error { return "This conversation could not be opened: \(error)" }
+        if store.hasLoaded || isDemo {
+            return "This conversation is no longer available on \(machineName(request.target.machineID))."
+        }
+        return nil
     }
 
     // MARK: Lifecycle

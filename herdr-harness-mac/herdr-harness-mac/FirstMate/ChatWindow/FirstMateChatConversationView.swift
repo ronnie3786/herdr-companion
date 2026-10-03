@@ -118,7 +118,21 @@ struct FirstMateChatConversationView: View {
 
     @ViewBuilder
     private func featureColumn(_ id: FirstMateFleetFeatureID) -> some View {
-        if let store = session.store(for: id.machineID), let snapshot = store.snapshots[id.featureID] {
+        if let reason = session.exactSelectionUnavailableReason {
+            VStack(spacing: 10) {
+                Image(systemName: "exclamationmark.bubble")
+                    .font(.system(size: 24))
+                Text("Conversation unavailable")
+                    .herdrFont(size: HerdrTheme.TextSize.small, weight: .semibold)
+                Text(reason)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+            }
+            .foregroundStyle(HerdrTheme.tertiaryText)
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let store = session.store(for: id.machineID), let snapshot = store.snapshots[id.featureID] {
             FirstMateFeatureChat(
                 session: session,
                 model: model,

@@ -8,7 +8,7 @@ struct HomeAvatar: View {
     var showsRing = false
     var animated = true
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.homeReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @State private var motion = false
     @State private var blinking = false

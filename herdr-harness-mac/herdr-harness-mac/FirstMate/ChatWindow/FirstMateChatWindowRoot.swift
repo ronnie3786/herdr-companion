@@ -225,6 +225,11 @@ struct FirstMateChatWindowRoot: View {
         .onChange(of: session.createStore.map(ObjectIdentifier.init), initial: true) { _, store in
             createOrigin = store == nil ? nil : session.createOrigin
         }
+        .onChange(of: shell.firstMateChatExactOpenRequest, initial: true) { _, request in
+            guard let request else { return }
+            shell.firstMateChatExactOpenRequest = nil
+            session.applyExactOpenRequest(request)
+        }
         .onChange(of: shell.firstMateChatOpenRequest, initial: true) { _, request in
             guard let request else { return }
             shell.firstMateChatOpenRequest = nil
@@ -630,7 +635,8 @@ extension FirstMateChatWindowSession {
     /// rejected it (it selected another feature) or failed. An archived or
     /// removed chat whose snapshot is still held stays open.
     var selectionIsUnresolvable: Bool {
-        Self.selectionIsUnresolvable(
+        guard exactOpenRequest == nil else { return false }
+        return Self.selectionIsUnresolvable(
             selectedConversationID,
             conversations: conversations,
             store: selectedConversationID.flatMap { store(for: $0.machineID) }

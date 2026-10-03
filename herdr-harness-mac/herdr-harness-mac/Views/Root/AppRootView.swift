@@ -84,6 +84,12 @@ final class HerdrShellState {
     var surfaceSearchFocusRequest = 0
     var homeAskRequest = 0
     var isInboxPresented = false
+    var homeWatcherRevealRequest: HomeRevealRequest?
+    var homeReviewRevealRequest: HomeRevealRequest?
+    var homeMachineRevealRequest: HomeRevealRequest?
+    var homeReviewPreparation: HomeReviewPreparation?
+    var homeReviewPreparationSelection: HomeReviewPreparationSelection?
+    var firstMateChatExactOpenRequest: FirstMateChatExactOpenRequest?
     var mainWindowAllowsPresentation = false
     let dashboard: DashboardState
     let agentBoard = AgentBoardState()
@@ -192,7 +198,14 @@ final class HerdrShellState {
 
     init(userDefaults: UserDefaults = .standard, prReviewGuide: PRReviewGuideSession = PRReviewGuideSession()) {
         self.preferences = userDefaults
-        self.home = HomeStore(defaults: userDefaults)
+        if HomeFixtures.requestedMoment != nil {
+            let name = "herdr.home.synthetic.presentation"
+            let syntheticDefaults = UserDefaults(suiteName: name)!
+            syntheticDefaults.removePersistentDomain(forName: name)
+            self.home = HomeStore(defaults: syntheticDefaults)
+        } else {
+            self.home = HomeStore(defaults: userDefaults)
+        }
         self.homeEnabled = userDefaults.bool(forKey: HomePreferences.enabledKey)
         if homeEnabled { self.detailScope = .home }
         let historyStore = NavigationHistoryPersistenceStore(userDefaults: userDefaults)

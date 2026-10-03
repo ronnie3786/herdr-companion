@@ -84,7 +84,7 @@ struct FirstMateSimulatorBuildRow: View {
             }
             Spacer(minLength: 8)
             if let date = build.date {
-                DashboardAgeText(date: date)
+                HerdrAgeText(date: date)
                     .herdrFont(size: HerdrTheme.TextSize.caption)
                     .monospacedDigit()
                     .foregroundStyle(palette.tertiaryText)

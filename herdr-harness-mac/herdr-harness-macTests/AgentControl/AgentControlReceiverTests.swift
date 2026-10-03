@@ -79,7 +79,7 @@ struct AgentControlReceiverTests {
             openSettingsWindow: {}
         )
         let staleRevision = controller.currentState().revision
-        shell.show(.activity, model: model)
+        shell.show(.watchers, model: model)
         controller.stateDidChange()
         await transport.install(AgentControlCommand(
             requestId: "stale-revision",
@@ -158,7 +158,7 @@ struct AgentControlReceiverTests {
 
         controller.restartForTesting()
         try await transport.waitForAcknowledgementCount(1)
-        shell.show(.activity, model: model)
+        shell.show(.watchers, model: model)
         controller.stateDidChange()
         try await transport.waitForAcknowledgementCount(2)
 

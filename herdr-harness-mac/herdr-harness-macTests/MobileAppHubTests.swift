@@ -45,14 +45,6 @@ struct MobileAppHubTests {
         #expect(MobileAppHubSettings.hubURL(from: "") == nil)
     }
 
-    @Test("Dashboard apps split on commas and whitespace, without duplicates")
-    func bundleIDs() {
-        #expect(MobileAppHubSettings.bundleIDs(from: "org.example.app, org.example.beta\norg.example.app")
-                == ["org.example.app", "org.example.beta"])
-        #expect(MobileAppHubSettings.dashboardQuery(hubURLText: "https://builds.example.invalid", bundleIDsText: " ") == nil)
-        #expect(MobileAppHubSettings.dashboardQuery(hubURLText: "", bundleIDsText: "org.example.app") == nil)
-    }
-
     @Test("Builds decode with and without First Mate links")
     func decoding() throws {
         let builds = try MobileAppHubFixtures.builds([
@@ -67,25 +59,21 @@ struct MobileAppHubTests {
         #expect(builds[0].date == ISO8601DateFormatter().date(from: "2026-09-25T14:00:00Z"))
     }
 
-    @Test("Search matches ticket, feature, app, and version; Focus mode keeps the last day")
-    func dashboardRows() throws {
+    @Test("First Mate build recency and app links retain the shared hub behavior")
+    func buildPresentation() throws {
         let now = try #require(ISO8601DateFormatter().date(from: "2026-09-26T12:00:00Z"))
         let builds = try MobileAppHubFixtures.builds([
             MobileAppHubFixtures.buildJSON(id: "new", builtAt: "2026-09-26T09:00:00Z"),
             MobileAppHubFixtures.buildJSON(id: "old", build: "90", builtAt: "2026-09-20T09:00:00Z", ticket: "EX-7", title: "Dark mode"),
         ])
-        #expect(MobileAppHubPresentation.dashboardRows(builds, query: "", focusMode: false, now: now).map(\.id) == ["new", "old"])
-        #expect(MobileAppHubPresentation.dashboardRows(builds, query: "", focusMode: true, now: now).map(\.id) == ["new"])
-        #expect(MobileAppHubPresentation.dashboardRows(builds, query: "ex-7", focusMode: false, now: now).map(\.id) == ["old"])
-        #expect(MobileAppHubPresentation.dashboardRows(builds, query: "(90)", focusMode: false, now: now).map(\.id) == ["old"])
-        #expect(MobileAppHubPresentation.dashboardTitle(builds) == "Example App builds")
+        #expect(MobileAppHubPresentation.isFresh(builds[0], now: now))
+        #expect(!MobileAppHubPresentation.isFresh(builds[1], now: now))
         #expect(MobileAppHubPresentation.seeAllURL(builds, hubURL: MobileAppHubFixtures.hubURL).absoluteString
                 == "https://builds.example.invalid/apps/org.example.app")
         let mixed = try MobileAppHubFixtures.builds([
             MobileAppHubFixtures.buildJSON(id: "a"),
             MobileAppHubFixtures.buildJSON(id: "b", app: "Other", bundleID: "org.example.other"),
         ])
-        #expect(MobileAppHubPresentation.dashboardTitle(mixed) == "Builds")
         #expect(MobileAppHubPresentation.seeAllURL(mixed, hubURL: MobileAppHubFixtures.hubURL) == MobileAppHubFixtures.hubURL)
     }
 
@@ -167,7 +155,7 @@ private final class HubURLProtocol: URLProtocol {
 @Suite("Mobile App Hub renders", .serialized)
 @MainActor
 struct MobileAppHubRenderTests {
-    @Test("Dashboard card and First Mate Overview section")
+    @Test("First Mate Overview build section")
     func sections() async throws {
         let now = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3 * 3600))
         let builds = try MobileAppHubFixtures.builds([
@@ -178,17 +166,6 @@ struct MobileAppHubRenderTests {
             MobileAppHubFixtures.buildJSON(id: "b1", version: "2.3.9", build: "101", builtAt: "2025-01-10T10:00:00Z", ticket: nil,
                                            title: "Launch screen refresh", expiresAt: "2025-06-01T00:00:00Z"),
         ])
-        let query = MobileAppHubFeed.Query(hubURL: MobileAppHubFixtures.hubURL, bundleIDs: ["org.example.app"])
-        let dashboard = DashboardState(defaults: UserDefaults(suiteName: "MobileAppHubRender.\(UUID())")!)
-        dashboard.builds.present(builds)
-        let card = try await HerdrRenderHarness.render("dashboard-builds.png", size: CGSize(width: 1100, height: 260)) {
-            DashboardBuildsSection(dashboard: dashboard, query: query)
-                .padding(.vertical, 20)
-                .background(HerdrTheme.windowBackground)
-                .foregroundStyle(HerdrTheme.text)
-        }
-        card.expectSubstantial()
-
         let feed = MobileAppHubFeed(builds: Array(builds.prefix(2)))
         for scheme in [ColorScheme.light, .dark] {
             let section = try await HerdrRenderHarness.render("first-mate-builds-\(scheme == .dark ? "dark" : "light").png",

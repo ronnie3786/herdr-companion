@@ -115,7 +115,7 @@ struct ShellRefreshLifecycleTests {
         defer { fixture.cleanUp() }
         let model = fixture.model
         let shell = HerdrShellState(userDefaults: fixture.defaults)
-        shell.detailScope = .dashboard
+        shell.detailScope = .home
         let task = Task { await shell.refreshCoordinator.run(model: model, shell: shell, canPoll: true) }
         for _ in 0..<1_000 where !shell.workInbox.hasLoaded { await Task.yield() }
         #expect(shell.workInbox.hasLoaded)

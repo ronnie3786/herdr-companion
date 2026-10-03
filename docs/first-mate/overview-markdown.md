@@ -11,7 +11,6 @@ render prose.
 | --- | --- | --- |
 | First Mate → Overview | Complete feature goal | Compact block Markdown: headings, paragraphs, emphasis, links, lists, quotes, code, tables, and rules. Empty goals keep an explicit empty state. |
 | First Mate → Overview | Latest journal summaries | Compact block Markdown. |
-| Agent view → Overview | Feature goal and journal summaries | Markdown blocks prepared with the existing Agent view prose model, off the main actor. Long goals retain the existing Show more control. |
 | First Mate → Documents | `text/markdown` document body | Already rendered with the full First Mate Markdown document view. A declared non-Markdown body remains literal text. Document titles, authors, visit names, media types, and provenance remain structural labels. |
 | First Mate → Agents | Saved assistant-session prose | Already rendered with the shared full Markdown message view. Agent titles, roles, status, usage, and machine verdict identifiers remain structural labels. User prompts keep their existing inline presentation. |
 | First Mate → Workflow | Worker progress summary, next action, evidence, and recovery event summaries | Compact block Markdown. Labels such as **Next** and **Worker-reported evidence** remain separate from the untrusted source. Visit names, revision/status labels, commit subjects, paths, hashes, and timestamps remain structural text. |

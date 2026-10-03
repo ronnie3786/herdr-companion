@@ -1,6 +1,6 @@
 import Foundation
 
-struct DashboardSkillRun: Codable, Equatable, Identifiable, Sendable {
+struct PRReviewSkillRun: Codable, Equatable, Identifiable, Sendable {
     var skillID: String
     var title: String
     var state: String

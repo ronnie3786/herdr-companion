@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
-/// Offscreen renders of the skim in First Mate chat (chat and column widths,
+/// Offscreen renders of the skim in First Mate chat (
 /// both appearances, the largest text size), its pending and Full reply states,
 /// the HUD, and the cards a phrase opens. PNGs land in the render directory.
 @Suite("First Mate skim renders", .serialized)
@@ -36,18 +36,9 @@ struct FirstMateSkimRenderTests {
         #expect(skimPixelCount(in: bitmap, matching: attention) >= 6, "The next-step dot should be First Mate's attention color")
     }
 
-    @Test("A skim fits a First Mate column and the largest text size")
-    func columnAndLargestText() async throws {
+    @Test("A skim fits the largest text size")
+    func largestText() async throws {
         let message = try Self.message(FirstMateSkimFixtures.txnJSON)
-        let row = AgentBoardContent.MessageRow(id: message.id, isHuman: false, isQueued: false, date: nil,
-                                               blocks: AgentBoardProse.blocks(from: message.text), attachments: [],
-                                               source: message.text, skim: message.skim)
-        let column = try await HerdrRenderHarness.render("first-mate-skim-column.png", size: CGSize(width: 440, height: 420)) {
-            AgentBoardMessageView(message: row, openFullView: {})
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-        column.expectSubstantial(minimumBytes: 4_096)
         let largest = try await HerdrRenderHarness.render("first-mate-skim-largest-text.png", size: CGSize(width: 760, height: 620)) {
             chatRow(message, scheme: .dark)
                 .environment(\.herdrFontScale, .xxxLarge)

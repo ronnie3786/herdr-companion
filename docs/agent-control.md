@@ -131,6 +131,7 @@ concurrent additions/removals can change subsequent pages.
 ## Navigate the current window
 
 ```sh
+herdr-control --control-machine desktop ui segment home --wait 30
 herdr-control --control-machine desktop ui segment git --wait 30
 herdr-control --control-machine desktop ui segment chat --wait 30
 herdr-control --control-machine desktop ui segment first-mate --wait 30
@@ -139,7 +140,10 @@ herdr-control --control-machine desktop ui back --wait 30
 herdr-control --control-machine desktop ui forward --wait 30
 ```
 
-Other segments are `terminal`, `skills`, `first-mate`, `pr-review`, `watchers` and `activity`.
+Other segments are `terminal`, `skills`, `first-mate`, `pr-review` and `watchers`.
+`home` opens the Home tab. The existing `activity` segment remains accepted as an alias
+for Home, whose recap replaces the retired standalone Mac Activity screen. Fleet and
+First Mate management remain utilities associated with Chats in the four-tab shell.
 Chat/Git/Terminal/Skills require an appropriate selected pane; unavailable modes
 fail instead of silently selecting another view. The Mac app has no workspace
 overview or attention deck, so `workspace` and `attention` are not segments.
@@ -185,7 +189,7 @@ control from the [long-term plan](agent-control-plan.md).
 
 | Area | Control surface |
 | --- | --- |
-| Main shell | Exact chat (pane) opening; main segments; back/forward; refresh; reveal in sidebar |
+| Main shell | Exact chat (pane) opening; `home` and retained segments (`activity` aliases Home); back/forward; refresh; reveal in sidebar |
 | Chat | Chat/Terminal/Git/Skills modes, summary presentation, Smart Rename, exact model selection, local unread marking; tab colors are read-only discovery |
 | Sidebar | Supported query/category/recency filters through a typed action |
 | Other native surfaces | Settings window, HUD, HUD notes, saved HUD chat history, First Mate feature/inspector |

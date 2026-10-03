@@ -288,6 +288,15 @@ Snoozes and dismissals are keyed by scoped identity and a meaningful evidence fi
 
 Use the field names the source types actually expose; if a listed field is missing, pick the nearest stable one and record it here. Store snoozes, dismissals, and visit metadata in one small versioned record in the app's local preferences, separate from server state. Prune expired snoozes on load, and drop entries whose identity has been absent from the fleet for seven days.
 
+**Implementation fallback record (October 3, 2026):** `GitHubReviewRequest` supplies neither
+a head SHA nor a request timestamp. Its local snooze fingerprint therefore uses the verified
+canonical PR identity with open state, title, and author. A new head or repeated request with
+identical available fields cannot be detected independently; the one-hour snooze still expires.
+Waiting chats use the machine-scoped pane ID and `pane.episodeKey`, the existing episode
+identity available without fetching every transcript. Quick-reply submission separately
+rehydrates and validates the exact current message and session. These are source limitations,
+not inferred message IDs or timestamps.
+
 The stack must remain stable as unrelated data refreshes. If the selected item is removed by confirmed source changes, choose the next eligible item deterministically and preserve keyboard focus.
 
 “Nice. You're clear.” is reserved for a verified cleared state. If every item is locally snoozed, explain that instead. Loading, stale, unsupported, disconnected, and empty states have distinct copy.

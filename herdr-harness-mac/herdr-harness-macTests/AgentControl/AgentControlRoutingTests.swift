@@ -130,11 +130,22 @@ struct AgentControlRoutingTests {
         }
     }
 
+    @Test("Home and the retained activity alias open the same Home destination")
+    func activityAlias() async throws {
+        let fixture = makeFixture()
+        for name in ["home", "activity"] {
+            fixture.shell.show(.fleet, model: fixture.model)
+            _ = try await fixture.controller.executeForTesting(
+                command(action: "ui.segment", parameters: ["segment": .string(name)]), serverMapping: [:])
+            #expect(fixture.shell.detailScope == .home)
+        }
+    }
+
     @Test("An old expected revision cannot race a newer human selection")
     func revisionRace() async throws {
         let fixture = makeFixture()
         let oldRevision = fixture.controller.currentState().revision
-        fixture.shell.show(.activity, model: fixture.model)
+        fixture.shell.show(.watchers, model: fixture.model)
         fixture.controller.stateDidChange()
         var request = command(action: "ui.segment", parameters: ["segment": .string("fleet")])
         request.expectedRevision = oldRevision
@@ -142,7 +153,7 @@ struct AgentControlRoutingTests {
         await #expect(throws: AgentControlCommandError.self) {
             try await fixture.controller.executeForTesting(request, serverMapping: [:])
         }
-        #expect(fixture.shell.detailScope == .activity)
+        #expect(fixture.shell.detailScope == .watchers)
     }
 
     @Test("Git and Terminal stay on the same exact pane and produce distinct history stops")
@@ -517,7 +528,7 @@ struct AgentControlRoutingTests {
         let fixture = makeFixture()
         let workspace = try #require(fixture.model.workspaces.first)
         let tab = try #require(workspace.tabs.first)
-        fixture.shell.show(.activity, model: fixture.model)
+        fixture.shell.show(.watchers, model: fixture.model)
         let targets = [
             AgentControlTarget(
                 kind: "workspace",
@@ -552,7 +563,7 @@ struct AgentControlRoutingTests {
                 )
             }
         }
-        #expect(fixture.shell.detailScope == .activity)
+        #expect(fixture.shell.detailScope == .watchers)
     }
 
     @Test("Exact pane switches retain each pane's unsent draft")

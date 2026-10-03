@@ -235,10 +235,10 @@ final class HerdrFirstMateFeedbackUITests: HerdrUITestCase {
     @MainActor
     func testFinalActionTimestampRowsInBothSyntheticChatSurfaces() {
         let app = XCUIApplication()
-        app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState", "-herdr.mac.firstMate.chatWindow", "YES"]
+        app.launchArguments = ["-HerdrDemoMode", "-HerdrResetSidebarState"]
         app.launch()
         defer { app.terminate() }
-        let chats = app.buttons["dashboard-recent-chats"]
+        let chats = app.buttons["home-tab-chats"]
         XCTAssertTrue(chats.waitForExistence(timeout: 10))
         chats.click()
         app.buttons["open-first-mate"].click()

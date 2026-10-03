@@ -5,9 +5,9 @@ import Testing
 @Suite("Shell navigation history", .serialized)
 @MainActor
 struct ShellNavigationHistoryTests {
-    @Test("The title bar's ⋯ menu offers Chat, Active Work, Fleet, and Activity")
+    @Test("The title bar menu retains Chat and Fleet utilities")
     func shellMenuDestinations() {
-        #expect(HerdrDetailScope.menuDestinations == [.session, .fleet, .activity])
+        #expect(HerdrDetailScope.menuDestinations == [.session, .fleet])
         #expect(HerdrDetailScope.session.label == "Chat")
         // Git is a pane mode in the chat's own menu, not a destination.
         #expect(!HerdrDetailScope.menuDestinations.contains(.git))
@@ -39,7 +39,7 @@ struct ShellNavigationHistoryTests {
         #expect(shell.resolvedScope(for: model) == .session)
     }
 
-    @Test("Opening a pane, Fleet, and Active Work records three visits")
+    @Test("Opening a pane, Fleet, and First Mate records three visits")
     func openingDestinationsRecordsTrail() throws {
         try withModel { model, shell, firstPane, _, _, _ in
 
@@ -74,7 +74,7 @@ struct ShellNavigationHistoryTests {
             shell.selectedPaneDidChange(model: model)
             #expect(shell.detailScope == .git)
             #expect(NavigationHistory(snapshot: shell.history.snapshot) == shell.history)
-            shell.show(.activity, model: model)
+            shell.show(.home, model: model)
             #expect(!shell.canGoForward)
         }
     }
@@ -169,7 +169,7 @@ struct ShellNavigationHistoryTests {
     func backRestoresPaneAndScope() throws {
         try withModel { model, shell, firstPane, _, _, _ in
             shell.openPane(id: firstPane.id, model: model)
-            shell.show(.activity, model: model)
+            shell.show(.home, model: model)
 
             #expect(shell.goBack(model: model))
             #expect(shell.detailScope == .session)

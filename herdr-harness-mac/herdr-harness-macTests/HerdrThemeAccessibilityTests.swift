@@ -31,7 +31,6 @@ struct HerdrThemeAccessibilityTests {
             ("code block", try over(HerdrTheme.codeFill, base)),
             ("chip in card", try over(HerdrTheme.chipFill, card)),
             ("NOW block", try over(HerdrTheme.insetFill, card)),
-            ("attention box", try rgb(HerdrTheme.attentionSurface)),
             ("alias elevated", try rgb(HerdrTheme.elevated)),
             ("alias input", try rgb(HerdrTheme.input)),
             ("alias surface", try rgb(HerdrTheme.surface)),

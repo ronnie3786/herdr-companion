@@ -72,109 +72,6 @@ private struct MobileAppHubRefreshModifier: ViewModifier {
     }
 }
 
-// MARK: - Dashboard
-
-/// The newest builds of the apps chosen in Settings → General → Builds.
-/// Hidden until a hub and at least one app are configured, and while the hub
-/// has no builds for them. `DashboardView` keeps `dashboard.builds` current.
-struct DashboardBuildsSection: View {
-    let dashboard: DashboardState
-    let query: MobileAppHubFeed.Query?
-    @Environment(\.openURL) private var openURL
-
-    private var feed: MobileAppHubFeed { dashboard.builds }
-
-    var body: some View {
-        if let query, !feed.hasLoaded || !feed.builds.isEmpty {
-            content(query)
-        }
-    }
-
-    private func content(_ query: MobileAppHubFeed.Query) -> some View {
-        let rows = MobileAppHubPresentation.dashboardRows(
-            feed.builds, query: dashboard.search, focusMode: dashboard.focusMode)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                DashboardSectionHeading(
-                    title: MobileAppHubPresentation.dashboardTitle(feed.builds), identifier: "dashboard-builds"
-                ) {
-                    openURL(MobileAppHubPresentation.seeAllURL(feed.builds, hubURL: query.hubURL))
-                }
-                Spacer(minLength: 8)
-                if let error = feed.error {
-                    Label("Couldn't refresh", systemImage: "exclamationmark.triangle")
-                        .herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.warning)
-                        .help(error)
-                }
-            }
-            if !feed.hasLoaded {
-                ProgressView().controlSize(.small).padding(.vertical, 8)
-            } else if rows.isEmpty {
-                Label(dashboard.focusMode ? "No builds from the last day." : "No builds match your search.",
-                      systemImage: "iphone")
-                    .herdrFont(size: HerdrTheme.TextSize.small).foregroundStyle(HerdrTheme.tertiaryText)
-                    .padding(.vertical, 10)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(rows) { build in
-                        DashboardBuildRow(build: build) { openURL(build.urls.page) }
-                    }
-                }
-                .herdrHairline(.top)
-            }
-        }
-        .padding(.horizontal, DashboardMetrics.pagePadding)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("dashboard-builds-section")
-    }
-}
-
-struct DashboardBuildRow: View {
-    let build: MobileAppHubBuild
-    let open: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 10) {
-                MobileAppHubIcon(url: build.urls.icon, name: build.app.name, size: 22)
-                if let ticket = build.label.ticket {
-                    MobileAppHubTicket(ticket: ticket, tint: HerdrTheme.accent)
-                }
-                Text(build.title)
-                    .herdrFont(size: HerdrTheme.TextSize.body)
-                    .foregroundStyle(HerdrTheme.primaryText)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if build.isSigningExpired() {
-                    Text("Signing expired").herdrFont(size: HerdrTheme.TextSize.caption).foregroundStyle(HerdrTheme.alert)
-                }
-                Text([build.versionLabel, build.source.machine].compactMap { $0 }.joined(separator: " · "))
-                    .herdrFont(size: HerdrTheme.TextSize.caption).monospacedDigit().foregroundStyle(HerdrTheme.tertiaryText)
-                    .lineLimit(1).truncationMode(.middle)
-                    .frame(maxWidth: 260, alignment: .trailing)
-                Text("000d")
-                    .hidden()
-                    .overlay(alignment: .trailing) { DashboardAgeText(date: build.date) }
-                    .herdrFont(size: HerdrTheme.TextSize.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(MobileAppHubPresentation.isFresh(build) ? HerdrTheme.success : HerdrTheme.tertiaryText)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: HerdrTheme.ControlHeight.row, alignment: .leading)
-            .background(isHovered ? HerdrTheme.hoverFill : .clear, in: .rect(cornerRadius: HerdrTheme.Radius.control))
-            .herdrHairline(.bottom, color: HerdrTheme.rowDivider)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.herdrPlain)
-        .onHover { isHovered = $0 }
-        .help("Open \(build.app.name) \(build.versionLabel) in Mobile App Hub")
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("dashboard-build-\(build.id)")
-    }
-}
-
 // MARK: - First Mate Overview
 
 /// Builds this First Mate's agents published: Mobile App Hub builds to install
@@ -340,7 +237,7 @@ private struct FirstMateBuildRow: View {
                     if MobileAppHubPresentation.isFresh(build) {
                         Circle().fill(HerdrTheme.success).frame(width: 6, height: 6).accessibilityHidden(true)
                     }
-                    DashboardAgeText(date: build.date)
+                    HerdrAgeText(date: build.date)
                         .herdrFont(size: HerdrTheme.TextSize.caption)
                         .monospacedDigit()
                         .foregroundStyle(palette.tertiaryText)

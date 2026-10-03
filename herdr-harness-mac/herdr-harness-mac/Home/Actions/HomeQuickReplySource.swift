@@ -77,7 +77,24 @@ final class HomeQuickReplySource {
     var operations: HomeQuickReplyOperations {
         .init(owner: { self.owner($0) }, load: { try await self.load($0) },
               submit: { await self.submit($0, action: $1) }, retry: { await self.retry($0) },
-              retain: { self.retain($0) })
+              retain: { self.retain($0) }, isDestinationCurrent: { self.isDestinationCurrent($0) })
+    }
+
+    private func isDestinationCurrent(_ expected: HomeQuickReplyOwner) -> Bool {
+        let machineID: String
+        var sessionID: String?
+        switch expected.route {
+        case .firstMate(let machine, _): machineID = machine
+        case .chat(let paneID):
+            guard let pane = model.pane(id: paneID) else { return false }
+            machineID = pane.machineID
+            sessionID = pane.piSemantic?.sessionID
+        default: return false
+        }
+        let configuration = model.firstMateConfiguration(machineID: machineID)
+        guard model.isDemoMode || configuration != nil else { return false }
+        return expected.matchesConnection(generation: model.connectionGeneration, configuration: configuration,
+                                          isDemo: model.isDemoMode, sessionID: sessionID)
     }
 
     private func owner(_ route: HomeRoute) -> HomeQuickReplyOwner? {

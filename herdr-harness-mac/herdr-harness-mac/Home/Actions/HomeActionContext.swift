@@ -3,7 +3,7 @@ import Foundation
 /// These controls change only Mac-local presentation and therefore belong
 /// to the interactive host rather than the read-only source projection.
 enum HomeActionPresentation {
-    static func snapshot(_ source: HomeSnapshot, snoozedCount: Int) -> HomeSnapshot {
+    static func snapshot(_ source: HomeSnapshot, snoozedCount: Int, unresolvedReplyCount: Int = 0) -> HomeSnapshot {
         var snapshot = source
         snapshot.focus = source.focus.map { original in
             var item = original
@@ -23,6 +23,15 @@ enum HomeActionPresentation {
         }
         if snoozedCount > 0 {
             snapshot.notices.append("\(snoozedCount) \(snoozedCount == 1 ? "attention item is" : "attention items are") snoozed on this Mac. Snoozing does not resolve the underlying work.")
+        }
+        if unresolvedReplyCount > 0 {
+            snapshot.notices.append("\(unresolvedReplyCount) \(unresolvedReplyCount == 1 ? "reply still needs" : "replies still need") a delivery check below.")
+            if snapshot.canShowAllClear {
+                snapshot.canShowAllClear = false
+                snapshot.mood = .attentive
+                snapshot.statusLine = "A reply still needs a check."
+                snapshot.summary = ["Your work is moving. Check the reply status below before sending again."]
+            }
         }
         return snapshot
     }

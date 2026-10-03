@@ -13,10 +13,20 @@ final class HomeQuickReplyController {
     @ObservationIgnored private var nextLane = 0
     @ObservationIgnored private var visibilityID = UUID()
     @ObservationIgnored private var answered: [HomeRoute: HomeQuickReplyQuestion] = [:]
+    private var submissionDetails: [HomeRoute: SubmissionDetails] = [:]
+    private var submissionOrder: [HomeRoute] = []
+    private var acknowledgedOutcomes: [HomeRoute: HomeQuickReplyQuestion] = [:]
+
+    private struct SubmissionDetails {
+        var question: HomeQuickReplyQuestion
+        var title: String
+        var label: String
+    }
 
     private struct Target: Equatable {
         var owner: HomeQuickReplyOwner
         var evidence: String
+        var title: String
     }
 
     private struct Job {
@@ -38,21 +48,21 @@ final class HomeQuickReplyController {
     func hydrate(focus: HomeFocusItem?, chats: [HomeChatItem], enabled: Bool) async {
         let visibility = UUID()
         visibilityID = visibility
-        var requested: [(HomeRoute, String)] = []
+        var requested: [(HomeRoute, String, String)] = []
         if enabled {
             if let focus, !focus.isStale, !focus.isIdea,
                case .firstMate = focus.route {
-                requested.append((focus.route, focus.fingerprint))
+                requested.append((focus.route, focus.fingerprint, focus.title))
             }
             for chat in chats.filter({ $0.isWaiting && !$0.isStale }).prefix(3) {
-                requested.append((chat.route, chat.evidenceID))
+                requested.append((chat.route, chat.evidenceID, chat.title))
             }
         }
         var targets: [HomeRoute: Target] = [:]
         var order: [HomeRoute] = []
-        for (route, evidence) in requested where targets[route] == nil {
+        for (route, evidence, title) in requested where targets[route] == nil {
             guard let owner = operations.owner(route) else { continue }
-            targets[route] = Target(owner: owner, evidence: evidence)
+            targets[route] = Target(owner: owner, evidence: evidence, title: title)
             order.append(route)
         }
         let previous = desired
@@ -114,6 +124,10 @@ final class HomeQuickReplyController {
         }
         // No suspension between the final owner check and the existing owner
         // reserving its submission. The displayed label is the entire payload.
+        // Publish the persistent status only at this boundary. Resizing Home
+        // during question verification must not remove the card from view.
+        submissionDetails[route] = .init(question: question, title: target.title, label: action.label)
+        if !submissionOrder.contains(route) { submissionOrder.append(route) }
         let result = await operations.submit(question, action)
         if result == .accepted { answered[route] = question }
         record(result, question: question, route: route)
@@ -135,18 +149,46 @@ final class HomeQuickReplyController {
         return operations.owner(route) == question.owner
     }
 
+    var unresolvedOutcomes: [HomeQuickReplyOutcome] {
+        submissionOrder.compactMap { route in
+            guard let presentation = presentations[route], presentation.phase.needsResolution,
+                  let details = submissionDetails[route], presentation.question == details.question,
+                  acknowledgedOutcomes[route] != details.question else { return nil }
+            return .init(question: details.question, title: details.title, replyLabel: details.label, phase: presentation.phase)
+        }
+    }
+
+    func canOpenOutcome(_ outcome: HomeQuickReplyOutcome) -> Bool {
+        isDestinationCurrent(outcome.owner)
+    }
+
+    func canAcknowledge(_ outcome: HomeQuickReplyOutcome) -> Bool {
+        outcome.phase.canAcknowledge && unresolvedOutcomes.contains(outcome)
+    }
+
+    /// This only hides an inspected receipt. Delivery remains uncertain and
+    /// the original question stays reserved against another quick submission.
+    func acknowledge(_ outcome: HomeQuickReplyOutcome) {
+        guard canAcknowledge(outcome) else { return }
+        acknowledgedOutcomes[outcome.id] = outcome.question
+    }
+
     /// A synchronous pause makes disappearance safe even after a hydration
     /// task has already completed. In-flight submissions keep their owner.
     func pauseHydration() { cancelHydration(visibility: visibilityID) }
 
     private func record(_ result: HomeQuickReplyResult, question: HomeQuickReplyQuestion, route: HomeRoute) {
         let phase: HomeQuickReplyPresentation.Phase
-        if result != .accepted, operations.owner(route) != question.owner {
+        if result != .accepted, !isDestinationCurrent(question.owner) {
             phase = .deliveryUnconfirmed("This conversation's connection changed. Open it to check the previous reply.", retryable: false)
         } else {
             phase = result.phase
         }
         presentations[route] = .init(question: question, phase: phase)
+    }
+
+    private func isDestinationCurrent(_ owner: HomeQuickReplyOwner) -> Bool {
+        operations.isDestinationCurrent?(owner) ?? (operations.owner(owner.route) == owner)
     }
 
     private func schedule(_ target: Target) {

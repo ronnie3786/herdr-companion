@@ -205,6 +205,130 @@ struct HomeQuickReplyTests {
         #expect(controller.presentations[route]?.phase.canRetry == false)
     }
 
+    @Test("A lost receipt stays reachable after its chat becomes working and leaves Home")
+    func outcomeSurvivesSourceCardRemoval() async throws {
+        let fake = QuickReplyFake()
+        let route = HomeRoute.chat(paneID: "alpha::pane")
+        fake.add(route)
+        fake.sendResult = .deliveryUnconfirmed("Open to check delivery", retryable: false)
+        fake.holdSubmissions = true
+        let controller = HomeQuickReplyController(operations: fake.operations)
+        await controller.hydrate(focus: nil, chats: [chat(route)], enabled: true)
+        let question = try #require(controller.presentations[route]?.question)
+        let sending = Task { await controller.send(question.actions[0], to: route, question: question) }
+        await settle { fake.submissions.count == 1 }
+        #expect(controller.unresolvedOutcomes.first?.phase == .sending)
+        // The source is no longer eligible to send, but its exact destination
+        // still exists. This models a server acceptance followed by lost receipt.
+        fake.owners[route] = nil
+        await controller.hydrate(focus: nil, chats: [], enabled: true)
+        fake.releaseSubmissions()
+        await sending.value
+        controller.pauseHydration()
+        let outcome = try #require(controller.unresolvedOutcomes.first)
+        #expect(outcome.owner == question.owner && outcome.id == route)
+        #expect(outcome.title == "A chat" && outcome.replyLabel == question.actions[0].label)
+        #expect(outcome.phase == .deliveryUnconfirmed("Open to check delivery", retryable: false))
+        #expect(controller.canOpenOutcome(outcome))
+        #expect(!controller.canRetry(route: route))
+        fake.add(route, generation: 2, token: "replacement")
+        #expect(!controller.canOpenOutcome(outcome))
+        #expect(controller.unresolvedOutcomes.first?.owner == question.owner)
+        #expect(fake.submissions.count == 1 && fake.retries.isEmpty)
+    }
+
+    @Test("A failed reply can retry its original submission after the source card is hidden")
+    func retainedFailureRetry() async throws {
+        let fake = QuickReplyFake()
+        let route = HomeRoute.firstMate(machineID: "alpha", featureID: "feature")
+        fake.add(route)
+        fake.sendResult = .failed("Try the original request again", retryable: true)
+        let controller = HomeQuickReplyController(operations: fake.operations)
+        await controller.hydrate(focus: focus(route), chats: [], enabled: true)
+        let question = try #require(controller.presentations[route]?.question)
+        await controller.send(question.actions[0], to: route, question: question)
+        await controller.hydrate(focus: nil, chats: [], enabled: true)
+        let outcome = try #require(controller.unresolvedOutcomes.first)
+        #expect(outcome.owner == question.owner && outcome.phase.canRetry)
+        await controller.retry(route: outcome.id)
+        #expect(fake.retries == [question.owner] && fake.submissions.count == 1)
+        #expect(controller.unresolvedOutcomes.isEmpty)
+    }
+
+    @Test("Checking a nonretryable receipt hides its notice without accepting or resending the question")
+    func acknowledgeUncertainReceipt() async throws {
+        let fake = QuickReplyFake()
+        let route = HomeRoute.chat(paneID: "alpha::pane")
+        fake.add(route)
+        fake.sendResult = .deliveryUnconfirmed("Check in conversation", retryable: false)
+        let controller = HomeQuickReplyController(operations: fake.operations)
+        await controller.hydrate(focus: nil, chats: [chat(route)], enabled: true)
+        let question = try #require(controller.presentations[route]?.question)
+        await controller.send(question.actions[0], to: route, question: question)
+        let outcome = try #require(controller.unresolvedOutcomes.first)
+        controller.acknowledge(outcome)
+        #expect(controller.unresolvedOutcomes.isEmpty)
+        #expect(controller.presentations[route]?.phase == .deliveryUnconfirmed("Check in conversation", retryable: false))
+        controller.pauseHydration()
+        await controller.hydrate(focus: nil, chats: [chat(route)], enabled: true)
+        await controller.send(question.actions[0], to: route, question: question)
+        await controller.retry(route: route)
+        #expect(controller.unresolvedOutcomes.isEmpty)
+        #expect(controller.presentations[route]?.actions.isEmpty == true)
+        #expect(fake.submissions.count == 1 && fake.retries.isEmpty)
+        var snapshot = HomeSnapshot()
+        snapshot.canShowAllClear = true
+        #expect(HomeActionPresentation.snapshot(snapshot, snoozedCount: 0,
+            unresolvedReplyCount: controller.unresolvedOutcomes.count).canShowAllClear)
+    }
+
+    @Test("Sending receipts and an old captured question cannot acknowledge the current result")
+    func acknowledgmentRequiresExactTerminalOutcome() async throws {
+        let fake = QuickReplyFake()
+        let route = HomeRoute.chat(paneID: "alpha::pane")
+        fake.add(route)
+        fake.sendResult = .deliveryUnconfirmed("Check in conversation", retryable: false)
+        fake.holdSubmissions = true
+        let controller = HomeQuickReplyController(operations: fake.operations)
+        await controller.hydrate(focus: nil, chats: [chat(route)], enabled: true)
+        let question = try #require(controller.presentations[route]?.question)
+        let sending = Task { await controller.send(question.actions[0], to: route, question: question) }
+        await settle { fake.submissions.count == 1 }
+        let pending = try #require(controller.unresolvedOutcomes.first)
+        #expect(!controller.canAcknowledge(pending))
+        controller.acknowledge(pending)
+        #expect(controller.unresolvedOutcomes.count == 1)
+        fake.releaseSubmissions()
+        await sending.value
+        let current = try #require(controller.unresolvedOutcomes.first)
+        var old = current
+        old.question.messageID = "previous-question"
+        controller.acknowledge(old)
+        controller.acknowledge(pending)
+        #expect(controller.unresolvedOutcomes == [current])
+        #expect(controller.canAcknowledge(current))
+        #expect(fake.submissions.count == 1 && fake.retries.isEmpty)
+    }
+
+    @Test("Outcome connection matching rejects replaced credentials, endpoint, session, generation, or mode", arguments: ["token", "endpoint", "session", "generation", "mode"])
+    func outcomeConnectionIdentity(change: String) {
+        let original = HomeQuickReplyOwner(route: .chat(paneID: "alpha::pane"), generation: 1,
+                                          configuration: .init(urlString: "https://example.invalid", token: "synthetic"),
+                                          isDemo: false, sessionID: "session")
+        var current = original
+        switch change {
+        case "token": current.configuration = .init(urlString: "https://example.invalid", token: "replacement")
+        case "endpoint": current.configuration = .init(urlString: "https://replacement.invalid", token: "synthetic")
+        case "session": current.sessionID = "replacement"
+        case "generation": current.generation += 1
+        default: current.isDemo.toggle()
+        }
+        #expect(original.matchesConnection(generation: 1, configuration: original.configuration,
+                                           isDemo: false, sessionID: "session"))
+        #expect(!original.matchesConnection(generation: current.generation, configuration: current.configuration,
+                                            isDemo: current.isDemo, sessionID: current.sessionID))
+    }
+
     @Test("Only validated completed current First Mate questions produce choices")
     func firstMateEvidence() {
         var snapshot = FirstMateDemo.features(step: 0)[0]
@@ -269,6 +393,7 @@ struct HomeQuickReplyTests {
 @MainActor
 private final class QuickReplyFake {
     var owners: [HomeRoute: HomeQuickReplyOwner] = [:]
+    var destinations: [HomeRoute: HomeQuickReplyOwner] = [:]
     var questions: [HomeRoute: HomeQuickReplyQuestion] = [:]
     var reads: [HomeRoute] = []
     var activeReads = 0
@@ -286,6 +411,7 @@ private final class QuickReplyFake {
                                         configuration: ServerConfiguration(urlString: "https://example.invalid", token: token),
                                         isDemo: false, sessionID: "session")
         owners[route] = owner
+        destinations[route] = owner
         questions[route] = .init(owner: owner, messageID: "question", reply: SkimReplyFixtures.reply,
                                   sessionID: "session", actions: SkimReplyFixtures.actions)
     }
@@ -306,7 +432,7 @@ private final class QuickReplyFake {
         }, retry: { owner in
             self.retries.append(owner)
             return .accepted
-        })
+        }, isDestinationCurrent: { self.destinations[$0.route] == $0 })
     }
 
     func releaseReads() {

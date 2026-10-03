@@ -45,7 +45,7 @@ struct PRReviewHostScopeShellTests {
         fixture.shell.selectPRReviewScope(.machine("host-b"))
         fixture.shell.show(.prReview, model: fixture.model)
         #expect(fixture.shell.prReviewScope == .machine("host-b"))
-        fixture.shell.show(.dashboard, model: fixture.model)
+        fixture.shell.show(.home, model: fixture.model)
         fixture.shell.show(.prReview, model: fixture.model)
         #expect(fixture.shell.prReviewScope == .all)
         #expect(fixture.shell.prReviewMachineID == "host-b")
@@ -55,11 +55,11 @@ struct PRReviewHostScopeShellTests {
     func historyReentryResetsScope() throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }
-        fixture.shell.show(.dashboard, model: fixture.model)
+        fixture.shell.show(.home, model: fixture.model)
         fixture.shell.show(.prReview, model: fixture.model)
         fixture.shell.selectPRReviewScope(.machine("host-b"))
         #expect(fixture.shell.goBack(model: fixture.model))
-        #expect(fixture.shell.detailScope == .dashboard)
+        #expect(fixture.shell.detailScope == .home)
         #expect(fixture.shell.goForward(model: fixture.model))
         #expect(fixture.shell.detailScope == .prReview)
         #expect(fixture.shell.prReviewScope == .all)
@@ -172,7 +172,6 @@ struct PRReviewHostScopeShellTests {
         fixture.shell.showPRReview(machineID: "host-b", reviewID: "prr_old", model: fixture.model)
         fixture.shell.prReviewScope = .machine("host-b")
         #expect(fixture.shell.prReviewOpenRequest != nil)
-        fixture.shell.dashboard.reviewRefreshError = "Synthetic old warning"
         let revision = fixture.model.prReviewMachineRevision
         fixture.model.setPRReviewMachineOverride("host-a")
         #expect(fixture.model.prReviewMachineRevision == revision + 1)
@@ -180,7 +179,6 @@ struct PRReviewHostScopeShellTests {
         #expect(fixture.shell.prReviewScope == .all)
         #expect(fixture.shell.prReviewMachineID == nil)
         #expect(fixture.shell.prReviewOpenRequest == nil)
-        #expect(fixture.shell.dashboard.reviewRefreshError == nil)
     }
 
     @Test("A removed machine resolves to All machines without retargeting the open review")

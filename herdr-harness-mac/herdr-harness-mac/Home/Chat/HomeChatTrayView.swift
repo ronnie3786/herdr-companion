@@ -40,6 +40,7 @@ struct HomeChatTrayView: View {
             guard isActive else { return }
             await controller.run()
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home-chat-tray")
     }
 

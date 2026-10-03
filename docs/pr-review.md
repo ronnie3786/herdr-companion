@@ -56,7 +56,7 @@ support. Demo mode (`-HerdrDemoMode`) shows a synthetic review without any serve
 
 ## Using it
 
-Open **PR Review** from the left navigator (directly under First Mate) or press ⌘8. The left
+Open the **PR Review** tab or press ⌘2. The left
 column becomes the review rail: the host menu, a field for a GitHub pull request link,
 Active / Archived, search, and the reviews themselves. **All machines** is the first host-menu
 option and is selected by default every time you enter PR Review, including when a link opens
@@ -68,9 +68,11 @@ hiding other machines' reviews; a temporarily failing host keeps its last usable
 Opening, archiving, refreshing or popping out a row always acts on that row's own machine,
 even when two machines reuse a review ID or pull request number. New reviews from All machines
 start on the Settings PR review host (or the open review's machine if no host is configured).
-No companion update is needed for this Mac-only host option. The Dashboard's reviews section
-still follows the main detail host, not the combined rail: opening a review on another machine
-also changes which machine's reviews appear on the Dashboard.
+No companion update is needed for this Mac-only host option. Home reads prepared reviews
+across the configured fleet independently of the main detail host. Opening a Home review
+selects that exact machine and review in PR Review; changing the detail host does not narrow
+Home's fleet coverage. Verified incoming requests from the primary companion are deduplicated
+against prepared pull-request identities.
 
 **Starting a review.** Paste a link such as `https://github.com/example-owner/example-repo/pull/42`
 and press Return, or choose **New review** and enter the link. Choose reviewers using the
@@ -199,7 +201,7 @@ and event; Archived lists them and Unarchive brings one back.
 review currently displayed, and choose **Pop Out into Window**. The review opens in its own
 resizable Mac window that keeps the complete workspace (Files, Context, Agents, and
 Ask AI) while the main Herdr window stays free to move through All sessions and other chats;
-an unsent chat draft is untouched by either window, and ⌘8 brings the section back. Every window
+an unsent chat draft is untouched by either window, and ⌘2 brings the section back. Every window
 is pinned to the machine and review it was opened from: changing the main window's review host,
 selection, or file never retargets it, and its Ask AI questions, document downloads, and agent
 handoffs stay on that host. One window exists per machine/review pair, so reopening the same

@@ -1,14 +1,13 @@
 # Herdr Companion for Mac
 
-A native macOS companion to the Herdr Harness iOS app — same Catppuccin Mocha aesthetic, same
-attention-first workflow, near-complete feature parity, rebuilt around a Mac-native shell: a
-persistent sidebar (workspaces → tabs → chats), a resizable chat/terminal detail view, real
-keyboard input to terminals, menu-bar fleet pulse, and system keyboard shortcuts.
+A native macOS companion with four persistent tabs: **Home**, **PR Review**, **Watchers**,
+and **Chats**. Home opens with a factual overview of your work, one focus item at a time,
+waiting chats, and recent activity. Chats retains its workspace/tab/pane sidebar, resizable
+chat and terminal detail, and native keyboard input. Herd Pulse and the desktop tools remain
+available independently of the main window.
 
-The shell is the deliberate difference. iOS's workspace *switcher* screen — status filter chips
-(all / needs you / active), the inline top-2 attention strip, and the git-worktree sibling rails —
-has no Mac counterpart: the always-visible sidebar, the Dashboard's Focus mode and Herd Pulse
-replace it. The Mac also has no attention deck or workspace overview screen; iOS keeps both.
+The Mac shell is separate from the iOS navigator. Home replaces the Mac Dashboard, Agent
+view, and standalone Activity destination. iOS keeps its own Activity and attention screens.
 
 ## Title bar
 
@@ -20,33 +19,42 @@ pill:
 - **Chat:** **Prompt History…** and **Summarize Session…** (Pi chats).
 - **Pi session**, **Focus and control** (Focus on Mac, Focus on Mac + Zoom, Interrupt) and
   **Pane** actions, then **Close pane** last.
-- **Go to:** Fleet and Activity, plus **Ask Agent…** for a one-off question.
+- **Go to:** Home and Fleet, plus **Ask Agent…** for a one-off question.
 
-Screens without a chat (Dashboard, Agent view, Fleet, Activity, First Mate, PR
-Review, Watchers) get the same **⋯** menu with just **Go to** and **Ask Agent…**. The View menu
-keeps its shortcuts: Focus Chat (⌘2), Focus Terminal (⌘3), Activity Feed (⌘5),
-Fleet (⌘7), PR Review (⌘8) and Watchers (⌘9).
+The **Chat tools** overflow beside Chats provides Fleet, First Mate management, Work inbox,
+Ask Agent, Settings, Notes, HUD, and Herd Pulse. These utilities retain their existing controls.
+Use ⌘1 through ⌘4 for Home, PR Review, Watchers, and Chats. Focus Chat is ⌥⌘1 and Focus
+Terminal is ⌥⌘2; Fleet remains ⌘7. ⌘F searches the active surface, ⌘J opens the Home First
+Mate tray, and ⇧⌘J opens Jump to Pane. Escape closes Home search before the tray.
 
 Swift 6 · SwiftUI + Observation · strict concurrency · zero third-party dependencies · macOS 26.
 
-## Dashboard home
+## Home
 
-The app opens on the Dashboard. **Focus mode** hides work that is not waiting
-for you. **Agent view** (Shift-Command-A) opens First Mate columns with
-independent Chat, Overview, Agents, and Workflow tabs and a reply box in each
-column; columns poll a bounded board and never re-download full histories.
-**Navigate → Dashboard** (Shift-Command-D) returns home from any screen.
-With a Mobile App Hub set in **Settings → General → Builds**, the Dashboard
-lists the newest builds of chosen apps and each First Mate's Overview lists the
-builds its agents published.
-See [Dashboard behavior and companion compatibility](../docs/macos-dashboard.md).
+The app opens on **Home**. Source-backed focus cards preserve the exact machine and feature,
+review, watcher, or pane identity when opened. **Skip for now** rotates the focus stack;
+**Later** snoozes an item on this Mac for an hour with **Undo snooze**. A changed question or
+new outage can reappear. Search, snoozing, and radar dismissal do not change global counts or
+resolve server work. Loading, stale information, and disconnected machines remain explicit.
+
+**Ask about this** opens the tray with a frozen context card and a draft question. The Ask
+bar or ⌘J opens the existing lead conversation. Suggestions fill the composer; sending is
+explicit. Drafts and unresolved sends survive dismissal and tab changes while the app runs.
+**Open in First Mate** appends the unsent material to the exact lead in the standalone window,
+then clears Home's transferred material only after acknowledgement. An upload or send in
+flight keeps its owner on Home. Drafts are not promised to survive quitting or a crash.
+
+**Window → First Mate** (⇧⌘F) is always available. First Mate management, projects,
+inspectors, Git, documents, and feature-associated Mobile App Hub and simulator builds remain
+accessible. The Dashboard-only build shelf is retired. See [Home behavior, compatibility,
+and verification](../docs/macos-home.md).
 
 ## September Mac improvements
 
 - **Shared Git comparisons:** PR Review and First Mate Git use earlier/later revision selectors and comparison-bound AI questions. Workflow steps retain commit history and open an exact commit in Git. The guided buddy can inspect earlier or later commits on demand; its opt-in low-impact mode explains files and marks them Viewed after completed narration. Requires the matching companion. See [shared Git comparisons](../docs/shared-git-diff.md).
 
 - **Compaction completion:** After Pi confirms context compaction, the composer replaces the compacting spinner with a checkmark beside **Context compacted** and a readiness line — **Ready for your next message.** when the session is connected and idle, the available steer/follow-up modes while Pi is still working, and an offline/reconnect message when it is not. The cue stays while you type and after a failed send; your next accepted message dismisses only the composer cue, while the transcript's **Context compacted** entry remains. Starting another compaction, changing sessions, or navigating to another branch removes it, and reopening an already-compacted chat reconstructs the fact from its saved compaction entries. No new server fields or capabilities are needed: this uses the existing `session_compact` event and compaction entries, and a server that provides neither shows no cue rather than guessing from token counts, elapsed time, or a disappearing spinner. The signed Mac feed installs only this app; the iOS build and companion packages ship separately.
-- **PR Review:** A navigator entry under First Mate turns a pasted GitHub pull request link into a review workspace prepared on the development-role companion: ranked files, a native diff with Ask AI, a context library, and Agents/Skills tabs. Requires a companion advertising `pr-review-v1`. See [PR Review](../docs/pr-review.md).
+- **PR Review:** The PR Review tab turns a pasted GitHub pull request link into a review workspace on the selected review host: ranked files, a native diff with Ask AI, a context library, and Agents/Skills tabs. Requires a companion advertising `pr-review-v1`. See [PR Review](../docs/pr-review.md).
 - **Quote & comment:** Available on the last three completed, text-bearing agent messages, including code blocks—not user messages or closed-session history. Tool calls and empty assistant messages do not displace eligible replies. The popup follows the visible selection endpoint. Save creates a previewable chip; sending embeds **Quoted response segments:** and each **User’s message:** directly in the prompt, without Markdown file attachments. See [details, proof, and lifecycle limits](../docs/mac-chat-quotes.md).
 - **Session chapters:** New Pi chat captures history before reset, shows progress, and confirms the changed session even without an SSE reset. The previous chat and its copyable ID remain above a visible new-conversation divider, including when the new transcript is empty. Local archives survive relaunch. Compact Chat and Reload Pi extensions now live in the prompt's … More popover. No server update is needed.
 - **Saved HUD chats:** Open the HUD clock button to search saved chats on the selected machine. New chat preserves history; Continue in agent promotes the full Pi conversation only when you choose. Updated servers retain HUD chats indefinitely and restore normal Pi tools, skills, extensions, and project context while respecting Pi trust settings. See [setup and limits](../docs/hud-chat-history.md).
@@ -76,9 +84,10 @@ Hovering visible HUD controls expands result icons into document-title pills. Th
 - **Sidebar navigator** — workspaces at the top level, panes grouped by tab beneath them, click a
   chat row to make it the main view. Collapse state persists across launches. Rows are styled in
   a single calm tone (no per-status hues) — active status words and unread counts carry the signal.
-- **My Work watchlist** — the top of the sidebar tracks GitHub pull requests requesting your
-  review and every non-Done Jira ticket assigned to you. Each provider has an independent count,
-  error state, and collapsible list; data refreshes on launch, manually, and every five minutes.
+- **Work inbox**: the Chats overflow opens GitHub pull requests requesting your review and
+  non-Done Jira tickets assigned to you. Each provider retains its own count, error state,
+  and collapsible list. Home uses verified GitHub request identities from the configured
+  primary companion and deduplicates them against prepared reviews.
 - **Native Pi chat** — the rich chat timeline (streaming turns, collapsed thinking, tool cards,
   interaction/permission cards, markdown with tables and code blocks, context meter, model +
   thinking-level switching) with the terminal always one toggle away.

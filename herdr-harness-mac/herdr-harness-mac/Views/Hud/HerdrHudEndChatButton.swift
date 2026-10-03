@@ -11,7 +11,7 @@ struct HerdrHudEndChatButton: View {
     var body: some View {
         Button(role: .destructive) { confirmsEnd = true } label: {
             Label(chat.session.isEnding ? "Ending…" : "End Chat", systemImage: "xmark.circle")
-                .labelStyle(DashboardInlineLabelStyle(spacing: 4))
+                .labelStyle(HerdrInlineLabelStyle(spacing: 4))
         }
         .buttonStyle(HerdrRowButtonStyle(tint: HerdrTheme.alert))
         .disabled(chat.session.isEnding || chat.session.isLoadingHistory || !chat.session.promotingExchangeIDs.isEmpty)

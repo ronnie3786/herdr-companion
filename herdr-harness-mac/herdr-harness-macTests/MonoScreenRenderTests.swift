@@ -4,7 +4,7 @@ import Testing
 @testable import herdr_harness_mac
 
 /// Whole-window renders at the Mono × Herdr study's frame (1280×800), one per
-/// target screen: chat, Git, Dashboard, Agent view, First Mate (dark and
+/// target screen: chat, Git, First Mate (dark and
 /// light) and the HUD. Offscreen snapshots cannot draw a `NavigationSplitView`
 /// sidebar or window chrome (see `DemoScreenshotRenderTests.rendersRootShell`),
 /// so each screen is composed the way `WorkspaceNavigationView` composes it:
@@ -81,18 +81,7 @@ struct MonoScreenRenderTests {
     func largestText() async throws {
         let model = HerdrRenderFixtures.demoModel()
         model.openPane(id: "demo1|w1:p2")
-        let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
-        shell.firstMate.configure(client: nil, demo: true)
-        shell.prReview.configure(client: nil, machineID: "demo", demo: true)
-        await shell.prReview.refresh()
-        MonoRenderFixtures.seedFeatures(shell: shell)
-        shell.show(.dashboard, model: model)
         let size = CGSize(width: 1440, height: 900)
-        let dashboard = try await HerdrRenderHarness.renderWindow("mono-dashboard-160.png", size: size) {
-            MonoRenderFixtures.window(model: model, shell: shell, scale: .xxxLarge)
-        }
-        dashboard.expectSubstantial()
-
         let chatShell = MonoRenderFixtures.shell(sidebarOnHome: true)
         chatShell.showSession()
         let workspace = try #require(model.workspace(id: "demo1|w1"))
@@ -125,45 +114,6 @@ struct MonoScreenRenderTests {
             MonoRenderFixtures.window(model: model, shell: firstMateShell, scale: .xxxLarge)
         }
         firstMate.expectSubstantial()
-    }
-
-    @Test("Dashboard and Agent view beside the sidebar")
-    func dashboardAndAgents() async throws {
-        let model = HerdrRenderFixtures.demoModel()
-        let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
-        shell.firstMate.configure(client: nil, demo: true)
-        shell.prReview.configure(client: nil, machineID: "demo", demo: true)
-        await shell.prReview.refresh()
-        let entries = MonoRenderFixtures.seedFeatures(shell: shell)
-        shell.show(.dashboard, model: model)
-
-        let dashboard = try await HerdrRenderHarness.renderWindow("mono-dashboard.png", size: Self.window) {
-            MonoRenderFixtures.window(model: model, shell: shell)
-        }
-        dashboard.expectSubstantial()
-
-        // The Dashboard's default: no rail, so the title bar starts after the
-        // traffic lights with the sidebar toggle.
-        let hiddenShell = MonoRenderFixtures.shell(sidebarOnHome: false)
-        hiddenShell.firstMate.configure(client: nil, demo: true)
-        MonoRenderFixtures.seedFeatures(shell: hiddenShell)
-        hiddenShell.show(.dashboard, model: model)
-        let collapsed = try await HerdrRenderHarness.renderWindow("mono-dashboard-no-sidebar.png", size: Self.window) {
-            MonoRenderFixtures.window(model: model, shell: hiddenShell)
-        }
-        collapsed.expectSubstantial()
-
-        for (index, entry) in entries.enumerated() {
-            let column = shell.agentBoard.column(for: entry)
-            column.configure(configuration: nil, generation: 0, demo: true, client: nil,
-                             demoSnapshot: shell.firstMate.snapshots[entry.feature.id])
-            if index == 2 { column.tab = .overview }
-        }
-        shell.show(.agentBoard, model: model)
-        let agents = try await HerdrRenderHarness.renderWindow("mono-agents.png", size: Self.window) {
-            MonoRenderFixtures.window(model: model, shell: shell)
-        }
-        agents.expectSubstantial()
     }
 
     @Test("First Mate workspace in dark and light", arguments: [ColorScheme.dark, .light])
@@ -232,8 +182,7 @@ struct MonoScreenRenderTests {
 
 @MainActor
 enum MonoRenderFixtures {
-    /// A shell with its own defaults; the Dashboard and Agent view show the
-    /// sidebar, as they do in the study's frames.
+    /// A shell with isolated defaults and an explicit sidebar preference.
     static func shell(sidebarOnHome: Bool) -> HerdrShellState {
         let defaults = UserDefaults(suiteName: "MonoRender.\(UUID().uuidString)")!
         let shell = HerdrShellState(userDefaults: defaults)
@@ -269,42 +218,5 @@ enum MonoRenderFixtures {
     static var desktop: some View {
         LinearGradient(colors: [Color(red: 0.36, green: 0.45, blue: 0.55), Color(red: 0.13, green: 0.17, blue: 0.23)],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-
-    /// Five synthetic First Mate features with the Dashboard's status mix.
-    @discardableResult
-    static func seedFeatures(shell: HerdrShellState) -> [DashboardFeatureEntry] {
-        let titles = ["Offline garden notes", "Keep agent sessions connected", "Settings screen refresh",
-                      "Weather readout", "Seed catalog sync"]
-        let statuses = ["awaiting_direction", "awaiting_direction", "blocked", "running", "paused"]
-        let base = Date.now.addingTimeInterval(-3_600)
-        for (index, title) in titles.enumerated() {
-            var snapshot = FirstMateDemo.features(step: index % 4)[0]
-            let id = "demo-mono-\(index)"
-            snapshot.feature.id = id
-            snapshot.feature.title = title
-            snapshot.feature.status = statuses[index]
-            snapshot.feature.updatedAt = HerdrTimestamp.string(from: Date.now.addingTimeInterval(Double(-index * 60)))
-            for i in snapshot.visits.indices { snapshot.visits[i].featureID = id }
-            for i in snapshot.assignments.indices { snapshot.assignments[i].featureID = id }
-            for i in snapshot.messages.indices { snapshot.messages[i].featureID = id }
-            snapshot.messages.append(.init(
-                id: "\(id)-markdown", featureID: id, role: "assistant",
-                text: "The second review is in — **PR #12032 is now approved**.\n\n- Two approvals\n- `ios_core` still pending",
-                status: "done", createdAt: HerdrTimestamp.string(from: base.addingTimeInterval(3_000))))
-            snapshot.events = snapshot.events.map { event in
-                var event = event
-                event.featureID = id
-                return event
-            }
-            var summary = FirstMateDashboardSummary.from(snapshot)
-            summary.activityAt = snapshot.feature.updatedAt
-            if statuses[index] == "awaiting_direction" || statuses[index] == "blocked" {
-                summary.needsUserPrompt = "Choose **A** (merge now) or **B** (wait for `ios_core`)."
-            }
-            snapshot.feature.dashboardSummary = summary
-            shell.firstMate.receive(snapshot)
-        }
-        return shell.dashboard.entries(shell: shell, isDemo: true)
     }
 }

@@ -4,6 +4,7 @@ struct HomeSummaryBalloon: View {
     var snapshot: HomeSnapshot
     var onCommand: (HomeCommand) -> Void
     @Environment(\.homeReduceTransparency) private var reduceTransparency
+    @Environment(\.homeReduceMotion) private var reduceMotion
 
     private var narrative: HomeText {
         HomeText(runs: snapshot.summary.enumerated().flatMap { index, sentence in
@@ -26,7 +27,12 @@ struct HomeSummaryBalloon: View {
                 .padding(.top, 14)
             if snapshot.isLoading {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                    if reduceMotion {
+                        Image(systemName: "circle.dotted").foregroundStyle(HomePalette.secondary)
+                            .accessibilityHidden(true)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
                     Text("Checking current work…").herdrFont(size: 12.5).foregroundStyle(HomePalette.secondary)
                 }
                 .padding(.top, 12)

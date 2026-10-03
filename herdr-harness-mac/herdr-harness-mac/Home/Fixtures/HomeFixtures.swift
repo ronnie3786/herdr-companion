@@ -22,6 +22,10 @@ enum HomeFixtures {
             value.mood = .calm
             value.greeting = "Good afternoon."
             value.dateLine = "Friday, October 2 · 1:42 PM · Last here 25 minutes ago"
+            value.firstMateStatus = "4 working · 1 needs you"
+            value.moving = rich([.chip(passkey), .text(" is building the client, "), .chip(docs),
+                                 .text(" has its PR open, "), .chip(snap), .text(" is in QA and "),
+                                 .chip(cache), .text(" is in review.")])
             value.summary = [rich([.text("You’re in a good rhythm. Since this morning "), .chip(docs),
                                    .text(" got unstuck and opened its PR, and you approved "), .chip(review88), .text(".")]),
                              "Just one question is waiting on you."]
@@ -50,6 +54,10 @@ enum HomeFixtures {
             value.mood = .happy
             value.greeting = "Good evening."
             value.dateLine = "Friday, October 2 · 6:10 PM · Last here an hour ago"
+            value.firstMateStatus = "3 working"
+            value.moving = rich([.chip(retry), .text(" is wiring the 503 path, "), .chip(passkey),
+                                 .text(" is in review and "), .chip(cache), .text(" is in review on "),
+                                 .chip(studio), .text(". All three are working independently.")])
             value.summary = [rich([.text("You’re all caught up. "), .chip(retry), .text(", "), .chip(passkey),
                                    .text(" and "), .chip(cache), .text(" are working on their own.")]),
                              "If you have a few minutes before the weekend, here are some ideas."]
@@ -209,9 +217,15 @@ enum HomeFixtures {
         case .watcher: "Open watcher"
         default: idea ? "Open project" : "Open conversation"
         }
+        let symbol = switch route {
+        case .review, .reviewRequest: "arrow.triangle.pull"
+        case .machine: "desktopcomputer"
+        case .watcher: "eye"
+        default: "bubble.left"
+        }
         var actions = [open(label, route: route, primary: true)]
         if !idea { actions.append(HomeAction(id: "later", title: "Later", command: .snooze(id))) }
-        return HomeFocusItem(id: id, title: title, reason: reason, body: HomeText(body), symbol: "arrow.triangle.pull", emoji: emoji,
+        return HomeFocusItem(id: id, title: title, reason: reason, body: HomeText(body), symbol: symbol, emoji: emoji,
                              tone: tone, actions: actions, route: route, isIdea: idea)
     }
     private static func chat(_ id: String, title: String, reason: String, location: String, quote: String,

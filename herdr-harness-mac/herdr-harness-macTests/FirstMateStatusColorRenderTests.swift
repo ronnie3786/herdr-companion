@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import herdr_harness_mac
 
-/// Renders the production First Mate badge and Dashboard pill and asserts the
+/// Renders the production First Mate badge and asserts the
 /// actual foreground pixels, then places the badges beside synthetic agent
 /// session bubbles so the shared palette is verified on screen rather than
 /// only in color values.
@@ -51,69 +51,6 @@ struct FirstMateStatusColorRenderTests {
                 }
             }
         }
-    }
-
-    @Test("A Dashboard pill renders the mapped foreground and no longer shows working as green")
-    func pillForegrounds() async throws {
-        for status in Self.requestedStatuses {
-            let expected = try rgb(try #require(FirstMateStatusColors.color(for: status, scheme: .dark)))
-            let render = try await HerdrRenderHarness.render(
-                "first-mate-status-pill-\(status).png",
-                size: CGSize(width: 240, height: 64)
-            ) {
-                DashboardStatusPill(status: status)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    .background(HerdrTheme.elevated)
-            }
-            render.expectSubstantial(minimumBytes: 1_024)
-            let bitmap = try bitmap(of: render)
-            #expect(
-                pixelCount(in: bitmap, matching: expected) >= 12,
-                "the \(status) pill did not render \(expected) foreground pixels"
-            )
-            for other in Self.requestedStatuses where other != status {
-                let otherColor = try rgb(try #require(FirstMateStatusColors.color(for: other, scheme: .dark)))
-                #expect(
-                    pixelCount(in: bitmap, matching: otherColor) == 0,
-                    "the \(status) pill rendered \(other)'s color"
-                )
-            }
-        }
-    }
-
-    @Test("Parked-turn and blocked-turn pills keep the mapped colors")
-    func pillAwaitingTurnPrecedence() async throws {
-        let signal = try rgb(HerdrTheme.signal)
-        let alert = try rgb(HerdrTheme.alert)
-
-        let yourTurn = try await HerdrRenderHarness.render(
-            "first-mate-status-pill-your-turn.png",
-            size: CGSize(width: 240, height: 64)
-        ) {
-            DashboardStatusPill(status: "running", awaitingTurn: true)
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .background(HerdrTheme.elevated)
-        }
-        yourTurn.expectSubstantial(minimumBytes: 1_024)
-        let yourTurnBitmap = try bitmap(of: yourTurn)
-        #expect(pixelCount(in: yourTurnBitmap, matching: signal) >= 12)
-        #expect(pixelCount(in: yourTurnBitmap, matching: alert) == 0)
-
-        let contradictory = try await HerdrRenderHarness.render(
-            "first-mate-status-pill-blocked-turn.png",
-            size: CGSize(width: 240, height: 64)
-        ) {
-            DashboardStatusPill(status: "blocked", awaitingTurn: true)
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .background(HerdrTheme.elevated)
-        }
-        contradictory.expectSubstantial(minimumBytes: 1_024)
-        let contradictoryBitmap = try bitmap(of: contradictory)
-        #expect(pixelCount(in: contradictoryBitmap, matching: alert) >= 12)
-        #expect(pixelCount(in: contradictoryBitmap, matching: signal) == 0)
     }
 
     @Test("First Mate badges beside synthetic HUD session bubbles share the dark palette")

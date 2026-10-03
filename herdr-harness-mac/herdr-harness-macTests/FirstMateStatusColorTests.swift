@@ -45,44 +45,6 @@ struct FirstMateStatusColorTests {
         }
     }
 
-    @Test("The Dashboard presentation uses the same mapped colors and keeps its labels")
-    func dashboardPresentation() {
-        let blocked = FeatureStatusPresentation(status: "blocked")
-        #expect(blocked.label == "Blocked")
-        #expect(blocked.symbol == "exclamationmark.triangle.fill")
-        #expect(blocked.color == HerdrTheme.alert)
-        #expect(blocked.color == AgentStatus.blocked.color)
-
-        let waiting = FeatureStatusPresentation(status: "awaiting_direction")
-        #expect(waiting.label == "Needs you")
-        #expect(waiting.symbol == "diamond.fill")
-        #expect(waiting.color == HerdrTheme.signal)
-        #expect(waiting.color == AgentStatus.done.color)
-
-        for status in ["running", "coordinating"] {
-            let working = FeatureStatusPresentation(status: status)
-            #expect(working.label == "Working")
-            #expect(working.symbol == "circle.lefthalf.filled")
-            #expect(working.color == HerdrTheme.working)
-            #expect(working.color == AgentStatus.working.color)
-            // Regression guard: the Working pill used to render the green
-            // waiting signal instead of the yellow working token.
-            #expect(working.color != HerdrTheme.signal)
-        }
-
-        // Ordinary parked-turn behavior stays green, matching the HUD's
-        // waiting/unread signal rather than the old attention amber.
-        let yourTurn = FeatureStatusPresentation(status: "running", awaitingTurn: true)
-        #expect(yourTurn.label == "Your turn")
-        #expect(yourTurn.color == HerdrTheme.signal)
-        #expect(yourTurn.color == AgentStatus.done.color)
-
-        // An explicit blocked status outranks an inconsistent parked-turn flag.
-        let contradictory = FeatureStatusPresentation(status: "blocked", awaitingTurn: true)
-        #expect(contradictory.label == "Blocked")
-        #expect(contradictory.color == HerdrTheme.alert)
-    }
-
     @Test("Unrelated statuses keep their existing fallbacks")
     func unrelatedFallbacks() {
         for status in ["paused", "recovering", "unverified", "completed", "complete", "passed", "cancelled", "failed", "error", "ready", "finished"] {
@@ -91,15 +53,6 @@ struct FirstMateStatusColorTests {
             #expect(FirstMateStatusColors.color(for: status, scheme: .light) == nil)
         }
 
-        #expect(FeatureStatusPresentation(status: "paused").color == HerdrTheme.mist)
-        #expect(FeatureStatusPresentation(status: "recovering").color == HerdrTheme.mist)
-        #expect(FeatureStatusPresentation(status: "ready").color == HerdrTheme.mist)
-        #expect(FeatureStatusPresentation(status: "cancelled").color == HerdrTheme.mist)
-        #expect(FeatureStatusPresentation(status: "completed").color == HerdrTheme.success)
-        #expect(FeatureStatusPresentation(status: "finished").color == HerdrTheme.success)
-        let unknown = FeatureStatusPresentation(status: "no_such_state")
-        #expect(unknown.label == "No Such State")
-        #expect(unknown.color == HerdrTheme.mist)
     }
 
     @Test("Light appearance keeps each HUD token's hue")

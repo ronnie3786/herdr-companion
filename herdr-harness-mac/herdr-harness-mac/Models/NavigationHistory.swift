@@ -10,17 +10,15 @@ import Foundation
 /// Git is remembered separately from the pane's primary Chat/Terminal segment.
 /// Snapshots from older builds may still hold the retired `workspace` and
 /// `attention` kinds; they decode to nil and drop out (`destination`).
+/// Retired Dashboard, Agent View, and Activity records migrate to Home.
 enum HerdrDestination: Hashable, Sendable {
     case home
     case pane(String)        // scoped pane id — MachineScopedID.compose
     case git(String)
-    case dashboard
-    case agentBoard
     case prReview
     case watchers
     case firstMate
     case fleet
-    case activity
 }
 
 /// Stable, forward-compatible representation of a history destination.
@@ -124,12 +122,6 @@ extension HerdrDestinationRecord {
         case .home:
             kind = "home"
             id = nil
-        case .dashboard:
-            kind = "dashboard"
-            id = nil
-        case .agentBoard:
-            kind = "agentBoard"
-            id = nil
         case .firstMate:
             kind = "firstMate"
             id = nil
@@ -141,9 +133,6 @@ extension HerdrDestinationRecord {
             id = nil
         case .fleet:
             kind = "fleet"
-            id = nil
-        case .activity:
-            kind = "activity"
             id = nil
         }
     }

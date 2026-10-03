@@ -12,17 +12,12 @@ struct HomeShellTests {
         #expect(HomeTab(scope: .git) == .chats)
     }
 
-    @Test("The preview preference controls the initial screen and legacy Home routes")
-    func optIn() {
+    @Test("Home is the initial screen and all four tabs remain directly reachable")
+    func defaultHome() {
         let suite = "HomeShellTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = HerdrAppModel(credentials: TestCredentialStore(), arguments: [], userDefaults: defaults, configuredMachines: [])
-        let legacy = HerdrShellState(userDefaults: defaults)
-        #expect(!legacy.homeEnabled)
-        legacy.show(.home, model: model)
-        #expect(legacy.detailScope == .dashboard)
-        defaults.set(true, forKey: HomePreferences.enabledKey)
         let preview = HerdrShellState(userDefaults: defaults)
         #expect(preview.detailScope == .home)
         for tab in HomeTab.allCases {

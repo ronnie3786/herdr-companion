@@ -141,7 +141,7 @@ struct FirstMateStartSessionView: View {
             if model.isSending { ProgressView().controlSize(.small).accessibilityLabel("Starting session") }
             Button(action: start) {
                 Label(model.isSending ? "Starting…" : "Start session", systemImage: "arrow.up")
-                    .labelStyle(DashboardInlineLabelStyle(spacing: 7))
+                    .labelStyle(HerdrInlineLabelStyle(spacing: 7))
             }
             .buttonStyle(HerdrButtonStyle(kind: .primary))
             .keyboardShortcut(.return, modifiers: .command)

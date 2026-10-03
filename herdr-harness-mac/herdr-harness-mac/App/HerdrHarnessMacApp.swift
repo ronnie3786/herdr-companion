@@ -81,7 +81,9 @@ struct HerdrHarnessMacApp: App {
                 // Apple documents `dynamicTypeSize` as not affecting text size
                 // on macOS, so Herdr uses this custom scale environment instead.
                 .environment(\.herdrFontScale, fontScale.scale)
-                .frame(minWidth: 1000, minHeight: 680)
+                // SwiftUI adds the native compact title bar to this content
+                // minimum. Keep the whole window at the supported 1000 × 680.
+                .frame(minWidth: 1000, minHeight: 680 - HerdrWindowChrome.titleBarHeight)
                 .foregroundStyle(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).text : HerdrTheme.text)
                 .preferredColorScheme(.dark)
                 .tint(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).accent : HerdrTheme.accent)
@@ -108,7 +110,7 @@ struct HerdrHarnessMacApp: App {
         // The permanent First Mate chat window. A single
         // `Window` so the Dock menu and ⇧⌘F can bring it back once closed.
         // Its automatic Window-menu entry is removed; `HerdrMacCommands` adds
-        // one only while the preview is on. It handles no external URLs: the
+        // the permanent command. It handles no external URLs: the
         // main window owns every `herdr://` route.
         Window("First Mate", id: HerdrWindowID.firstMateChat) {
             FirstMateChatWindowRoot(model: model, shell: shell, modelFavorites: modelFavorites)
@@ -426,8 +428,7 @@ struct HerdrMacCommands: Commands {
             Button("Ask First Mate") {
                 shell.show(.home, model: model)
                 openWindow(id: HerdrWindowID.main)
-                if shell.homeEnabled { shell.homeAskRequest &+= 1 }
-                else { FirstMateChatWindowOpening.openLead(shell: shell, openWindow: openWindow) }
+                shell.homeAskRequest &+= 1
             }
             .keyboardShortcut("j", modifiers: .command)
             Divider()

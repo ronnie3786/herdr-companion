@@ -16,7 +16,7 @@ struct NavigationHistoryPersistenceTests {
             version: NavigationHistorySnapshot.currentVersion,
             backward: [HerdrDestinationRecord(.pane("a"))!, HerdrDestinationRecord(.pane("b"))!],
             current: HerdrDestinationRecord(.git("a")),
-            forward: [HerdrDestinationRecord(.activity)!]
+            forward: [HerdrDestinationRecord(.home)!]
         )
 
         store.save(snapshot)

@@ -65,41 +65,12 @@ final class MobileAppHubFeed {
 }
 
 extension MobileAppHubSettings {
-    static func dashboardQuery(hubURLText: String, bundleIDsText: String) -> MobileAppHubFeed.Query? {
-        guard let hubURL = hubURL(from: hubURLText) else { return nil }
-        let ids = bundleIDs(from: bundleIDsText)
-        guard !ids.isEmpty else { return nil }
-        return .init(hubURL: hubURL, bundleIDs: ids, limit: 40)
-    }
-
     static func firstMateQuery(hubURLText: String, featureID: String) -> MobileAppHubFeed.Query? {
         hubURL(from: hubURLText).map { .init(hubURL: $0, firstMateFeatureID: featureID, limit: 50) }
     }
 }
 
 enum MobileAppHubPresentation {
-    /// Dashboard search matches the same words a person would type for a build:
-    /// ticket, feature, app, version, or branch. Focus mode keeps the last day.
-    static func dashboardRows(_ builds: [MobileAppHubBuild], query: String, focusMode: Bool,
-                              now: Date = .now, limit: Int = 5) -> [MobileAppHubBuild] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtered = builds.filter { build in
-            if focusMode, now.timeIntervalSince(build.date) > 24 * 3600 { return false }
-            guard !needle.isEmpty else { return true }
-            return [build.label.ticket, build.label.title, build.app.name, build.versionLabel, build.source.branch]
-                .compactMap { $0?.lowercased() }
-                .contains { $0.contains(needle) }
-        }
-        return Array(filtered.prefix(limit))
-    }
-
-    /// "Doximity builds" when every build is one app, otherwise "Builds".
-    static func dashboardTitle(_ builds: [MobileAppHubBuild]) -> String {
-        let names = Set(builds.map(\.app.name))
-        if names.count == 1, let name = names.first { return "\(name) builds" }
-        return "Builds"
-    }
-
     /// Where "See all" goes: the one app's page, or the hub's home.
     static func seeAllURL(_ builds: [MobileAppHubBuild], hubURL: URL) -> URL {
         let pages = Set(builds.compactMap(\.urls.appPage))

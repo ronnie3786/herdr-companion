@@ -89,7 +89,7 @@ struct HomeTabStrip: View {
         .buttonStyle(.herdrPlain)
         .accessibilityIdentifier("home-tab-\(tab.rawValue)")
         .accessibilityLabel(tab.title)
-        .accessibilityValue(badge(tab).map { "\($0.text) need attention" } ?? "")
+        .accessibilityValue(badge(tab).map { $0.text == "!" ? "Needs attention" : "\($0.text) need attention" } ?? "")
         .accessibilityAddTraits(selection == tab ? .isSelected : [])
     }
 
@@ -100,6 +100,7 @@ struct HomeTabStrip: View {
                 TextField("Search Home", text: $query)
                     .textFieldStyle(.plain)
                     .focused($searchFocused)
+                    .task { searchFocused = true }
                     .accessibilityIdentifier("home-search-field")
                     .onExitCommand { query = ""; isSearching = false }
                 Button("Close search", systemImage: "xmark") { query = ""; isSearching = false }
@@ -123,9 +124,18 @@ struct HomeTabStrip: View {
     }
 
     private func badge(_ tab: HomeTab) -> (text: String, tone: HomeTone)? {
+        Self.badge(tab, snapshot: snapshot)
+    }
+
+    static func badge(_ tab: HomeTab, snapshot: HomeSnapshot) -> (text: String, tone: HomeTone)? {
         switch tab {
         case .home: snapshot.focusCount > 0 ? (String(snapshot.focusCount), .attention) : nil
-        case .reviews: snapshot.reviewCount > 0 ? (String(snapshot.reviewCount), snapshot.reviewNeedsAttention ? .alert : .brandBlue) : nil
+        case .reviews:
+            if snapshot.reviewCount > 0 {
+                (String(snapshot.reviewCount), snapshot.reviewNeedsAttention ? .alert : .brandBlue)
+            } else {
+                snapshot.reviewNeedsAttention ? ("!", .alert) : nil
+            }
         case .watchers: snapshot.watcherNeedsAttention ? ("!", .alert) : nil
         case .chats: snapshot.waitingChatCount > 0 ? (String(snapshot.waitingChatCount), .attention) : nil
         }

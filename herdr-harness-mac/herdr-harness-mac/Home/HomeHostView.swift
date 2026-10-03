@@ -13,7 +13,9 @@ struct HomeHostView: View {
 
     var body: some View {
         let request = hydrationRequest
-        HomeContentView(snapshot: HomeActionPresentation.snapshot(home.snapshot, snoozedCount: home.snoozedCount),
+        let outcomes = shell.homeQuickReply?.unresolvedOutcomes ?? []
+        HomeContentView(snapshot: HomeActionPresentation.snapshot(home.snapshot, snoozedCount: home.snoozedCount,
+                                                                 unresolvedReplyCount: outcomes.count),
                         selectedFocusID: home.selectedFocusID,
                         recapExpanded: $home.recapExpanded, onSelectFocus: home.selectFocus,
                         onCommand: command, onScroll: onScroll,
@@ -26,21 +28,28 @@ struct HomeHostView: View {
                                                     enabled: request.enabled)
             }
             .onDisappear { shell.homeQuickReply?.pauseHydration() }
-            .overlay(alignment: .bottom) {
-                if let text = home.status ?? searchStatus {
-                    HStack(spacing: 12) {
-                        Text(text).herdrFont(size: 13).foregroundStyle(HomePalette.secondary)
-                        if home.canUndoSnooze {
-                            Button("Undo snooze", action: home.undoLastSnooze)
-                                .herdrFont(size: 13, weight: .semibold).foregroundStyle(HomePalette.accent)
-                                .buttonStyle(HomeButtonStyle())
-                                .accessibilityIdentifier("home-snooze-undo")
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !outcomes.isEmpty || home.status != nil || searchStatus != nil {
+                    VStack(spacing: 10) {
+                        if let controller = shell.homeQuickReply, !outcomes.isEmpty {
+                            HomeReplyOutcomesView(controller: controller, outcomes: outcomes, onOpen: openOutcome)
+                        }
+                        if let text = home.status ?? searchStatus {
+                            HStack(spacing: 12) {
+                                Text(text).herdrFont(size: 13).foregroundStyle(HomePalette.secondary)
+                                if home.canUndoSnooze {
+                                    Button("Undo snooze", action: home.undoLastSnooze)
+                                        .herdrFont(size: 13, weight: .semibold).foregroundStyle(HomePalette.accent)
+                                        .buttonStyle(HomeButtonStyle())
+                                        .accessibilityIdentifier("home-snooze-undo")
+                                }
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .background(HomePalette.color(0x282631), in: .capsule)
+                            .accessibilityIdentifier("home-status")
                         }
                     }
-                    .padding(.horizontal, 16).padding(.vertical, 10)
-                    .background(HomePalette.color(0x282631), in: .capsule)
-                    .padding(.bottom, 84)
-                    .accessibilityIdentifier("home-status")
+                    .padding(.horizontal, 24).padding(.top, 10).padding(.bottom, 84)
                 }
             }
     }
@@ -74,6 +83,14 @@ struct HomeHostView: View {
 
     private func chatVisibilityChanged(_ id: String, _ visible: Bool) {
         if visible { visibleChatIDs.insert(id) } else { visibleChatIDs.remove(id) }
+    }
+
+    private func openOutcome(_ outcome: HomeQuickReplyOutcome) {
+        guard shell.homeQuickReply?.canOpenOutcome(outcome) == true else {
+            home.showStatus("The original conversation is unavailable. Its reply status is kept here.")
+            return
+        }
+        HomeRouting.open(outcome.id, model: model, shell: shell, openWindow: openWindow, openSettings: openSettings)
     }
 
     private var searchStatus: String? {

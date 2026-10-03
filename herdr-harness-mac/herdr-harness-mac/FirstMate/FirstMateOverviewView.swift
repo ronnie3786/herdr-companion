@@ -84,7 +84,7 @@ struct FirstMateOverviewView: View {
                     .padding(.vertical, 4)
                 }
                 Button("Open workflow", systemImage: "arrow.right") { store.inspector = .workflow }
-                    .labelStyle(DashboardInlineLabelStyle(spacing: 5))
+                    .labelStyle(HerdrInlineLabelStyle(spacing: 5))
                     .buttonStyle(.herdrPlain)
                     .herdrFont(size: HerdrTheme.TextSize.caption, weight: .medium)
                     .foregroundStyle(palette.accent)

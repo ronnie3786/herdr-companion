@@ -44,7 +44,6 @@ struct WorkspaceNavigationView: View {
     @AppStorage("herdr.shell.sidebarWidth") private var storedSidebarWidth = Double(HerdrTheme.sidebarWidth)
     @State private var liveSidebarWidth: Double?
     @State private var hasPlacedSidebar = false
-    @Environment(\.herdrWindowIsFullScreen) private var isFullScreen
 
     private static let sidebarWidthRange = 240.0...480.0
 
@@ -71,7 +70,7 @@ struct WorkspaceNavigationView: View {
     /// or rendered offscreen.
     private var navigationContent: some View {
         HStack(spacing: 0) {
-            if isSidebarVisible && !(shell.homeEnabled && shell.detailScope == .watchers) {
+            if isSidebarVisible && shell.detailScope != .watchers {
                 sidebarColumn
                     .frame(width: sidebarWidth)
                     .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: railBackground) }
@@ -83,7 +82,7 @@ struct WorkspaceNavigationView: View {
         // Above both columns, so the whole 6pt strip across the rail's edge
         // can be grabbed (the detail column would otherwise take half of it).
         .overlay(alignment: .leading) {
-            if isSidebarVisible && !(shell.homeEnabled && shell.detailScope == .watchers) {
+            if isSidebarVisible && shell.detailScope != .watchers {
                 sidebarResizeHandle
                     .offset(x: sidebarWidth - 3)
             }
@@ -222,7 +221,6 @@ struct WorkspaceNavigationView: View {
                     HerdrSidebarView(
                         model: model,
                         openPane: openSession,
-                        openDashboard: { shell.goHome(model: model) },
                         openFirstMate: { shell.show(.firstMate, model: model) },
                         openPRReview: { shell.show(.prReview, model: model) },
                         openWatchers: { shell.show(.watchers, model: model) },
@@ -242,8 +240,8 @@ struct WorkspaceNavigationView: View {
         }
     }
 
-    /// The rail's 40pt header: room for the traffic lights, the context's
-    /// name, and the sidebar toggle.
+    /// The rail's 40pt header below the global tab strip: its context's
+    /// name and the sidebar toggle.
     private func sidebarHeader(actions: AnyView?) -> some View {
         HStack(spacing: 7) {
             switch shell.detailScope {
@@ -272,7 +270,7 @@ struct WorkspaceNavigationView: View {
         .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
         .foregroundStyle(chromeTitle)
         .lineLimit(1)
-        .padding(.leading, (isFullScreen || shell.homeEnabled) ? 13 : HerdrWindowChrome.trafficLightInset)
+        .padding(.leading, 13)
         .padding(.trailing, 6)
         .herdrBar(hairline: .clear)
         .accessibilityElement(children: .contain)
@@ -689,7 +687,7 @@ struct WorkspaceNavigationView: View {
                 }
             }
         }
-        // Dashboard cards and Agent view open features the fleet list knows
+        // External First Mate requests open features the fleet list knows
         // about, which can be newer than this store's list. Refresh once before
         // deciding the target is absent, so the click never lands elsewhere.
         if !Task.isCancelled, let target = shell.pendingFirstMateControlTarget,
@@ -733,10 +731,6 @@ struct WorkspaceNavigationView: View {
         // root view.
         case .home:
             ContentUnavailableView("Home", systemImage: "house", description: Text("Your First Mate overview is being prepared."))
-        case .dashboard:
-            DashboardView(model: model, shell: shell)
-        case .agentBoard:
-            AgentBoardView(model: model, shell: shell)
         // `.git` never survives `resolvedScope` — it is a pane sub-mode the
         // picker translates — but the switch still has to name it.
         case .session, .git:
@@ -819,8 +813,6 @@ struct WorkspaceNavigationView: View {
             )
         case .fleet:
             FleetDestinationView(model: model)
-        case .activity:
-            ActivityFeedView(model: model, selectPane: openSession)
         }
     }
 
@@ -877,15 +869,12 @@ struct WorkspaceNavigationView: View {
         )
     }
 
-    private var titleBarLeadingPadding: CGFloat {
-        guard !shell.homeEnabled, !isSidebarVisible, !isFullScreen else { return isSidebarVisible ? 12 : 8 }
-        return HerdrWindowChrome.trafficLightInset - 2
-    }
+    private var titleBarLeadingPadding: CGFloat { isSidebarVisible ? 12 : 8 }
 
     @ViewBuilder
     private var defaultTitle: some View {
         switch shell.detailScope {
-        case .home, .dashboard, .agentBoard:
+        case .home:
             Text(shell.detailScope.label)
                 .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                 .foregroundStyle(chromeTitle)
@@ -912,13 +901,6 @@ struct WorkspaceNavigationView: View {
 
     private var navigationControls: some View {
         HStack(spacing: 0) {
-            if !shell.homeEnabled && shell.detailScope != .dashboard {
-                // A place, not a second Back button.
-                Button("Dashboard", systemImage: "square.grid.2x2") { shell.goHome(model: model) }
-                    .buttonStyle(HerdrIconButtonStyle(tint: chromeIcon))
-                    .help("Dashboard (Shift-Command-D)")
-                    .accessibilityIdentifier("back-to-dashboard")
-            }
             historyButton(
                 symbol: "chevron.left",
                 label: "Back",

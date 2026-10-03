@@ -1,6 +1,6 @@
 import Foundation
 
-struct DashboardReviewState: Codable, Equatable, Sendable {
+struct PRReviewViewerState: Codable, Equatable, Sendable {
     var state: String
     var pendingCommentCount: Int = 0
     var needsUser: Bool = false

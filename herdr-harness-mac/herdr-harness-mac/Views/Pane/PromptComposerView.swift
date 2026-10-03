@@ -575,7 +575,7 @@ struct PromptComposerView: View {
                         // Stop turn is spelled out so it never reads as "stop
                         // recording".
                         Button("Stop turn", systemImage: "stop.fill", action: stopPi)
-                            .labelStyle(DashboardInlineLabelStyle(spacing: 4))
+                            .labelStyle(HerdrInlineLabelStyle(spacing: 4))
                             .buttonStyle(HerdrButtonStyle(kind: .outline, height: HerdrTheme.ControlHeight.small))
                             .disabled(!piConfiguration.canAbort)
                             .help("Stop Pi's current turn")

@@ -183,8 +183,8 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
     var runningRuns: Int
     var documentCount: Int
     var body: String?
-    var viewerReview: DashboardReviewState? = nil
-    var skillRuns: [DashboardSkillRun]? = nil
+    var viewerReview: PRReviewViewerState? = nil
+    var skillRuns: [PRReviewSkillRun]? = nil
     /// The newest walkthrough, from a companion with `pr-review-walkthroughs-v1`.
     var walkthrough: PRReviewWalkthroughSummary? = nil
 
@@ -261,8 +261,8 @@ struct PRReviewSummary: Codable, Equatable, Identifiable, Sendable {
         runningRuns = try container.decodeIfPresent(Int.self, forKey: .runningRuns) ?? 0
         documentCount = try container.decodeIfPresent(Int.self, forKey: .documentCount) ?? 0
         body = try container.decodeIfPresent(String.self, forKey: .body)
-        viewerReview = try container.decodeIfPresent(DashboardReviewState.self, forKey: .viewerReview)
-        skillRuns = try container.decodeIfPresent([DashboardSkillRun].self, forKey: .skillRuns)
+        viewerReview = try container.decodeIfPresent(PRReviewViewerState.self, forKey: .viewerReview)
+        skillRuns = try container.decodeIfPresent([PRReviewSkillRun].self, forKey: .skillRuns)
         walkthrough = try container.decodeIfPresent(PRReviewWalkthroughSummary.self, forKey: .walkthrough)
     }
 }

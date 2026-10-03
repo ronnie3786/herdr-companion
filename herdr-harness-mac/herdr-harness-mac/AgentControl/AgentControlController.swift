@@ -679,7 +679,8 @@ final class AgentControlController {
             return .completed(result)
 
         case "ui.segment":
-            let segment = try requiredString("segment", command.parameters)
+            let requestedSegment = try requiredString("segment", command.parameters)
+            let segment = requestedSegment == "activity" ? "home" : requestedSegment
             let panePresentation = try await openSegment(segment, shell: shell, model: model, context: context)
             if let panePresentation {
                 guard await presentationWaiter(panePresentation, model, shell) else {
@@ -1073,7 +1074,7 @@ final class AgentControlController {
                 throw AgentControlCommandError.notFound("The history pane is no longer available.")
             }
             return .pane(id: id, mode: .git)
-        case .home, .dashboard, .agentBoard, .firstMate, .prReview, .watchers, .fleet, .activity:
+        case .home, .firstMate, .prReview, .watchers, .fleet:
             return nil
         }
     }

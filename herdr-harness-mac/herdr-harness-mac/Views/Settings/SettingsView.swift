@@ -26,7 +26,6 @@ struct SettingsView: View {
     private var firstMateDockBadgeEnabled = FirstMateChatPreferences.defaultDockBadgeEnabled
     @AppStorage(FirstMateHudPreferences.enabledKey)
     private var firstMateHudEnabled = FirstMateHudPreferences.defaultEnabled
-    @AppStorage(MobileAppHubSettings.dashboardBundleIDsKey) private var buildsDashboardApps = ""
     @State private var isPresentingMachines = false
     @State private var isPresentingMachineEditor = false
     @State private var editingMachine: HerdrMachine?
@@ -551,16 +550,13 @@ struct SettingsView: View {
                 Label("Enter the hub's full address, starting with https://", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(HerdrTheme.warning)
             }
-            TextField("Dashboard apps", text: $buildsDashboardApps, prompt: Text("com.example.app"))
-                .autocorrectionDisabled()
-                .accessibilityIdentifier("settings-builds-dashboard-apps")
         } header: {
             SettingsSectionHeader {
                 Text("Builds")
             }
         } footer: {
             SettingsSectionFooter {
-                Text("Each First Mate's Overview lists the builds its agents published to Mobile App Hub. The Dashboard shows the newest builds of the apps listed here, by bundle ID, separated by commas. Leave the address empty to hide builds.")
+                Text("Each First Mate's Overview lists the builds its agents published to Mobile App Hub. Leave the address empty to hide builds.")
             }
         }
     }

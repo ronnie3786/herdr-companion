@@ -4,6 +4,22 @@ import Testing
 
 @Suite("Home frozen action context")
 struct HomeActionContextTests {
+    @Test("Unresolved reply delivery suppresses all-clear copy even after the source card disappears")
+    func unresolvedReplyPreventsAllClear() {
+        var source = HomeSnapshot()
+        source.availability = .current
+        source.canShowAllClear = true
+        source.statusLine = "All clear for now"
+        source.summary = ["You are all caught up."]
+        let result = HomeActionPresentation.snapshot(source, snoozedCount: 0, unresolvedReplyCount: 1)
+        #expect(!result.canShowAllClear)
+        #expect(result.statusLine == "A reply still needs a check.")
+        #expect(!result.summary.map(\.plainText).joined().contains("caught up"))
+        #expect(result.notices.contains { $0.contains("delivery check") })
+        #expect(source.canShowAllClear && source.focus.isEmpty && source.chats.isEmpty)
+        #expect(HomeActionPresentation.snapshot(source, snoozedCount: 0).canShowAllClear)
+    }
+
     @Test("Production evidence receives local Later and Dismiss controls without changing counts or duplicating fixture actions")
     func localActions() {
         var source = HomeSnapshot()

@@ -102,7 +102,7 @@ struct FirstMateFleetSidebarView: View {
             }
             HStack(spacing: 6) {
                 Label("Feature details open on their owning companion", systemImage: "desktopcomputer")
-                    .labelStyle(DashboardInlineLabelStyle(spacing: 6))
+                    .labelStyle(HerdrInlineLabelStyle(spacing: 6))
                     .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(palette.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)

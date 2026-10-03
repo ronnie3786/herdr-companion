@@ -98,7 +98,7 @@ struct FirstMateSidebarView: View {
                     .accessibilityIdentifier("first-mate-leave-demo")
                 HStack(spacing: 6) {
                     Label("Synthetic demo", systemImage: "flask")
-                        .labelStyle(DashboardInlineLabelStyle(spacing: 5))
+                        .labelStyle(HerdrInlineLabelStyle(spacing: 5))
                         .herdrFont(size: HerdrTheme.TextSize.caption)
                         .foregroundStyle(palette.tertiaryText)
                     Text("·").foregroundStyle(palette.tertiaryText)
@@ -113,7 +113,7 @@ struct FirstMateSidebarView: View {
             }
             HStack(spacing: 6) {
                 Label(store.isDemo ? "Demo data only" : "Companion host", systemImage: store.isDemo ? "circle.dotted" : "desktopcomputer")
-                    .labelStyle(DashboardInlineLabelStyle(spacing: 6))
+                    .labelStyle(HerdrInlineLabelStyle(spacing: 6))
                     .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(palette.tertiaryText)
                 Spacer()

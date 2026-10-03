@@ -73,6 +73,22 @@ struct HomeRenderTests {
         #expect(stale.focus.allSatisfy { $0.isStale })
         #expect(stale.chats.allSatisfy { $0.isStale })
     }
+    @Test("Synthetic moments do not inherit conflicting morning status")
+    func coherentMomentStatus() {
+        let clear = HomeFixtures.snapshot(.clear)
+        #expect(clear.focusCount == 0)
+        #expect(clear.focus.allSatisfy { $0.isIdea })
+        #expect(!clear.firstMateStatus.contains("need"))
+        #expect(!clear.moving.plainText.contains("Snapshot test flakes"),
+                "The evening recap says Snapshot test flakes merged; it cannot still be in QA")
+        let afternoon = HomeFixtures.snapshot(.afternoon)
+        #expect(afternoon.focusCount == 1)
+        #expect(afternoon.firstMateStatus.contains("1 needs you"))
+        #expect(!afternoon.moving.plainText.contains(afternoon.focus[0].title),
+                "The retry project is awaiting the user’s answer, not independently building")
+        #expect(afternoon.moving.plainText.contains("Docs search has its PR open"))
+    }
+
     /// AppKit's frame-view cache omits the layer-backed Home scroll surface and
     /// distorts its glows. Render the shared SwiftUI grid at an explicit viewport
     /// instead. Window controls, resizing and scrolling are covered by HomeUITests.

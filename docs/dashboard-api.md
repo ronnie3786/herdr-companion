@@ -1,11 +1,17 @@
-# Dashboard companion data
+# Retained companion summary and board APIs
 
-The Mac Dashboard uses additive fields on the existing First Mate and PR Review
-list responses. Older clients ignore these fields. New clients must keep them
-optional, and display unavailable data honestly when connected to older servers.
-No existing authorization or write contract changes.
+The Mac Dashboard and Agent view are retired, replaced by [Home](macos-home.md).
+This document retains the compatible wire and server contracts originally added for those
+screens. `dashboard_summary`, `FirstMateDashboardSummary`, the board capability and endpoint,
+and cached review-state responses remain available to existing clients. Retiring Mac
+presentation does not delete an endpoint or change authorization or write contracts.
 
-## First Mate cards
+Home consumes lightweight First Mate and PR Review fleet data, including compatible summary
+fallbacks. It does not restore the old Agent view board poller. Older clients ignore additive
+fields; clients must keep them optional and display unavailable data honestly with older
+companions. Companion packages continue to ship separately from the Mac app.
+
+## First Mate summaries
 
 `GET /api/v1/first-mate/features` includes `dashboard_summary` on each feature:
 
@@ -38,10 +44,10 @@ No existing authorization or write contract changes.
 
 The projection is one SQLite query. It does not load full feature snapshots.
 
-## Agent view board
+## Retained board endpoint
 
-Capability `first-mate-board-v1` adds a bounded, versioned projection for one
-Agent view column:
+Capability `first-mate-board-v1` provides a bounded, versioned feature projection. The
+former Mac Agent view used it for a column; the compatible endpoint remains:
 
 `GET /api/v1/first-mate/features/{featureId}/board?messages=60&journal=40&if_version=…`
 
@@ -137,7 +143,7 @@ Example board response, abbreviated and synthetic:
 `pending_comment_count` counts the viewer's own pending review comments.
 `needs_user` is true only for pending or re-review states on someone else's PR.
 `is_own_pr` is null until known, otherwise GitHub's `viewerDidAuthor` value.
-The Dashboard excludes rows when `is_own_pr` is true.
+Home excludes a review from its actionable focus and review count when `is_own_pr` is true.
 
 `reviewed_at`, `reviewed_commit`, `head_commit`, and `review_requested` retain the
 evidence for the projection. Re-review means the head differs from the viewer's

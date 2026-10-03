@@ -7,7 +7,6 @@ struct HerdrSidebarView: View {
     /// infer it from a selection change (clicking the already-selected chat has
     /// to work too).
     let openPane: (HerdrPane) -> Void
-    var openDashboard: (() -> Void)? = nil
     var openFirstMate: (() -> Void)? = nil
     var openPRReview: (() -> Void)? = nil
     var openWatchers: (() -> Void)? = nil
@@ -239,13 +238,8 @@ struct HerdrSidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader { header }
             recencyTabs
-            if openDashboard != nil || openFirstMate != nil || openPRReview != nil || openWatchers != nil {
+            if openFirstMate != nil || openPRReview != nil || openWatchers != nil {
                 VStack(spacing: 0) {
-                    if let openDashboard {
-                        SidebarNavRow(title: "Dashboard", systemImage: "square.grid.2x2", action: openDashboard)
-                            .help("Dashboard (Shift-Command-D)")
-                            .accessibilityIdentifier("sidebar-dashboard")
-                    }
                     if let openFirstMate {
                         FirstMateNavigationButton(
                             attentionCount: firstMateAttentionCount,

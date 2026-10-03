@@ -13,7 +13,7 @@ enum HomeTab: String, CaseIterable, Identifiable {
     }
     init(scope: HerdrDetailScope) {
         switch scope {
-        case .home, .dashboard, .agentBoard, .activity: self = .home
+        case .home: self = .home
         case .prReview: self = .reviews
         case .watchers: self = .watchers
         default: self = .chats

@@ -189,7 +189,6 @@ struct HomeRoutingTests {
 
         init(defaultHost: String? = nil) {
             defaults = UserDefaults(suiteName: "HomeRoutingTests.\(UUID().uuidString)")!
-            defaults.set(true, forKey: HomePreferences.enabledKey)
             if let defaultHost { defaults.set(defaultHost, forKey: "herdr.prReview.machineID") }
             model = HerdrAppModel(credentials: TestCredentialStore(), arguments: [], userDefaults: defaults,
                                   configuredMachines: [.init(id: "alpha", name: "Alpha", urlString: "https://alpha.example"),

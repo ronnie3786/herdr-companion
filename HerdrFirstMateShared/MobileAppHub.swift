@@ -5,7 +5,6 @@ import Foundation
 /// with the First Mate session that produced it; Herdr only reads.
 enum MobileAppHubSettings {
     static let hubURLKey = "herdr.builds.hubURL"
-    static let dashboardBundleIDsKey = "herdr.builds.dashboardBundleIDs"
 
     /// An http(s) address with a host, without a trailing slash. Anything else
     /// leaves the Builds sections hidden.
@@ -19,14 +18,6 @@ enum MobileAppHubSettings {
         var normalized = components
         while normalized.path.hasSuffix("/") { normalized.path.removeLast() }
         return normalized.url
-    }
-
-    /// Bundle identifiers separated by commas, spaces, or new lines.
-    static func bundleIDs(from text: String) -> [String] {
-        var seen = Set<String>()
-        return text.split(whereSeparator: { $0 == "," || $0.isWhitespace })
-            .map(String.init)
-            .filter { seen.insert($0).inserted }
     }
 }
 

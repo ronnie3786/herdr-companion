@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct DashboardAgeText: View {
+struct HerdrAgeText: View {
     let date: Date
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in

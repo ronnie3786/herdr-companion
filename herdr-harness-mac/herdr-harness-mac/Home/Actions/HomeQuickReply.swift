@@ -7,6 +7,12 @@ struct HomeQuickReplyOwner: Equatable, Sendable {
     var configuration: ServerConfiguration?
     var isDemo: Bool
     var sessionID: String? = nil
+
+    func matchesConnection(generation: Int, configuration: ServerConfiguration?, isDemo: Bool,
+                           sessionID: String? = nil) -> Bool {
+        self.generation == generation && self.configuration == configuration
+            && self.isDemo == isDemo && self.sessionID == sessionID
+    }
 }
 
 /// Only the shared, validated skim reader may produce these choices.
@@ -48,11 +54,35 @@ struct HomeQuickReplyPresentation: Equatable, Sendable {
             default: false
             }
         }
+
+        var needsResolution: Bool {
+            switch self {
+            case .sending, .failed, .deliveryUnconfirmed: true
+            default: false
+            }
+        }
+
+        var canAcknowledge: Bool {
+            switch self {
+            case .failed(_, false), .deliveryUnconfirmed(_, false): true
+            default: false
+            }
+        }
     }
 
     var question: HomeQuickReplyQuestion?
     var phase: Phase
     var actions: [SkimReplyAction] { phase == .ready ? question?.actions ?? [] : [] }
+}
+
+/// Submission evidence remains visible when work leaves its source card.
+struct HomeQuickReplyOutcome: Identifiable, Equatable, Sendable {
+    var question: HomeQuickReplyQuestion
+    var title: String
+    var replyLabel: String
+    var phase: HomeQuickReplyPresentation.Phase
+    var owner: HomeQuickReplyOwner { question.owner }
+    var id: HomeRoute { owner.route }
 }
 
 struct HomeQuickReplyLoad: Sendable {
@@ -83,4 +113,6 @@ struct HomeQuickReplyOperations {
     var submit: (HomeQuickReplyQuestion, SkimReplyAction) async -> HomeQuickReplyResult
     var retry: (HomeQuickReplyOwner) async -> HomeQuickReplyResult
     var retain: ([HomeQuickReplyOwner]) -> Void = { _ in }
+    /// Navigation and receipts need identity, independent of send eligibility.
+    var isDestinationCurrent: ((HomeQuickReplyOwner) -> Bool)? = nil
 }

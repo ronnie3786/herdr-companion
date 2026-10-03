@@ -40,7 +40,7 @@ struct NavigationHistoryTests {
     @Test("Mixed scope and pane destinations round-trip")
     func mixedDestinationsRoundTrip() {
         let destinations: [HerdrDestination] = [
-            .pane("a"), .firstMate, .git("a"), .activity,
+            .pane("a"), .firstMate, .git("a"), .home,
         ]
         var history = trail(destinations)
 
@@ -49,7 +49,7 @@ struct NavigationHistoryTests {
         #expect(history.goBack(isAlive: alive) == .pane("a"))
         #expect(history.goForward(isAlive: alive) == .firstMate)
         #expect(history.goForward(isAlive: alive) == .git("a"))
-        #expect(history.goForward(isAlive: alive) == .activity)
+        #expect(history.goForward(isAlive: alive) == .home)
     }
 
     @Test("The stack is capped and drops the oldest")

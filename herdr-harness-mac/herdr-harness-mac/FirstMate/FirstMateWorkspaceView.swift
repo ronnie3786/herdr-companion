@@ -237,7 +237,7 @@ struct FirstMateWorkspaceView: View {
         HStack(spacing: 10) {
             if let owningMachineName {
                 Label(owningMachineName, systemImage: "desktopcomputer")
-                    .labelStyle(DashboardInlineLabelStyle(spacing: 5))
+                    .labelStyle(HerdrInlineLabelStyle(spacing: 5))
                     .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(palette.tertiaryText)
                     .lineLimit(1)

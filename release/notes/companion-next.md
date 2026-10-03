@@ -1,25 +1,5 @@
 # Next companion update, unreleased
 
-## Share Agent Roles
-
-- Adds `agent-roles-share-v1`. `GET /api/v1/agent-roles/export?preview=1` lists
-  exportable roles; `GET /api/v1/agent-roles/export?roleIds=…` returns a
-  `herdr-agent-roles` v1 document with each role's stored skill copies. Untouched
-  built-ins, Recovery Advisor, machine IDs, revisions, team IDs and paths are never
-  exported, and a private key in a prompt or skill file blocks the export.
-- `POST /api/v1/agent-roles/import` plans a file with `dryRun: true` and applies a
-  reviewed plan atomically with `planDigest`, `expectedRevision`, `roleIds` and
-  `replaceRoleIds`. Existing roles change only when listed in `replaceRoleIds`.
-  Skills are matched by content; a skill ID this computer already uses for other
-  files is installed under a derived ID, so existing copies never change. Teams
-  are matched by name. A commit bumps the revision and publishes
-  `agent_roles.changed` once; dry runs and no-op imports do neither.
-- The import route accepts the same 16 MB body as role saves. Deeply nested
-  JSON bodies now return 400 instead of a server error.
-- Teams travel by name and use the saved teams in this release
-  (`pr-review-teams-v1`). Older Mac apps are unaffected. Install and restart this
-  package separately from the Mac app.
-
 ## Turn Watchers on from the app
 
 - A person can turn Watchers on or off per machine without editing

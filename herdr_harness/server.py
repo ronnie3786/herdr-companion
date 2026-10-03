@@ -16,11 +16,10 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from . import attachments, chat_tab_colors, first_mate_archive, first_mate_fleet, first_mate_peers, issue_reports, response_audio, result_artifacts, voice
 from . import simulator_previews, websocket_relay
-from .active_work import ActiveWorkError
 from .first_mate_store import FirstMateError
 from .first_mate_read_models import feature_summary
 from .directory_browser import DIRECTORY_CAPABILITY, DirectoryBrowserError, browse_directories
@@ -57,7 +56,6 @@ from . import agent_roles_share
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError, valid_pi_session_id
 from .secret_file import (
     SecretFileError,
-    load_private_bearer_token_file,
     validate_bearer_token,
 )
 from .service import HerdrService, _find_pane_id
@@ -73,7 +71,6 @@ _AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _KEY_RE = re.compile(r"^[A-Za-z0-9+_-]{1,32}$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 _EVENT_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
-_ACTIVE_WORK_ACTOR_RE = re.compile(r"^agent:[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
 _AGENT_STATUSES = frozenset({"idle", "working", "blocked", "done", "unknown"})
 _AGENT_KINDS = frozenset(
     {
@@ -104,7 +101,6 @@ _AGENT_KINDS = frozenset(
 _DISCONNECT_ERRNOS = {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.EPIPE}
 
 _HERDR_WEB_STATIC = os.path.join(os.path.dirname(__file__), "static", "herdr-web")
-_BOARD_STATIC = os.path.join(os.path.dirname(__file__), "static", "board.html")
 _FIRST_MATE_STATIC = os.path.join(os.path.dirname(__file__), "static", "first-mate")
 _HERDR_WEB_CONTENT_TYPES = {
     ".html": "text/html",
@@ -151,31 +147,8 @@ class HTTPValidationError(ValueError):
         self.status = status
 
 
-class ActiveWorkAuthConfigurationError(ValueError):
-    """An Active Work bearer-token configuration is ambiguous or unsafe."""
-
-
-def _active_work_manage_route(method: str, path: str) -> bool:
-    """Return whether a method/path belongs to the Active Work API surface."""
-
-    if method == "GET" and path == "/api/v1/events":
-        return True
-    return method in {"GET", "POST", "PATCH", "DELETE"} and _active_work_api_route(
-        path
-    )
-
-
-def _active_work_sync_route(method: str, path: str) -> bool:
-    return bool(
-        (method == "GET" and path == "/api/v1/active-work/sync-targets")
-        or (method == "POST" and path == "/api/v1/active-work/ingestions")
-    )
-
-
-def _active_work_api_route(path: str) -> bool:
-    return path == "/api/v1/active-work" or path.startswith(
-        "/api/v1/active-work/"
-    )
+class AuthConfigurationError(ValueError):
+    """The API bearer-token configuration is invalid."""
 
 
 def _pi_session_context_route(method: str, path: str) -> bool:
@@ -196,50 +169,11 @@ def _agent_control_route(path: str) -> bool:
     )
 
 
-def _configured_manage_token(environ: Mapping[str, Any]) -> str:
-    """Resolve the management token only from explicit operator configuration."""
-
-    direct = environ.get("HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN") or ""
-    explicit_file = environ.get("HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN_FILE") or ""
-    if direct and explicit_file:
-        raise ActiveWorkAuthConfigurationError(
-            "configure either HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN or "
-            "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN_FILE, not both"
-        )
-    try:
-        if direct:
-            return validate_bearer_token(
-                direct,
-                field="HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN",
-                required=True,
-            )
-
-        selected_file = explicit_file
-        if not selected_file:
-            return ""
-        return load_private_bearer_token_file(
-            selected_file,
-            field="Active Work management token file",
-        )
-    except SecretFileError as exc:
-        raise ActiveWorkAuthConfigurationError(str(exc)) from exc
-
-
 def _validated_configured_token(value: Any, *, field: str) -> str:
     try:
         return validate_bearer_token(value, field=field, required=False)
     except SecretFileError as exc:
-        raise ActiveWorkAuthConfigurationError(str(exc)) from exc
-
-
-def _reject_auth_token_collisions(tokens: Mapping[str, str]) -> None:
-    configured = [(name, value) for name, value in tokens.items() if value]
-    for index, (first_name, first_value) in enumerate(configured):
-        for second_name, second_value in configured[index + 1 :]:
-            if hmac.compare_digest(first_value, second_value):
-                raise ActiveWorkAuthConfigurationError(
-                    f"{first_name} and {second_name} must use distinct bearer tokens"
-                )
+        raise AuthConfigurationError(str(exc)) from exc
 
 
 def _identifier(value: Any, label: str = "identifier") -> str:
@@ -555,14 +489,6 @@ def api_description() -> dict:
             "workspaceFiles": "/api/v1/workspaces/{workspaceId}/files",
             "jiraAssigned": "/api/v1/jira/assigned",
             "workInbox": "/api/v1/work-inbox",
-            "activeWork": "/api/v1/active-work",
-            "activeWorkItem": "/api/v1/active-work/items/{workItemId}",
-            "activeWorkWorkflows": "/api/v1/active-work/workflows",
-            "activeWorkWorkflow": "/api/v1/active-work/workflows/{slug}",
-            "activeWorkItemStage": "/api/v1/active-work/items/{workItemId}/stages/{stageKey}",
-            "activeWorkItemPath": "/api/v1/active-work/items/{workItemId}/path",
-            "activeWorkSyncTargets": "/api/v1/active-work/sync-targets",
-            "board": "/board",
             "voiceTranscriptions": "/api/v1/voice/transcriptions",
             "responseAudioCapabilities": "/api/v1/response-audio/capabilities",
             "responseAudioPrepare": "/api/v1/response-audio/prepare",
@@ -653,14 +579,6 @@ def api_description() -> dict:
             "POST /api/v1/push/devices|unregister",
             "POST /api/v1/live-activities|unregister",
             "POST /api/v1/voice/transcriptions",
-            "POST /api/v1/active-work/items",
-            "PATCH /api/v1/active-work/items/{workItemId}",
-            "POST /api/v1/active-work/items/{workItemId}/transitions",
-            "POST /api/v1/active-work/items/{workItemId}/path",
-            "POST /api/v1/active-work/workflows",
-            "PATCH /api/v1/active-work/items/{workItemId}/stages/{stageKey}",
-            "POST /api/v1/active-work/jira/{issueKey}/setup",
-            "POST /api/v1/active-work/ingestions",
             "POST /api/v1/response-audio/prepare|speech",
             "POST /api/v1/result-artifacts",
             "POST|PUT|DELETE /api/v1/pr-reviews",
@@ -690,7 +608,6 @@ def api_description() -> dict:
             "alerts.read_state_changed",
             "stars.changed",
             "cleanup.run_updated",
-            "active_work.updated",
             "result_artifact.created",
         ],
         "generatedAt": utc_now(),
@@ -730,18 +647,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
         if api_token is not None
         else service.environ.get("HERDR_HARNESS_API_TOKEN", ""),
         field="HERDR_HARNESS_API_TOKEN",
-    )
-    configured_manage_token = _configured_manage_token(service.environ)
-    configured_ingest_token = _validated_configured_token(
-        service.environ.get("HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN", ""),
-        field="HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN",
-    )
-    _reject_auth_token_collisions(
-        {
-            "HERDR_HARNESS_API_TOKEN": configured_token,
-            "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": configured_manage_token,
-            "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN": configured_ingest_token,
-        }
     )
     cors_origin = service.environ.get("HERDR_HARNESS_CORS_ORIGIN", "")
     universal_app_ids = _universal_link_app_ids(service.environ)
@@ -806,51 +711,21 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             )
 
         def _authorized(self, *, path: str, method: str) -> bool:
-            self._active_work_ingest_scope = False
-            self._active_work_manage_scope = False
             self._authorization_scope = "open"
             authorization = self.headers.get("Authorization", "")
             scheme, separator, candidate = authorization.partition(" ")
             bearer = bool(separator and scheme.lower() == "bearer")
-            manage_route = _active_work_manage_route(method, path)
-            sync_route = _active_work_sync_route(method, path)
-            protected_by_scoped_token = bool(
-                (manage_route and configured_manage_token)
-                or (sync_route and configured_ingest_token)
-            )
-            full_bearer_route = _agent_control_route(path)
-            # Preserve the explicit loopback development mode: scoped Active
-            # Work credentials protect only their routes when no main token is
-            # configured, rather than locking unrelated legacy API routes.
-            if not configured_token and not protected_by_scoped_token and not full_bearer_route:
+            # Preserve explicit loopback development mode; control always requires the API token.
+            if not configured_token and not _agent_control_route(path):
                 return True
             valid_main = bool(
                 bearer
                 and configured_token
                 and hmac.compare_digest(candidate, configured_token)
             )
-            valid_manage = bool(
-                bearer
-                and configured_manage_token
-                and manage_route
-                and hmac.compare_digest(candidate, configured_manage_token)
-            )
-            valid_ingest = bool(
-                bearer
-                and configured_ingest_token
-                and sync_route
-                and hmac.compare_digest(candidate, configured_ingest_token)
-            )
-            valid = valid_main or valid_manage or valid_ingest
-            self._active_work_ingest_scope = bool(valid_ingest and not valid_main)
-            self._active_work_manage_scope = bool(valid_manage and not valid_main)
             if valid_main:
                 self._authorization_scope = "main"
-            elif valid_manage:
-                self._authorization_scope = "active_work_manage"
-            elif valid_ingest:
-                self._authorization_scope = "active_work_ingest"
-            if not valid:
+            if not valid_main:
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 body = json.dumps(
@@ -863,24 +738,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 self.wfile.write(body)
                 return False
             return True
-
-        def _resolve_active_work_actor(self) -> str:
-            # The ingestion credential has a fixed identity. A caller cannot
-            # use an advisory header to disguise a scraper write as a user or
-            # a different agent.
-            if getattr(self, "_active_work_ingest_scope", False):
-                return "sync:buzz"
-            candidate = self.headers.get("X-Herdr-Actor", "")
-            if not candidate:
-                if getattr(self, "_active_work_manage_scope", False):
-                    return "agent:active-work-cli"
-                return "user"
-            if not _ACTIVE_WORK_ACTOR_RE.fullmatch(candidate):
-                raise HTTPValidationError(
-                    "X-Herdr-Actor must use the form agent:<identifier>",
-                    code="active_work_actor_invalid",
-                )
-            return candidate
 
         def _read_json(self, *, maximum: int = MAX_BODY_BYTES) -> dict:
             raw_length = self.headers.get("Content-Length", "0")
@@ -969,8 +826,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     return
                 if method == "GET" and self._serve_herdr_web_static(path):
                     return
-                if method == "GET" and self._serve_board_static(path):
-                    return
                 if method == "GET" and self._serve_first_mate_static(path):
                     return
                 if len(segments) < 2 or segments[:2] != ["api", "v1"]:
@@ -1005,8 +860,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     # the same canonical route and not only the raw encoded path.
                     self._error(401, "unauthorized", "A valid bearer token is required")
                     return
-                if _active_work_api_route(path):
-                    self._active_work_actor = self._resolve_active_work_actor()
                 attachment_upload = (
                     method == "POST"
                     and len(segments) == 5
@@ -1063,8 +916,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             except CleanupError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except AgentRunError as exc:
-                self._error(exc.status, exc.code, str(exc))
-            except ActiveWorkError as exc:
                 self._error(exc.status, exc.code, str(exc))
             except FirstMateError as exc:
                 self._json_response({"ok": False, "error": {"code": exc.code, "message": str(exc),
@@ -1181,41 +1032,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             self._common_headers()
             self.end_headers()
             self.wfile.write(body)
-            return True
-
-        def _serve_board_static(self, path: str) -> bool:
-            if path == "/board":
-                raw_path = urllib.parse.urlparse(self.path).path
-                if not raw_path.endswith("/"):
-                    # Keep the redirect relative so a reverse-proxy prefix is
-                    # preserved by the browser (for example /base/board/).
-                    try:
-                        self.send_response(308)
-                        self.send_header("Location", "board/")
-                        self.send_header("Content-Length", "0")
-                        self._common_headers()
-                        self.end_headers()
-                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                        pass
-                    return True
-                target = _BOARD_STATIC
-            elif path == "/board/":
-                target = _BOARD_STATIC
-            else:
-                return False
-            if not os.path.isfile(target):
-                return False
-            with open(target, "rb") as handle:
-                body = handle.read()
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self._common_headers()
-                self.end_headers()
-                self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                return False
             return True
 
         def _simulator_route(self, method: str, feature_id: str, tail: list[str], query: dict, body: dict):
@@ -2657,105 +2473,6 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                             expected_root=expected_root,
                             reveal=reveal,
                         )
-            if method == "GET" and tail == ["active-work"]:
-                return service.active_work_board()
-            if method == "GET" and tail == ["active-work", "workflows"]:
-                return service.list_active_work_workflows()
-            if method == "POST" and tail == ["active-work", "workflows"]:
-                return service.apply_active_work_workflow(body)
-            if method == "GET" and len(tail) == 3 and tail[:2] == ["active-work", "workflows"]:
-                slug = _identifier(tail[2], "workflow slug")
-                raw_version = str((query.get("version") or [""])[0]).strip()
-                version = None
-                if raw_version:
-                    try:
-                        version = int(raw_version)
-                    except ValueError as exc:
-                        raise HTTPValidationError("version must be an integer") from exc
-                    if version < 1:
-                        raise HTTPValidationError("version must be a positive integer")
-                return service.get_active_work_workflow(slug, version=version)
-            if method == "GET" and tail == ["active-work", "sync-targets"]:
-                return service.active_work_sync_targets()
-            if method == "POST" and tail == ["active-work", "ingestions"]:
-                if getattr(self, "_active_work_ingest_scope", False):
-                    if body.get("source") != "buzz":
-                        raise ActiveWorkError(
-                            "The scoped Active Work token only accepts Buzz observations",
-                            code="active_work_ingest_scope_forbidden",
-                            status=403,
-                        )
-                    return service.ingest_active_work(body, actor="sync:buzz")
-                actor = getattr(self, "_active_work_actor", "user")
-                return service.ingest_active_work(
-                    body,
-                    actor=None if actor == "user" else actor,
-                )
-            if method == "POST" and tail == ["active-work", "items"]:
-                return service.create_active_work_item(
-                    body,
-                    actor=getattr(self, "_active_work_actor", "user"),
-                ), 201
-            if len(tail) == 3 and tail[:2] == ["active-work", "items"]:
-                item_id = _identifier(tail[2], "work item ID")
-                if method == "GET":
-                    return service.active_work_item(item_id)
-                if method == "PATCH":
-                    return service.patch_active_work_item(
-                        item_id,
-                        body,
-                        actor=getattr(self, "_active_work_actor", "user"),
-                    )
-            if (
-                method == "POST"
-                and len(tail) == 4
-                and tail[:2] == ["active-work", "items"]
-                and tail[3] == "path"
-            ):
-                item_id = _identifier(tail[2], "work item ID")
-                return service.update_active_work_path(
-                    item_id, body, actor=getattr(self, "_active_work_actor", "user")
-                )
-            if (
-                method == "POST"
-                and len(tail) == 4
-                and tail[:2] == ["active-work", "items"]
-                and tail[3] == "transitions"
-            ):
-                item_id = _identifier(tail[2], "work item ID")
-                return service.transition_active_work_item(
-                    item_id,
-                    body,
-                    actor=getattr(self, "_active_work_actor", "user"),
-                )
-            if (
-                method == "PATCH"
-                and len(tail) == 5
-                and tail[:2] == ["active-work", "items"]
-                and tail[3] == "stages"
-            ):
-                item_id = _identifier(tail[2], "work item ID")
-                stage_key = _identifier(tail[4], "stage key")
-                return service.patch_active_work_stage(
-                    item_id,
-                    stage_key,
-                    body,
-                    actor=getattr(self, "_active_work_actor", "user"),
-                )
-            if (
-                method == "POST"
-                and len(tail) == 4
-                and tail[:2] == ["active-work", "jira"]
-                and tail[3] == "setup"
-            ):
-                if body:
-                    raise HTTPValidationError("Jira setup request does not accept a body")
-                issue_key = _identifier(tail[2], "Jira key")
-                result = service.setup_active_work_jira(
-                    issue_key,
-                    actor=getattr(self, "_active_work_actor", "user"),
-                )
-                return result, 201 if result.get("created") else 200
             if method == "GET" and tail == ["work-inbox"]:
                 return service.work_inbox()
             if method == "GET" and tail == ["jira", "assigned"]:

@@ -59,7 +59,7 @@ Authorization: Bearer <full API token>
 ```
 
 The route requires the full API bearer even when the server otherwise permits
-insecure loopback development. Active Work scoped credentials never authorize
+insecure loopback development. Other credentials never authorize
 it. In addition, every request carries a per-installation `publisherToken`:
 
 - `clientId` is the stable installation identifier in the control `ui_<uuid>`

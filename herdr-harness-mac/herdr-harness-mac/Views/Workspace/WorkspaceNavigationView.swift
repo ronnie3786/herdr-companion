@@ -43,7 +43,6 @@ private struct PRReviewPollingIdentity: Equatable {
 struct WorkspaceNavigationView: View {
     @Bindable var model: HerdrAppModel
     @Bindable var shell: HerdrShellState
-    @Bindable var activeWorkStore: ActiveWorkStore
     let modelFavorites: ModelFavoritesStore
     let updates: HerdrUpdateController
     /// Render tests only: a detail view that cannot be reached with demo data
@@ -213,7 +212,7 @@ struct WorkspaceNavigationView: View {
                             store: shell.prReview,
                             back: { shell.show(.session, model: model) },
                             canControl: model.isDemoMode || prReviewCreationConfiguration != nil,
-                            openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
+                            openURL: { url in Task { try? await HerdrExternalLinkOpener.open(url) } },
                             setCreating: setPRReviewCreating,
                             popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) },
                             fleet: prReviewFleetIsVisible ? shell.prReviewFleet : nil,
@@ -528,19 +527,6 @@ struct WorkspaceNavigationView: View {
             // A reveal is a one-off, not the person's saved choice.
             appliedSidebarVisibility = .all
             withAnimation(.snappy) { columnVisibility = .all }
-        }
-        .task(id: model.connectionGeneration) {
-            activeWorkStore.resetForConnectionChange()
-            await refreshActiveWork()
-        }
-        .task(id: model.activeWorkRefreshTick) {
-            guard activeWorkStore.hasLoaded else { return }
-            await refreshActiveWork()
-        }
-        .task(id: model.primaryConnectionState) {
-            guard model.primaryConnectionState == .live || model.primaryConnectionState == .demo,
-                  !activeWorkStore.hasLoaded || activeWorkStore.hasError else { return }
-            await refreshActiveWork()
         }
     }
 
@@ -902,7 +888,7 @@ struct WorkspaceNavigationView: View {
                 store: shell.prReview,
                 comments: shell.prReviewComments,
                 canControl: model.isDemoMode || prReviewConfiguration != nil,
-                openURL: { url in Task { try? await ActiveWorkLinkOpener.open(url) } },
+                openURL: { url in Task { try? await HerdrExternalLinkOpener.open(url) } },
                 askAI: { selection, view, rect in
                     guard let review = shell.prReview.selectedReview,
                           let machineID = shell.prReview.currentMachineID else { return }
@@ -917,59 +903,6 @@ struct WorkspaceNavigationView: View {
                 popOut: { openWindow(id: HerdrWindowID.prReview, value: $0) },
                 documentHost: model
             )
-        case .activeWork:
-            Group {
-                if model.isDemoMode || model.activeWorkLegacyUI {
-                    ActiveWorkContainerView(
-                        store: activeWorkStore,
-                        isControlEnabled: model.canControlPrimary,
-                        refresh: refreshActiveWork,
-                        createItem: createItem,
-                        setupJira: setupJira,
-                        transition: transition,
-                        setLifecycle: setLifecycle,
-                        openSession: openTrackedSession,
-                        openURL: { url in
-                            Task {
-                                do {
-                                    try await ActiveWorkLinkOpener.open(url)
-                                } catch {
-                                    model.toastMessage = error.localizedDescription
-                                }
-                            }
-                        },
-                        transcribeVoice: { try await model.transcribeVoiceNote(at: $0) },
-                        askBoard: { question in
-                            shell.presentAgent(prompt: activeWorkStore.agentPrompt(question: question))
-                        }
-                    )
-                } else if let configuration = model.activeServerConfiguration {
-                    ActiveWorkBoardWebView(
-                        configuration: configuration,
-                        openPane: { paneID, machineID in
-                            shell.openPane(rawPaneID: paneID, machineID: machineID, model: model)
-                        },
-                        openExternal: { url in
-                            Task {
-                                do {
-                                    try await ActiveWorkLinkOpener.open(url)
-                                } catch {
-                                    model.toastMessage = error.localizedDescription
-                                }
-                            }
-                        },
-                        copyText: { model.copyToPasteboard($0) },
-                        popOut: { openWindow(id: HerdrWindowID.activeWorkBoard) },
-                        spawnReview: { payload in
-                            Task { await model.spawnPrReviewSession(payload) }
-                        }
-                    )
-                    .accessibilityIdentifier("active-work-container")
-                } else {
-                    ActiveWorkBoardEmptyStateView()
-                        .accessibilityIdentifier("active-work-container")
-                }
-            }
         case .fleet:
             FleetDestinationView(model: model)
         case .activity:
@@ -983,40 +916,6 @@ struct WorkspaceNavigationView: View {
     /// the user is looking at.
     private func openSession(_ pane: HerdrPane) {
         shell.openPane(id: pane.id, model: model)
-    }
-
-    private func openTrackedSession(_ session: ActiveWorkPiSession) {
-        guard let paneID = session.paneID else { return }
-        shell.openPane(rawPaneID: paneID, machineID: session.machineID, model: model)
-    }
-
-    private func refreshActiveWork() async {
-        await activeWorkStore.refresh {
-            try await model.fetchActiveWork()
-        }
-    }
-
-    private func setupJira(_ candidate: ActiveWorkJiraCandidate) async throws {
-        _ = try await model.setupActiveWorkJira(key: candidate.key)
-        await refreshActiveWork()
-    }
-
-    private func createItem(kind: String, title: String, summary: String) async throws {
-        _ = try await model.createActiveWorkItem(kind: kind, title: title, summary: summary)
-        await refreshActiveWork()
-    }
-
-    private func transition(
-        _ item: ActiveWorkItem,
-        _ target: ActiveWorkPipelineStage
-    ) async throws {
-        _ = try await model.transitionActiveWorkItem(item, to: target)
-        await refreshActiveWork()
-    }
-
-    private func setLifecycle(_ item: ActiveWorkItem, _ lifecycle: String) async throws {
-        _ = try await model.setActiveWorkLifecycle(item, lifecycle: lifecycle)
-        await refreshActiveWork()
     }
 
     /// The detail column's 40pt title bar: navigation, the screen's own title

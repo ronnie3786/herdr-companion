@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// Presentation scoped to the Mac's embedded Git and Active Work pages.
+/// Presentation scoped to the Mac's embedded Git pages.
 /// Authentication bootstrap and navigation policy remain owned by each container.
 @MainActor
 enum HerdrWebTheme {

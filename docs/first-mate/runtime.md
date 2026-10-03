@@ -15,7 +15,7 @@ and all views remain available. Reconciliation deliberately reads all features,
 so archiving a running feature does not stop, pause, cancel, resume, or otherwise
 steer its coordinator or workers. Unarchive restores list visibility without
 changing the workflow. No visits, assignments, documents, sessions, events,
-Active Work linkage, or work item identity are deleted.
+or external work item identity are deleted.
 
 ## Runtime boundary
 

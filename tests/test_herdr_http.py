@@ -927,57 +927,29 @@ class HerdrHTTPTests(unittest.TestCase):
             "https://herdr.example.test/base/herdr-web/",
         )
 
-    def test_board_page_serves_pre_auth_and_relative_redirect_preserves_reverse_proxy_prefixes(
-        self,
-    ):
-        with urllib.request.urlopen(self.base + "/board/", timeout=2) as response:
-            status = response.status
-            content_type = response.headers.get("Content-Type", "")
-            body = response.read().decode("utf-8")
 
+    def test_active_work_is_absent_from_api_description_and_routes(self):
+        status, _, description = self.request("/api/v1")
         self.assertEqual(status, 200)
-        self.assertIn("text/html", content_type)
-        self.assertIn("Herdr Ticket Paths", body)
-
-        connection = http.client.HTTPConnection(
-            "127.0.0.1",
-            self.server.server_address[1],
-            timeout=2,
-        )
-        self.addCleanup(connection.close)
-        connection.request("GET", "/board")
-        response = connection.getresponse()
-        response.read()
-
-        self.assertEqual(response.status, 308)
-        self.assertEqual(response.getheader("Location"), "board/")
-        self.assertEqual(
-            urllib.parse.urljoin(
-                "https://herdr.example.test/base/board",
-                response.getheader("Location"),
-            ),
-            "https://herdr.example.test/base/board/",
-        )
-
-    def test_board_page_styles_activity_messages(self):
-        with urllib.request.urlopen(self.base + "/board/", timeout=2) as response:
-            body = response.read().decode("utf-8")
-
-        self.assertEqual(response.status, 200)
-        self.assertIn(".act-bubble", body)
-        self.assertIn(".act-chip", body)
-        self.assertNotIn("Bangers", body)
-
-    def test_api_description_lists_workflow_and_board_endpoints(self):
-        status, _, body = self.request("/api/v1")
-
-        self.assertEqual(status, 200)
-        self.assertEqual(
-            body["endpoints"]["activeWorkWorkflows"],
-            "/api/v1/active-work/workflows",
-        )
-        self.assertEqual(body["endpoints"]["board"], "/board")
-        self.assertIn("POST /api/v1/active-work/workflows", body["mutations"])
+        self.assertNotIn("activeWork", description["endpoints"])
+        self.assertNotIn("board", description["endpoints"])
+        self.assertNotIn("active-work", json.dumps(description))
+        self.assertNotIn("active_work.updated", description["sseEvents"])
+        routes = [("GET", "/board"), ("GET", "/board/"),
+                  ("GET", "/api/v1/active-work"), ("GET", "/api/v1/active-work/workflows"),
+                  ("GET", "/api/v1/active-work/sync-targets"),
+                  ("POST", "/api/v1/active-work/items"),
+                  ("PATCH", "/api/v1/active-work/items/synthetic"),
+                  ("POST", "/api/v1/active-work/items/synthetic/transitions"),
+                  ("POST", "/api/v1/active-work/items/synthetic/path"),
+                  ("PATCH", "/api/v1/active-work/items/synthetic/stages/plan"),
+                  ("POST", "/api/v1/active-work/jira/SYN-1/setup"),
+                  ("POST", "/api/v1/active-work/ingestions")]
+        for method, path in routes:
+            with self.subTest(method=method, path=path):
+                status, _, body = self.request(path, method=method, payload={} if method != "GET" else None)
+                self.assertEqual(status, 404)
+                self.assertEqual(body["error"]["code"], "not_found")
 
     def test_api_prefix_requires_exact_version_segment(self):
         for path in ("/api/v10/workspaces", "/api/v1evil/workspaces"):

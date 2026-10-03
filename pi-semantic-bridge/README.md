@@ -317,22 +317,6 @@ use observed revisions so concurrent Mac/agent edits produce a conflict.
 Run `herdr-notes --help`; its API connection comes from the selected TOML
 configuration or the matching native terminal discovery record. Global Pi instruction files are unchanged.
 
-The bundled `active-work-discovery` extension adds `herdr-active-work` guidance
-for those same Herdr sessions. For work the user has authorized, agents read the
-item and its current path, maintain progress and a clear next action, and adapt
-the ticket's route when reviews or investigation require a detour. Path changes
-and moves use the observed revision and record a reason. Human decisions,
-evidence, ownership, and waiting reasons remain part of the durable handoff.
-The extension injects instructions only, without reading tickets, starting a
-monitor, or executing workflow steps. Stored ticket text remains data. It does
-not grant permission for unrelated changes or external actions.
-
-Use `herdr-active-work show <REF>` and `herdr-active-work path-show <REF>` to
-inspect a ticket, and command help for `path-set`, `move`, `track`, `update`,
-and `stage-set`. `track` records the current owner, loop status, waiting reason,
-next action, and resume context. Install the matching CLI and server with this package so the
-discovered commands use the same API contract.
-
 ## Development
 
 Use Node.js 22.19 or newer. Run `npm ci` and `npm test` in this directory. The extension is tested with Pi 0.84.2; the declared peer range records the supported release series. Test tooling is installed locally.

@@ -210,7 +210,7 @@ def ui_state(value: Any) -> dict:
     if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
         raise ControlError("state.revision must be a nonnegative integer")
     window = value.get("window")
-    if window not in {"main", "settings", "hud", "active-work"}:
+    if window not in {"main", "settings", "hud"}:
         raise ControlError("state.window is invalid")
     segment = short_string(value.get("segment"), "state.segment", maximum=64)
     enabled = value.get("enabled")

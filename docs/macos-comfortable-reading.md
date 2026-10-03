@@ -48,7 +48,7 @@ Streaming prose must not reserve empty rows or boundary blank lines that disappe
 when the response finishes. Whitespace inside code fences remains intact. The
 composer and navigation continue to adapt to the app's text-size preference.
 
-Embedded Git and Active Work content receives presentation-only CSS from the Mac
+Embedded Git content receives presentation-only CSS from the Mac
 host. Bootstrap authentication, navigation restrictions, native message handling,
 and the shared server/web/iOS API contract are unchanged.
 
@@ -61,6 +61,6 @@ and the shared server/web/iOS API contract are unchanged.
   collapsed activity, failures, tables, and code.
 - Sidebar selection, unread and starred sessions, keyboard navigation, large text,
   and narrow windows.
-- Settings validation, machine configuration, and embedded Git/board navigation.
+- Settings validation, machine configuration, and embedded Git navigation.
 
 Only synthetic fixtures may be used in repository screenshots and tests.

@@ -2,7 +2,6 @@ import Foundation
 
 enum AgentControlWindow: String, Codable, Sendable {
     case main, settings, hud
-    case activeWork = "active-work"
 }
 
 struct AgentControlTarget: Codable, Equatable, Sendable {

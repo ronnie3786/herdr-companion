@@ -521,24 +521,12 @@ def _redact_environment_auth(environ: Mapping[str, Any]) -> dict[str, Any]:
     """Expose only boolean auth state, never a credential or path."""
 
     api_configured = bool(_safe_text(environ.get("HERDR_HARNESS_API_TOKEN")))
-    manage_configured = bool(_safe_text(environ.get("HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN")))
-    manage_file = _safe_text(environ.get("HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN_FILE"))
-    if manage_file:
-        try:
-            manage_configured = manage_configured or Path(manage_file).is_file()
-        except OSError:
-            pass
-    ingest_configured = bool(_safe_text(environ.get("HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN")))
     apns_configured = all(
         bool(_safe_text(environ.get(name)))
         for name in ("HERDR_APNS_KEY_ID", "HERDR_APNS_TEAM_ID", "HERDR_APNS_KEY_PATH")
     )
     return {
         "api": {"configured": api_configured},
-        "activeWork": {
-            "manageConfigured": manage_configured,
-            "ingestConfigured": ingest_configured,
-        },
         "push": {"configured": apns_configured},
     }
 

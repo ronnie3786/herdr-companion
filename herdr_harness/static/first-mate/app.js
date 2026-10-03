@@ -372,7 +372,7 @@
     const workState=['running','coordinating','recovering','paused','blocked','awaiting_direction'].includes(record?.status)
       ?'Archiving changes list visibility only. Work keeps its current state and may continue according to its existing authorization. '
       :'Archiving changes list visibility only. ';
-    return `<form id="archive-feature"><p>${workState}Visits, assignments, documents, sessions, events, status, and Active Work linkage are retained.</p>${explanation?`<p class="archive-unavailable">${escape(explanation)}</p>`:''}<label for="archive-reason">Optional reason</label><select id="archive-reason">${archiveReasonOptions}</select><div class="archive-actions"><button class="primary" id="archive-without-cleanup" type="button">Archive without cleanup</button></div></form>`;
+    return `<form id="archive-feature"><p>${workState}Visits, assignments, documents, sessions, events, and status are retained.</p>${explanation?`<p class="archive-unavailable">${escape(explanation)}</p>`:''}<label for="archive-reason">Optional reason</label><select id="archive-reason">${archiveReasonOptions}</select><div class="archive-actions"><button class="primary" id="archive-without-cleanup" type="button">Archive without cleanup</button></div></form>`;
   }
   function installHideOnlyArchive(feature){
     $('#archive-without-cleanup').onclick=()=>setArchived(feature,true,$('#archive-reason').value||null);

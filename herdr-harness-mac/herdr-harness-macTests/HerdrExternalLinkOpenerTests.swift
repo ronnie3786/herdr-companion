@@ -4,8 +4,26 @@ import Testing
 @testable import herdr_harness_mac
 
 @MainActor
-@Suite("Active Work link opener")
-struct ActiveWorkLinkOpenerTests {
+@Suite("External link opener")
+struct HerdrExternalLinkOpenerTests {
+    @Test("Shared link validation accepts Buzz message links and rejects malformed destinations")
+    func validatesExternalLinks() {
+        #expect(HerdrExternalURL.threadURL(from: "buzz://message?channel=channel-1&id=event-1") != nil)
+        for value in [
+            "buzz://channel?channel=channel-1&id=event-1",
+            "buzz://message?id=event-1",
+            "buzz://message?channel=channel-1",
+            "buzz://message?channel=channel-1&id=event-1&id=event-2",
+            "buzz://message?channel=channel-1&id=event-1&root=root-1",
+            "buzz://person@message?channel=channel-1&id=event-1",
+            "buzz://message?channel=channel-1&id=event-1#fragment",
+            "buzz://message?channel=channel-1&id=event-1&redirect=https://example.invalid",
+            "https://user:password@example.invalid", "file:///tmp/synthetic", "javascript:alert(1)",
+        ] {
+            #expect(HerdrExternalURL.threadURL(from: value) == nil)
+        }
+    }
+
     private let buzzURL = URL(
         string: "buzz://message?channel=89a5bbb0-7a26-438f-81fb-ceb65d82b683&id=d7f719aaed94d298ba9f5b151f3247ade3a2ca3d0c22c544afadd1c80f3ea452"
     )!
@@ -20,7 +38,7 @@ struct ActiveWorkLinkOpenerTests {
         var createsNewInstance = true
         var allowsSubstitution = true
 
-        let route = await ActiveWorkLinkOpener.open(
+        let route = await HerdrExternalLinkOpener.open(
             buzzURL,
             resolveBuzzApplication: { expectedApplicationURL },
             openNormally: { _ in
@@ -52,7 +70,7 @@ struct ActiveWorkLinkOpenerTests {
         var normallyOpenedURL: URL?
         var targetedApplicationURL: URL?
 
-        let route = await ActiveWorkLinkOpener.open(
+        let route = await HerdrExternalLinkOpener.open(
             buzzURL,
             resolveBuzzApplication: { expectedApplicationURL },
             openNormally: { url in
@@ -74,7 +92,7 @@ struct ActiveWorkLinkOpenerTests {
         let malformedURL = URL(string: "buzz://message?channel=channel-1")!
         var attemptedOpen = false
 
-        let route = await ActiveWorkLinkOpener.open(
+        let route = await HerdrExternalLinkOpener.open(
             malformedURL,
             resolveBuzzApplication: {
                 attemptedOpen = true
@@ -95,7 +113,7 @@ struct ActiveWorkLinkOpenerTests {
     func reportsTargetedLaunchFailure() async {
         struct TestFailure: Error { }
 
-        let route = await ActiveWorkLinkOpener.open(
+        let route = await HerdrExternalLinkOpener.open(
             buzzURL,
             resolveBuzzApplication: { URL(fileURLWithPath: "/Applications/Buzz.app") },
             openNormally: { _ in false },
@@ -109,7 +127,7 @@ struct ActiveWorkLinkOpenerTests {
     func rejectsUnverifiedSchemeHandler() async {
         var normallyOpened = false
 
-        let route = await ActiveWorkLinkOpener.open(
+        let route = await HerdrExternalLinkOpener.open(
             buzzURL,
             resolveBuzzApplication: { nil },
             openNormally: { _ in

@@ -18,8 +18,6 @@ from typing import Any, Callable, Mapping, Optional, TypeVar
 
 from .alerts import AlertStore, utc_now
 from . import attachments, local_tools, response_audio, result_artifacts, voice, workspace_tools
-from .active_work import ActiveWorkError
-from .active_work_store import ActiveWorkRepository, DEFAULT_STORE_PATH as DEFAULT_ACTIVE_WORK_STORE_PATH
 from .agent_activity import AgentActivityManager
 from .agent_runs import ACT_CHARTER, ASK_CHARTER, THINKING_LEVELS, AgentRunError, AgentRunManager
 from .chat_tab_colors import project_snapshot, sources_response
@@ -39,12 +37,10 @@ from .panes_seen import PaneFirstSeenStore
 from .pane_lifecycle import PaneLifecycle
 from .push_notifications import APNsManager
 from .quick_voice import QuickVoiceManager
-from .remote_activity import RemoteActivityPoller
 from .session_labels import SessionLabelManager, session_prompt_context
 from .stars import StarStore
 from .terminal import TerminalObserver, TerminalObserverError
 from .unread_notifications import UnreadNotificationManager
-from .workflows import parse_workflow_config
 
 
 _ToolResult = TypeVar("_ToolResult")
@@ -126,9 +122,7 @@ class HerdrService:
         response_audio_service: Optional[response_audio.ResponseAudioService] = None,
         cleanup: Optional[CleanupManager] = None,
         agent_runs: Optional[AgentRunManager] = None,
-        active_work: Optional[ActiveWorkRepository] = None,
         agent_activity: Optional[AgentActivityManager] = None,
-        remote_activity: Optional[RemoteActivityPoller] = None,
         result_artifact_store: Optional[result_artifacts.ResultArtifactStore] = None,
         first_mate_store: Optional[FirstMateStore] = None,
         first_mate_runtime: Optional[Any] = None,
@@ -194,23 +188,10 @@ class HerdrService:
         self._label_observation_lock = threading.Lock()
         self._label_observed_checkpoints: dict[str, tuple[str, int]] = {}
         self.cleanup = cleanup or CleanupManager(self, environ=self.environ)
-        active_work_store_path = self.environ.get("HERDR_HARNESS_ACTIVE_WORK_STORE_PATH")
-        if not active_work_store_path:
-            active_work_store_path = DEFAULT_ACTIVE_WORK_STORE_PATH if production_environment else ":memory:"
-        self.active_work = active_work or ActiveWorkRepository(active_work_store_path, environ=self.environ)
-        self._owns_active_work = active_work is None
         self.agent_activity = agent_activity or AgentActivityManager(
-            self.active_work,
-            self.broker,
-            environ=None if production_environment else self.environ,
             on_session_activity=lambda pane_id: self.broker.publish("snapshot.updated", {
                 "paneId": pane_id, "change": "session_activity", "generatedAt": utc_now(),
             }),
-        )
-        self.remote_activity = remote_activity or RemoteActivityPoller(
-            lambda: set(self.active_work.active_pane_ids()),
-            self.agent_activity.handle_event,
-            environ=None if production_environment else self.environ,
         )
         # Agent runs are initialized lazily. Most harness requests do not need
         # a subprocess manager, and delaying creation avoids touching its
@@ -521,10 +502,6 @@ class HerdrService:
             self.agent_activity.start()
         except Exception:
             pass
-        try:
-            self.remote_activity.start()
-        except Exception:
-            pass
         self._event_thread = threading.Thread(
             target=self._event_loop,
             name="herdr-events",
@@ -586,10 +563,6 @@ class HerdrService:
             self.agent_activity.stop()
         except Exception:
             pass
-        try:
-            self.remote_activity.stop()
-        except Exception:
-            pass
         for thread in (
             self._event_thread,
             self._refresh_thread,
@@ -605,8 +578,6 @@ class HerdrService:
             stop_agent_runs = getattr(self._agent_runs, "stop", None)
             if callable(stop_agent_runs):
                 stop_agent_runs()
-        if self._owns_active_work:
-            self.active_work.close()
         if self._owns_first_mate_store and self._first_mate_store is not None:
             self._first_mate_store.close()
         if self._owns_pr_review_store and self._pr_review_store is not None:
@@ -1996,156 +1967,6 @@ class HerdrService:
             "review_requests": review_section,
             "jira_tickets": jira_section,
         }
-
-    def active_work_board(self) -> dict:
-        """Return durable Active Work state with live, explicitly untracked Jira candidates.
-
-        Jira is an enrichment source only. A Jira outage must not make
-        the durable board unavailable, and merely observing a candidate never
-        creates a work item.
-        """
-
-        candidates: list[dict] = []
-        jira_status: dict[str, Any] = {"ok": True, "error": None}
-        try:
-            payload = self.local_tools.jira_assigned(limit=100)
-            site = payload.get("site")
-            raw_tickets = payload.get("tickets")
-            for raw in raw_tickets if isinstance(raw_tickets, list) else []:
-                ticket = self._jira_ticket(raw)
-                if ticket is None:
-                    continue
-                if isinstance(site, str) and site.strip():
-                    ticket["site"] = site.strip()
-                candidates.append(ticket)
-                # Refresh only an already-tracked link. This method is
-                # intentionally incapable of creating work from observation.
-                try:
-                    self.active_work.refresh_tracked_jira(ticket)
-                except ActiveWorkError:
-                    # One malformed optional Jira candidate must not make the
-                    # durable Active Work board unavailable.
-                    continue
-        except local_tools.LocalToolsError as exc:
-            jira_status = {"ok": False, "error": str(exc)}
-
-        result = self.active_work.board_projection(candidates)
-        result["jira_candidates_status"] = jira_status
-        return result
-
-    def active_work_item(self, item_id: str) -> dict:
-        item = self.active_work.item_projection(item_id)
-        if item is None:
-            raise ActiveWorkError(
-                "Active Work item not found",
-                code="active_work_item_not_found",
-                status=404,
-            )
-        return {"ok": True, "item": item, "generated_at": utc_now()}
-
-    def list_active_work_workflows(self) -> dict:
-        return {
-            "ok": True,
-            "workflows": self.active_work.list_workflows(),
-            "generated_at": utc_now(),
-        }
-
-    def get_active_work_workflow(self, slug: str, *, version: Optional[int] = None) -> dict:
-        workflow = self.active_work.get_workflow(slug, version)
-        return {"ok": True, "workflow": workflow, "generated_at": utc_now()}
-
-    def apply_active_work_workflow(self, payload: dict) -> dict:
-        config = parse_workflow_config(payload)
-        result = self.active_work.apply_workflow(config)
-        return {"ok": True, **result, "generated_at": utc_now()}
-
-    def create_active_work_item(self, payload: dict, *, actor: str = "user") -> dict:
-        item = self.active_work.create_item(payload, actor=actor)
-        self._publish_active_work_updated(item, change="created")
-        return {"ok": True, "item": item, "generated_at": utc_now()}
-
-    def patch_active_work_item(
-        self,
-        item_id: str,
-        payload: dict,
-        *,
-        actor: str = "user",
-    ) -> dict:
-        item = self.active_work.patch_item(item_id, payload, actor=actor)
-        self._publish_active_work_updated(item, change="patched")
-        return {"ok": True, "item": item, "generated_at": utc_now()}
-
-    def transition_active_work_item(
-        self,
-        item_id: str,
-        payload: dict,
-        *,
-        actor: str = "user",
-    ) -> dict:
-        item = self.active_work.transition(item_id, payload, actor=actor)
-        self._publish_active_work_updated(item, change="transitioned")
-        return {"ok": True, "item": item, "generated_at": utc_now()}
-
-    def update_active_work_path(
-        self, item_id: str, payload: dict, *, actor: str = "user"
-    ) -> dict:
-        item = self.active_work.update_path(item_id, payload, actor=actor)
-        self._publish_active_work_updated(item, change="path_updated")
-        return {"ok": True, "item": item, "generated_at": utc_now()}
-
-    def patch_active_work_stage(
-        self, item_id: str, stage_key: str, payload: dict, *, actor: str = "user"
-    ) -> dict:
-        item = self.active_work.patch_stage(item_id, stage_key, payload, actor=actor)
-        self._publish_active_work_updated(item, change="stage_patched")
-        return {"ok": True, "item": item, "generated_at": utc_now()}
-
-    def setup_active_work_jira(self, issue_key: str, *, actor: str = "user") -> dict:
-        """Set up one explicitly selected Jira issue without creating Buzz resources."""
-
-        payload = self._tool_call(self.local_tools.jira_issue, issue_key)
-        ticket = self._jira_ticket(payload.get("ticket"))
-        if ticket is None:
-            raise ActiveWorkError(
-                "Jira returned an invalid issue",
-                code="active_work_jira_invalid_response",
-                status=502,
-            )
-        site = payload.get("site")
-        if isinstance(site, str) and site.strip():
-            ticket["site"] = site.strip()
-        result = self.active_work.setup_jira(ticket, actor=actor)
-        item = result["item"]
-        self._publish_active_work_updated(
-            item,
-            change="jira_setup" if result["created"] else "jira_refreshed",
-        )
-        return {"ok": True, **result, "generated_at": utc_now()}
-
-    def ingest_active_work(self, payload: dict, *, actor: Optional[str] = None) -> dict:
-        source_name = str(payload.get("source") or "ingest") if isinstance(payload, dict) else "ingest"
-        result = self.active_work.ingest(
-            payload,
-            actor=actor or f"ingest:{source_name[:64]}",
-        )
-        item = result.get("item")
-        if result.get("applied") and isinstance(item, dict):
-            self._publish_active_work_updated(item, change="ingested")
-        return {"ok": True, **result, "generated_at": utc_now()}
-
-    def active_work_sync_targets(self) -> dict:
-        return self.active_work.sync_targets()
-
-    def _publish_active_work_updated(self, item: dict, *, change: str) -> None:
-        self.broker.publish(
-            "active_work.updated",
-            {
-                "work_item_id": item.get("id"),
-                "revision": item.get("revision"),
-                "change": change,
-                "generated_at": utc_now(),
-            },
-        )
 
     def jira_issue(self, *, query: str) -> dict:
         payload = self._tool_call(self.local_tools.jira_issue, query)

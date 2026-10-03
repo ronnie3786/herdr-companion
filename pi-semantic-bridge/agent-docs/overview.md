@@ -38,7 +38,6 @@ query the advertised action and capability catalogs.
   actions, and receipts;
 - `herdr-first-mate`: external feature inspection and operator lifecycle actions;
 - `herdr-notes`: synchronized note list/search/read and revisioned mutations;
-- `herdr-active-work`: items, ticket paths, stage evidence, and durable handoff;
 - `herdr-hud-chats`: saved HUD history discovery (`list`, `search`, `show`);
 - `herdr-session-context`: projected prior conversation by exact identity;
 - `herdr-pr-review`: PR Review resources and native navigation;

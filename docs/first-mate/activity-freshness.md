@@ -73,7 +73,6 @@ ambiguous timeout.
 | Native general API request | 15 s | 45 s |
 | Native First Mate reads | 15 s | 90 s |
 | Native health/network checks | 8 s | 30 s |
-| Remote activity snapshot bootstrap | 8 s | 30 s |
 | Control CLI request | 20 s | 60 s |
 | First Mate CLI request | 20 s | 90 s |
 | Native agent-run status request | 30 s | 45 s |

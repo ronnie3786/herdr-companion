@@ -271,17 +271,20 @@ final class HerdrMacShellUITests: HerdrUITestCase {
         )
     }
 
-    /// The navigator used to carry an Active Work CTA above the tree. It lives
-    /// in the title bar's ⋯ menu with the app's other destinations.
     @MainActor
-    func testSidebarNoLongerCarriesTheActiveWorkCTA() throws {
+    func testActiveWorkIsRemovedFromTheShell() throws {
         let app = launchDemoApp()
         XCTAssertTrue(app.buttons["sidebar-workspace-demo1|w1"].waitForExistence(timeout: 10))
 
         XCTAssertFalse(
             app.control(identifier: "sidebar-active-work").exists,
-            "Active Work lives in the title bar's ⋯ menu, not the sidebar"
+            "The removed feature must not appear in the sidebar"
         )
+        XCTAssertNil(app.menuBarItem("View", item: "Active Work"))
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        app.control(identifier: "shell-more-menu").click()
+        XCTAssertFalse(app.menuItems["shell-menu-active-work"].exists)
+        XCTAssertFalse(app.menuItems["Active Work"].exists)
     }
 
     @MainActor

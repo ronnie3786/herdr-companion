@@ -40,7 +40,7 @@ pass that value to `session --before` to read earlier messages.
 The default list contains active features. `list --archived` returns only archived
 features and `list --all` returns both in deterministic update order. Archive is
 not a lifecycle action: it retains status, workflow revision, visits, assignments,
-documents, saved sessions, events, Active Work linkage and `work_item_id`. Running
+documents, saved sessions, events and the external `work_item_id` reference. Running
 work continues. Reasons are optional; supported values are `completed`, `test/synthetic`,
 `duplicate`, `no longer relevant`, `superseded`, and `other`.
 

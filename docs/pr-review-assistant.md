@@ -1,5 +1,8 @@
 # PR Review Assistant
 
+Active Work references below are historical. That feature has been removed;
+see [upgrade notes](active-work-removal.md).
+
 Status: Implemented in macOS 0.27.0-beta.1 with companion 0.27.0b1 (2026-09-21); see
 [pr-review.md](pr-review.md) for setup, behaviour, the CLI and the agent-control actions.
 Originally a draft feature guideline (2026-09-20).

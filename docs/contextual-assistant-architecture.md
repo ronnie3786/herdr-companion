@@ -64,7 +64,7 @@ standalone web redesign or rewriting the full Pi conversation UI.
 ```mermaid
 flowchart TD
     HUD[HUD context adapter] --> Native[Swift conversation component]
-    Future[Notes / Active Work / terminal adapters] --> Native
+    Future[Notes / terminal adapters] --> Native
     Git[Git selection adapter] --> Web[React conversation component]
     Native --> API[Contextual agent-run contract]
     Web --> API

@@ -24,7 +24,7 @@ the companion package or CLI; update those components separately.
 4. Invoke actions only within the human's authorization in the agent conversation.
    **CLI actions do not require another confirmation in the Mac UI.** Normal
    manually clicked confirmations remain unchanged. Authentication, exact-target
-   checks, busy-state guards and existing Active Work/First Mate human checkpoints
+   checks, busy-state guards and existing First Mate human checkpoints
    still apply. Discovering an action never grants permission to execute it.
 
 Turning off Mac agent control stops UI control. It does not revoke the companion
@@ -133,7 +133,7 @@ concurrent additions/removals can change subsequent pages.
 ```sh
 herdr-control --control-machine desktop ui segment git --wait 30
 herdr-control --control-machine desktop ui segment chat --wait 30
-herdr-control --control-machine desktop ui segment active-work --wait 30
+herdr-control --control-machine desktop ui segment first-mate --wait 30
 herdr-control --control-machine desktop ui segment fleet --wait 30
 herdr-control --control-machine desktop ui back --wait 30
 herdr-control --control-machine desktop ui forward --wait 30
@@ -193,8 +193,8 @@ control from the [long-term plan](agent-control-plan.md).
 | Workspace resources | Create workspace, tab and Pi chat; rename workspace/tab/pane |
 | Pane resources | Set star, split, close, end Pi while preserving the tab, compact, interrupt |
 | Upstream terminal | Explicit focus and zoom operations, separate from Companion navigation |
-| Existing domain tools | Notes, Active Work and First Mate retain their dedicated authenticated CLIs and workflow rules |
-| Not app-wide parity yet | Individual Git diff/file controls, every Active Work/Fleet submenu, all settings setters, attachment/quote editors, and complete closed-session archive search |
+| Existing domain tools | Notes and First Mate retain their dedicated authenticated CLIs and workflow rules |
+| Not app-wide parity yet | Individual Git diff/file controls, every Fleet submenu, all settings setters, attachment/quote editors, and complete closed-session archive search |
 
 Unsupported actions return an error. Do not substitute arbitrary terminal
 keystrokes or a generic shell command to bypass the catalog or validation.
@@ -278,7 +278,7 @@ The additive API exposes `/api/v1/control/capabilities`, `/api/v1/discovery`,
 `/api/v1/control/inspect`, resource actions/receipts under `/api/v1/control`, and
 receiver clients/state/actions/commands under `/api/v1/ui`. It requires the main
 API bearer even when the server otherwise permits insecure loopback development.
-Active Work scoped credentials do not authorize UI control.
+Only the main companion bearer token authorizes UI control.
 
 Receiver registration, heartbeats and acknowledgements also require a per-server
 receiver secret. The app keeps it in Keychain; the server stores only its hash.

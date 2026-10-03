@@ -1,10 +1,15 @@
-# First Mate archive review
+# Herdr Companion 0.102.0-beta.1
 
-Completed sessions in the standalone First Mate window now have an **Archive session…** button. The sidebar and conversation Archive actions open the same review, with First Mate’s purple glass, native translucent material and lavender controls. Mac First Mate uses dark appearance throughout.
+Active Work has been removed from the Mac app, including its menu entry,
+Command-6 shortcut, board and focus views, pop-out window, and background requests.
+Old navigation history skips that destination. Chat, First Mate, My Work, and
+PR Review remain available, including Chat activity labels and review links.
 
-- Review session-owned disposable resources, choose what to delete, and see an estimated amount of disk space before confirming. Dirty worktrees, project folders and protected resources remain in place.
-- Keep documents and conversation copies in the session, or move those copies into its saved completion record. The full record is saved before cleanup and remains searchable and exportable.
-- Follow actual cleanup status and a persistent activity log. **Completed work** at the bottom of the standalone conversation list opens saved records on the selected companion machine.
-- Project archive offers the same optional review for its completed sessions. Archiving only the project keeps its folder, history and running work.
+Install through **Herdr Companion → Check for Updates…**. This Mac update works
+with an older companion. To remove Active Work from the server as well, install
+the separately published **Companion 0.84.0-beta.1** package on each host.
+The Mac updater does not install server packages or restart running tasks.
 
-Reviewed resource cleanup requires companion **0.84.0b1** or newer with `first-mate-archive-review-v1`. Older native clients and ordinary archive requests continue to hide sessions without deleting resources. The companion wheel is a separate server installation; the Mac updater installs only the app. Existing active sessions and private configuration are preserved during the server rollout.
+Existing private board data is left untouched. See the
+[removal and upgrade notes](https://github.com/ronnie3786/herdr-companion/blob/main/docs/active-work-removal.md)
+for retired background jobs, Pi package updates, and configuration compatibility.

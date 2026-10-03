@@ -287,7 +287,7 @@ private struct PRReviewDocumentRow: View {
                 return
             }
             Task {
-                do { try await ActiveWorkLinkOpener.open(url) }
+                do { try await HerdrExternalLinkOpener.open(url) }
                 catch { openError = error.localizedDescription }
             }
         case .audio, .video:
@@ -318,7 +318,7 @@ private struct PRReviewDocumentRow: View {
         guard let quickTime = NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: "com.apple.QuickTimePlayerX"
         ) else {
-            guard NSWorkspace.shared.open(url) else { throw ActiveWorkLinkOpener.OpenError.unavailable }
+            guard NSWorkspace.shared.open(url) else { throw HerdrExternalLinkOpener.OpenError.unavailable }
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()

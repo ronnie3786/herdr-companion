@@ -271,49 +271,20 @@ api_token="private-token"
         self.assertGreaterEqual(len(stores), 15)
         self.assertTrue(all(value.startswith(root + '/') for value in stores))
         self.assertTrue(config.environ['HERDR_HARNESS_NOTES_STORE_PATH'].endswith('notes.sqlite3'))
-        self.assertEqual(config.environ['HERDR_HARNESS_WORKFLOWS_DIR'], root + '/workflows')
+        self.assertNotIn("HERDR_HARNESS_WORKFLOWS_DIR", config.environ)
+        self.assertNotIn("HERDR_HARNESS_ACTIVE_WORK_STORE_PATH", config.environ)
 
-    def test_workflow_definitions_only_load_from_configured_directory(self):
-        from herdr_harness.active_work_store import ActiveWorkRepository
 
-        legacy = self.root / '.config/herdr-harness/workflows'
-        legacy.mkdir(parents=True)
-        payload = {
-            'workflow': 'garden-demo', 'version': 1, 'title': 'Garden Demo',
-            'phases': [{'key': 'plan', 'title': 'Plan'}, {'key': 'finish', 'title': 'Finish'}],
-            'stages': [
-                {'key': 'plan', 'title': 'Plan', 'phase': 'plan', 'skill': 'plan'},
-                {'key': 'finish', 'title': 'Finish', 'phase': 'finish', 'skill': 'finish'},
-            ],
-        }
-        (legacy / 'garden.json').write_text(json.dumps(payload))
-        repository = ActiveWorkRepository(':memory:', environ={'HOME': str(self.root)})
-        self.addCleanup(repository.close)
-        self.assertNotIn('garden-demo', {item['slug'] for item in repository.list_workflows()})
-
-        config = self.load('[active_work]\nworkflows_dir=".config/herdr-harness/workflows"')
-        configured = ActiveWorkRepository(':memory:', environ=config.environ)
-        self.addCleanup(configured.close)
-        self.assertIn('garden-demo', {item['slug'] for item in configured.list_workflows()})
-
-    def test_manage_token_and_apns_names_match_actual_consumers(self):
-        config = self.load('''[active_work]
-manage_token="test-manage"
-ingest_token="test-ingest"
-[push]
+    def test_apns_names_match_actual_consumers(self):
+        config = self.load('''[push]
 environment="sandbox"
 [apple]
 team_id="EXAMPLETEAM"
 ios_bundle_id="org.example.herdr.ios"
 ''')
-        self.assertEqual(config.environ['HERDR_ACTIVE_WORK_MANAGE_TOKEN'], 'test-manage')
-        self.assertEqual(config.environ['HERDR_ACTIVE_WORK_TOKEN'], 'test-ingest')
         self.assertEqual(config.environ['HERDR_APNS_ENV'], 'sandbox')
         self.assertEqual(config.environ['HERDR_HARNESS_APP_IDS'], 'EXAMPLETEAM.org.example.herdr.ios')
 
-    def test_process_manage_token_override_is_shared_with_cli(self):
-        config = load_configuration(self.write('[active_work]\nmanage_token="from-file"'), environ={"HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN": "from-process"})
-        self.assertEqual(config.environ["HERDR_ACTIVE_WORK_MANAGE_TOKEN"], "from-process")
 
     def test_invalid_port_error_never_echoes_the_supplied_value(self):
         with self.assertRaises(ConfigurationError) as raised:
@@ -323,7 +294,6 @@ ios_bundle_id="org.example.herdr.ios"
     def test_client_urls_follow_configured_server_port_and_bind_address(self):
         config = self.load('[server]\nhost="0.0.0.0"\nport=9191')
         self.assertEqual(config.environ['HERDR_HARNESS_URL'], 'http://127.0.0.1:9191')
-        self.assertEqual(config.environ['HERDR_ACTIVE_WORK_BASE_URL'], 'http://127.0.0.1:9191')
         self.assertIn('HERDR_HARNESS_URL', config.derived_urls)
         config = self.load('[server]\nhost="::"\nport=9292')
         self.assertEqual(config.environ['HERDR_HARNESS_URL'], 'http://[::1]:9292')

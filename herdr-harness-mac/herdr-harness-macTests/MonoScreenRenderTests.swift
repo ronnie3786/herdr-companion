@@ -253,7 +253,6 @@ enum MonoRenderFixtures {
             WorkspaceNavigationView(
                 model: model,
                 shell: shell,
-                activeWorkStore: ActiveWorkStore(),
                 modelFavorites: ModelFavoritesStore(),
                 updates: HerdrUpdateController(defaults: UserDefaults(suiteName: "MonoRender.updates.\(UUID().uuidString)")!),
                 detailOverride: detail

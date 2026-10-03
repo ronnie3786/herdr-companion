@@ -1,13 +1,33 @@
 # Companion 0.84.0-beta.1
 
-First Mate can now retain a searchable, immutable completion record and clean up explicitly selected session-owned disposable resources after completion.
+Removes the Active Work server feature: its board page and API, durable-store
+implementation, workflow templates, Buzz sync, board review watcher, activity
+summaries, remote activity forwarding, and Pi discovery extension. The installed
+`herdr-active-work`, `herdr-active-work-sync`, and `herdr-pr-review-watch` commands
+are removed. Protected requests to the retired endpoints return 404.
 
-- Adds `first-mate-archive-review-v1` and `first-mate-archive-cleanup-v1`. Read-only previews return resource eligibility, logical size estimates and a token bound to the current session and resource state. Cleanup requires the reviewed revision, token, resource IDs and retention choices together.
-- Ordinary archive requests from older Mac, iOS and web clients remain visibility-only and retain files. Active work continues. Project-only archive keeps its source folder and sessions.
-- The full original request, conversation, documents, recorded links, outcomes, usage and historical evidence are cataloged before deletion. Optional compaction moves live chat/document copies to that catalog. Search, export, durable progress logs and safe retry remain available.
-- Only resources created and registered by First Mate are candidates. Cleanup rechecks ownership, archive generation, stopped writers and Git state. Modified or unintegrated worktrees, source projects, backups, published builds, shared resources and unknown files are retained. Legacy resources without ownership receipts are retained.
-- Adds the host-local `fm_allocate_resource` tool for disposable build/cache directories. Resource allocation does not grant access to another machine or arbitrary filesystem paths.
+Chat's live activity labels, First Mate, My Work, Notes, and the separate PR Review
+API and CLI continue to work. Old board credentials no longer authenticate any
+request. Main API token validation and authentication remain enforced.
 
-Install this companion wheel separately on each server; the Mac updater installs only the app. Keep the private configuration and state, take a consistent state backup, and switch services at a safe boundary while preserving detached sessions. Keep the previous runtime for rollback. Existing clients remain compatible; the native review is included in Mac 0.102.0-beta.1.
+Install this package separately on each companion using the
+[server update procedure](https://github.com/ronnie3786/herdr-companion/blob/main/herdr_harness/README.md#update-the-server).
+Stop and remove operator-managed schedules for the retired sync/review commands,
+update the matching Pi package registration, and reload or resume existing Pi
+sessions against the new package. Keep the private configuration, state, and prior
+runtime for rollback. Wait for companion-owned jobs to finish before restarting
+a busy server.
 
-After installation, verify authenticated `GET /api/v1/first-mate/capabilities` includes both archive capabilities and `GET /api/v1/first-mate/history` succeeds. Open a completed session in the standalone First Mate window and choose **Archive session…** to review cleanup before confirming.
+Old `[active_work]`, `[remote_activity]`, and `[providers.activity]` settings are
+ignored so existing configuration files still load. Existing private board data
+and workflow files are retained without being opened or migrated.
+
+Update Mac clients to **0.102.0-beta.1** to remove their Active Work UI. Older Mac
+clients see an unavailable board after this server update; their other features
+continue to work. The Mac updater does not install this package, and publication
+does not restart a server.
+
+To verify, authenticated requests to `/board/` and `/api/v1/active-work` return
+404, `/api/v1` no longer advertises board endpoints, and a running Pi chat still
+shows its current activity. See the
+[full compatibility notes](https://github.com/ronnie3786/herdr-companion/blob/main/docs/active-work-removal.md).

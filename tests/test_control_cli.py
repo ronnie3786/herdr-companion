@@ -184,7 +184,7 @@ def standard_ui_actions():
         ui_action(
             "ui.segment",
             properties={"segment": {"type": "string", "enum": [
-                "chat", "terminal", "git", "skills", "active-work", "pr-review",
+                "chat", "terminal", "git", "skills", "pr-review",
                 "watchers", "first-mate", "fleet", "activity",
             ]}},
             required=("segment",),

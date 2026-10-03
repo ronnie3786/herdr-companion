@@ -46,10 +46,6 @@ ENVIRONMENT_FIELDS = {
         "model": "HERDR_HARNESS_CLEANUP_MODEL", "thinking_level": "HERDR_HARNESS_CLEANUP_THINKING",
         "pi_binary": "HERDR_HARNESS_CLEANUP_PI_BIN",
     },
-    "providers.activity": {
-        "url": "HERDR_HARNESS_ACTIVITY_MODEL_URL", "model": "HERDR_HARNESS_ACTIVITY_MODEL_NAME",
-        "debounce_seconds": "HERDR_HARNESS_ACTIVITY_DEBOUNCE_SECONDS",
-    },
     "providers.summary": {
         "url": "HERDR_RESPONSE_AUDIO_SUMMARY_URL", "model": "HERDR_RESPONSE_AUDIO_SUMMARY_MODEL",
         "provider": "HERDR_RESPONSE_AUDIO_SUMMARY_PROVIDER", "api_key": "HERDR_RESPONSE_AUDIO_SUMMARY_API_KEY",
@@ -65,17 +61,6 @@ ENVIRONMENT_FIELDS = {
     "providers.transcription": {
         "url": "HERDR_HARNESS_TRANSCRIPTION_URL", "token": "HERDR_HARNESS_TRANSCRIPTION_TOKEN",
         "backend": "HERDR_HARNESS_TRANSCRIPTION_BACKEND", "model": "HERDR_HARNESS_TRANSCRIPTION_MODEL",
-    },
-    "active_work": {
-        "url": "HERDR_ACTIVE_WORK_BASE_URL", "token": "HERDR_ACTIVE_WORK_TOKEN",
-        "manage_token": "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN",
-        "ingest_token": "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN",
-        "workflow_root": "BUZZ_WORKFLOW_ROOT", "store_path": "HERDR_HARNESS_ACTIVE_WORK_STORE_PATH",
-        "workflows_dir": "HERDR_HARNESS_WORKFLOWS_DIR",
-    },
-    "remote_activity": {
-        "url": "HERDR_HARNESS_REMOTE_ACTIVITY_URL", "prefix": "HERDR_HARNESS_REMOTE_ACTIVITY_PREFIX",
-        "token": "HERDR_HARNESS_REMOTE_ACTIVITY_TOKEN", "poll_seconds": "HERDR_HARNESS_REMOTE_ACTIVITY_POLL_SECONDS",
     },
     "first_mate": {
         "model": "HERDR_FIRST_MATE_MODEL",
@@ -347,6 +332,7 @@ def load_configuration(
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError):
             raise ConfigurationError("Herdr configuration could not be read as valid TOML") from None
+        # Retired active_work and remote_activity sections are accepted but ignored.
         allowed_sections = {"version", "machine", "server", "fleet", "providers", "active_work", "first_mate", "simportal", "pr_review", "watchers", "remote_activity", "integrations", "code_factory", "push", "apple", "deployment", "environment", "machines"}
         if set(data) - allowed_sections:
             raise ConfigurationError("Unrecognized top-level configuration section; use the Herdr cluster configuration sample")
@@ -419,15 +405,6 @@ def load_configuration(
         bundle_id = apple.get("ios_bundle_id") or f"{bundle_prefix}.ios"
         resolved["HERDR_HARNESS_APP_IDS"] = f"{apple['team_id']}.{bundle_id}"
     resolved.update(environment)
-    # Both clients consume the resolved server credential unless an explicit
-    # client-specific credential was selected by the operator.
-    for suffix in ("", "_FILE"):
-        manage = "HERDR_HARNESS_ACTIVE_WORK_MANAGE_TOKEN" + suffix
-        ingest = "HERDR_HARNESS_ACTIVE_WORK_INGEST_TOKEN" + suffix
-        if manage in resolved:
-            resolved.setdefault("HERDR_ACTIVE_WORK_MANAGE_TOKEN" + suffix, resolved[manage])
-        if ingest in resolved and "HERDR_ACTIVE_WORK_TOKEN" not in resolved and "HERDR_ACTIVE_WORK_TOKEN_FILE" not in resolved:
-            resolved["HERDR_ACTIVE_WORK_TOKEN" + suffix] = resolved[ingest]
     if "HERDR_HARNESS_PORT" in resolved:
         try:
             valid_port = 1 <= int(resolved["HERDR_HARNESS_PORT"]) <= 65535
@@ -439,10 +416,6 @@ def load_configuration(
     if not resolved.get("HERDR_HARNESS_URL"):
         resolved["HERDR_HARNESS_URL"] = server_origin(resolved.get("HERDR_HARNESS_HOST", "127.0.0.1"), resolved.get("HERDR_HARNESS_PORT", "9092"))
         derived_urls.add("HERDR_HARNESS_URL")
-    if not resolved.get("HERDR_ACTIVE_WORK_BASE_URL"):
-        resolved["HERDR_ACTIVE_WORK_BASE_URL"] = resolved["HERDR_HARNESS_URL"]
-        if "HERDR_HARNESS_URL" in derived_urls:
-            derived_urls.add("HERDR_ACTIVE_WORK_BASE_URL")
     if selected_path is not None:
         resolved["HERDR_CONFIG"] = str(selected_path)
     if selected:
@@ -454,7 +427,7 @@ def load_configuration(
             state = root / state
         paths = {
             "ALERT_STORE_PATH": "alerts.json", "STAR_STORE_PATH": "stars.json",
-            "PI_STORE_PATH": "pi-semantic.sqlite3", "ACTIVE_WORK_STORE_PATH": "active-work.sqlite3",
+            "PI_STORE_PATH": "pi-semantic.sqlite3",
             "FIRST_MATE_STORE_PATH": "first-mate.sqlite3", "FIRST_MATE_RUNS_ROOT": "first-mate-runs",
             "PR_REVIEW_STORE_PATH": "pr-review.sqlite3", "PR_REVIEW_RUNS_ROOT": "pr-review-runs",
             "WATCHERS_STORE_PATH": "watchers.sqlite3", "WATCHERS_ROOT": "watchers",
@@ -464,7 +437,6 @@ def load_configuration(
             "PANE_SEEN_STORE_PATH": "pane-first-seen.json", "SESSION_LABEL_STORE_PATH": "session-labels.json",
             "PANE_LIFECYCLE_STORE_PATH": "pane-lifecycle.sqlite3",
             "RESULT_ARTIFACTS_ROOT": "result-artifacts", "PUSH_STORE_PATH": "push-devices.json",
-            "WORKFLOWS_DIR": "workflows",
         }
         for variable, suffix in paths.items():
             resolved.setdefault("HERDR_HARNESS_" + variable, str(state / suffix))

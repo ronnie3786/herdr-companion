@@ -60,7 +60,7 @@ SSH, scan the tailnet, or mount another machine's disk on the Mac. It enumerates
 the owning companion's local filesystem under that companion process account.
 
 Project APIs, directory browsing, and project-based feature creation require the
-main companion bearer token. Active Work manage/ingest tokens cannot use them.
+main companion bearer token. Retired board credentials cannot use them.
 If no main token is configured, these APIs fail closed with `api_token_required`
 (503). Existing unauthenticated loopback development behavior for manual feature
 creation is unchanged.

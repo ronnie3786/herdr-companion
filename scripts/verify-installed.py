@@ -26,6 +26,20 @@ def main():
             return subprocess.check_output([python, "-I", "-c", code, *arguments], cwd=root, env=env, stderr=subprocess.STDOUT, timeout=30).decode()
         resources = json.loads(run("import json; import herdr_harness; from herdr_harness.resources import pi_extension_path, configuration_example; from herdr_harness.agent_docs import docs_root; from pathlib import Path; p=Path(herdr_harness.__file__).parent; d=docs_root(); print(json.dumps({'installed': 'site-packages' in str(p), 'pi': (pi_extension_path({})/'extensions/send-to-herdr.ts').is_file(), 'awareness': (pi_extension_path({})/'extensions/companion-awareness.ts').is_file(), 'guides': all((d/name).is_file() for name in ('overview.md','control.md','first-mate.md','api.md')), 'sample': configuration_example().is_file(), 'web': (p/'static/herdr-web/index.html').is_file()}))"))
         assert all(resources.values()), resources
+        retired_board = run("""
+from importlib.metadata import distribution
+from pathlib import Path
+import herdr_harness
+from herdr_harness.resources import pi_extension_path
+root = Path(herdr_harness.__file__).parent
+assert not any((root / name).exists() for name in (
+    'active_work.py', 'active_work_store.py', 'workflows.py', 'remote_activity.py', 'static/board.html'))
+assert not (pi_extension_path({}) / 'extensions/active-work-discovery.ts').exists()
+retired_commands = {'herdr-active-work', 'herdr-active-work-sync', 'herdr-pr-review-watch'}
+assert not retired_commands.intersection(entry.name for entry in distribution('herdr-companion').entry_points)
+print('ok')
+""")
+        assert retired_board.strip() == "ok", retired_board
         lineage = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/session-lineage.ts').is_file(); assert '../lib/session-lineage' in (p/'extensions/pi-semantic-bridge.ts').read_text(); assert (p/'extensions/session-context-discovery.ts').is_file(); print('ok')")
         assert lineage.strip() == "ok"
         transport = run("from herdr_harness.resources import pi_extension_path; p=pi_extension_path({}); assert (p/'lib/socket-writer.ts').is_file(); assert '../lib/socket-writer.ts' in (p/'extensions/pi-semantic-bridge.ts').read_text(); print('ok')")
@@ -84,7 +98,7 @@ print(json.dumps({
 store.close()
 """))
         assert all(first_mate.values()), first_mate
-        for module in ("herdr_harness.configuration_cli", "herdr_harness.control_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_active_work_sync", "herdr_commands.herdr_pr_review_watch", "herdr_commands.herdr_hud_chats_cli", "herdr_commands.herdr_session_context_cli", "herdr_commands.herdr_first_mate_cli"):
+        for module in ("herdr_harness.configuration_cli", "herdr_harness.control_cli", "herdr_commands.setup_herdr_demo", "herdr_commands.herdr_hud_chats_cli", "herdr_commands.herdr_session_context_cli", "herdr_commands.herdr_first_mate_cli"):
             run(f"from {module} import main; raise SystemExit(main())", "--help")
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))

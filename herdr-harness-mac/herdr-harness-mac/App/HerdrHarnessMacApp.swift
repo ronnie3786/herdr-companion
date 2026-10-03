@@ -8,7 +8,6 @@ import UniformTypeIdentifiers
 /// exists for.
 enum HerdrWindowID {
     static let main = "herdr-main"
-    static let activeWorkBoard = "herdr-active-work-board"
     static let workspaceGit = "herdr-workspace-git"
     static let firstMateGit = "herdr-first-mate-git"
     static let prReview = "herdr-pr-review"
@@ -29,7 +28,6 @@ struct HerdrHarnessMacApp: App {
     @State private var updates = HerdrUpdateController()
     @State private var herdPulse = HerdPulseCoordinator()
     @State private var shell = HerdrShellState()
-    @State private var activeWorkStore = ActiveWorkStore()
     @State private var connectionDriver = HerdrConnectionDriver()
     @State private var fontScale = HerdrFontScaleStore()
     @State private var cleanupSettings = CleanupSettingsStore()
@@ -62,7 +60,6 @@ struct HerdrHarnessMacApp: App {
             AppRootView(
                 model: model,
                 shell: shell,
-                activeWorkStore: activeWorkStore,
                 driver: connectionDriver,
                 hudController: hudController,
                 quickVoiceController: quickVoiceController,
@@ -107,17 +104,6 @@ struct HerdrHarnessMacApp: App {
                 updates: updates
             )
         }
-
-        Window("Active Work", id: HerdrWindowID.activeWorkBoard) {
-            ActiveWorkBoardWindowRoot(model: model, shell: shell)
-                .environment(\.herdrFontScale, fontScale.scale)
-                .frame(minWidth: 900, minHeight: 640)
-                .background(HerdrTheme.windowBackground)
-                .foregroundStyle(HerdrTheme.text)
-                .preferredColorScheme(.dark)
-                .tint(HerdrTheme.accent)
-        }
-        .defaultSize(width: 1280, height: 860)
 
         // The First Mate chat window (preview, Settings ▸ General). A single
         // `Window` so the Dock menu and ⇧⌘F can bring it back once closed.
@@ -395,11 +381,6 @@ struct HerdrMacCommands: Commands {
                 shell.show(.activity, model: model)
             }
             .keyboardShortcut("5", modifiers: .command)
-
-            Button("Active Work") {
-                shell.show(.activeWork, model: model)
-            }
-            .keyboardShortcut("6", modifiers: .command)
 
             Button("Fleet") {
                 shell.show(.fleet, model: model)

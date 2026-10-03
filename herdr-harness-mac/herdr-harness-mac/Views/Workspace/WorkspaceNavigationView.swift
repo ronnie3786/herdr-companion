@@ -42,8 +42,6 @@ struct WorkspaceNavigationView: View {
     @Environment(\.openWindow) private var openWindow
 
     @AppStorage("herdr.shell.sidebarWidth") private var storedSidebarWidth = Double(HerdrTheme.sidebarWidth)
-    @AppStorage(FirstMateChatPreferences.windowEnabledKey)
-    private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
     @State private var liveSidebarWidth: Double?
     @State private var hasPlacedSidebar = false
     @Environment(\.herdrWindowIsFullScreen) private var isFullScreen
@@ -73,7 +71,7 @@ struct WorkspaceNavigationView: View {
     /// or rendered offscreen.
     private var navigationContent: some View {
         HStack(spacing: 0) {
-            if isSidebarVisible {
+            if isSidebarVisible && !(shell.homeEnabled && shell.detailScope == .watchers) {
                 sidebarColumn
                     .frame(width: sidebarWidth)
                     .background { HerdrGlassBackground(level: HerdrTheme.Glass.sidebar, base: railBackground) }
@@ -85,7 +83,7 @@ struct WorkspaceNavigationView: View {
         // Above both columns, so the whole 6pt strip across the rail's edge
         // can be grabbed (the detail column would otherwise take half of it).
         .overlay(alignment: .leading) {
-            if isSidebarVisible {
+            if isSidebarVisible && !(shell.homeEnabled && shell.detailScope == .watchers) {
                 sidebarResizeHandle
                     .offset(x: sidebarWidth - 3)
             }
@@ -119,6 +117,7 @@ struct WorkspaceNavigationView: View {
             if context != .rail { shell.rememberSidebarVisibility(visibility, home: context == .home) }
         }
         .onChange(of: shell.sidebarToggleRequest) { _, _ in toggleSidebar() }
+        .onChange(of: shell.sidebarShowRequest) { _, _ in columnVisibility = .all }
         .onAppear { shell.recordVisit(for: model) }
     }
 
@@ -211,7 +210,8 @@ struct WorkspaceNavigationView: View {
                             },
                             refreshFleetReview: { target in
                                 Task { await performPRReviewFleetAction(target) { try await shell.prReviewFleet.refreshReview(target) } }
-                            }
+                            },
+                            searchFocusRequest: shell.surfaceSearchFocusRequest
                         )
                     }
                 } else {
@@ -226,7 +226,8 @@ struct WorkspaceNavigationView: View {
                         watchersSelected: shell.detailScope == .watchers,
                         firstMateAttentionCount: firstMateAttentionCount,
                         prReviewWalkthroughCount: shell.prReview.walkthroughAttentionCount,
-                        showsHeader: false
+                        showsHeader: false,
+                        searchFocusRequest: shell.surfaceSearchFocusRequest
                     )
                 }
             }
@@ -267,7 +268,7 @@ struct WorkspaceNavigationView: View {
         .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
         .foregroundStyle(chromeTitle)
         .lineLimit(1)
-        .padding(.leading, isFullScreen ? 13 : HerdrWindowChrome.trafficLightInset)
+        .padding(.leading, (isFullScreen || shell.homeEnabled) ? 13 : HerdrWindowChrome.trafficLightInset)
         .padding(.trailing, 6)
         .herdrBar(hairline: .clear)
         .accessibilityElement(children: .contain)
@@ -726,6 +727,8 @@ struct WorkspaceNavigationView: View {
         switch shell.resolvedScope(for: model) {
         // Each screen reads its own data, so fleet polls never re-evaluate this
         // root view.
+        case .home:
+            ContentUnavailableView("Home", systemImage: "house", description: Text("Your First Mate overview is being prepared."))
         case .dashboard:
             DashboardView(model: model, shell: shell)
         case .agentBoard:
@@ -780,13 +783,13 @@ struct WorkspaceNavigationView: View {
                 owningMachineName: resolvedFirstMateScope == .all ? activeFirstMateMachine?.name : nil,
                 allowsDirectCreate: true,
                 popOutGit: { openWindow(id: HerdrWindowID.firstMateGit, value: $0) },
-                popOutChat: firstMateChatWindowEnabled ? { openFirstMateChatWindow() } : nil,
+                popOutChat: { openFirstMateChatWindow() },
                 startSession: { shell.showFirstMateStart(preferredMachineID: firstMateDetailMachineID) }
             )
             .environment(\.firstMateMarkRead, markFirstMateRead)
             }
         case .watchers:
-            WatchersView(store: shell.watchers)
+            WatchersView(store: shell.watchers, searchFocusRequest: shell.surfaceSearchFocusRequest)
         case .prReview:
             PRReviewContainerView(
                 store: shell.prReview,
@@ -868,14 +871,14 @@ struct WorkspaceNavigationView: View {
     }
 
     private var titleBarLeadingPadding: CGFloat {
-        guard !isSidebarVisible, !isFullScreen else { return isSidebarVisible ? 12 : 8 }
+        guard !shell.homeEnabled, !isSidebarVisible, !isFullScreen else { return isSidebarVisible ? 12 : 8 }
         return HerdrWindowChrome.trafficLightInset - 2
     }
 
     @ViewBuilder
     private var defaultTitle: some View {
         switch shell.detailScope {
-        case .dashboard, .agentBoard:
+        case .home, .dashboard, .agentBoard:
             Text(shell.detailScope.label)
                 .herdrFont(size: HerdrTheme.TextSize.body, weight: .semibold)
                 .foregroundStyle(chromeTitle)
@@ -902,7 +905,7 @@ struct WorkspaceNavigationView: View {
 
     private var navigationControls: some View {
         HStack(spacing: 0) {
-            if shell.detailScope != .dashboard {
+            if !shell.homeEnabled && shell.detailScope != .dashboard {
                 // A place, not a second Back button.
                 Button("Dashboard", systemImage: "square.grid.2x2") { shell.goHome(model: model) }
                     .buttonStyle(HerdrIconButtonStyle(tint: chromeIcon))

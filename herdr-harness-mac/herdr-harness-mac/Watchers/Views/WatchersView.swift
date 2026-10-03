@@ -2,6 +2,13 @@ import SwiftUI
 
 struct WatchersView: View {
     @Bindable var store: WatchersStore
+    var revealRequest: HomeRevealRequest? = nil
+    var onRevealHandled: (UUID) -> Void = { _ in }
+    var searchFocusRequest = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealLedger = HomeRevealLedger()
+    @State private var highlightedEntryID: String?
+    @State private var revealNotice: String?
     @State private var filter = "All watchers"
     @State private var search = ""
     @State private var builder = false
@@ -28,15 +35,17 @@ struct WatchersView: View {
                         intro(scroll: scroll, metrics: metrics).padding(.bottom, metrics.stacksIntro ? 22 : 29)
                         toolbar(metrics).padding(.bottom, 20)
                         VStack(alignment: .leading, spacing: 12) {
+                            if let revealNotice { errorBanner(revealNotice).id("home-watcher-reveal-notice") }
                             if let error = store.error { errorBanner(error) }
                             ForEach(store.notices.keys.sorted(), id: \.self) { key in errorBanner(store.notices[key] ?? "") }
                         }
-                        .padding(.bottom, store.error == nil && store.notices.isEmpty ? 0 : 20)
+                        .padding(.bottom, store.error == nil && store.notices.isEmpty && revealNotice == nil ? 0 : 20)
                         content(metrics)
                         createPrompt.padding(.top, 24)
                     }
                     .padding(.horizontal, metrics.contentSide).padding(.top, metrics.contentTop).padding(.bottom, metrics.contentBottom + 16)
                 }
+                .task(id: revealAttempt) { await applyReveal(scroll: scroll) }
             }
         }
         .herdrPaneBackground()
@@ -47,6 +56,45 @@ struct WatchersView: View {
         .sheet(isPresented: $inbox) { WatcherInboxSheet(store: store) }
         .background { Button("") { searchFocused = true }.keyboardShortcut("/", modifiers: []).hidden() }
         .accessibilityIdentifier("watchers-destination")
+        .onChange(of: searchFocusRequest, initial: true) { _, request in
+            if request > 0 { searchFocused = true }
+        }
+        .task(id: highlightedEntryID) {
+            guard highlightedEntryID != nil else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            highlightedEntryID = nil
+        }
+    }
+
+    private var revealAttempt: HomeRevealAttempt {
+        HomeRevealAttempt(request: revealRequest, isReady: store.loaded || store.sources.isEmpty,
+                          available: Set(store.entries.map { .watcher(machineID: $0.machineID, watcherID: $0.watcher.id) }))
+    }
+
+    @MainActor private func applyReveal(scroll: ScrollViewProxy) async {
+        guard let request = revealRequest, case .watcher(let machineID, let watcherID) = request.target else { return }
+        let attempt = revealAttempt
+        switch revealLedger.resolve(request, isReady: attempt.isReady, available: attempt.available) {
+        case .waiting, .alreadyHandled: return
+        case .missing(let message):
+            revealNotice = message
+            highlightedEntryID = nil
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            scroll.scrollTo("home-watcher-reveal-notice", anchor: .top)
+        case .available:
+            guard let entry = store.entries.first(where: { $0.machineID == machineID && $0.watcher.id == watcherID }) else { return }
+            revealNotice = nil
+            search = ""
+            filter = "All watchers"
+            // Let the cleared filter materialize the exact card before scrolling.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { scroll.scrollTo(entry.id, anchor: .center) }
+            highlightedEntryID = entry.id
+        }
+        revealLedger.markHandled(request)
+        onRevealHandled(request.id)
     }
     @ViewBuilder private func content(_ metrics: WatchersMetrics) -> some View {
         if !store.loaded { ProgressView("Finding your watchers…").frame(maxWidth: .infinity).padding(50) }
@@ -208,6 +256,9 @@ struct WatchersView: View {
                 GridRow {
                     ForEach(entries[start..<min(start + columns, entries.count)]) { entry in
                         WatcherCard(entry: entry, busy: store.busy.contains(entry.id) || store.demo || !store.enabledMachines.contains(entry.machineID), metrics: metrics, edit: { selected = entry; editor = true }, action: { action in Task { await store.action(action, entry: entry) } }, history: { history = entry }, build: { selected = entry; builder = true })
+                            .overlay(RoundedRectangle(cornerRadius: 16)
+                                .strokeBorder(highlightedEntryID == entry.id ? HerdrTheme.accent : .clear, lineWidth: 2)
+                                .allowsHitTesting(false))
                             .id(entry.id)
                     }
                     ForEach(0..<(columns - min(columns, entries.count - start)), id: \.self) { _ in Color.clear.frame(maxWidth: .infinity, maxHeight: 0) }

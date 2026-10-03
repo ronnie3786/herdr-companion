@@ -28,7 +28,7 @@ struct ShellRefreshModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                ShellRefreshWindowObserver { windowAllowsPolling = $0 }
+                ShellRefreshWindowObserver { windowAllowsPolling = $0; shell.mainWindowAllowsPresentation = $0 }
                     .frame(width: 0, height: 0)
             }
             .task(id: identity) {

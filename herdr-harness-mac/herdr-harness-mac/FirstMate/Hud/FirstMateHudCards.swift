@@ -447,7 +447,7 @@ struct FirstMateHudLeadChatCard: View {
                 }
             }
             Spacer()
-            if controller.openLeadInWindow != nil, FirstMateChatWindowOpening.isChatWindowEnabled {
+            if controller.openLeadInWindow != nil {
                 Button {
                     controller.openLeadWindow()
                 } label: {

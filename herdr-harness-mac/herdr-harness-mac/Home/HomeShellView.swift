@@ -1,0 +1,78 @@
+import AppKit
+import SwiftUI
+
+struct HomeShellView: View {
+    @Bindable var model: HerdrAppModel
+    @Bindable var shell: HerdrShellState
+    let modelFavorites: ModelFavoritesStore
+    let updates: HerdrUpdateController
+    let utilities: AnyView
+    @Environment(\.openWindow) private var openWindow
+
+    private var tab: HomeTab { HomeTab(scope: shell.detailScope) }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            HomePalette.base.ignoresSafeArea()
+            if shell.detailScope == .home {
+                ContentUnavailableView("Home", systemImage: "house", description: Text("Your First Mate overview is being prepared."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("home-placeholder")
+            } else {
+                WorkspaceNavigationView(model: model, shell: shell, modelFavorites: modelFavorites, updates: updates)
+                    .padding(.top, 86)
+            }
+            HomeTabStrip(selection: tab, snapshot: shell.home.snapshot,
+                         query: Binding(get: { shell.home.search }, set: { shell.home.search = $0 }), isSearching: $shell.homeSearchPresented,
+                         searchFocusRequest: shell.homeSearchFocusRequest,
+                         isActive: shell.mainWindowAllowsPresentation,
+                         onSelect: { shell.show($0.scope, model: model) },
+                         onSearch: search, chatsTools: utilities)
+        }
+        .ignoresSafeArea(.container, edges: .top)
+        .task(id: shell.mainWindowAllowsPresentation) {
+            guard shell.mainWindowAllowsPresentation else { return }
+            await shell.homeProjection.run(model: model, shell: shell, home: shell.home)
+        }
+        .onChange(of: shell.detailScope, initial: true) { _, scope in
+            if scope == .home { shell.home.beginVisit() } else { shell.home.endVisit() }
+        }
+        .onChange(of: shell.homeAskRequest) { _, _ in
+            FirstMateChatWindowOpening.openLead(shell: shell, openWindow: openWindow)
+        }
+        .background {
+            if [.home, .reviews, .watchers, .chats].contains(tab) {
+                Button("Find", action: search).keyboardShortcut("f", modifiers: .command).hidden()
+            }
+        }
+        .sheet(isPresented: $shell.isInboxPresented) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("Work inbox").font(.title2.bold())
+                    Spacer()
+                    Button("Done") { shell.isInboxPresented = false }.keyboardShortcut(.cancelAction)
+                }
+                ScrollView {
+                    SidebarWorkInboxView(store: shell.workInbox, refreshID: model.connectionGeneration,
+                                         automaticallyRefresh: false,
+                                         refresh: { await shell.refreshCoordinator.refreshSummaries(model: model, shell: shell) })
+                }
+            }
+            .padding(24).frame(width: 620, height: 560)
+        }
+    }
+
+    private func search() {
+        if tab == .home {
+            shell.homeSearchPresented = true
+            shell.homeSearchFocusRequest &+= 1
+        } else if shell.detailScope == .watchers || shell.detailScope == .prReview || shell.detailScope == .session || shell.detailScope == .git {
+            if tab == .chats { shell.requestSidebarShow() }
+            shell.surfaceSearchFocusRequest &+= 1
+        } else {
+            let sender = NSMenuItem()
+            sender.tag = NSTextFinder.Action.showFindInterface.rawValue
+            NSApp.sendAction(#selector(NSTextView.performFindPanelAction(_:)), to: nil, from: sender)
+        }
+    }
+}

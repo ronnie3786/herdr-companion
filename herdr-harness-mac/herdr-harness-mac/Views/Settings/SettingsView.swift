@@ -11,13 +11,17 @@ struct SettingsView: View {
     let hudController: HerdrHudController
     @Bindable var updates: HerdrUpdateController
     @Bindable var agentControl: AgentControlController
+    var revealRequest: HomeRevealRequest?
+    var onRevealHandled: (UUID) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealLedger = HomeRevealLedger()
+    @State private var highlightedMachineID: String?
+    @State private var revealNotice: String?
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.openWindow) private var openWindow
     @AppStorage(ChatActivityPreferences.groupAllClankingActivityKey)
     private var groupAllClankingActivity = ChatActivityPreferences.defaultGroupAllClankingActivity
     @AppStorage(MobileAppHubSettings.hubURLKey) private var buildsHubURL = ""
-    @AppStorage(FirstMateChatPreferences.windowEnabledKey)
-    private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
     @AppStorage(FirstMateChatPreferences.dockBadgeEnabledKey)
     private var firstMateDockBadgeEnabled = FirstMateChatPreferences.defaultDockBadgeEnabled
     @AppStorage(FirstMateHudPreferences.enabledKey)
@@ -59,7 +63,9 @@ struct SettingsView: View {
         agentRoles: AgentRolesStore? = nil,
         initialPane: SettingsPane = .general,
         initialAgentRoleTab: AgentRoleEditor.Tab = .profile,
-        initialSmartRenameCatalogMachineID: String? = nil
+        initialSmartRenameCatalogMachineID: String? = nil,
+        revealRequest: HomeRevealRequest? = nil,
+        onRevealHandled: @escaping (UUID) -> Void = { _ in }
     ) {
         self.initialAgentRoleTab = initialAgentRoleTab
         self.model = model
@@ -71,6 +77,8 @@ struct SettingsView: View {
         self.hudController = hudController
         self.updates = updates
         self.agentControl = agentControl
+        self.revealRequest = revealRequest
+        self.onRevealHandled = onRevealHandled
         _selectedPane = State(initialValue: initialPane)
         _agentRoles = State(initialValue: agentRoles ?? AgentRolesStore(model: model))
         followsModelConnections = agentRoles == nil
@@ -122,6 +130,14 @@ struct SettingsView: View {
         .onChange(of: controlActiveState, initial: true) { _, state in
             if state == .key { agentControl.noteWindow(.settings) }
         }
+        .onChange(of: revealRequest?.id, initial: true) { _, _ in
+            if case .machine = revealRequest?.target { selectedPane = .machines }
+        }
+        .task(id: highlightedMachineID) {
+            guard highlightedMachineID != nil else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            highlightedMachineID = nil
+        }
         .task {
             await loadCleanupModels()
             await loadAgentModels()
@@ -140,13 +156,51 @@ struct SettingsView: View {
         } else {
             VStack(spacing: 0) {
                 SettingsPageHeader(pane: selectedPane)
-                Form {
-                    paneSections(for: selectedPane)
+                ScrollViewReader { scroll in
+                    Form {
+                        if selectedPane == .machines, let revealNotice {
+                            Section {
+                                Label(revealNotice, systemImage: "info.circle")
+                                    .foregroundStyle(HerdrTheme.secondaryText)
+                                    .id("home-machine-reveal-notice")
+                                    .accessibilityIdentifier("settings-machine-reveal-notice")
+                            }
+                        }
+                        paneSections(for: selectedPane)
+                    }
+                    .formStyle(SettingsGlassFormStyle())
+                    .herdrFont(size: HerdrTheme.TextSize.body)
+                    .task(id: revealAttempt) { await applyMachineReveal(scroll: scroll) }
                 }
-                .formStyle(SettingsGlassFormStyle())
-                .herdrFont(size: HerdrTheme.TextSize.body)
             }
         }
+    }
+
+    private var revealAttempt: HomeRevealAttempt {
+        HomeRevealAttempt(request: revealRequest, isReady: selectedPane == .machines,
+                          available: Set(model.machines.map { .machine(machineID: $0.id) }))
+    }
+
+    @MainActor private func applyMachineReveal(scroll: ScrollViewProxy) async {
+        guard let request = revealRequest, case .machine(let machineID) = request.target else { return }
+        let attempt = revealAttempt
+        switch revealLedger.resolve(request, isReady: attempt.isReady, available: attempt.available) {
+        case .waiting, .alreadyHandled: return
+        case .missing(let message):
+            revealNotice = message
+            highlightedMachineID = nil
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            scroll.scrollTo("home-machine-reveal-notice", anchor: .top)
+        case .available:
+            revealNotice = nil
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { scroll.scrollTo(request.target, anchor: .center) }
+            highlightedMachineID = machineID
+        }
+        revealLedger.markHandled(request)
+        onRevealHandled(request.id)
     }
 
     @ViewBuilder
@@ -231,6 +285,10 @@ struct SettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.herdrPlain)
+                .id(HomeRevealRequest.Target.machine(machineID: machine.id))
+                .overlay(RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+                    .strokeBorder(highlightedMachineID == machine.id ? HerdrTheme.accent : .clear, lineWidth: 2)
+                    .allowsHitTesting(false))
                 .accessibilityIdentifier("settings-machine-row-\(machine.id)")
             }
 
@@ -466,13 +524,6 @@ struct SettingsView: View {
 
     private var firstMateSection: some View {
         Section {
-            Toggle(
-                "First Mate chat window (preview)",
-                systemImage: "bubble.left.and.bubble.right",
-                isOn: $firstMateChatWindowEnabled
-            )
-            .tint(HerdrTheme.controlAccent)
-            .accessibilityIdentifier("settings-first-mate-chat-window")
             Toggle(
                 "Show First Mate count on the Dock icon",
                 systemImage: "app.badge",

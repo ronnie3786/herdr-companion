@@ -180,6 +180,19 @@ struct NavigationHistoryTests {
         #expect(HerdrDetailScope(rawValue: "activeWork") == nil)
     }
 
+    @Test("Retired overviews migrate to Home and adjacent entries collapse")
+    func migratesHomeHistory() {
+        let snapshot = NavigationHistorySnapshot(version: NavigationHistorySnapshot.currentVersion,
+            backward: [.init(kind: "pane", id: "a"), .init(kind: "dashboard", id: nil), .init(kind: "agentBoard", id: nil)],
+            current: .init(kind: "activity", id: nil),
+            forward: [.init(kind: "dashboard", id: nil), .init(kind: "fleet", id: nil)])
+        let restored = NavigationHistory(snapshot: snapshot)
+        #expect(restored.backward == [.pane("a")])
+        #expect(restored.current == .home)
+        #expect(restored.forward == [.fleet])
+        #expect(HerdrDestinationRecord(.home)?.kind == "home")
+    }
+
     @Test("Restoring caps backward to the entries nearest to current")
     func restoringCapsBackwardToEntriesNearestCurrent() {
         let oversized = (0..<(NavigationHistory.capacity + 10)).map {

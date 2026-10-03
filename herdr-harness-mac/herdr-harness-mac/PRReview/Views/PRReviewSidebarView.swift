@@ -12,6 +12,14 @@ struct PRReviewSidebarView: View {
     var openFleetReview: ((PRReviewWindowTarget) -> Void)? = nil
     var archiveFleetReview: ((PRReviewWindowTarget, Bool) -> Void)? = nil
     var refreshFleetReview: ((PRReviewWindowTarget) -> Void)? = nil
+    var revealRequest: HomeRevealRequest? = nil
+    var onRevealHandled: (UUID) -> Void = { _ in }
+    var searchFocusRequest = 0
+    @FocusState private var searchFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealLedger = HomeRevealLedger()
+    @State private var highlightedTarget: HomeRevealRequest.Target?
+    @State private var revealNotice: String?
     @State private var pastedURL = ""
     @State private var validationError: String?
 
@@ -68,9 +76,18 @@ struct PRReviewSidebarView: View {
             TextField("Search reviews", text: $store.search)
                 .textFieldStyle(.roundedBorder)
                 .herdrFont(.callout)
+                .focused($searchFocused)
+                .accessibilityIdentifier("pr-review-search")
 
-            ScrollView {
+            ScrollViewReader { scroll in
+              ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
+                    if let revealNotice {
+                        Label(revealNotice, systemImage: "info.circle")
+                            .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
+                            .padding(10).id("home-review-reveal-notice")
+                            .accessibilityIdentifier("pr-review-reveal-notice")
+                    }
                     if let fleet {
                         ForEach(fleet.notices) { notice in
                             Label("\(notice.machineName): \(notice.message)", systemImage: "exclamationmark.triangle")
@@ -106,12 +123,70 @@ struct PRReviewSidebarView: View {
                         }
                     }
                 }
+              }
+              .task(id: revealAttempt) { await applyReveal(scroll: scroll) }
             }
         }
         .padding(HerdrTheme.cardPadding)
         .herdrPaneBackground(HerdrTheme.railBackground)
         .foregroundStyle(HerdrTheme.text)
         .accessibilityIdentifier("pr-review-sidebar")
+        .onChange(of: searchFocusRequest, initial: true) { _, request in
+            if request > 0 { searchFocused = true }
+        }
+        .task(id: highlightedTarget) {
+            guard highlightedTarget != nil else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            highlightedTarget = nil
+        }
+    }
+
+    private var revealAttempt: HomeRevealAttempt {
+        if let fleet {
+            let available = Set((fleet.active + fleet.archived).map {
+                HomeRevealRequest.Target.review(machineID: $0.machineID, reviewID: $0.review.id)
+            })
+            let present = revealRequest.map { available.contains($0.target) } ?? false
+            return HomeRevealAttempt(request: revealRequest,
+                                     isReady: present || (fleet.hasLoaded && !fleet.isRefreshing) || fleet.sourceCount == 0,
+                                     available: available)
+        }
+        let available = Set((store.reviews + store.archivedReviews).compactMap { review -> HomeRevealRequest.Target? in
+            guard let machineID = store.currentMachineID else { return nil }
+            return .review(machineID: machineID, reviewID: review.id)
+        })
+        let present = revealRequest.map { available.contains($0.target) } ?? false
+        return HomeRevealAttempt(request: revealRequest,
+                                 isReady: present || (store.hasLoaded && !store.isRefreshing) || store.unconfigured,
+                                 available: available)
+    }
+
+    @MainActor private func applyReveal(scroll: ScrollViewProxy) async {
+        guard let request = revealRequest, case .review(let machineID, let reviewID) = request.target else { return }
+        let attempt = revealAttempt
+        switch revealLedger.resolve(request, isReady: attempt.isReady, available: attempt.available) {
+        case .waiting, .alreadyHandled: return
+        case .missing(let message):
+            revealNotice = message
+            highlightedTarget = nil
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            scroll.scrollTo("home-review-reveal-notice", anchor: .top)
+        case .available:
+            revealNotice = nil
+            store.search = ""
+            if let fleet {
+                store.showArchived = !fleet.active.contains { $0.machineID == machineID && $0.review.id == reviewID }
+            } else {
+                store.showArchived = !store.reviews.contains { $0.id == reviewID }
+            }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { scroll.scrollTo(request.target, anchor: .center) }
+            highlightedTarget = request.target
+        }
+        revealLedger.markHandled(request)
+        onRevealHandled(request.id)
     }
 
     private var filteredReviews: [PRReviewSummary] {
@@ -141,6 +216,10 @@ struct PRReviewSidebarView: View {
             reviewLabel(review, selected: selected, machineName: entry.machineName, rowID: entry.id.id)
         }
         .buttonStyle(.herdrPlain)
+        .id(HomeRevealRequest.Target.review(machineID: entry.machineID, reviewID: review.id))
+        .overlay(RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+            .strokeBorder(highlightedTarget == .review(machineID: entry.machineID, reviewID: review.id) ? HerdrTheme.accent : .clear, lineWidth: 2)
+            .allowsHitTesting(false))
         .accessibilityIdentifier("pr-review-review-\(entry.id.id)")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .contextMenu {
@@ -163,6 +242,10 @@ struct PRReviewSidebarView: View {
             reviewLabel(review, selected: store.selectedReviewID == review.id)
         }
         .buttonStyle(.herdrPlain)
+        .id(HomeRevealRequest.Target.review(machineID: store.currentMachineID ?? "", reviewID: review.id))
+        .overlay(RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
+            .strokeBorder(highlightedTarget == .review(machineID: store.currentMachineID ?? "", reviewID: review.id) ? HerdrTheme.accent : .clear, lineWidth: 2)
+            .allowsHitTesting(false))
         .accessibilityIdentifier("pr-review-review-\(review.id)")
         .accessibilityAddTraits(store.selectedReviewID == review.id ? .isSelected : [])
         .contextMenu {

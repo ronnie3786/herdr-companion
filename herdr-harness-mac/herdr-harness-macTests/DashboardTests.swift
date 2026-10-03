@@ -185,7 +185,7 @@ struct DashboardTests {
         #expect(agents[0].roleLabel == "iOS platform & architecture lead")
     }
 
-    @Test("Dashboard launches first and both new destinations survive navigation history")
+    @Test("Legacy launch navigation stays usable while saved overview destinations migrate to Home")
     func navigation() throws {
         let defaults = isolatedDefaults()
         let shell = HerdrShellState(userDefaults: defaults)
@@ -201,8 +201,8 @@ struct DashboardTests {
         #expect(shell.detailScope == .dashboard)
         #expect(shell.goForward(model: model))
         #expect(shell.detailScope == .agentBoard)
-        #expect(HerdrDestinationRecord(.dashboard)?.destination == .dashboard)
-        #expect(HerdrDestinationRecord(.agentBoard)?.destination == .agentBoard)
+        #expect(HerdrDestinationRecord(.dashboard)?.destination == .home)
+        #expect(HerdrDestinationRecord(.agentBoard)?.destination == .home)
         #expect(!HerdrDetailScope.menuDestinations.contains(.dashboard))
         let pane = try #require(model.workspaces.first?.panes.first)
         shell.openPane(id: pane.id, model: model)

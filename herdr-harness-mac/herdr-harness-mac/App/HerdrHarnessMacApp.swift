@@ -105,7 +105,7 @@ struct HerdrHarnessMacApp: App {
             )
         }
 
-        // The First Mate chat window (preview, Settings ▸ General). A single
+        // The permanent First Mate chat window. A single
         // `Window` so the Dock menu and ⇧⌘F can bring it back once closed.
         // Its automatic Window-menu entry is removed; `HerdrMacCommands` adds
         // one only while the preview is on. It handles no external URLs: the
@@ -114,7 +114,6 @@ struct HerdrHarnessMacApp: App {
             FirstMateChatWindowRoot(model: model, shell: shell, modelFavorites: modelFavorites)
                 .containerBackground(.clear, for: .window)
                 .modifier(FirstMateAppServicesModifier(appDelegate: appDelegate, model: model, shell: shell, modelFavorites: modelFavorites))
-                .modifier(FirstMateChatWindowDismissal())
                 .modifier(HerdrMainWindowChromeModifier(revealsDesktop: true))
                 .environment(herdPulse)
                 .environment(\.herdrFontScale, fontScale.scale)
@@ -263,8 +262,6 @@ struct HerdrMacCommands: Commands {
     let quickVoiceController: QuickVoicePanelController
     let updates: HerdrUpdateController
     @Environment(\.openWindow) private var openWindow
-    @AppStorage(FirstMateChatPreferences.windowEnabledKey)
-    private var firstMateChatWindowEnabled = FirstMateChatPreferences.defaultWindowEnabled
     @AppStorage(FirstMateHudPreferences.enabledKey)
     private var firstMateHudEnabled = FirstMateHudPreferences.defaultEnabled
 
@@ -273,17 +270,14 @@ struct HerdrMacCommands: Commands {
         // handling. The other editors are plain text, so no system font/size
         // menu is needed.
 
-        // Window ▸ First Mate (⇧⌘F; ⌥⌘F is Report a Bug), only while the
-        // chat window preview is on.
+        // Window ▸ First Mate (⇧⌘F; ⌥⌘F is Report a Bug).
         CommandGroup(before: .windowList) {
-            if firstMateChatWindowEnabled {
-                Button("First Mate") {
+            Button("First Mate") {
                     NSApp.activate()
                     openWindow(id: HerdrWindowID.firstMateChat)
                 }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .accessibilityIdentifier("menu-first-mate-chat-window")
-            }
         }
 
         CommandGroup(after: .appInfo) {
@@ -370,30 +364,17 @@ struct HerdrMacCommands: Commands {
             Button("Focus Chat") {
                 focusPane(mode: .chat)
             }
-            .keyboardShortcut("2", modifiers: .command)
+            .keyboardShortcut("1", modifiers: [.command, .option])
 
             Button("Focus Terminal") {
                 focusPane(mode: .terminal)
             }
-            .keyboardShortcut("3", modifiers: .command)
-
-            Button("Activity Feed") {
-                shell.show(.activity, model: model)
-            }
-            .keyboardShortcut("5", modifiers: .command)
+            .keyboardShortcut("2", modifiers: [.command, .option])
 
             Button("Fleet") {
                 shell.show(.fleet, model: model)
             }
             .keyboardShortcut("7", modifiers: .command)
-
-            Button("PR Review") {
-                shell.show(.prReview, model: model)
-            }
-            .keyboardShortcut("8", modifiers: .command)
-
-            Button("Watchers") { shell.show(.watchers, model: model) }
-                .keyboardShortcut("9", modifiers: .command)
 
             Divider()
 
@@ -430,16 +411,21 @@ struct HerdrMacCommands: Commands {
         }
 
         CommandMenu("Navigate") {
-            Button("Dashboard") {
-                shell.goHome(model: model)
+            Button("Home") { shell.show(.home, model: model); openWindow(id: HerdrWindowID.main) }
+                .keyboardShortcut("1", modifiers: .command)
+            Button("PR Review") { shell.show(.prReview, model: model); openWindow(id: HerdrWindowID.main) }
+                .keyboardShortcut("2", modifiers: .command)
+            Button("Watchers") { shell.show(.watchers, model: model); openWindow(id: HerdrWindowID.main) }
+                .keyboardShortcut("3", modifiers: .command)
+            Button("Chats") { shell.show(.session, model: model); openWindow(id: HerdrWindowID.main) }
+                .keyboardShortcut("4", modifiers: .command)
+            Button("Ask First Mate") {
+                shell.show(.home, model: model)
                 openWindow(id: HerdrWindowID.main)
+                if shell.homeEnabled { shell.homeAskRequest &+= 1 }
+                else { FirstMateChatWindowOpening.openLead(shell: shell, openWindow: openWindow) }
             }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
-            Button("Agent View") {
-                shell.show(.agentBoard, model: model)
-                openWindow(id: HerdrWindowID.main)
-            }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
+            .keyboardShortcut("j", modifiers: .command)
             Divider()
             Button("Open Chat…") {
                 shell.presentCommandPalette()
@@ -457,7 +443,7 @@ struct HerdrMacCommands: Commands {
                 shell.jumpToPaneInput = ""
                 shell.isJumpToPanePresented = true
             }
-            .keyboardShortcut("j", modifiers: .command)
+            .keyboardShortcut("j", modifiers: [.command, .shift])
 
             Button("Focus Current Pane on Mac") {
                 guard let pane = selectedPane else { return }

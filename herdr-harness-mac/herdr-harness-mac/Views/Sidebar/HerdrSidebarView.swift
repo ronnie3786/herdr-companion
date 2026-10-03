@@ -21,6 +21,8 @@ struct HerdrSidebarView: View {
     /// The main window draws the rail's 40pt header itself (traffic lights and
     /// the sidebar toggle); standalone hosts keep the brand header here.
     var showsHeader = true
+    /// Incremented by the active shell's Find action. Zero leaves normal focus alone.
+    var searchFocusRequest = 0
     @State private var query = ""
     @State private var selectedColor: ChatTabColor?
     @State private var isPresentingCreateWorkspace = false
@@ -265,7 +267,7 @@ struct HerdrSidebarView: View {
 
             machinePicker
 
-            WorkspaceSearchField(text: $query, placeholder: "Filter chats")
+            WorkspaceSearchField(text: $query, placeholder: "Filter chats", focusRequest: searchFocusRequest)
                 .herdrHairline(.bottom)
 
             VStack(alignment: .leading, spacing: 0) {

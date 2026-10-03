@@ -1,10 +1,7 @@
 import Foundation
 
-/// Settings for the First Mate chat window preview and the Dock badge.
+/// Presentation preferences for First Mate windows and the Dock badge.
 enum FirstMateChatPreferences {
-    /// Settings ▸ General ▸ "First Mate chat window (preview)".
-    static let windowEnabledKey = "herdr.mac.firstMate.chatWindow"
-    static let defaultWindowEnabled = false
     /// The draggable conversation-list width, shared by every route into the
     /// single standalone chat scene and restored after relaunch.
     static let sidebarWidthKey = "herdr.mac.firstMate.chatWindow.sidebarWidth"
@@ -13,7 +10,6 @@ enum FirstMateChatPreferences {
     static let inspectorWidthKey = "herdr.mac.firstMate.chatWindow.inspectorWidth"
     static let defaultInspectorWidth = 410.0
     /// Settings ▸ General ▸ "Show First Mate count on the Dock icon".
-    /// Independent of the preview window.
     static let dockBadgeEnabledKey = "herdr.mac.firstMate.dockBadge"
     static let defaultDockBadgeEnabled = true
 }

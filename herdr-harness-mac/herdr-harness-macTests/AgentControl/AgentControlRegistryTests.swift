@@ -17,6 +17,8 @@ struct AgentControlRegistryTests {
             try AgentControlRegistry.validate(action: "ui.segment", parameters: ["segment": .string("not-real")])
         }
         try AgentControlRegistry.validate(action: "ui.segment", parameters: ["segment": .string("git")])
+        try AgentControlRegistry.validate(action: "ui.segment", parameters: ["segment": .string("home")])
+        try AgentControlRegistry.validate(action: "ui.segment", parameters: ["segment": .string("activity")])
     }
 
     @Test("All advertised actions have strict object schemas and truthful disabled reasons")

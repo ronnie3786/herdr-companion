@@ -4,6 +4,7 @@ import SwiftUI
 struct WorkspaceSearchField: View {
     @Binding var text: String
     var placeholder: String = "Filter spaces"
+    var focusRequest = 0
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -36,5 +37,8 @@ struct WorkspaceSearchField: View {
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .frame(minHeight: HerdrTheme.ControlHeight.bar)
+        .onChange(of: focusRequest, initial: true) { _, request in
+            if request > 0 { isFocused = true }
+        }
     }
 }

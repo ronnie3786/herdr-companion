@@ -3,6 +3,7 @@ import SwiftUI
 struct SidebarWorkInboxView: View {
     @Bindable var store: WorkInboxStore
     let refreshID: Int
+    var automaticallyRefresh = true
     let refresh: @MainActor () async -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expandedProvider: WorkInboxProvider? = .github
@@ -84,7 +85,7 @@ struct SidebarWorkInboxView: View {
         }
         .accessibilityIdentifier("sidebar-my-work")
         .task(id: refreshID) {
-            await pollWorkInbox()
+            if automaticallyRefresh { await pollWorkInbox() }
         }
     }
 

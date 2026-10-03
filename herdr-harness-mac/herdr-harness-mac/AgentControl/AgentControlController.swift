@@ -1026,7 +1026,7 @@ final class AgentControlController {
         case "watchers": showMainWindow(); shell.show(.watchers, model: model)
         case "first-mate": showMainWindow(); shell.show(.firstMate, model: model)
         case "fleet": showMainWindow(); shell.show(.fleet, model: model)
-        case "activity": showMainWindow(); shell.show(.activity, model: model)
+        case "home", "activity": showMainWindow(); shell.show(.home, model: model)
         default: throw AgentControlCommandError.invalid("Unsupported segment.")
         }
         return nil
@@ -1073,7 +1073,7 @@ final class AgentControlController {
                 throw AgentControlCommandError.notFound("The history pane is no longer available.")
             }
             return .pane(id: id, mode: .git)
-        case .dashboard, .agentBoard, .firstMate, .prReview, .watchers, .fleet, .activity:
+        case .home, .dashboard, .agentBoard, .firstMate, .prReview, .watchers, .fleet, .activity:
             return nil
         }
     }

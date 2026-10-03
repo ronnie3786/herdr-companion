@@ -4,6 +4,7 @@ import SwiftUI
 /// Which view the detail column is showing. The Mac shell has no tab bar, so
 /// this is what replaced `AppTab`.
 enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case home
     case dashboard
     case agentBoard
     case session
@@ -26,7 +27,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
     ]
 
     /// Dashboard and Agent view: overview screens that start without the sidebar.
-    var isHome: Bool { self == .dashboard || self == .agentBoard }
+    var isHome: Bool { self == .home || self == .dashboard || self == .agentBoard }
 
     enum SidebarContext: Hashable { case home, rail, chats }
 
@@ -39,6 +40,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var label: String {
         switch self {
+        case .home: "Home"
         case .dashboard: "Dashboard"
         case .agentBoard: "Agent view"
         case .session: "Chat"
@@ -53,6 +55,7 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var symbol: String {
         switch self {
+        case .home: "house"
         case .dashboard: "square.grid.2x2"
         case .agentBoard: "rectangle.split.3x1"
         case .session: "bubble.left"
@@ -73,6 +76,15 @@ enum HerdrDetailScope: String, CaseIterable, Identifiable, Hashable, Sendable {
 @Observable
 final class HerdrShellState {
     var detailScope: HerdrDetailScope = .dashboard
+    let home: HomeStore
+    let homeEnabled: Bool
+    @ObservationIgnored let homeProjection = HomeProjectionCoordinator()
+    var homeSearchPresented = false
+    var homeSearchFocusRequest = 0
+    var surfaceSearchFocusRequest = 0
+    var homeAskRequest = 0
+    var isInboxPresented = false
+    var mainWindowAllowsPresentation = false
     let dashboard: DashboardState
     let agentBoard = AgentBoardState()
     private(set) var firstMate = FirstMateStore()
@@ -114,6 +126,8 @@ final class HerdrShellState {
     /// View ▸ Show/Hide Sidebar. The shell owns the rail's visibility; menu
     /// commands only ask for a toggle.
     private(set) var sidebarToggleRequest = 0
+    private(set) var sidebarShowRequest = 0
+    func requestSidebarShow() { sidebarShowRequest &+= 1 }
 
     func requestSidebarToggle() { sidebarToggleRequest += 1 }
     private(set) var agentControlPaneMode: PaneDetailMode?
@@ -178,6 +192,9 @@ final class HerdrShellState {
 
     init(userDefaults: UserDefaults = .standard, prReviewGuide: PRReviewGuideSession = PRReviewGuideSession()) {
         self.preferences = userDefaults
+        self.home = HomeStore(defaults: userDefaults)
+        self.homeEnabled = userDefaults.bool(forKey: HomePreferences.enabledKey)
+        if homeEnabled { self.detailScope = .home }
         let historyStore = NavigationHistoryPersistenceStore(userDefaults: userDefaults)
         self.dashboard = DashboardState(defaults: userDefaults)
         self.historyStore = historyStore
@@ -582,9 +599,11 @@ final class HerdrShellState {
     /// there steps back, so Back/Forward never fills with Dashboard ⇄ feature
     /// pairs.
     func goHome(model: HerdrAppModel) {
-        guard detailScope != .dashboard else { return }
-        if history.backward.last == .dashboard, goBack(model: model) { return }
-        show(.dashboard, model: model)
+        let destination: HerdrDetailScope = homeEnabled ? .home : .dashboard
+        guard detailScope != destination else { return }
+        let historical: HerdrDestination = homeEnabled ? .home : .dashboard
+        if history.backward.last == historical, goBack(model: model) { return }
+        show(destination, model: model)
     }
 
     /// Home screens open without the sidebar and other screens with it, until
@@ -600,7 +619,8 @@ final class HerdrShellState {
     }
 
     /// Scope-only destinations (Fleet and Activity).
-    func show(_ scope: HerdrDetailScope, model: HerdrAppModel) {
+    func show(_ requestedScope: HerdrDetailScope, model: HerdrAppModel) {
+        let scope: HerdrDetailScope = requestedScope == .home && !homeEnabled ? .dashboard : requestedScope
         if scope == .prReview, detailScope != .prReview { prReviewScope = .all }
         if scope == .git {
             agentControlPaneMode = .git
@@ -610,6 +630,7 @@ final class HerdrShellState {
             agentControlPaneID = nil
             agentControlSelectionPaneID = nil
         }
+        surfaceSearchFocusRequest = 0
         detailScope = scope
         paneModeFocusRequest &+= 1
         recordVisit(for: model)
@@ -618,6 +639,7 @@ final class HerdrShellState {
     /// The scope actually rendered: Git is a sub-mode of the mounted session.
     func resolvedScope(for model: HerdrAppModel) -> HerdrDetailScope {
         switch detailScope {
+        case .home: return .home
         case .dashboard: return .dashboard
         case .agentBoard: return .agentBoard
         case .session, .git: return .session
@@ -640,6 +662,7 @@ final class HerdrShellState {
         switch resolvedScope(for: model) {
         case .session, .git:
             model.pane(id: model.selectedPaneID).map { detailScope == .git ? .git($0.id) : .pane($0.id) }
+        case .home: .home
         case .dashboard: .dashboard
         case .agentBoard: .agentBoard
         case .firstMate: .firstMate
@@ -741,6 +764,7 @@ final class HerdrShellState {
             agentControlPaneID = id
             model.openPane(id: id)
             detailScope = .git
+        case .home: detailScope = homeEnabled ? .home : .dashboard
         case .dashboard: detailScope = .dashboard
         case .agentBoard: detailScope = .agentBoard
         case .firstMate: detailScope = .firstMate
@@ -757,7 +781,7 @@ final class HerdrShellState {
     private func isAlive(_ destination: HerdrDestination, model: HerdrAppModel) -> Bool {
         switch destination {
         case let .pane(id), let .git(id): model.pane(id: id) != nil
-        case .dashboard, .agentBoard, .firstMate, .prReview, .watchers, .fleet, .activity: true
+        case .home, .dashboard, .agentBoard, .firstMate, .prReview, .watchers, .fleet, .activity: true
         }
     }
 
@@ -802,6 +826,7 @@ final class HerdrShellState {
         switch resolvedScope(for: model) {
         case .session, .git:
             return model.currentPaneDetailMode?.rawValue ?? "session"
+        case .home: return "home"
         case .dashboard: return "dashboard"
         case .agentBoard: return "agent-board"
         case .prReview: return "pr-review"
@@ -866,15 +891,38 @@ struct AppRootView: View {
             }
     }
 
+    private var homeUtilities: some View {
+        Menu("Chat tools", systemImage: "ellipsis") {
+            Button("Fleet", systemImage: "desktopcomputer") { shell.show(.fleet, model: model) }
+            Button("First Mate management", systemImage: "sailboat") { shell.show(.firstMate, model: model) }
+            Button("Work inbox", systemImage: "tray") { shell.show(.session, model: model); shell.isInboxPresented = true }
+            Button("Ask Agent…", systemImage: "sparkles") { shell.isAgentPresented = true }
+                .disabled(!model.canControl)
+            Divider()
+            Button("Settings…", systemImage: "gearshape") { openSettings() }
+            Button("New Note", systemImage: "note.text.badge.plus", action: hudController.createNote)
+            Button("Summon HUD", action: hudController.summon)
+            Button(herdPulse.isRunning ? "Stop Herd Pulse" : "Start Herd Pulse") { Task { await herdPulse.toggle() } }
+                .disabled(herdPulse.isBusy)
+            Divider()
+            Button("Dashboard") { shell.show(.dashboard, model: model) }
+            Button("Agent View") { shell.show(.agentBoard, model: model) }
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .frame(width: 20, height: 30)
+        .foregroundStyle(HomePalette.secondary)
+        .accessibilityIdentifier("home-chats-tools")
+    }
+
     private var rootContent: some View {
         Group {
             if model.hasCompletedSetup {
-                WorkspaceNavigationView(
-                    model: model,
-                    shell: shell,
-                    modelFavorites: modelFavorites,
-                    updates: updates
-                )
+                if shell.homeEnabled {
+                    HomeShellView(model: model, shell: shell, modelFavorites: modelFavorites,
+                                  updates: updates, utilities: AnyView(homeUtilities))
+                } else {
+                    WorkspaceNavigationView(model: model, shell: shell, modelFavorites: modelFavorites, updates: updates)
+                }
             } else {
                 OnboardingView(model: model)
                     .safeAreaInset(edge: .top, spacing: 0) {

@@ -204,16 +204,12 @@ struct FirstMateDockBadgeTests {
         return defaults
     }
 
-    @Test("Preferences: the window preview is off and the Dock count on by default, independently")
+    @Test("The Dock count is enabled by default and independently configurable")
     func preferenceDefaults() {
-        #expect(FirstMateChatPreferences.defaultWindowEnabled == false)
         #expect(FirstMateChatPreferences.defaultDockBadgeEnabled == true)
-        #expect(FirstMateChatPreferences.windowEnabledKey != FirstMateChatPreferences.dockBadgeEnabledKey)
         let defaults = Self.defaults()
         let controller = FirstMateDockBadgeController(defaults: defaults, apply: { _ in }, isInert: false)
         #expect(controller.isEnabled)
-        defaults.set(false, forKey: FirstMateChatPreferences.windowEnabledKey)
-        #expect(controller.isEnabled, "The Dock count does not follow the window preview")
         defaults.set(false, forKey: FirstMateChatPreferences.dockBadgeEnabledKey)
         #expect(!controller.isEnabled)
     }
@@ -457,25 +453,21 @@ struct FirstMateDockBadgeTests {
         #expect(Set(items.map(\.id.featureID)) == ["demo-receipts", "demo-release", "demo-search"])
     }
 
-    @Test("Choosing a conversation opens the chat window with the preview on, else the First Mate screen")
+    @Test("Choosing a conversation always opens the exact owner in the chat window")
     func opening() throws {
         let model = ChatFixtures.model(demo: false)
         let shell = ChatFixtures.shell()
         let id = FirstMateFleetFeatureID(machineID: "alpha", featureID: "fmf_synthetic")
         var opened: [String] = []
         let openWindow = OpenWindowActionProbe { opened.append($0) }
-        openWindow.open(id, model: model, shell: shell, chatWindowEnabled: true)
+        openWindow.open(id, model: model, shell: shell)
         #expect(shell.firstMateChatOpenRequest == id)
         #expect(opened == [HerdrWindowID.firstMateChat])
 
-        shell.firstMateChatOpenRequest = nil
-        openWindow.open(id, model: model, shell: shell, chatWindowEnabled: false)
-        #expect(shell.firstMateChatOpenRequest == nil)
-        #expect(shell.detailScope == .firstMate)
-        #expect(shell.firstMateScope == .machine("alpha"))
-        let target = try #require(shell.pendingFirstMateControlTarget)
-        #expect(target.machineID == "alpha" && target.featureID == "fmf_synthetic" && target.inspector == .overview)
-        #expect(opened == [HerdrWindowID.firstMateChat, HerdrWindowID.main])
+        let other = FirstMateFleetFeatureID(machineID: "beta", featureID: "fmf_synthetic")
+        openWindow.open(other, model: model, shell: shell)
+        #expect(shell.firstMateChatOpenRequest == other)
+        #expect(opened == [HerdrWindowID.firstMateChat, HerdrWindowID.firstMateChat])
     }
 }
 
@@ -485,8 +477,8 @@ struct FirstMateDockBadgeTests {
 private struct OpenWindowActionProbe {
     let record: (String) -> Void
 
-    func open(_ id: FirstMateFleetFeatureID, model: HerdrAppModel, shell: HerdrShellState, chatWindowEnabled: Bool) {
-        FirstMateChatWindowOpening.route(id, model: model, shell: shell, chatWindowEnabled: chatWindowEnabled, activate: {}, openWindow: record)
+    func open(_ id: FirstMateFleetFeatureID, model: HerdrAppModel, shell: HerdrShellState) {
+        FirstMateChatWindowOpening.route(id, model: model, shell: shell, activate: {}, openWindow: record)
     }
 }
 
@@ -505,15 +497,8 @@ struct FirstMateCountTextTests {
 @Suite("First Mate chat window entry points render", .serialized)
 @MainActor
 struct FirstMateChatShellRenderTests {
-    @Test("The First Mate screen shows Open in window beside Chat | Git while the preview is on")
+    @Test("The First Mate screen always shows Open in window beside Chat and Git")
     func openInWindowButton() async throws {
-        let defaults = UserDefaults.standard
-        let key = FirstMateChatPreferences.windowEnabledKey
-        let previous = defaults.object(forKey: key)
-        defaults.set(true, forKey: key)
-        defer {
-            if let previous { defaults.set(previous, forKey: key) } else { defaults.removeObject(forKey: key) }
-        }
         let model = HerdrRenderFixtures.demoModel()
         let shell = MonoRenderFixtures.shell(sidebarOnHome: true)
         shell.show(.firstMate, model: model)

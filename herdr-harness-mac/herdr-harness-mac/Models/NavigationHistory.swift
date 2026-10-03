@@ -11,6 +11,7 @@ import Foundation
 /// Snapshots from older builds may still hold the retired `workspace` and
 /// `attention` kinds; they decode to nil and drop out (`destination`).
 enum HerdrDestination: Hashable, Sendable {
+    case home
     case pane(String)        // scoped pane id — MachineScopedID.compose
     case git(String)
     case dashboard
@@ -120,6 +121,9 @@ extension HerdrDestinationRecord {
             guard !id.isEmpty else { return nil }
             kind = "git"
             self.id = id
+        case .home:
+            kind = "home"
+            id = nil
         case .dashboard:
             kind = "dashboard"
             id = nil
@@ -152,19 +156,20 @@ extension HerdrDestinationRecord {
         case "git":
             guard let id, !id.isEmpty else { return nil }
             return .git(id)
-        case "dashboard": return .dashboard
-        case "agentBoard": return .agentBoard
+        case "home", "dashboard", "agentBoard", "activity": return .home
         case "firstMate": return .firstMate
         case "prReview": return .prReview
         case "watchers": return .watchers
         case "fleet": return .fleet
-        case "activity": return .activity
         default: return nil
         }
     }
 }
 
 extension NavigationHistory {
+    private static func deduplicated(_ values: [HerdrDestination]) -> [HerdrDestination] {
+        values.reduce(into: []) { result, value in if result.last != value { result.append(value) } }
+    }
     var snapshot: NavigationHistorySnapshot {
         NavigationHistorySnapshot(
             version: NavigationHistorySnapshot.currentVersion,
@@ -176,8 +181,10 @@ extension NavigationHistory {
 
     init(snapshot: NavigationHistorySnapshot) {
         self.init()
-        backward = Array(snapshot.backward.compactMap(\.destination).suffix(Self.capacity))
+        backward = Self.deduplicated(Array(snapshot.backward.compactMap(\.destination).suffix(Self.capacity)))
         current = snapshot.current?.destination
-        forward = Array(snapshot.forward.compactMap(\.destination).prefix(Self.capacity))
+        forward = Self.deduplicated(Array(snapshot.forward.compactMap(\.destination).prefix(Self.capacity)))
+        while backward.last == current, !backward.isEmpty { backward.removeLast() }
+        while forward.first == current, !forward.isEmpty { forward.removeFirst() }
     }
 }

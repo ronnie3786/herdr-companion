@@ -17,17 +17,6 @@ private struct FirstMateDetailConnectionIdentity: Hashable {
     let isDemo: Bool
 }
 
-/// Authenticated roster identity, held only in memory and never logged.
-private struct PRReviewFleetConnectionIdentity: Hashable {
-    let roster: PRReviewFleetIdentity
-    let configurationURLs: [String?]
-}
-
-private struct PRReviewFleetPollingIdentity: Equatable {
-    let connection: PRReviewFleetConnectionIdentity
-    let isVisible: Bool
-}
-
 private struct PRReviewPollingIdentity: Equatable {
     let machineID: String?
     let reviewID: String?
@@ -411,19 +400,6 @@ struct WorkspaceNavigationView: View {
 
     var body: some View {
         navigationContent
-        .task(id: prReviewFleetConnectionIdentity) {
-            let sources = model.machines.compactMap { machine -> WatchersSource? in
-                guard let configuration = model.prReviewConfiguration(machineID: machine.id) else { return nil }
-                return WatchersSource(machineID: machine.id, machineName: machine.name, client: HerdrAPIClient(configuration: configuration))
-            }
-            shell.watchers.configure(sources, identity: prReviewFleetConnectionIdentity, demo: model.isDemoMode)
-            if model.isDemoMode, ProcessInfo.processInfo.arguments.contains("-HerdrWatchersDemo") { shell.show(.watchers, model: model) }
-            while !Task.isCancelled {
-                await shell.watchers.refresh()
-                do { try await Task.sleep(for: shell.watchers.pollingInterval) } catch { return }
-            }
-        }
-        .task(id: model.watchersRefreshTick) { await shell.watchers.refresh() }
         .task(id: firstMateDetailConnectionIdentity) {
             // Connection changes own store configuration. The process-owned
             // guard also makes this safe when closing and recreating the main
@@ -461,38 +437,9 @@ struct WorkspaceNavigationView: View {
             shell.attachPRReviewCommentStore(model.prReviewComments)
             shell.configurePRReviewIfNeeded(configuration: prReviewConfiguration, machineID: prReviewMachineID, connectionGeneration: model.connectionGeneration, isDemo: model.isDemoMode)
             await shell.prReview.refresh()
-            await applyPRReviewNavigationRequest()
-        }
-        .onChange(of: model.prReviewMachineRevision) { _, _ in
-            // A deliberate Settings change supersedes the previous host override.
-            shell.prReviewHostSettingsDidChange()
-        }
-        .task(id: PRReviewFleetPollingIdentity(connection: prReviewFleetConnectionIdentity, isVisible: prReviewFleetIsVisible)) {
-            // Reconcile even while hidden so removed/reconfigured hosts cannot
-            // publish stale responses. Only the visible All machines rail polls.
-            shell.prReviewFleet.setSources(prReviewFleetSources, identity: prReviewFleetConnectionIdentity)
-            guard prReviewFleetIsVisible else { return }
-            await shell.prReviewFleet.refresh()
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .seconds(30))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled, prReviewFleetIsVisible else { return }
-                await shell.prReviewFleet.refresh()
-            }
-        }
-        .onChange(of: shell.prReview.reviews.map(\.id)) { _, _ in
-            // Includes creates and archives from the single-host detail header.
-            guard prReviewFleetIsVisible else { return }
-            Task { await shell.prReviewFleet.refresh() }
-        }
-        .task(id: shell.prReviewOpenRequest?.id) {
-            await applyPRReviewNavigationRequest()
         }
         .task(id: model.prReviewRefreshTick) {
-            await shell.refreshPRReviews(refreshFleet: prReviewFleetIsVisible)
+            await shell.refreshPRReviews(refreshFleet: false)
         }
         .task(id: PRReviewPollingIdentity(
             machineID: shell.prReviewMachineID ?? model.prReviewMachine?.id,
@@ -670,28 +617,6 @@ struct WorkspaceNavigationView: View {
         shell.detailScope == .prReview && resolvedPRReviewScope == .all && !model.isDemoMode
     }
 
-    private var prReviewFleetConnectionIdentity: PRReviewFleetConnectionIdentity {
-        let configurations = model.machines.map { model.prReviewConfiguration(machineID: $0.id) }
-        return .init(
-            roster: .init(
-                isDemo: model.isDemoMode,
-                generation: model.connectionGeneration,
-                machines: zip(model.machines, configurations).map { machine, configuration in
-                    .init(id: machine.id, name: machine.name, urlString: machine.urlString, token: configuration?.token ?? "")
-                }
-            ),
-            configurationURLs: configurations.map { $0?.baseURL.absoluteString }
-        )
-    }
-
-    private var prReviewFleetSources: [PRReviewFleetSource] {
-        guard !model.isDemoMode else { return [] }
-        return model.machines.compactMap { machine in
-            guard let configuration = model.prReviewConfiguration(machineID: machine.id) else { return nil }
-            return .init(machineID: machine.id, machineName: machine.name, client: HerdrAPIClient(configuration: configuration))
-        }
-    }
-
     private var prReviewCreationConfiguration: ServerConfiguration? {
         if resolvedPRReviewScope == .all, !model.isDemoMode, let machine = model.prReviewMachine {
             return model.prReviewConfiguration(machineID: machine.id)
@@ -730,27 +655,6 @@ struct WorkspaceNavigationView: View {
 
     private var prReviewConfiguration: ServerConfiguration? {
         model.prReviewConfiguration(machineID: prReviewMachineID)
-    }
-
-    private func applyPRReviewNavigationRequest() async {
-        guard !Task.isCancelled,
-              let request = shell.prReviewOpenRequest,
-              request.id != shell.prReviewAppliedRequestID,
-              shell.prReview.currentMachineID == prReviewMachineID,
-              model.isDemoMode || request.serverURL == prReviewConfiguration?.baseURL.absoluteString
-        else { return }
-
-        shell.prReview.tab = request.tab
-        shell.prReview.select(request.reviewID)
-        await shell.prReview.refreshSelected()
-        guard !Task.isCancelled else { return }
-        if let file = request.file {
-            shell.prReview.selectedPath = file
-            if let line = request.line {
-                shell.prReview.scroll(to: file, line: line, side: request.side)
-            }
-        }
-        shell.prReviewAppliedRequestID = request.id
     }
 
     private func applyFirstMateNavigationRequest() async {

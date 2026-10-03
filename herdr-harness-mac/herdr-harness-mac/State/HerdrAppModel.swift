@@ -64,7 +64,9 @@ final class HerdrAppModel {
     private(set) var resultArtifactPhases: [String: AgentResultArtifactPhase] = [:]
     private(set) var recentlyOpenedResultArtifactIDs: Set<String> = []
     private(set) var activityHistoryAlerts: [HerdrAlert] = []
+    private(set) var activityHistoryLoaded = false
     var isRefreshingActivity = false
+    @ObservationIgnored private var activityRefreshRequestID: UUID?
     var activityFeedError: String?
     var connectionState: ConnectionState = .disconnected
     var selectedTab: AppTab = .workspaces
@@ -144,6 +146,9 @@ final class HerdrAppModel {
     var connectionGeneration = 0 {
         didSet {
             if connectionGeneration != oldValue {
+                activityHistoryLoaded = false
+                activityRefreshRequestID = nil
+                isRefreshingActivity = false
                 cancelDeferredRefreshes()
                 discardPendingQuickPaneRoutes()
                 acceptedPrompts.removeAll()
@@ -522,6 +527,14 @@ final class HerdrAppModel {
 
     func connectionState(forMachine id: String) -> ConnectionState {
         machineStates[id] ?? (isDemoMode ? .demo : .disconnected)
+    }
+
+    /// A stable outage episode, cleared after a successful connection. Reading
+    /// the observed fleet revision makes runtime changes visible to Home.
+    func connectionFailureBeganAt(forMachine id: String) -> Date? {
+        _ = fleetRevision
+        _ = machineStates[id]
+        return runtimes[id]?.firstFailureAt
     }
 
     /// Whether the cached workspaces for this machine were fetched by a
@@ -1331,12 +1344,35 @@ final class HerdrAppModel {
         return try await client.fetchAssignedJiraTickets().tickets
     }
 
+    var workInboxConnectionIdentity: WorkInboxConnectionIdentity {
+        // Observe the mirrored connection, not the non-observed runtime map,
+        // so shell reconciliation also runs when a new runtime becomes ready.
+        let connection = activeServerConnection.flatMap { connection -> ActiveServerConnection? in
+            guard !isDemoMode, connection.generation == connectionGeneration,
+                  connection.configuration == configuration(forReviewMachine: machines.first) else { return nil }
+            return connection
+        }
+        return .init(machineID: machines.first?.id, generation: connectionGeneration,
+                     isDemo: isDemoMode, connection: connection)
+    }
+
     func fetchWorkInbox() async throws -> WorkInboxResponse {
+        try await fetchWorkInbox(expectedIdentity: workInboxConnectionIdentity)
+    }
+
+    func fetchWorkInbox(expectedIdentity: WorkInboxConnectionIdentity) async throws -> WorkInboxResponse {
+        guard !Task.isCancelled, expectedIdentity == workInboxConnectionIdentity else { throw CancellationError() }
         if isDemoMode { return DemoData.workInbox }
-        guard let client = primaryClient else {
+        guard let machineID = expectedIdentity.machineID,
+              let connection = expectedIdentity.connection,
+              connection.generation == connectionGeneration,
+              runtimes[machineID]?.connection == connection,
+              let client = primaryClient else {
             throw APIError.noActiveConnection(machineID: machines.first?.name ?? "primary")
         }
-        return try await client.fetchWorkInbox()
+        let response = try await client.fetchWorkInbox()
+        guard !Task.isCancelled, expectedIdentity == workInboxConnectionIdentity else { throw CancellationError() }
+        return response
     }
 
     func fetchJiraTicket(query: String) async throws -> JiraTicket {
@@ -2825,36 +2861,59 @@ final class HerdrAppModel {
         ].contains(urlError.code)
     }
 
-    func refreshActivityFeed() async {
-        guard !isRefreshingActivity else { return }
+    func refreshActivityFeed(
+        load: @escaping @Sendable (HerdrAPIClient) async throws -> [HerdrAlert] = {
+            try await $0.fetchAlerts(limit: 500).alerts
+        }
+    ) async {
+        guard !Task.isCancelled, !isRefreshingActivity else { return }
+        let requestID = UUID()
+        let generation = connectionGeneration
+        let demo = isDemoMode
+        let roster = machines
+        let connections = roster.map { runtimes[$0.id]?.connection }
+        let configurations = roster.map { configuration(forReviewMachine: $0) }
+        activityRefreshRequestID = requestID
         isRefreshingActivity = true
-        activityFeedError = nil
-        defer { isRefreshingActivity = false }
+        defer {
+            if activityRefreshRequestID == requestID {
+                isRefreshingActivity = false
+                activityRefreshRequestID = nil
+            }
+        }
 
         if isDemoMode {
             activityHistoryAlerts = alerts
+            activityHistoryLoaded = true
+            activityFeedError = nil
             return
         }
 
-        let targets = machines.compactMap { machine -> (HerdrMachine, HerdrAPIClient)? in
-            guard let client = client(forMachine: machine.id) else { return nil }
+        let targets = roster.compactMap { machine -> (HerdrMachine, HerdrAPIClient)? in
+            // Settings can advance the generation before the connection
+            // driver's next task rebuilds its runtimes. Never capture the
+            // previous transport under the new generation in that interval.
+            guard let connection = runtimes[machine.id]?.connection,
+                  connection.generation == generation,
+                  connection.configuration == configuration(forReviewMachine: machine),
+                  let client = client(forMachine: machine.id) else { return nil }
             return (machine, client)
         }
         var results = await withTaskGroup(of: ActivityFetchResult.self) { group in
             for (machine, client) in targets {
                 group.addTask {
                     do {
-                        let response = try await client.fetchAlerts(limit: 500)
+                        let alerts = try await load(client)
                         return ActivityFetchResult(
                             machineID: machine.id,
-                            alerts: response.alerts.map { $0.stamped(machineID: machine.id) },
+                            alerts: alerts.map { $0.stamped(machineID: machine.id) },
                             errorMessage: nil
                         )
                     } catch {
                         return ActivityFetchResult(
                             machineID: machine.id,
                             alerts: nil,
-                            errorMessage: error.localizedDescription
+                            errorMessage: HerdrCancellation.isCancellation(error) ? nil : error.localizedDescription
                         )
                     }
                 }
@@ -2864,6 +2923,11 @@ final class HerdrAppModel {
             for await result in group { fetched.append(result) }
             return fetched
         }
+
+        guard !Task.isCancelled, activityRefreshRequestID == requestID,
+              generation == connectionGeneration, demo == isDemoMode,
+              roster == machines, connections == roster.map({ runtimes[$0.id]?.connection }),
+              configurations == roster.map({ configuration(forReviewMachine: $0) }) else { return }
 
         let targetMachineIDs = Set(targets.map { $0.0.id })
         for machine in machines where !targetMachineIDs.contains(machine.id) {
@@ -2875,11 +2939,15 @@ final class HerdrAppModel {
         }
 
         let refreshedMachineIDs = Set(results.compactMap { $0.alerts == nil ? nil : $0.machineID })
-        var merged = activityHistoryAlerts.filter { !refreshedMachineIDs.contains($0.machineID) }
+        let configuredMachineIDs = Set(roster.map(\.id))
+        var merged = activityHistoryAlerts.filter {
+            configuredMachineIDs.contains($0.machineID) && !refreshedMachineIDs.contains($0.machineID)
+        }
         for result in results {
             if let fresh = result.alerts { merged.append(contentsOf: fresh) }
         }
         activityHistoryAlerts = ActivityFeed.merged(current: [], history: merged)
+        activityHistoryLoaded = true
 
         let failures = results.compactMap { result -> String? in
             guard let message = result.errorMessage else { return nil }
@@ -4607,6 +4675,7 @@ final class HerdrAppModel {
         #endif
         alerts = DemoData.alerts.map { $0.stamped(machineID: "demo1") }
         activityHistoryAlerts = alerts
+        activityHistoryLoaded = true
         activityFeedError = nil
         fleetRevision &+= 1
         runtimes = Dictionary(uniqueKeysWithValues: machines.map {
@@ -4650,7 +4719,9 @@ final class HerdrAppModel {
         resultArtifactPhases = [:]
         recentlyOpenedResultArtifactIDs = []
         activityHistoryAlerts = []
+        activityHistoryLoaded = false
         activityFeedError = nil
+        activityRefreshRequestID = nil
         isRefreshingActivity = false
         if hadFleetContent { fleetRevision &+= 1 }
         selectedWorkspaceID = nil

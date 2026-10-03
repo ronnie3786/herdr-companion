@@ -85,6 +85,8 @@ final class HerdrShellState {
     /// cache protection, so no window can evict a file another is displaying.
     let prReviewDocumentResources: PRReviewDocumentResources
     let watchers = WatchersStore()
+    let workInbox = WorkInboxStore()
+    @ObservationIgnored let refreshCoordinator = ShellRefreshCoordinator()
     let prReview: PRReviewStore
     /// The main window's comment sheet presentation state. The saved records
     /// themselves live in the process-owned store in `HerdrAppModel`, shared
@@ -455,6 +457,31 @@ final class HerdrShellState {
         await fleet
     }
 
+    /// Root-owned so links remain actionable when the workspace navigator is
+    /// unmounted. Revalidate the exact request and connection after hydration.
+    func applyPRReviewNavigationRequest(model: HerdrAppModel) async {
+        let machineID = prReviewMachineID ?? (model.isDemoMode ? "demo" : model.prReviewMachine?.id)
+        let configuration = model.prReviewConfiguration(machineID: machineID)
+        let generation = model.connectionGeneration
+        guard !Task.isCancelled, let request = prReviewOpenRequest,
+              request.id != prReviewAppliedRequestID,
+              model.isDemoMode || request.serverURL == configuration?.baseURL.absoluteString else { return }
+        configurePRReviewIfNeeded(configuration: configuration, machineID: machineID,
+                                  connectionGeneration: generation, isDemo: model.isDemoMode)
+        prReview.tab = request.tab
+        prReview.select(request.reviewID)
+        await prReview.refreshSelected()
+        guard !Task.isCancelled, generation == model.connectionGeneration,
+              prReviewOpenRequest?.id == request.id, prReview.currentMachineID == machineID,
+              prReview.selectedReviewID == request.reviewID,
+              configuration == model.prReviewConfiguration(machineID: machineID) else { return }
+        if let file = request.file {
+            prReview.selectedPath = file
+            if let line = request.line { prReview.scroll(to: file, line: line, side: request.side) }
+        }
+        prReviewAppliedRequestID = request.id
+    }
+
     func preparePRReviewCreation(model: HerdrAppModel) {
         guard PRReviewHostScope.resolved(prReviewScope, availableMachineIDs: model.machines.map(\.id)) == .all,
               !model.isDemoMode,
@@ -821,6 +848,7 @@ struct AppRootView: View {
 
     var body: some View {
         rootContent
+            .modifier(ShellRefreshModifier(model: model, shell: shell))
             .overlay {
                 commandPaletteOverlay
             }

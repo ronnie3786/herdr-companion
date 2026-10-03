@@ -284,6 +284,30 @@ struct PRReviewFleetIndexTests {
         #expect(!index.hasLoaded)
     }
 
+    @Test("A same-ID endpoint or credential change clears only that host's cached reviews", arguments: [false, true])
+    func reconfiguredHostDropsPreviousAccountRows(changesURL: Bool) async throws {
+        let configuration = try #require(ServerConfiguration(urlString: "https://alpha.example.invalid", token: "synthetic-old"))
+        let changed = try #require(ServerConfiguration(urlString: changesURL ? "https://replacement.example.invalid" : "https://alpha.example.invalid",
+                                                        token: changesURL ? "synthetic-old" : "synthetic-new"))
+        let alpha = SyntheticPRReviewFleetClient(active: [review("alpha-old")], archived: [review("alpha-archived", archived: true)])
+        let beta = SyntheticPRReviewFleetClient(active: [review("beta-kept")])
+        let index = PRReviewFleetIndex()
+        index.setSources([
+            .init(machineID: "host-a", machineName: "Alpha", client: alpha, configuration: configuration),
+            .init(machineID: "host-b", machineName: "Beta", client: beta, configuration: configuration)
+        ], identity: 1)
+        await index.refresh()
+        #expect(index.active.count == 2 && index.archived.count == 1)
+        index.setSources([
+            .init(machineID: "host-a", machineName: "Alpha", client: alpha, configuration: changed),
+            .init(machineID: "host-b", machineName: "Renamed Beta", client: beta, configuration: configuration)
+        ], identity: 2)
+        #expect(index.active.map(\.review.id) == ["beta-kept"])
+        #expect(index.active.first?.machineName == "Renamed Beta")
+        #expect(index.archived.isEmpty)
+        #expect(index.lastSuccessfulRefreshAt == nil)
+    }
+
     @Test("Removing a source immediately drops both lists and its notice")
     func removalDropsEntriesAndNotices() async {
         let alpha = SyntheticPRReviewFleetClient(active: [review("prr_a")], archived: [review("prr_a_old", archived: true)])

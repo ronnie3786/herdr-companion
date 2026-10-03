@@ -5,6 +5,9 @@ struct PRReviewFleetSource: Sendable {
     let machineID: String
     let machineName: String
     let client: any PRReviewClient
+    /// Required for live sources; nil is for injected, connectionless clients.
+    /// Kept in memory only, never exposed in Home or logged.
+    var configuration: ServerConfiguration? = nil
 }
 
 /// What invalidates fleet requests: the ordered roster, names, authenticated
@@ -59,6 +62,7 @@ final class PRReviewFleetIndex {
     private(set) var hasLoaded = false
     private(set) var isRefreshing = false
     private(set) var sourceCount = 0
+    @ObservationIgnored private(set) var lastSuccessfulRefreshAt: Date?
 
     @ObservationIgnored private var sources: [PRReviewFleetSource] = []
     @ObservationIgnored private var identity: AnyHashable?
@@ -85,18 +89,24 @@ final class PRReviewFleetIndex {
     }
 
     /// An unchanged identity is a no-op, even if the caller constructed fresh
-    /// clients. Remaining hosts keep their lists and notices; removed hosts
-    /// are dropped immediately, and labels and order follow the new roster.
+    /// clients. Unchanged authenticated hosts keep their lists and notices;
+    /// removed or reconfigured hosts are dropped immediately. Labels and
+    /// order follow the new roster without discarding unchanged hosts.
     func setSources(_ sources: [PRReviewFleetSource], identity: AnyHashable) {
         guard self.identity != identity else { return }
         generation &+= 1
         self.identity = identity
+        let previousSources = self.sources
         self.sources = sources
-        let machineIDs = Set(sources.map(\.machineID))
-        hosts = hosts.filter { machineIDs.contains($0.key) }
+        hosts = hosts.filter { machineID, _ in
+            guard let previous = previousSources.first(where: { $0.machineID == machineID }),
+                  let next = sources.first(where: { $0.machineID == machineID }) else { return false }
+            return previous.configuration == next.configuration
+        }
         sourceCount = sources.count
         isRefreshing = false
         hasLoaded = false
+        lastSuccessfulRefreshAt = nil
         publish()
     }
 
@@ -109,6 +119,7 @@ final class PRReviewFleetIndex {
         let refreshSources = sources
         let mutationRevisions = hosts.mapValues(\.mutationRevision)
         isRefreshing = true
+        var successfulHosts = 0
         defer {
             if generation == refreshGeneration { isRefreshing = false }
         }
@@ -129,6 +140,7 @@ final class PRReviewFleetIndex {
                     host.active = active
                     host.archived = archived
                     host.notice = nil
+                    successfulHosts += 1
                 case let .failure(message):
                     host.notice = message
                 case .cancelled:
@@ -139,7 +151,10 @@ final class PRReviewFleetIndex {
                 publish()
             }
         }
-        if generation == refreshGeneration, !Task.isCancelled { hasLoaded = true }
+        if generation == refreshGeneration, !Task.isCancelled {
+            hasLoaded = true
+            if !refreshSources.isEmpty, successfulHosts == refreshSources.count { lastSuccessfulRefreshAt = .now }
+        }
     }
 
     /// Archives only the target's companion and reconciles that row from the

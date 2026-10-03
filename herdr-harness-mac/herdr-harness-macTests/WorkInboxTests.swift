@@ -75,6 +75,8 @@ struct WorkInboxTests {
     @MainActor
     func storeRefreshState() async {
         let store = WorkInboxStore()
+        let identity = identity()
+        store.configure(identity: identity)
         var response = WorkInboxResponse.empty
         response.reviewRequests.items = [
             GitHubReviewRequest(
@@ -88,15 +90,118 @@ struct WorkInboxTests {
             )
         ]
 
-        await store.refresh { response }
+        await store.refresh(for: identity) { response }
 
         #expect(store.hasLoaded)
         #expect(store.totalCount == 1)
         #expect(store.transportError == nil)
 
-        await store.refresh { throw APIError.invalidResponse }
+        await store.refresh(for: identity) { throw APIError.invalidResponse }
 
         #expect(store.totalCount == 1)
         #expect(store.transportError == "The Herdr server returned an invalid response.")
     }
+
+    @Test("A provider failure retains its last successful rows and freshness")
+    @MainActor
+    func providerFailureKeepsLastGoodRows() async {
+        let store = WorkInboxStore()
+        let identity = identity()
+        store.configure(identity: identity)
+        await store.refresh(for: identity) { response(number: 9) }
+        let updatedAt = store.reviewRequestsUpdatedAt
+        var failure = WorkInboxResponse.empty
+        failure.reviewRequests.ok = false
+        failure.jiraTickets.items = [.init(key: "APP-2", projectKey: "APP", title: "Task", status: "In Progress", priority: "", issueType: "Story", url: "https://jira.example/APP-2")]
+        await store.refresh(for: identity) { failure }
+        #expect(store.response.reviewRequests.items.map(\.number) == [9])
+        #expect(store.reviewRequestsUpdatedAt == updatedAt)
+        #expect(store.error(for: .github) != nil)
+        #expect(store.response.jiraTickets.items.map(\.key) == ["APP-2"])
+        #expect(store.jiraTicketsUpdatedAt != nil)
+        #expect(store.error(for: .jira) == nil)
+        await store.refresh(for: identity) { .empty }
+        #expect(store.response.reviewRequests.items.isEmpty)
+        #expect(store.error(for: .github) == nil)
+    }
+
+    @Test("A delayed old primary cannot overwrite new data or finish its refresh")
+    @MainActor
+    func replacementRejectsOldResponseAndDefer() async {
+        let store = WorkInboxStore()
+        let old = identity()
+        let new = identity(generation: 1)
+        let oldGate = InboxResponseGate()
+        let newGate = InboxResponseGate()
+        store.configure(identity: old)
+        let first = Task { await store.refresh(for: old) { await oldGate.load() } }
+        await oldGate.waitUntilRequested()
+        store.configure(identity: new)
+        #expect(!store.hasLoaded)
+        #expect(store.response.reviewRequests.items.isEmpty)
+        let second = Task { await store.refresh(for: new) { await newGate.load() } }
+        await newGate.waitUntilRequested()
+        oldGate.finish(response(number: 1))
+        await first.value
+        #expect(store.isRefreshing)
+        #expect(!store.hasLoaded)
+        newGate.finish(response(number: 2))
+        await second.value
+        #expect(store.response.reviewRequests.items.map(\.number) == [2])
+        #expect(!store.isRefreshing)
+    }
+
+    @Test("Cancelled loads do not publish a result or an error banner")
+    @MainActor
+    func ignoresCancellation() async {
+        let store = WorkInboxStore()
+        let identity = identity()
+        store.configure(identity: identity)
+        await store.refresh(for: identity) { throw URLError(.cancelled) }
+        #expect(!store.hasLoaded)
+        #expect(store.transportError == nil)
+        let gate = InboxResponseGate()
+        let task = Task { await store.refresh(for: identity) { await gate.load() } }
+        await gate.waitUntilRequested()
+        task.cancel()
+        gate.finish(response(number: 3))
+        await task.value
+        #expect(!store.hasLoaded)
+        #expect(store.response.reviewRequests.items.isEmpty)
+        #expect(store.transportError == nil)
+    }
+
+    private func identity(generation: Int = 0) -> WorkInboxConnectionIdentity {
+        .init(machineID: "primary", generation: generation, isDemo: false,
+              connection: .init(configuration: ServerConfiguration(urlString: "https://companion.example", token: "synthetic")!, generation: generation))
+    }
+
+    private func response(number: Int) -> WorkInboxResponse {
+        var response = WorkInboxResponse.empty
+        response.reviewRequests.items = [.init(number: number, title: "Review", url: "https://github.com/example/repo/pull/\(number)", isDraft: false, state: "open", author: "author", repository: "example/repo")]
+        return response
+    }
+
+}
+
+
+@MainActor
+private final class InboxResponseGate {
+    private var pending: CheckedContinuation<WorkInboxResponse, Never>?
+    private var started: CheckedContinuation<Void, Never>?
+
+    func load() async -> WorkInboxResponse {
+        await withCheckedContinuation {
+            pending = $0
+            started?.resume()
+            started = nil
+        }
+    }
+
+    func waitUntilRequested() async {
+        if pending != nil { return }
+        await withCheckedContinuation { started = $0 }
+    }
+
+    func finish(_ response: WorkInboxResponse) { pending?.resume(returning: response); pending = nil }
 }

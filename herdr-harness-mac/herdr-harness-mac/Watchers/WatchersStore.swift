@@ -45,6 +45,7 @@ enum WatcherMachineState: Equatable, Sendable {
     private(set) var unreadCount = 0
     private(set) var loaded = false
     private(set) var refreshing = false
+    @ObservationIgnored private(set) var lastSuccessfulRefreshAt: Date?
     var error: String?
     var busy: Set<String> = []
     private(set) var demo = false
@@ -74,6 +75,7 @@ enum WatcherMachineState: Equatable, Sendable {
     func configure(_ sources: [WatchersSource], identity: AnyHashable, demo: Bool) {
         guard self.identity != identity else { return }
         generation &+= 1; self.identity = identity; self.sources = sources; self.demo = demo
+        lastSuccessfulRefreshAt = nil
         entries = demo ? WatchersDemo.entries : []; notices = [:]; inboxCounts = [:]; enabledMachines = []; unreadCount = 0; loaded = demo; refreshing = false; busy = []; actionRequestIDs = [:]; refreshAgain = false
         machineStates = Dictionary(sources.map { ($0.machineID, demo ? WatcherMachineState.on(supervised: true) : .checking) }, uniquingKeysWith: { first, _ in first }); changingMachines = []; settingErrors = [:]; seenOn = []
     }
@@ -82,6 +84,7 @@ enum WatcherMachineState: Equatable, Sendable {
         guard !demo else { return }
         guard !refreshing else { refreshAgain = true; return }
         let token = generation; let revision = mutationRevision; refreshing = true
+        var successfulHosts = 0
         defer {
             if token == generation {
                 refreshing = false; loaded = true
@@ -103,6 +106,10 @@ enum WatcherMachineState: Equatable, Sendable {
             } }
             for await (machineID, machineName, state, list, inbox) in group {
                 guard token == generation, revision == mutationRevision, !Task.isCancelled else { group.cancelAll(); continue }
+                switch state {
+                case .on, .off: successfulHosts += 1
+                case .checking, .needsUpdate, .unreachable: break
+                }
                 machineStates[machineID] = state
                 guard state.isOn else {
                     enabledMachines.remove(machineID); inboxCounts[machineID] = nil; unreadCount = inboxCounts.values.reduce(0, +)
@@ -119,6 +126,8 @@ enum WatcherMachineState: Equatable, Sendable {
                 entries = Self.ordered(entries)
             }
         }
+        if token == generation, revision == mutationRevision, !Task.isCancelled,
+           !sources.isEmpty, successfulHosts == sources.count { lastSuccessfulRefreshAt = .now }
     }
     func state(for machineID: String) -> WatcherMachineState { machineStates[machineID] ?? .checking }
     func machineName(for machineID: String) -> String { sources.first { $0.machineID == machineID }?.machineName ?? machineID }

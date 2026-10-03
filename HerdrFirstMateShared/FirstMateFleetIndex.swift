@@ -210,6 +210,12 @@ final class FirstMateFleetIndex {
         hosts.contains { !$0.isLoading && ($0.lastUpdated != nil || $0.error != nil || $0.unsupported) }
     }
 
+    /// Freshness for coalesced projections. Poll contact time is deliberately
+    /// not observed, so an unchanged successful poll does not redraw the fleet.
+    func lastSuccessfulContact(machineID: String) -> Date? {
+        lastContact[machineID]
+    }
+
     /// The number of distinct First Mate features on any host that are waiting
     /// on a human decision.
     ///

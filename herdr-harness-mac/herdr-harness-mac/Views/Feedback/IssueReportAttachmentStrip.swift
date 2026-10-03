@@ -55,7 +55,7 @@ struct IssueReportAttachmentStrip: View {
             }
         }
         .padding(12)
-        .background(HerdrTheme.elevated.opacity(isDropTargeted ? 0.95 : 0.6))
+        .background(isDropTargeted ? HerdrTheme.insetFill : HerdrTheme.cardFill)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(
@@ -100,7 +100,7 @@ struct IssueReportAttachmentChip: View {
         .padding(.leading, 6)
         .padding(.vertical, 6)
         .padding(.trailing, 2)
-        .background(HerdrTheme.surface, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+        .background(HerdrTheme.insetFill, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         .accessibilityIdentifier("issue-report-attachment-\(attachment.filename)")
         .task(id: attachment.id) {
             guard attachment.isImage else { return }
@@ -125,7 +125,7 @@ struct IssueReportAttachmentChip: View {
                 .herdrFont(.caption)
                 .foregroundStyle(HerdrTheme.muted)
                 .frame(width: 32, height: 32)
-                .background(HerdrTheme.elevated, in: .rect(cornerRadius: HerdrTheme.compactRadius))
+                .background(HerdrTheme.fieldFill, in: .rect(cornerRadius: HerdrTheme.compactRadius))
         }
     }
 

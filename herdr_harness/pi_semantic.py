@@ -1199,6 +1199,7 @@ class PiSemanticManager:
         environ: Optional[Mapping[str, str]] = None,
         journal: Optional[PiSemanticJournal] = None,
         on_event: Optional[Callable[[dict], None]] = None,
+        on_snapshot: Optional[Callable[[dict], None]] = None,
     ) -> None:
         production_environment = environ is None
         self.environ = dict(os.environ if production_environment else environ)
@@ -1229,6 +1230,7 @@ class PiSemanticManager:
             ),
         )
         self._on_event = on_event
+        self._on_snapshot = on_snapshot
         self._saved_history = PiSavedHistory()
         self._lock = threading.RLock()
         self._started = False
@@ -1393,6 +1395,20 @@ class PiSemanticManager:
                         ):
                             if self._on_event is not None:
                                 self._on_event(copy.deepcopy(event))
+                        # Snapshot records do not emit an HTTP event. Notify
+                        # background consumers only after the checkpoint is
+                        # durably journaled, including reconnect recovery.
+                        if self._on_snapshot is not None and (record.get("kind") or record.get("type")) in {
+                            "snapshot", "session.snapshot", "reset", "stream.reset",
+                        }:
+                            snapshot = record.get("snapshot") or record.get("payload")
+                            if isinstance(snapshot, dict):
+                                try:
+                                    self._on_snapshot(copy.deepcopy(snapshot))
+                                except Exception as exc:
+                                    # Optional work must not drop the bridge or
+                                    # expose conversation text in diagnostics.
+                                    _LOG.warning("Pi snapshot observer failed: %s", type(exc).__name__)
                     # A recv can finish one valid large line and start another.
                     # Bound individual records, not the combined socket read.
                     if len(buffer) > PI_SEMANTIC_MAX_LINE_BYTES:

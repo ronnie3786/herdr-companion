@@ -883,6 +883,7 @@ struct AppRootView: View {
                 .disabled(herdPulse.isBusy)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .labelStyle(.iconOnly)
         .frame(width: 20, height: 30)
         .foregroundStyle(HomePalette.secondary)
         .accessibilityIdentifier("home-chats-tools")

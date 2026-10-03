@@ -1,6 +1,6 @@
 # First Mate Home and four-tab shell: implementation plan
 
-**Status:** Reviewed and approved on October 3, 2026. Ready to implement, starting with the pre-flight steps in section 0 and PR 1 in section 12.
+**Status:** Implemented on October 3, 2026 across PRs [194](https://github.com/ronnie3786/herdr-companion/pull/194), [195](https://github.com/ronnie3786/herdr-companion/pull/195), [196](https://github.com/ronnie3786/herdr-companion/pull/196), [197](https://github.com/ronnie3786/herdr-companion/pull/197), and [198](https://github.com/ronnie3786/herdr-companion/pull/198). See [current Home behavior and acceptance traceability](macos-home.md); PR 198 records final delivery verification. The sections below preserve the approved plan and its historical baseline.
 
 **Date:** October 3, 2026.
 
@@ -8,7 +8,7 @@
 
 **Design authority:** The locked [First Mate Home design specification](../design/first-mate-home-2026-10-03/DESIGN-SPEC.md), its `reference.html`, stylesheet, and four synthetic moments. The rendered reference wins if a written measurement disagrees with it. These design files are untracked in the main checkout and must be committed to the feature branch before work starts (section 0).
 
-This document describes the proposed finished implementation, its integration requirements, and its acceptance criteria. It does not claim these changes are complete. A small, uncommitted scaffold (about 550 lines) exists in the `codex/first-mate-home` worktree, including initial Home models, visual primitives, and partial route changes. That scaffold has not been compiled or validated. The user's original working checkout has been preserved.
+At approval, this document described the proposed implementation, integration requirements, and acceptance criteria. A small, uncommitted scaffold (about 550 lines) existed in the `codex/first-mate-home` worktree, including initial Home models, visual primitives, and partial route changes. That scaffold had not been compiled or validated. The user's original working checkout was preserved.
 
 ## 0. Review layer: October 3, 2026
 

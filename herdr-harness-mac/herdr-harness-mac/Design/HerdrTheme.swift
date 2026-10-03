@@ -11,12 +11,9 @@ import os
 /// composited over `base`, so their contrast is fixed and testable. Nothing a
 /// person reads falls below 4.5:1 (`HerdrThemeAccessibilityTests`).
 ///
-/// The Mac app is dark everywhere except First Mate's light appearance. The
-/// neutral, accent and status roles follow the view's color scheme there,
-/// resolving to MonoCode light (base hsl(240 8% 97%), ink hsl(240 8% 18%)), so
-/// shared chrome such as the composer and title bar works on both. Code
-/// colors (diff, syntax) stay dark. Outside a view, `resolved(_:scheme:)`
-/// picks an appearance explicitly.
+/// The Mac app uses dark appearance throughout, including First Mate.
+/// Adaptive roles remain available for shared component rendering and contrast
+/// tests. Outside a view, `resolved(_:scheme:)` picks an appearance explicitly.
 ///
 /// Older names (`graphite`, `elevated`, `mist`, …) remain as aliases of these
 /// roles so every view reads as the new palette; components adopt the role

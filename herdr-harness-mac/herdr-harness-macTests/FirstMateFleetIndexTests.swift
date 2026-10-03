@@ -69,6 +69,39 @@ struct FirstMateFleetIndexTests {
         #expect(index.hosts[0].features.isEmpty)
     }
 
+    @Test("Reviewed cleanup keeps the owning client and rejects a changed connection")
+    func reviewedArchiveOwner() async throws {
+        for changeConnection in [false, true] {
+            var value = snapshot(id: "same-id", title: "Synthetic task", goal: "Keep the owner")
+            value.feature.status = "completed"
+            let alpha = ArchiveFleetClient(snapshot: value)
+            let beta = ArchiveFleetClient(snapshot: value)
+            let index = FirstMateFleetIndex()
+            let a = machine(id: "alpha", name: "Alpha")
+            let b = machine(id: "beta", name: "Beta")
+            let sources: [FirstMateFleetSource] = [
+                .init(machine: a, configuration: configuration(for: a, token: "alpha"), client: alpha),
+                .init(machine: b, configuration: configuration(for: b, token: "beta"), client: beta),
+            ]
+            index.activate(sources: sources, connectionGeneration: 1)
+            let target = index.archiveTarget(machineID: a.id, feature: value.feature)
+            let client = try #require(index.archiveClient(for: target))
+            let store = FirstMateStore()
+            store.configure(client: client, demo: false)
+            await store.refresh()
+            let review = FirstMateArchiveModel(store: store, feature: value.feature,
+                                               isConnectionCurrent: { index.isCurrent(target) })
+            await review.load()
+            #expect(review.canConfirm)
+            if changeConnection { index.activate(sources: sources, connectionGeneration: 2) }
+            await review.submit()
+            #expect(await alpha.reviewRequests.count == (changeConnection ? 0 : 1))
+            #expect(await beta.reviewRequests.isEmpty)
+            #expect(review.phase == (changeConnection ? .interrupted : .finished))
+            if changeConnection { #expect(index.archiveClient(for: target) == nil) }
+        }
+    }
+
     @Test("Unsupported and failed archives retain the feature and explain the failure")
     func archiveFailure() async {
         for supported in [false, true] {
@@ -1036,6 +1069,7 @@ private actor ArchiveFleetClient: FirstMateClient {
     let failArchive: Bool
     let listGate: FirstMateFleetResponseGate?
     var archiveRequests: [String] = []
+    var reviewRequests: [FirstMateArchiveRequest] = []
 
     init(snapshot: FirstMateSnapshot, supported: Bool = true, failArchive: Bool = false,
          listGate: FirstMateFleetResponseGate? = nil) {
@@ -1045,11 +1079,26 @@ private actor ArchiveFleetClient: FirstMateClient {
         self.listGate = listGate
     }
     func fetchFirstMateCapabilities() async throws -> FirstMateCapabilities {
-        .init(ok: true, capabilities: supported ? ["first-mate-archive-v1"] : [])
+        .init(ok: true, capabilities: supported ? ["first-mate-archive-v1", "first-mate-archive-cleanup-v1", "first-mate-archive-review-v1"] : [])
     }
     func fetchFirstMateFeatures() async throws -> FirstMateFeatureList {
         if let listGate { return try await listGate.fetch() }
         return .init(ok: true, features: snapshot.feature.isArchived ? [] : [snapshot.feature])
+    }
+    func fetchFirstMateArchivePreview(featureID: String) async throws -> FirstMateArchivePreviewResponse {
+        .init(ok: true, preview: .init(featureID: featureID, featureRevision: snapshot.feature.revision,
+                                       token: "synthetic-preview", resources: [], documentCount: 0, messageCount: 1))
+    }
+    func confirmFirstMateArchive(featureID: String, request: FirstMateArchiveRequest) async throws -> FirstMateArchiveReceipt {
+        reviewRequests.append(request)
+        return .init(ok: true, feature: snapshot.feature, archiveID: "synthetic-archive", cleanup: cleanup)
+    }
+    func fetchFirstMateArchiveProgress(featureID: String, archiveID: String?, after: Int) async throws -> FirstMateArchiveProgress {
+        .init(ok: true, cleanup: cleanup, logs: [], nextAfter: nil)
+    }
+    private var cleanup: FirstMateArchiveCleanup {
+        .init(id: "synthetic-archive", status: "completed", attempt: 1, message: "Saved", historyAvailable: true,
+              bytesReclaimed: 0, removed: 0, retained: 0, failed: 0, updatedAt: FirstMateDemo.timestamp)
     }
     func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot {
         archiveRequests.append(featureID)

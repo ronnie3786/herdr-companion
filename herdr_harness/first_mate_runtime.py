@@ -46,7 +46,9 @@ from .first_mate_routing import (
     delegation_profile,
     resolve_dispatch_policy,
 )
+from . import first_mate_archive
 from . import first_mate_fleet
+from .first_mate_cleanup import FirstMateCleanup
 from .first_mate_store import LEAD_KIND, FirstMateError, system_message_attention, validate_assignment_payload
 from .first_mate_usage_background import BackgroundFirstMateUsage
 from .first_mate_workspaces import FeatureWorkspaces, independent_path, lock_path as workspace_lock_path, path_key
@@ -927,6 +929,8 @@ class FirstMateRuntime:
         from .first_mate_reliability import FirstMateReliability
         self.reliability = FirstMateReliability(self)
         self.links = FirstMateLinkDiscovery(self.store, root=self.root)
+        self.cleanup = FirstMateCleanup(self)
+        self.store.archive_previewer = self.cleanup.preview
         self.workspaces = FeatureWorkspaces(self, _read_json, _write_json)
         # The lead's reach into the other machines of this companion's roster.
         self.peers = PeerDirectory(self.environ)
@@ -1208,7 +1212,7 @@ class FirstMateRuntime:
     def _usage_account(self, feature: dict, *, assignments: list[dict] | None = None,
                        jobs: list[dict] | None = None,
                        ledger_sessions: list[dict] | None = None) -> dict:
-        return self.usage.account(
+        account = self.usage.account(
             feature_id=feature["id"],
             assignments=assignments if assignments is not None else self.store.list_assignments(feature_id=feature["id"]),
             ledger_sessions=ledger_sessions if ledger_sessions is not None else self.store.list_session_records(),
@@ -1216,6 +1220,10 @@ class FirstMateRuntime:
             jobs_root=self.jobs_root,
             updated_at=feature.get("updated_at") or utc_now(),
         )
+        historical = first_mate_archive.facts(self.store, feature)
+        if historical:
+            account["usage"] = historical["usage"]
+        return account
 
     def list_features(self, view: str = "active") -> list[dict]:
         verification_deadline = time.monotonic() + VERIFICATION_READ_SECONDS
@@ -1229,6 +1237,7 @@ class FirstMateRuntime:
             account = self._usage_account(feature, jobs=jobs, ledger_sessions=ledger_sessions)
             selection = self._policy(feature, kind="coordinator", claim={}).selection()
             result.append({**feature, "usage": account["usage"], "model_selection": selection,
+                           "archive_cleanup": first_mate_archive.summary(self.store, feature["id"]),
                            "verification": self._live_verification(feature, deadline=verification_deadline),
                            "coordinator_context": self.context.project(feature, jobs)})
         return result
@@ -1238,6 +1247,7 @@ class FirstMateRuntime:
         jobs = self._jobs()
         selection = self._policy(feature, kind="coordinator", claim={}).selection()
         return {**feature, "usage": self._usage_account(feature, jobs=jobs)["usage"],
+                "archive_cleanup": first_mate_archive.summary(self.store, feature_id),
                 "model_selection": selection,
                 "verification": self._live_verification(feature),
                 "coordinator_context": self.context.project(feature, jobs)}
@@ -1248,6 +1258,9 @@ class FirstMateRuntime:
         TTL bounds retention; it is never a substitute for checking workspace
         HEAD/status. Mutating gate decisions use verification_assessment directly.
         """
+        historical = first_mate_archive.facts(self.store, feature)
+        if historical:
+            return {**historical["verification"], "historical_only": True}
         if deadline is None:
             deadline = time.monotonic() + VERIFICATION_READ_SECONDS
         previous_deadline = getattr(self._verification_read_context, "deadline", None)
@@ -1399,6 +1412,7 @@ class FirstMateRuntime:
         if not board["unchanged"]:
             selection = self._policy(board["feature"], kind="coordinator", claim={}).selection()
             board["feature"] = {**board["feature"], "model_selection": selection,
+                                "archive_cleanup": first_mate_archive.summary(self.store, feature_id),
                                 "verification": verification}
         return activity_presentation(board)
 
@@ -1409,6 +1423,7 @@ class FirstMateRuntime:
         result = dict(snapshot)
         feature_selection = self._policy(snapshot["feature"], kind="coordinator", claim={}).selection()
         result["feature"] = {**snapshot["feature"], "usage": account["usage"],
+                             "archive_cleanup": first_mate_archive.summary(self.store, feature_id),
                              "model_selection": feature_selection,
                              "verification": self._live_verification(snapshot["feature"]),
                              "coordinator_context": self.context.project(snapshot["feature"], jobs)}
@@ -2210,6 +2225,7 @@ class FirstMateRuntime:
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 self._require_storage(prepared["source"])
                 self._git(prepared["source"], "worktree", "add", "-b", branch, str(path), metadata["base_revision"])
+                self.cleanup.register_worktree(feature, path, branch)
             if prepared.get("workspace_version") and not prepared.get("ready"):
                 metadata["workspace_identity"] = self.workspaces.identity(feature, str(path), metadata.get("workspace_identity"))
                 self.workspaces.remember(feature, metadata, primary=prepared["make_primary"])
@@ -2827,6 +2843,7 @@ class FirstMateRuntime:
             # Monitoring can still inspect healthy work; failed features keep
             # their writer identity and are retried on the next scheduler pass.
             self.reliability.tick(jobs, excluded_feature_ids=failed_features)
+            self.cleanup.tick(jobs)
             if time.monotonic() - self._last_watch >= 10:
                 self._watch([job for job in jobs if job["feature_id"] not in failed_features])
                 self._last_watch = time.monotonic()
@@ -2835,8 +2852,8 @@ class FirstMateRuntime:
                 self._record_load_sample(worker_count)
             if not self.capabilities()["available"]:
                 return
-            # Archiving is presentation-only. Detached work for an archived
-            # feature continues to reconcile until its workflow settles.
+            # Archiving unfinished work remains presentation-only. It never
+            # queues cleanup or interrupts that work.
             for feature in self.store.list_features("all", include_lead=True):
                 if feature["status"] in {"cancelled", "completed"} or feature["id"] in failed_features:
                     continue
@@ -3590,6 +3607,21 @@ class FirstMateRuntime:
             return session
         if action == "fm_save_link":
             return self._save_link(job, params)
+        if action == "fm_allocate_resource" and job["kind"] in {"coordinator", "worker"}:
+            if set(params) != {"kind"}:
+                raise FirstMateError("Disposable resources accept only kind", code="invalid_request", status=400)
+            self._persisted_parent_job(feature_id, job)
+            if job["kind"] == "coordinator":
+                if feature.get("coordinator_owner") != job.get("owner"):
+                    raise FirstMateError("Coordinator ownership changed", code="stale_owner")
+            else:
+                assignment = self.store.get_assignment(claim["id"])
+                if (assignment["feature_id"] != feature_id or assignment["generation"] != claim.get("generation")
+                        or assignment["native_session_id"] != job.get("native_session_id")
+                        or assignment["status"] != "running" or feature["status"] != "running"
+                        or not self.store.assignment_is_in_current_visit(assignment["id"])):
+                    raise FirstMateError("Resource allocation is outside the current assignment", code="stale_owner")
+            return self.cleanup.allocate(feature_id, params["kind"], request_id)
         if action == "fm_register_simulator_build":
             return self._register_simulator_build(job, params, request_id)
         if action == "fm_delegate" and job["kind"] == "worker":

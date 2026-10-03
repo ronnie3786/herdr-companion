@@ -29,6 +29,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
     var workItemID: String?
     var archivedAt: String? = nil
     var archiveReason: String? = nil
+    var archiveCleanup: FirstMateArchiveCleanup? = nil
     var coordinatorModel: String? = nil
     var coordinatorThinking: String? = nil
     var modelSettingsRevision: Int? = nil
@@ -63,6 +64,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
         case currentVisitID = "current_visit_id", createdAt = "created_at", updatedAt = "updated_at"
         case workItemID = "work_item_id"
         case archivedAt = "archived_at", archiveReason = "archive_reason"
+        case archiveCleanup = "archive_cleanup"
         case coordinatorModel = "coordinator_model", coordinatorThinking = "coordinator_thinking"
         case modelSettingsRevision = "model_settings_revision"
         case nativeSessionID = "native_session_id", coordinatorOwner = "coordinator_owner"
@@ -87,6 +89,7 @@ struct FirstMateFeature: Codable, Equatable, Identifiable, Sendable {
             && lhs.workItemID == rhs.workItemID
             && lhs.archivedAt == rhs.archivedAt
             && lhs.archiveReason == rhs.archiveReason
+            && lhs.archiveCleanup == rhs.archiveCleanup
             && lhs.coordinatorModel == rhs.coordinatorModel
             && lhs.coordinatorThinking == rhs.coordinatorThinking
             && lhs.modelSettingsRevision == rhs.modelSettingsRevision
@@ -121,6 +124,7 @@ extension FirstMateFeature {
         projectRevision = try container.decodeIfPresent(Int.self, forKey: .projectRevision)
         archivedAt = try container.decodeIfPresent(String.self, forKey: .archivedAt)
         archiveReason = try container.decodeIfPresent(String.self, forKey: .archiveReason)
+        archiveCleanup = try container.decodeIfPresent(FirstMateArchiveCleanup.self, forKey: .archiveCleanup)
         coordinatorModel = try container.decodeIfPresent(String.self, forKey: .coordinatorModel)
         coordinatorThinking = try container.decodeIfPresent(String.self, forKey: .coordinatorThinking)
         modelSettingsRevision = try container.decodeIfPresent(Int.self, forKey: .modelSettingsRevision)

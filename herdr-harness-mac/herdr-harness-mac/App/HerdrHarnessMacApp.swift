@@ -83,7 +83,7 @@ struct HerdrHarnessMacApp: App {
                 .environment(\.herdrFontScale, fontScale.scale)
                 .frame(minWidth: 1000, minHeight: 680)
                 .foregroundStyle(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).text : HerdrTheme.text)
-                .preferredColorScheme(shell.detailScope == .firstMate ? shell.firstMate.colorScheme : .dark)
+                .preferredColorScheme(.dark)
                 .tint(shell.detailScope == .firstMate ? FirstMatePalette(scheme: shell.firstMate.colorScheme).accent : HerdrTheme.accent)
         }
         // When the NSWindow has been closed, ask SwiftUI to recreate this scene

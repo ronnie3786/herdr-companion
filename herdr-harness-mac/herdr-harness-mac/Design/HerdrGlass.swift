@@ -9,16 +9,16 @@ import SwiftUI
 /// the other windows retain their painted backdrop.
 ///
 /// Glass is on when the person has it on in Settings → General → Appearance,
-/// Reduce Transparency is off, and the window is dark. First Mate's light
-/// appearance stays opaque.
+/// Reduce Transparency is off, and the window is dark. Alternate appearance
+/// rendering stays opaque.
 enum HerdrGlass {
     /// Herdr's one background-brightness factor. Every background the purple
     /// glass and haze theme draws — the cached dusk artwork, the cached Haze
     /// artwork, and the `base` color of an active `HerdrGlassBackground` — is
     /// multiplied by this once, in encoded sRGB. That deepens the purple about
     /// 20% while preserving hue, alpha, the gradient geometry, blur,
-    /// saturation, cropping, glass levels, and the opaque Glass-off, First Mate
-    /// light, and Reduce Transparency branches. Foreground text, icons, and
+    /// saturation, cropping, glass levels, and the opaque Glass-off, alternate
+    /// appearance, and Reduce Transparency branches. Foreground text, icons, and
     /// status colors are untouched, so reading text gains contrast.
     static let backgroundBrightness = 0.80
 

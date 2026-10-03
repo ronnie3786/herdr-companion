@@ -253,6 +253,10 @@
     const d=state.detail;if(!d)return;let html='';
     if(state.tab==='Overview'){
       html=`<p class="eyebrow">The goal</p><p class="goal">${escape(d.feature.goal)}</p>${usagePanel(d.feature.usage,'Full task usage')}${verificationPanel(d.feature.verification, !!state.error)}`;
+      if(d.feature.archive_cleanup){
+        const cleanup=d.feature.archive_cleanup;
+        html+=`<section class="checkpoint" aria-label="Archive cleanup"><h3>Archive cleanup · ${escape(label(cleanup.status))}</h3><p>${escape(cleanup.message)}</p><p>${number(cleanup.removed)} removed · ${number(cleanup.retained)} retained · ${number(cleanup.failed)} failed · approximately ${number(cleanup.bytes_reclaimed)} bytes reclaimed</p>${cleanup.history_available?'<p>Verification and usage are historical facts saved at archive.</p>':''}<button data-archive-report="${escape(d.feature.id)}">Completion record and cleanup log</button>${d.feature.archived_at&&['failed','completed'].includes(cleanup.status)?`<button data-retry-cleanup="${escape(d.feature.id)}">Retry cleanup</button>`:''}<p>Unarchiving restores visibility. Removed temporary resources are not recreated.</p></section>`;
+      }
       if(d.feature.status==='awaiting_direction')html+='<section class="checkpoint"><h3>Ready for your next direction</h3><p>Work is waiting at a human checkpoint. Review the latest request, then tell First Mate how you want to continue.</p></section>';
       html+=`<div class="section-title"><h2>Working on this feature</h2><small>${d.assignments.length} assignments</small></div>${agentRows([...d.assignments.filter(a=>['running','queued','dispatching','handoff_pending'].includes(a.status)),...d.assignments.filter(a=>!['running','queued','dispatching','handoff_pending'].includes(a.status)).slice(-4)].slice(0,4))}`;
       html+='<div class="section-title"><h2>Feature journal</h2></div>'+d.events.slice(-12).reverse().map(e=>`<article class="event"><time>${escape(date(e.created_at))}</time>${escape(e.summary||label(e.type))}</article>`).join('');
@@ -305,23 +309,123 @@
     }catch(e){if(generation===state.generation && resource===state.resourceGeneration)notice(e.message);}
   }
   async function openAgent(id){const a=state.detail.assignments.find(a=>a.id===id);const sessions=(state.detail.sessions||[]).filter(s=>s.assignment_id===id);if(!sessions.length&&a?.native_session_id)return openSession(a.native_session_id);const own=a?.subtree_usage&&JSON.stringify(a.subtree_usage)!==JSON.stringify(a.usage)?`<p>Own · ${usageInline(a.usage)}<br>With descendants · ${usageInline(a.subtree_usage)}</p>`:`<p>${usageInline(a?.usage)}</p>`;const modelSelection=a?.model_selection?`<p class="document-meta">${escape(selectionText(a.model_selection,true))}</p>`:'';modal(a?.title||'Assignment',`<p>${escape(label(a?.status))}</p>${modelSelection}${own}${sessions.length?sessionRows(sessions):'<p class="document-meta">A saved session will appear after this assignment starts.</p>'}${state.detail.sessions_truncated?'<p>Showing recent session history. Older sessions remain retained on the companion host.</p>':''}`);}
-  async function setArchived(feature, archived, reason=null){
-    const action=archived?'archive':'unarchive', body={action,request_id:idFor(`${action}:${feature}`,reason||action)};
+  async function openArchiveReport(feature, recordID=null){
+    modal('Completion record and cleanup log','<p>Loading saved history…</p>');
+    const generation=state.resourceGeneration;
+    try{
+      let report='',offset=0,digest=null,complete=false;
+      for(let pageCount=0;pageCount<100;pageCount++){
+        const query=new URLSearchParams({offset:String(offset)});
+        if(recordID)query.set('id',recordID);
+        if(digest)query.set('sha256',digest);
+        const page=await api(`features/${encodeURIComponent(feature)}/archive-record?${query}`);
+        if(generation!==state.resourceGeneration)return;
+        if(typeof page.report!=='string'||typeof page.sha256!=='string'||!page.sha256||page.sha256.length>128)throw Error('Companion returned an invalid completion record.');
+        if(digest!==null&&page.sha256!==digest)throw Error('Completion record changed while loading. Reload it before exporting.');
+        digest=page.sha256;
+        report+=page.report;
+        if(report.length>8000000)throw Error('Completion record is too large to open in the browser. Use the history CLI to export it.');
+        if(page.next_offset===null){complete=true;break;}
+        if(!Number.isInteger(page.next_offset)||page.next_offset<=offset)throw Error('Companion returned an invalid completion record cursor.');
+        offset=page.next_offset;
+      }
+      if(!complete)throw Error('Completion record has too many pages for the browser. Use the history CLI to export it.');
+      $('#dialog-body').innerHTML=`<button id="export-archive">Export Markdown</button><pre class="literal-text">${escape(report)}</pre>`;
+      $('#export-archive').onclick=()=>{
+        const url=URL.createObjectURL(new Blob([report],{type:'text/markdown;charset=utf-8'}));
+        const anchor=document.createElement('a');anchor.href=url;anchor.download=`${String(feature).replace(/[^A-Za-z0-9._-]/g,'_')}-completion.md`;anchor.click();
+        setTimeout(()=>URL.revokeObjectURL(url),1000);
+      };
+    }catch(error){if(generation===state.resourceGeneration)$('#dialog-body').innerHTML=`<p>${escape(error.message)}</p>`;}
+  }
+  function searchHistory(){
+    modal('Search completed work','<form id="history-search"><label for="history-query">Request, outcome, document, commit or link</label><input id="history-query" maxlength="500"><button type="submit">Search</button></form><div id="history-results"></div>');
+    const generation=state.resourceGeneration;
+    $('#history-search').onsubmit=async event=>{
+      event.preventDefault();const query=$('#history-query').value;
+      try{
+        const page=await api(`history?q=${encodeURIComponent(query)}`);
+        if(generation!==state.resourceGeneration||$('#history-query').value!==query)return;
+        const records=Array.isArray(page.records)?page.records:[];
+        $('#history-results').innerHTML=records.map(record=>`<button class="row" data-archive-report="${escape(record.feature_id)}" data-record-id="${escape(record.id)}"><span><strong>${escape(record.title)}</strong><small>${escape(record.created_at)} · ${escape(record.status)}</small></span></button>`).join('')||'<p>No matching completion records.</p>';
+        if(page.next_offset!==null)$('#history-results').innerHTML+='<p>More matches exist. Narrow your search or use the history CLI to page through all records.</p>';
+      }catch(error){if(generation===state.resourceGeneration)notice(error.message);}
+    };
+  }
+  async function setArchived(feature, archived, reason=null, review=null){
+    const action=archived?'archive':'unarchive', key=`${action}:${feature}`;
+    const requestValue=review?JSON.stringify({reason:reason||null,expected_revision:review.expected_revision,preview_token:review.preview_token,cleanup_options:review.cleanup_options}):(reason||action);
+    const body={action,request_id:idFor(key,requestValue)};
     if(archived&&reason)body.reason=reason;
+    if(review)Object.assign(body,review);
     try{
       await api(`features/${encodeURIComponent(feature)}/actions`,body);
-      state.pending.delete(`${action}:${feature}`);
+      state.pending.delete(key);
       if(archived&&!state.showArchived&&state.selected===feature){state.selected=null;state.detail=null;state.lastSignature='';}
       if($('#dialog').open)$('#dialog').close();
       await refresh();
-    }catch(error){notice(error.message);}
+      return true;
+    }catch(error){notice(error.message);return false;}
   }
-  function archiveDialog(feature){
+  const archiveReasonOptions='<option value="">No reason</option><option value="completed">Completed</option><option value="test/synthetic">Test/synthetic</option><option value="duplicate">Duplicate</option><option value="no longer relevant">No longer relevant</option><option value="superseded">Superseded</option><option value="other">Other</option>';
+  function hideOnlyArchiveHTML(record, explanation=''){
+    const workState=['running','coordinating','recovering','paused','blocked','awaiting_direction'].includes(record?.status)
+      ?'Archiving changes list visibility only. Work keeps its current state and may continue according to its existing authorization. '
+      :'Archiving changes list visibility only. ';
+    return `<form id="archive-feature"><p>${workState}Visits, assignments, documents, sessions, events, and status are retained.</p>${explanation?`<p class="archive-unavailable">${escape(explanation)}</p>`:''}<label for="archive-reason">Optional reason</label><select id="archive-reason">${archiveReasonOptions}</select><div class="archive-actions"><button class="primary" id="archive-without-cleanup" type="button">Archive without cleanup</button></div></form>`;
+  }
+  function installHideOnlyArchive(feature){
+    $('#archive-without-cleanup').onclick=()=>setArchived(feature,true,$('#archive-reason').value||null);
+  }
+  async function archiveDialog(feature){
     const record=state.features.find(item=>item.id===feature)||state.detail?.feature;
-    if(record?.archived_at){setArchived(feature,false);return;}
-    const continues=['running','coordinating','recovering'].includes(record?.status);
-    modal('Archive feature',`<form id="archive-feature"><p>${continues?'Work continues after archiving. ':''}The feature leaves the active list. Visits, assignments, documents, sessions, events, and status are retained.</p><label for="archive-reason">Optional reason</label><select id="archive-reason"><option value="">No reason</option><option value="completed">Completed</option><option value="test/synthetic">Test/synthetic</option><option value="duplicate">Duplicate</option><option value="no longer relevant">No longer relevant</option><option value="superseded">Superseded</option><option value="other">Other</option></select><button class="primary" type="submit">Archive</button></form>`);
-    $('#archive-feature').onsubmit=e=>{e.preventDefault();setArchived(feature,true,$('#archive-reason').value||null);};
+    if(record?.archived_at){await setArchived(feature,false);return;}
+    if(record?.status!=='completed'){
+      modal('Archive feature',hideOnlyArchiveHTML(record));
+      installHideOnlyArchive(feature);
+      return;
+    }
+    modal('Review archive cleanup','<p>Loading the current host-owned resources…</p>');
+    const generation=state.generation, resourceGeneration=state.resourceGeneration;
+    try{
+      const result=await api(`features/${encodeURIComponent(feature)}/archive-preview`),preview=result.preview;
+      if(generation!==state.generation||resourceGeneration!==state.resourceGeneration)return;
+      if(!preview||preview.feature_id!==feature)throw Error('Companion returned a cleanup preview for a different feature.');
+      if(!preview.eligible){
+        $('#dialog-body').innerHTML=hideOnlyArchiveHTML(record,preview.ineligible_reason||'Cleanup is unavailable for this archive.');
+        installHideOnlyArchive(feature);
+        return;
+      }
+      const resources=Array.isArray(preview.resources)?preview.resources:[];
+      const defaults=new Set(Array.isArray(preview.cleanup_options?.resource_ids)?preview.cleanup_options.resource_ids:[]);
+      const rows=resources.map((item,index)=>{
+        const estimate=Number.isInteger(item.estimated_bytes)&&item.estimated_bytes>=0?`${number(item.estimated_bytes)} estimated bytes`:'size unknown';
+        return `<label class="archive-resource" for="archive-resource-${index}"><input id="archive-resource-${index}" type="checkbox" ${item.can_delete&&defaults.has(item.id)?'checked':''} ${item.can_delete?'':'disabled'}><span><strong>${escape(label(item.kind))}</strong><small>${escape(item.path)}</small><small>${escape(item.reason)} · ${estimate}</small></span></label>`;
+      }).join('')||'<p>No host-owned disposable resources are registered for this feature.</p>';
+      const documentRetention=preview.retention?.documents||{}, chatRetention=preview.retention?.chat||{};
+      $('#dialog-body').innerHTML=`<form id="archive-feature"><p>A verified completion record is saved before cleanup. Select the exact disposable resources to remove. Resources that fail the live safety checks are retained.</p><div class="archive-review">${rows}</div><label class="archive-retention" for="archive-keep-documents"><input id="archive-keep-documents" type="checkbox"><span><strong>Keep readable live document bodies</strong><br>${escape(documentRetention.keep||'The immutable completion record always retains the original document bodies.')}</span></label><label class="archive-retention" for="archive-keep-chat"><input id="archive-keep-chat" type="checkbox"><span><strong>Keep readable live conversation</strong><br>${escape(chatRetention.keep||'The immutable completion record always retains the original conversation.')}</span></label><p class="document-meta">Clearing either retention choice stores originals in the completion record and replaces the live copy with a catalog pointer. SQLite file size may not shrink immediately.</p><label for="archive-reason">Optional reason</label><select id="archive-reason">${archiveReasonOptions}</select><div class="archive-actions"><button id="archive-without-cleanup" type="button">Archive without cleanup</button><button class="primary" type="submit">Archive and clean selected</button></div></form>`;
+      resources.forEach((item,index)=>{const box=$(`#archive-resource-${index}`);box.checked=!!item.can_delete&&defaults.has(item.id);box.disabled=!item.can_delete;});
+      $('#archive-keep-documents').checked=preview.cleanup_options?.keep_documents===true;
+      $('#archive-keep-chat').checked=preview.cleanup_options?.keep_chat===true;
+      $('#archive-without-cleanup').onclick=()=>setArchived(feature,true,$('#archive-reason').value||null);
+      $('#archive-feature').onsubmit=async event=>{
+        event.preventDefault();
+        const cleanupOptions={
+          resource_ids:resources.flatMap((item,index)=>item.can_delete&&$(`#archive-resource-${index}`).checked?[item.id]:[]),
+          keep_documents:!!$('#archive-keep-documents').checked,
+          keep_chat:!!$('#archive-keep-chat').checked,
+        };
+        await setArchived(feature,true,$('#archive-reason').value||null,{
+          expected_revision:preview.feature_revision,
+          preview_token:preview.token,
+          cleanup_options:cleanupOptions,
+        });
+      };
+    }catch(error){
+      if(generation!==state.generation||resourceGeneration!==state.resourceGeneration)return;
+      $('#dialog-body').innerHTML=hideOnlyArchiveHTML(record,`Cleanup review is unavailable: ${error.message}`);
+      installHideOnlyArchive(feature);
+    }
   }
   document.addEventListener('click',async e=>{
     const b=e.target.closest('button');if(!b)return;
@@ -332,7 +436,14 @@
     if(b.dataset.agent)await openAgent(b.dataset.agent);
     if(b.dataset.document)await openDocument(b.dataset.document);
     if(b.dataset.session){b.disabled=true;try{await openSession(b.dataset.session,b.dataset.before===undefined?null:Number(b.dataset.before));}finally{b.disabled=false;}}
-    if(b.dataset.archiveFeature)archiveDialog(b.dataset.archiveFeature);
+    if(b.dataset.archiveFeature)await archiveDialog(b.dataset.archiveFeature);
+    if(b.dataset.archiveReport)await openArchiveReport(b.dataset.archiveReport,b.dataset.recordId||null);
+    if(b.dataset.retryCleanup){
+      const feature=b.dataset.retryCleanup;
+      if(state.detail?.feature.id!==feature)return;
+      b.disabled=true;
+      try{await api(`features/${encodeURIComponent(feature)}/archive-cleanup/retry`,{request_id:idFor(`cleanup:${feature}`,'retry')});state.pending.delete(`cleanup:${feature}`);await refresh();}catch(error){notice(error.message);}finally{b.disabled=false;}
+    }
     if(b.dataset.action){
       const action=b.dataset.action, feature=b.dataset.actionFeature;
       if(!feature || state.selected!==feature || state.detail?.feature.id!==feature)return;
@@ -357,6 +468,7 @@
   $('#new').onclick=()=>{modal('Start a feature','<form id="new-feature"><label for="feature-title">Feature name</label><input id="feature-title" required placeholder="A small improvement worth shipping"><label for="feature-goal">What should it achieve?</label><textarea id="feature-goal" required placeholder="Describe the outcome in your own words."></textarea><label for="feature-cwd">Project folder on this companion host</label><input id="feature-cwd" required placeholder="/path/to/project"><button class="primary" type="submit">Create feature</button></form>');$('#new-feature').onsubmit=async e=>{e.preventDefault();const payload={title:$('#feature-title').value.trim(),goal:$('#feature-goal').value.trim(),cwd:$('#feature-cwd').value.trim()};payload.request_id=idFor('create',JSON.stringify(payload));try{const d=await api('features',payload);state.pending.delete('create');selectFeature(d.feature.id);await refresh();$('#prompt').focus();}catch(err){notice(err.message);}};};
   $('#connect').onclick=()=>{modal('Connect to Herdr','<form id="connection-form"><p>Your companion API token stays in memory for this page only.</p><label for="api-token">API token</label><input id="api-token" type="password" autocomplete="off"><button class="primary">Connect</button></form>');$('#connection-form').onsubmit=e=>{e.preventDefault();state.token=$('#api-token').value;selectFeature(state.selected);$('#dialog').close();refresh();};};
   $('#show-archived').onchange=e=>{state.showArchived=e.target.checked;state.generation++;refresh();};
+  $('#search-history').onclick=searchHistory;
   $('#dialog').addEventListener('close',()=>{state.resourceGeneration++;});
   function theme(value){document.documentElement.dataset.theme=value;$('#theme').textContent=value==='dark'?'Light mode':'Dark mode';try{localStorage.setItem('herdr-first-mate-theme',value);}catch{}}
   $('#theme').onclick=()=>theme(document.documentElement.dataset.theme==='dark'?'light':'dark');

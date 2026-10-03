@@ -5,7 +5,7 @@ struct FirstMateProjectEditorView: View {
     @Bindable var index: FirstMateProjectIndex
     let saved: (FirstMateProjectSelection) -> Void
     @State private var browser: FirstMateFolderBrowserModel?
-    @State private var confirmArchive = false
+    @State private var archiveModel: FirstMateProjectArchiveModel?
     @FocusState private var nameFocused: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
@@ -116,11 +116,7 @@ struct FirstMateProjectEditorView: View {
                     Button(model.isArchived ? "Restore project" : "Archive project", action: archive)
                         .disabled(model.isSaving || model.isConflict || index.host(model.machineID)?.canManageProjects != true)
                         .accessibilityIdentifier("first-mate-project-archive")
-                        .confirmationDialog("Archive this project?", isPresented: $confirmArchive, titleVisibility: .visible) {
-                            Button("Archive project", role: .destructive, action: confirmArchiving)
-                        } message: {
-                            Text("Existing sessions keep running. You can restore this project from Projects at any time.")
-                        }
+
                 }
                 Spacer()
                 if model.isSaving { ProgressView().controlSize(.small).accessibilityLabel("Saving project") }
@@ -147,6 +143,14 @@ struct FirstMateProjectEditorView: View {
         .sheet(item: $browser) { browser in
             FirstMateFolderBrowserView(model: browser) { model.cwd = $0 }
         }
+        .sheet(item: $archiveModel) { archiveModel in
+            FirstMateProjectArchiveSheet(model: archiveModel) {
+                guard let selection = await model.setArchived(true, in: index) else { return false }
+                saved(selection)
+                dismiss()
+                return true
+            }
+        }
         .accessibilityIdentifier("first-mate-project-editor")
     }
 
@@ -161,9 +165,8 @@ struct FirstMateProjectEditorView: View {
     private func reload() { Task { await model.reload(in: index) } }
     private func archive() {
         if model.isArchived { Task { if let selection = await model.setArchived(false, in: index) { saved(selection); dismiss() } } }
-        else { confirmArchive = true }
-    }
-    private func confirmArchiving() {
-        Task { if let selection = await model.setArchived(true, in: index) { saved(selection); dismiss() } }
+        else if let project = model.original, let connection = model.connection(in: index) {
+            archiveModel = .init(project: project, connection: connection, isCurrent: { index.isCurrent(connection) })
+        }
     }
 }

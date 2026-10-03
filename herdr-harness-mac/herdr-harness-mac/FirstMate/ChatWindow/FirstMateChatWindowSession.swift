@@ -336,6 +336,13 @@ final class FirstMateChatWindowSession {
         archiveCandidate = shell.firstMateFleet.archiveTarget(machineID: id.machineID, feature: feature)
     }
 
+    /// Keep the blocking sheet mounted while both windows reconcile the archived row.
+    func didArchive(_ target: FirstMateFleetIndex.ArchiveTarget) {
+        if selection == .feature(target.id) { select(.lead) }
+        didMutate(machineID: target.machineID)
+        Task { await store(for: target.machineID)?.refresh() }
+    }
+
     func archive(_ target: FirstMateFleetIndex.ArchiveTarget, reason: FirstMateArchiveReason?) async -> String? {
         if isDemo {
             guard let store = store(for: target.machineID),

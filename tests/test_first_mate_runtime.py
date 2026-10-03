@@ -509,6 +509,18 @@ class FirstMateRuntimeTests(unittest.TestCase):
                 'provenance': {'native_session_id': 'forged'}}, 'save-forged-provenance')
         self.assertEqual(len(self.store.list_links(feature['id'])), 2)
 
+    def test_managed_coordinator_allocates_owned_disposable_space(self):
+        feature = self.feature()
+        claim = self.store.claim_message(feature['id'], self.runtime.owner)
+        job = self.runtime._new_job(feature, kind='coordinator', prompt='Build in disposable space', claim=claim)
+        resource = self.runtime._tool(job, 'fm_allocate_resource', {'kind':'temporary_build'}, 'space-one')
+        self.assertEqual(resource['kind'], 'temporary_build')
+        self.assertTrue(Path(resource['path']).is_relative_to(self.runtime.root / 'disposable'))
+        self.assertEqual(resource, self.runtime._tool(
+            job, 'fm_allocate_resource', {'kind':'temporary_build'}, 'space-one'))
+        with self.assertRaises(FirstMateError):
+            self.runtime._tool(job, 'fm_allocate_resource', {'kind':'cache', 'path':'/tmp'}, 'forged-space')
+
     def test_link_spool_requests_are_idempotent_and_fenced_to_the_exact_session(self):
         feature = self.feature()
         human = self.store.claim_message(feature['id'], self.runtime.owner)

@@ -433,6 +433,37 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         )
     }
 
+    func fetchFirstMateArchivePage(featureID: String, archiveID: String?, offset: Int, sha256: String?) async throws -> FirstMateArchivePage {
+        var query = [URLQueryItem(name: "offset", value: String(offset))]
+        if let archiveID { query.append(URLQueryItem(name: "id", value: archiveID)) }
+        if let sha256 { query.append(URLQueryItem(name: "sha256", value: sha256)) }
+        return try await request(path: firstMatePath("features", id: featureID) + "/archive-record", query: query)
+    }
+
+    func retryFirstMateCleanup(featureID: String, requestID: String) async throws -> FirstMateCleanupResponse {
+        try await request(path: firstMatePath("features", id: featureID) + "/archive-cleanup/retry", method: "POST", body: ["request_id": requestID])
+    }
+
+    func fetchFirstMateArchivePreview(featureID: String) async throws -> FirstMateArchivePreviewResponse {
+        try await request(path: firstMatePath("features", id: featureID) + "/archive-preview")
+    }
+
+    func confirmFirstMateArchive(featureID: String, request archive: FirstMateArchiveRequest) async throws -> FirstMateArchiveReceipt {
+        try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: archive)
+    }
+
+    func fetchFirstMateArchiveProgress(featureID: String, archiveID: String?, after: Int) async throws -> FirstMateArchiveProgress {
+        var query = [URLQueryItem(name: "after", value: String(after)), URLQueryItem(name: "limit", value: "100")]
+        if let archiveID { query.append(.init(name: "archive_id", value: archiveID)) }
+        return try await request(path: firstMatePath("features", id: featureID) + "/archive-progress", query: query)
+    }
+
+    func searchFirstMateHistory(query: String, offset: Int) async throws -> FirstMateHistoryResponse {
+        try await request(path: "/api/v1/first-mate/history", query: [
+            URLQueryItem(name: "q", value: query), URLQueryItem(name: "offset", value: String(offset)),
+        ])
+    }
+
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
         try await request(path: firstMatePath("documents", id: id))
     }

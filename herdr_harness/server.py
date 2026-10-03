@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import gzip
+import hashlib
 import hmac
 import html
 import json
@@ -17,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
 
-from . import attachments, chat_tab_colors, first_mate_fleet, first_mate_peers, issue_reports, response_audio, result_artifacts, voice
+from . import attachments, chat_tab_colors, first_mate_archive, first_mate_fleet, first_mate_peers, issue_reports, response_audio, result_artifacts, voice
 from . import simulator_previews, websocket_relay
 from .first_mate_store import FirstMateError
 from .first_mate_read_models import feature_summary
@@ -395,6 +396,8 @@ def api_description() -> dict:
             DIRECTORY_CAPABILITY,
             "first-mate-usage-v1",
             "first-mate-archive-v1",
+            "first-mate-archive-cleanup-v1",
+            "first-mate-archive-review-v1",
             "first-mate-attachments-v1",
             "first-mate-context-v1",
             "first-mate-safe-model-settings-v1",
@@ -444,6 +447,10 @@ def api_description() -> dict:
             "firstMateProjects": "/api/v1/first-mate/projects",
             "directories": "/api/v1/directories",
             "firstMateCapabilities": "/api/v1/first-mate/capabilities",
+            "firstMateHistory": "/api/v1/first-mate/history",
+            "firstMateArchivePreview": "/api/v1/first-mate/features/{featureId}/archive-preview",
+            "firstMateArchiveProgress": "/api/v1/first-mate/features/{featureId}/archive-progress",
+            "firstMateArchiveRecord": "/api/v1/first-mate/features/{featureId}/archive-record",
             "firstMateAttachment": "/api/v1/first-mate/features/{featureId}/attachments",
             "firstMateFeedbackCategories": "/api/v1/first-mate/feedback-categories",
             "firstMateFeedback": "/api/v1/first-mate/features/{featureId}/feedback",
@@ -536,6 +543,8 @@ def api_description() -> dict:
             "POST /api/v1/first-mate/projects",
             "PATCH /api/v1/first-mate/projects/{projectId}",
             "POST /api/v1/first-mate/projects/{projectId}/archive",
+            "POST /api/v1/first-mate/features/{featureId}/archive-cleanup/retry",
+            "POST /api/v1/first-mate/features/{featureId}/resources",
             "POST /api/v1/agent-profiles",
             "POST /api/v1/agent-roles",
             "POST /api/v1/agent-roles/import",
@@ -1105,6 +1114,13 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                                           code="server_identity_unavailable", status=503)
             return server_id
 
+        def _require_archive_auth(self) -> None:
+            if not configured_token:
+                raise HTTPValidationError("Configure the companion API token before using archive cleanup or history",
+                                          code="api_token_required", status=503)
+            if self._authorization_scope != "main":
+                raise HTTPValidationError("A valid bearer token is required", code="unauthorized", status=401)
+
         def _first_mate_route(self, method: str, tail: list[str], query: dict, body: dict):
             if tail[:1] == ["projects"]:
                 self._require_project_auth()
@@ -1135,6 +1151,8 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     "first-mate-v1", "first-mate-model-settings-v1", "first-mate-usage-v1",
                     "first-mate-projects-v1", DIRECTORY_CAPABILITY,
                     "first-mate-archive-v1", "first-mate-attachments-v1",
+                    "first-mate-archive-cleanup-v1",
+                    "first-mate-archive-review-v1",
                     "first-mate-context-v1", "first-mate-safe-model-settings-v1",
                     "first-mate-git-v1", "first-mate-runtime-health-v1", "first-mate-reliability-v1",
                     "first-mate-feature-workspaces-v1",
@@ -1156,6 +1174,18 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     **({"server_id": self._project_server_id()} if hasattr(service, "control_store") else {})}
             if method == "GET" and tail == ["models"]:
                 return {"ok": True, **service.first_mate.model_catalog()}
+            if method == "GET" and tail == ["history"]:
+                self._require_archive_auth()
+                if set(query) - {"q", "offset", "limit"} or any(len(values) != 1 for values in query.values()):
+                    raise HTTPValidationError("Invalid history search query")
+                try:
+                    offset, limit = int(query.get("offset", ["0"])[0]), int(query.get("limit", ["50"])[0])
+                except ValueError:
+                    raise HTTPValidationError("Invalid history search bounds")
+                text = query.get("q", [""])[0]
+                if not 0 <= offset <= 1000000 or not 1 <= limit <= 50 or len(text) > 500:
+                    raise HTTPValidationError("Invalid history search bounds")
+                return {"ok": True, **first_mate_archive.search(store, text, offset, limit)}
             if tail == ["feedback-categories"]:
                 if method == "GET":
                     return {"ok": True, "categories": store.list_feedback_categories()}
@@ -1245,6 +1275,65 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                 feature_id = _string(tail[1], "feature_id", maximum=128)
                 if len(tail) >= 3 and tail[2] in {"simulator-builds", "simulator-previews"}:
                     return self._simulator_route(method, feature_id, tail[2:], query, body)
+                if tail[2:] == ["archive-preview"] and method == "GET":
+                    self._require_archive_auth()
+                    if query:
+                        raise HTTPValidationError("Archive preview does not accept query fields")
+                    return {"ok": True, "preview": runtime.cleanup.preview(feature_id)}
+                if tail[2:] == ["archive-progress"] and method == "GET":
+                    self._require_archive_auth()
+                    if set(query) - {"archive_id", "after", "limit"} or any(len(values) != 1 for values in query.values()):
+                        raise HTTPValidationError("Invalid archive progress query")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                        limit = int(query.get("limit", ["100"])[0])
+                    except ValueError:
+                        raise HTTPValidationError("Invalid archive progress bounds")
+                    if after < 0 or not 1 <= limit <= 200:
+                        raise HTTPValidationError("Invalid archive progress bounds")
+                    archive_id = query.get("archive_id", [None])[0]
+                    if archive_id is not None:
+                        archive_id = _string(archive_id, "archive_id", maximum=128)
+                    return {"ok": True, **first_mate_archive.progress(
+                        store, feature_id, archive_id, after=after, limit=limit)}
+                if tail[2:] == ["archive-record"] and method == "GET":
+                    self._require_archive_auth()
+                    if set(query) - {"id", "offset", "length", "sha256"} or any(len(values) != 1 for values in query.values()):
+                        raise HTTPValidationError("Invalid archive record query")
+                    try:
+                        offset, length = int(query.get("offset", ["0"])[0]), int(query.get("length", ["80000"])[0])
+                    except ValueError:
+                        raise HTTPValidationError("Invalid archive record bounds")
+                    if offset < 0 or not 1 <= length <= 80000:
+                        raise HTTPValidationError("Invalid archive record bounds")
+                    archive_id = query.get("id", [None])[0]
+                    if archive_id is not None:
+                        archive_id = _string(archive_id, "id", maximum=128)
+                    report = first_mate_archive.report(store, feature_id, archive_id)
+                    digest = hashlib.sha256(report.encode()).hexdigest()
+                    expected_digest = query.get("sha256", [digest])[0]
+                    if "sha256" in query:
+                        expected_digest = _string(expected_digest, "sha256", maximum=64)
+                        if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+                            raise HTTPValidationError("Invalid archive record fingerprint")
+                    if expected_digest != digest:
+                        raise FirstMateError("Cleanup report changed. Reload it before exporting.", code="archive_report_changed")
+                    return {"ok": True, "cleanup": first_mate_archive.summary(store, feature_id, archive_id),
+                            "report": report[offset:offset + length], "sha256": digest,
+                            "next_offset": offset + length if offset + length < len(report) else None}
+                if tail[2:] == ["archive-cleanup", "retry"] and method == "POST":
+                    self._require_archive_auth()
+                    if query or set(body) != {"request_id"}:
+                        raise HTTPValidationError("Cleanup retry requires only request_id")
+                    cleanup = first_mate_archive.retry(store, feature_id, body["request_id"])
+                    service.first_mate_changed(feature_id)
+                    return {"ok": True, "cleanup": cleanup}
+                if tail[2:] == ["resources"] and method == "POST":
+                    self._require_archive_auth()
+                    if query or set(body) != {"kind", "request_id"}:
+                        raise HTTPValidationError("Resource allocation requires kind and request_id")
+                    resource = runtime.cleanup.allocate(feature_id, body["kind"], body["request_id"])
+                    return {"ok": True, "resource": resource}, 201
                 if tail[2:] == ["git", "workspaces"] and method == "GET":
                     if query:
                         raise HTTPValidationError("Git workspace request contains an unsupported query field")
@@ -1442,17 +1531,29 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     service.first_mate_changed(feature_id)
                     return {"ok": True, "message": message, "feature": feature_view(feature_id)}, 202
                 if tail[2:] == ["actions"] and method == "POST":
-                    if set(body) - {"action", "request_id", "expected_revision", "reason"}:
+                    if set(body) - {"action", "request_id", "expected_revision", "reason", "preview_token", "cleanup_options"}:
                         raise HTTPValidationError("Action contains an unsupported field")
                     action = _string(body.get("action"), "action", maximum=32)
                     if action in {"archive", "unarchive"}:
-                        if "expected_revision" in body or (action == "unarchive" and "reason" in body):
+                        if action == "archive" and "preview_token" in body:
+                            self._require_archive_auth()
+                        if action == "unarchive" and set(body) - {"action", "request_id"}:
                             raise HTTPValidationError("Archive action contains an unsupported field")
                         request_id = _string(body.get("request_id"), "request_id", maximum=200)
                         payload = {"request_id": request_id}
                         if body.get("reason") is not None:
                             payload["reason"] = _string(body.get("reason"), "reason", maximum=32)
-                        store.set_archived(feature_id, action == "archive", payload)
+                        for key in ("expected_revision", "preview_token", "cleanup_options"):
+                            if key in body:
+                                payload[key] = body[key]
+                        result = store.set_archived(feature_id, action == "archive", payload)
+                        if action == "archive" and "preview_token" in body:
+                            archive_id = result["archive_id"]
+                            cleanup = first_mate_archive.summary(store, feature_id, archive_id)
+                            if cleanup and cleanup["status"] in {"pending", "waiting", "running"}:
+                                service.first_mate_changed(feature_id)
+                            return {"ok": True, "feature": feature_view(feature_id),
+                                    "archive_id": archive_id, "cleanup": cleanup}
                         return {"ok": True, "feature": feature_view(feature_id)}
                     if action not in {"pause", "resume", "cancel"} or "reason" in body:
                         raise HTTPValidationError("Use a message to direct the next stage", code="first_mate_action_invalid")

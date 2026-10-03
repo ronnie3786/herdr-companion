@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from . import first_mate_archive
 from . import first_mate_fleet as fleet_format
 from . import skim as skim_format
 from .directory_browser import canonical_directory
@@ -387,6 +388,9 @@ class FirstMateStore:
         # thinking, reply_sha256) when it should be skimmed, else None. The
         # pending row then commits with the reply, so clients see "Skimming".
         self.skim_policy: Callable[[str], dict | None] | None = None
+        # Installed by FirstMateRuntime. Enhanced archive requests require this
+        # host-local dry run so callers cannot nominate paths or stale resources.
+        self.archive_previewer: Callable[[str], dict] | None = None
         self._db = sqlite3.connect(str(self.path) if self.path else ":memory:", timeout=15, isolation_level=None, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys=ON")
@@ -394,6 +398,12 @@ class FirstMateStore:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=FULL")
         self._db.executescript(SCHEMA)
+        self._db.executescript(first_mate_archive.SCHEMA)
+        archive_columns = {row[1] for row in self._db.execute("PRAGMA table_info(fm_archives)")}
+        if "preview_token" not in archive_columns:
+            self._db.execute("ALTER TABLE fm_archives ADD COLUMN preview_token TEXT")
+        if "cleanup_options_json" not in archive_columns:
+            self._db.execute("ALTER TABLE fm_archives ADD COLUMN cleanup_options_json TEXT NOT NULL DEFAULT '{}'")
         if "code_revision" not in {row[1] for row in self._db.execute("PRAGMA table_info(fm_attempts)")}:
             self._db.execute("ALTER TABLE fm_attempts ADD COLUMN code_revision TEXT")
         self._db.execute("INSERT OR IGNORE INTO fm_assignment_memberships SELECT a.visit_id,a.id,a.input_revision,v.authorization_message_id,NULL,a.created_at FROM fm_assignments a JOIN fm_visits v ON v.id=a.visit_id")
@@ -1389,13 +1399,30 @@ class FirstMateStore:
 
     def set_archived(self, feature_id: str, archived: bool, payload: Mapping[str, Any]) -> dict:
         body = dict(payload)
-        allowed = {"request_id", "reason"} if archived else {"request_id"}
-        if set(body) != allowed and not (archived and set(body) == {"request_id"}):
+        enhanced = {"expected_revision", "preview_token", "cleanup_options"}
+        allowed = ({"request_id", "reason"} | enhanced) if archived else {"request_id"}
+        if not set(body) <= allowed or "request_id" not in body or (not archived and set(body) != {"request_id"}):
             raise FirstMateError("Invalid archive fields", code="invalid_request", status=400)
+        supplied_enhanced = set(body) & enhanced
+        if supplied_enhanced and supplied_enhanced != enhanced:
+            raise FirstMateError("Archive preview fields must be submitted together", code="invalid_request", status=400)
         request_id = _text(body.get("request_id"), "request_id", 200)
         reason = body.get("reason") if archived else None
         if reason is not None and (not isinstance(reason, str) or reason not in ARCHIVE_REASONS):
             raise FirstMateError("Invalid archive reason", code="invalid_request", status=400)
+        options = None
+        if supplied_enhanced:
+            _text(body.get("preview_token"), "preview_token", 128)
+            options = body.get("cleanup_options")
+            if not isinstance(options, dict) or set(options) != {"resource_ids", "keep_documents", "keep_chat"}:
+                raise FirstMateError("Invalid cleanup options", code="invalid_request", status=400)
+            resource_ids = options.get("resource_ids")
+            if (not isinstance(resource_ids, list) or len(resource_ids) > 1000
+                    or not all(isinstance(item, str) and item and len(item) <= 200 for item in resource_ids)
+                    or len(set(resource_ids)) != len(resource_ids)
+                    or type(options.get("keep_documents")) is not bool
+                    or type(options.get("keep_chat")) is not bool):
+                raise FirstMateError("Invalid cleanup options", code="invalid_request", status=400)
         scope = ("archive:" if archived else "unarchive:") + feature_id
         with self._transaction():
             cached = self._receipt(scope, request_id, body)
@@ -1403,6 +1430,17 @@ class FirstMateStore:
                 return cached
             feature = self._one("fm_features", feature_id)
             self._refuse_lead(feature, "archive")
+            if supplied_enhanced:
+                self._revision(feature, body["expected_revision"])
+                if self.archive_previewer is None:
+                    raise FirstMateError("Archive preview is unavailable on this runtime",
+                                         code="archive_preview_unavailable", status=503)
+                preview = self.archive_previewer(feature_id)
+                permitted = {item["id"] for item in preview["resources"] if item["can_delete"]}
+                if (not preview["eligible"] or preview["token"] != body["preview_token"]
+                        or not set(options["resource_ids"]) <= permitted):
+                    raise FirstMateError("Archive preview changed. Review the current resources and try again.",
+                                         code="archive_preview_stale")
             if archived and feature["archived_at"] is None:
                 archived_at = _now()
                 self._db.execute(
@@ -1410,6 +1448,10 @@ class FirstMateStore:
                     (archived_at, reason, feature_id),
                 )
                 self._event(feature_id, "feature.archived", "Feature archived", {"reason": reason})
+                archive_id = (first_mate_archive.queue(
+                    self, self._one("fm_features", feature_id),
+                    preview_token=body["preview_token"], cleanup_options=options)
+                    if supplied_enhanced else None)
             elif not archived and feature["archived_at"] is not None:
                 previous_reason = feature["archive_reason"]
                 self._db.execute(
@@ -1417,7 +1459,9 @@ class FirstMateStore:
                     (feature_id,),
                 )
                 self._event(feature_id, "feature.unarchived", "Feature unarchived", {"previous_reason": previous_reason})
-            return self._save_receipt(scope, request_id, body, self._one("fm_features", feature_id))
+                first_mate_archive.cancel(self, feature_id)
+            result = ({"archive_id": archive_id} if supplied_enhanced else self._one("fm_features", feature_id))
+            return self._save_receipt(scope, request_id, body, result)
 
     def list_links(self, feature_id: str | None = None) -> list[dict]:
         """Return every retained link, including hidden rows, for its feature."""

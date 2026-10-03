@@ -85,6 +85,8 @@ final class FirstMateStore {
     private(set) var error: String?
     private(set) var unsupported = false
     private(set) var archiveSupported = false
+    private(set) var archiveCleanupSupported = false
+    private(set) var archiveReviewSupported = false
     private(set) var attachmentsSupported = false
     private(set) var contextSupported = false
     private(set) var safeModelSettingsSupported = false
@@ -169,7 +171,13 @@ final class FirstMateStore {
     @ObservationIgnored let composerDrafts = FirstMateComposerDraftStore()
     #endif
 
-    var colorScheme: ColorScheme { isDark ? .dark : .light }
+    var colorScheme: ColorScheme {
+        #if os(macOS)
+        .dark
+        #else
+        isDark ? .dark : .light
+        #endif
+    }
     var canManageLinks: Bool { isDemo || linksSupported }
     var canMutateLinks: Bool { isDemo || controlAvailable }
     var snapshot: FirstMateSnapshot? { selectedFeatureID.flatMap { snapshots[$0] } }
@@ -226,6 +234,8 @@ final class FirstMateStore {
         error = nil
         unsupported = false
         archiveSupported = demo
+        archiveCleanupSupported = false
+        archiveReviewSupported = false
         attachmentsSupported = demo
         contextSupported = demo
         safeModelSettingsSupported = demo
@@ -448,6 +458,8 @@ final class FirstMateStore {
         readViewsSupported = capabilities.ok && capabilities.supportsReadViews
         #endif
         archiveSupported = capabilities.ok && capabilities.supportsArchive
+        archiveCleanupSupported = capabilities.ok && capabilities.supportsArchiveCleanup
+        archiveReviewSupported = capabilities.ok && capabilities.supportsArchiveReview
         attachmentsSupported = capabilities.ok && capabilities.supportsAttachments
         contextSupported = capabilities.ok && capabilities.supportsContext
         safeModelSettingsSupported = capabilities.ok && capabilities.supportsSafeModelSettings
@@ -545,6 +557,8 @@ final class FirstMateStore {
             } catch {
                 guard capturedGeneration == generation else { return }
                 archiveSupported = false
+                archiveCleanupSupported = false
+                archiveReviewSupported = false
                 attachmentsSupported = false
                 contextSupported = false
                 safeModelSettingsSupported = false
@@ -1379,6 +1393,75 @@ final class FirstMateStore {
             if capturedGeneration == generation { record(error) }
             return false
         }
+    }
+
+    func archivePreview(featureID: String, lifecycle expected: LifecycleIdentity) async throws -> FirstMateArchivePreview {
+        guard expected == lifecycle, let client, archiveReviewSupported else { throw CancellationError() }
+        let response = try await client.fetchFirstMateArchivePreview(featureID: featureID)
+        guard expected == lifecycle, response.ok, response.preview.featureID == featureID else { throw CancellationError() }
+        return response.preview
+    }
+
+    func confirmArchive(featureID: String, request: FirstMateArchiveRequest, lifecycle expected: LifecycleIdentity) async throws -> FirstMateArchiveReceipt {
+        guard expected == lifecycle, let client, archiveReviewSupported, !isSending else { throw CancellationError() }
+        isSending = true
+        defer { if expected == lifecycle { isSending = false } }
+        let response = try await client.confirmFirstMateArchive(featureID: featureID, request: request)
+        guard expected == lifecycle, response.ok, response.feature.id == featureID else { throw CancellationError() }
+        var acknowledgement = FirstMateSnapshot(feature: response.feature)
+        acknowledgement.hasDetails = false
+        acknowledgement.includesLinks = false
+        receive(acknowledgement)
+        // Keep the selected detail mounted until the blocking archive sheet closes.
+        // The next refresh reconciles list visibility after the operation.
+        error = nil
+        return response
+    }
+
+    func archiveProgress(featureID: String, archiveID: String?, after: Int, lifecycle expected: LifecycleIdentity) async throws -> FirstMateArchiveProgress {
+        guard expected == lifecycle, let client, archiveReviewSupported else { throw CancellationError() }
+        let response = try await client.fetchFirstMateArchiveProgress(featureID: featureID, archiveID: archiveID, after: after)
+        guard expected == lifecycle, response.ok else { throw CancellationError() }
+        return response
+    }
+
+    func archiveReport(featureID: String, archiveID: String? = nil) async throws -> String {
+        guard let client, archiveCleanupSupported else { throw APIError.invalidResponse }
+        let capturedGeneration = generation
+        var offset = 0
+        var digest: String?
+        var chunks: [String] = []
+        var bytes = 0
+        for _ in 0..<100 {
+            try Task.checkCancellation()
+            let page = try await client.fetchFirstMateArchivePage(featureID: featureID, archiveID: archiveID, offset: offset, sha256: digest)
+            guard capturedGeneration == generation, page.ok else { throw CancellationError() }
+            guard !page.sha256.isEmpty, page.sha256.count <= 128,
+                  digest == nil || digest == page.sha256 else { throw APIError.invalidResponse }
+            if digest == nil { digest = page.sha256 }
+            bytes += page.report.utf8.count
+            guard bytes <= 8_000_000 else { throw APIError.server(status: 413, message: "This record is too large to open here. Export it with the history CLI.") }
+            chunks.append(page.report)
+            guard let next = page.nextOffset else { return chunks.joined() }
+            guard next > offset else { throw APIError.invalidResponse }
+            offset = next
+        }
+        throw APIError.server(status: 413, message: "This record has too many pages. Export it with the history CLI.")
+    }
+
+    func retryCleanup(featureID: String, requestID: String, lifecycle expected: LifecycleIdentity) async throws {
+        guard expected == lifecycle, let client, archiveCleanupSupported else { throw CancellationError() }
+        let response = try await client.retryFirstMateCleanup(featureID: featureID, requestID: requestID)
+        guard expected == lifecycle, response.ok else { throw CancellationError() }
+        await refresh()
+    }
+
+    func searchHistory(query: String, offset: Int = 0) async throws -> FirstMateHistoryResponse {
+        guard let client, archiveCleanupSupported else { throw APIError.invalidResponse }
+        let capturedGeneration = generation
+        let response = try await client.searchFirstMateHistory(query: query, offset: offset)
+        guard capturedGeneration == generation, response.ok else { throw CancellationError() }
+        return response
     }
 
     /// Explicitly saves one PR or general HTTP(S) link to this feature.

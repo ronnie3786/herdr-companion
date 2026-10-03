@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First Mate Home</title>
+<meta name="description" content="Design reference for the Mac app's First Mate Home: seamless window, centred tab bar, Spotlight home with My First Mate, and the slim Ask First Mate chat.">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="first-mate-home.css">
+</head>
+<body>
+<header class="pagebar">
+  <span class="brand">First Mate Home <span>design reference · locked October 3, 2026</span></span>
+  <nav aria-label="Pages"><a class="on" href="reference.html">Reference</a><a href="index.html">Design spec</a></nav>
+  <span class="spacer"></span>
+  <span class="page-label">Moment</span>
+  <div class="seg page-moments" role="group" aria-label="Moment">
+    <button data-moment="morning">Morning</button><button data-moment="afternoon">Afternoon</button><button data-moment="clear">All clear</button><button data-moment="trouble">Something broke</button>
+  </div>
+</header>
+<div class="window" id="window">
+  <header class="titlebar" id="titlebar"></header>
+  <main class="home" id="home"></main>
+  <div id="fm-layer"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</div>
+<p class="page-note" id="moment-note"></p>
+<script src="data.js"></script>
+<script src="moments.js"></script>
+<script src="first-mate-home.js"></script>
+</body>
+</html>

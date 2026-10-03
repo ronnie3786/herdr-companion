@@ -452,7 +452,8 @@ final class AgentRolesStore {
     var supportsSharing: Bool { overview?.supportsSharing == true }
     /// The Share menu opens; its items also need `supportsSharing`.
     var canOpenShareMenu: Bool {
-        status == .loaded && !isSaving && !isImporting && !requiresConnectionReload && selectedMachine != nil
+        status == .loaded && !isSaving && !isImporting && !requiresConnectionReload && !catalog.isLoading
+            && selectedMachine != nil
     }
     var canShareRoles: Bool { canOpenShareMenu && supportsSharing }
 

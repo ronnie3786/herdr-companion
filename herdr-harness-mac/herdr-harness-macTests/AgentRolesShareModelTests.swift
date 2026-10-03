@@ -284,7 +284,7 @@ struct AgentRolesShareModelTests {
         #expect(await client.recordedImports().count == 1)
     }
 
-    @Test("Local skill hashes are read one package at a time and skip what this Mac can't package")
+    @Test("Local skill hashes are read one package at a time and keep unreadable local copies separate")
     func localSkillHashes() async throws {
         let client = AgentRoleTestClient(overview: Fixtures.shareOverview())
         await client.respondToImports(with: [.success(try Fixtures.samplePlan())])
@@ -294,8 +294,9 @@ struct AgentRolesShareModelTests {
         await model.openImport(fileName: "sample.json", data: try Fixtures.shareDocument())
         #expect(model.importHeader?.skillIDs == ["skill_alpha", "skill_bravo", "skill_remote"])
         #expect(catalog.bundleRequests == [["skill_alpha"], ["skill_bravo"]])
-        #expect(model.importLocalSkills == ["skill_alpha": Self.syntheticHash])
-        #expect(await client.recordedImports().first?.localSkills == ["skill_alpha": Self.syntheticHash])
+        let expected = ["skill_alpha": Self.syntheticHash, "skill_bravo": AgentRolesShareModel.unreadableSkillHash]
+        #expect(model.importLocalSkills == expected)
+        #expect(await client.recordedImports().first?.localSkills == expected)
     }
 
     @Test("Imports need saved roles first")

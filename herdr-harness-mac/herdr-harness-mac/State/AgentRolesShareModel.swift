@@ -405,17 +405,22 @@ final class AgentRolesShareModel {
     }
 
     /// One package at a time, so each skill gets the full per-package size budget.
-    /// A skill this Mac can't package is left out, and the companion treats it as absent.
+    /// A local skill this Mac can't package still claims its ID with a hash that
+    /// never matches, so the companion keeps the shared copy separate.
     private func localSkillHashes(for ids: [String]) async -> [String: String] {
         let local = Set(store.catalog.skills.map(\.id))
         var hashes: [String: String] = [:]
         for id in ids where local.contains(id) {
-            guard let bundle = (try? await store.catalog.bundles(for: [id]))?.first(where: { $0.id == id }) else { continue }
-            let hash = await Task.detached(priority: .userInitiated) { AgentRoleSkillContentHash.hash(bundle) }.value
-            if let hash { hashes[id] = hash }
+            var hash: String?
+            if let bundle = (try? await store.catalog.bundles(for: [id]))?.first(where: { $0.id == id }) {
+                hash = await Task.detached(priority: .userInitiated) { AgentRoleSkillContentHash.hash(bundle) }.value
+            }
+            hashes[id] = hash ?? Self.unreadableSkillHash
         }
         return hashes
     }
+
+    static let unreadableSkillHash = String(repeating: "0", count: 64)
 
     private static func withoutByteOrderMark(_ data: Data) -> Data {
         data.starts(with: [0xEF, 0xBB, 0xBF]) ? Data(data.dropFirst(3)) : data

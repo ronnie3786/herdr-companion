@@ -16,9 +16,9 @@
   `agent_roles.changed` once; dry runs and no-op imports do neither.
 - The import route accepts the same 16 MB body as role saves. Deeply nested
   JSON bodies now return 400 instead of a server error.
-- Requires the saved-teams companion changes (`pr-review-teams-v1`). Older Mac
-  apps are unaffected. Install and restart this package separately from the Mac
-  app.
+- Teams travel by name and use the saved teams in this release
+  (`pr-review-teams-v1`). Older Mac apps are unaffected. Install and restart this
+  package separately from the Mac app.
 
 ## Turn Watchers on from the app
 

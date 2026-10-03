@@ -50,7 +50,10 @@ struct HerdrWindowChrome: NSViewRepresentable {
             let center = NotificationCenter.default
             for name in [NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification] {
                 observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.reportFullScreen() }
+                    MainActor.assumeIsolated {
+                        self?.applyChrome()
+                        self?.reportFullScreen()
+                    }
                 })
             }
             reportFullScreen()
@@ -74,6 +77,13 @@ struct HerdrWindowChrome: NSViewRepresentable {
                 window.toolbar = toolbar
             }
             if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
+            // This empty toolbar establishes windowed traffic-light geometry.
+            // In full screen AppKit draws it over our navigation, so hide it
+            // there and restore the compact title bar when the window returns.
+            let toolbarVisible = !window.styleMask.contains(.fullScreen)
+            if window.toolbar?.isVisible != toolbarVisible {
+                window.toolbar?.isVisible = toolbarVisible
+            }
         }
 
         private func reportFullScreen() {

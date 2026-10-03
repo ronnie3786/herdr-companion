@@ -1,4 +1,4 @@
-"""Skims for First Mate chat and HUD chats: the asynchronous hook.
+"""Skims for First Mate, HUD, and Main Chat: the asynchronous hooks.
 
 A finished conversation reply (First Mate replies, notices, stage results, and
 escalations) or a completed HUD chat turn of at least `skim_min_words` words
@@ -9,6 +9,9 @@ inference per reply, with at most one action repair per attempt (profile
 the result beside the reply. The reply itself is
 never delayed, changed, or re-sent: a failed or rejected skim only means the
 client keeps showing the full reply.
+
+Main Chat checkpoints prepare the latest settled reply in the shared chat cache
+before a reader opens it; on-demand requests reuse the same cached result.
 
 The model sees the reply and the human question it answers, nothing else.
 Nothing here logs reply or skim text; logs carry ids, statuses, and timings.
@@ -32,6 +35,7 @@ import uuid
 
 from . import skim
 from .skim_chat_store import ChatSkimStore
+from .skim_pi import settled_reply
 from .agent_runs import (
     MODEL_PATTERN,
     SKIM_PROFILE,
@@ -212,6 +216,25 @@ class SkimService:
         if state is None:
             raise AgentRunError("This skim is no longer cached.", code="skim_not_found", status=404)
         return {"id": identifier, "skim": skim.served(state)}
+
+    def observe_pi_snapshot(self, snapshot: dict) -> None:
+        """Prepare Main Chat skims even when no client has opened the pane."""
+        if not self.settings.enabled:
+            return
+        source = settled_reply(snapshot)
+        if source is None:
+            return
+        question, replies = source
+        for reply in replies:
+            try:
+                # Use the reader's exact cache identity, eligibility, queue
+                # bounds, and worker pool. This never waits for inference.
+                self.request_chat(reply=reply, question=question)
+            except AgentRunError as exc:
+                if exc.code not in {"skim_busy", "skim_too_large"}:
+                    raise
+                # Opening the reply remains a fallback if prewarming could
+                # not fit within the queue or input bounds.
 
     def _skim_chat(self, identifier: str) -> None:
         source = self._chats.begin(identifier)

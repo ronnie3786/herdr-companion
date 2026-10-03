@@ -93,8 +93,12 @@ On iPhone and iPad the existing skim reader is unchanged: a tap opens the origin
   First Mate and HUD conversations refresh once for the new generation settings.
   A refresh temporarily shows the original reply; an empty list of actions does
   not trigger another attempt.
-- Main Mac chat requests skims for mounted, settled final assistant text through
-  authenticated `POST /api/v1/skims` and polls `GET /api/v1/skims/{id}`. Streaming,
+- Main Mac chat skims are prepared by the companion when Pi saves an idle
+  checkpoint after `agent_settled`, even when the chat is unopened. Reconnect
+  checkpoints also prepare the latest completed answer. The reader retrieves
+  that same cached result through authenticated `POST /api/v1/skims` and polls
+  `GET /api/v1/skims/{id}` if it is still pending. Opening older replies, or ones
+  that could not fit in the background queue, remains an on-demand fallback. Streaming,
   tool commentary, cancelled, and failed turns are ineligible. The companion uses
   the same worker pool and configured model; a content-addressed private SQLite
   cache includes the reply hash, question, model settings, and prompt version in
@@ -141,7 +145,10 @@ secret file.
 3. Switch to **Full reply** and back. Rate and quote the reply; both act on the
    full text.
 4. Ask a HUD chat and main Mac chat a long question and expect the same. Streaming
-   output should stay full until the turn settles.
+   output should stay full until the turn settles. Leave a Main Chat closed while
+   it finishes, allow time for the skim model, then open it: the reader should
+   retrieve the completed skim without starting another model run. The matching
+   companion must be installed and restarted separately for background preparation.
 5. Use a synthetic reply offering “recover it” and “revise it”. Confirm title-case
    labels and the original outgoing phrases, hover explanations, keyboard activation, and one normal message per
    click. Test a draft, attachments, disconnection, a failed send, feature/session
@@ -152,7 +159,7 @@ secret file.
 Focused regression commands:
 
 ```sh
-.venv/bin/python -m unittest tests.test_skim tests.test_skim_service tests.test_skim_actions tests.test_chat_skims tests.test_herdr_http.HerdrHTTPTests.test_chat_skims_require_authentication_and_bound_inputs
+.venv/bin/python -m unittest tests.test_skim tests.test_skim_service tests.test_skim_actions tests.test_chat_skims tests.test_pi_chat_skims tests.test_herdr_http.HerdrHTTPTests.test_chat_skims_require_authentication_and_bound_inputs
 xcodebuild -project herdr-harness-mac/herdr-harness-mac.xcodeproj -scheme herdr-harness-mac -destination 'platform=macOS' test -only-testing:herdr-harness-macTests/SkimReplyTests -only-testing:herdr-harness-macTests/ChatSkimTests -only-testing:herdr-harness-macTests/SkimReplyRenderTests -only-testing:herdr-harness-macTests/FirstMateSkimTests
 ```
 

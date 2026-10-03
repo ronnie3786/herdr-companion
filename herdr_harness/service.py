@@ -175,6 +175,7 @@ class HerdrService:
             self.client.socket_path,
             environ=None if production_environment else self.environ,
             on_event=self._dispatch_pi_event,
+            on_snapshot=self._observe_pi_skim_snapshot,
         )
         self.response_audio = response_audio_service or response_audio.ResponseAudioService(self.environ)
         from .captioned_speech import CaptionedSpeechService
@@ -558,10 +559,9 @@ class HerdrService:
             self.quick_voice.recover()
 
     def stop(self) -> None:
+        self._stop_event.set()
         if self._watchers_runtime is not None:
             self._watchers_runtime.stop()
-        if self._skims is not None:
-            self._skims.stop()
         if self._first_mate_notifications is not None:
             self._first_mate_notifications.stop()
         if self._simulator_previews is not None:
@@ -577,10 +577,11 @@ class HerdrService:
         self.session_labels.stop()
         if self._quick_voice is not None:
             self._quick_voice.stop()
-        self._stop_event.set()
         self._refresh_event.set()
         self._restart_subscription.set()
         self.pi_semantic.stop()
+        if self._skims is not None:
+            self._skims.stop()
         try:
             self.agent_activity.stop()
         except Exception:
@@ -882,6 +883,10 @@ class HerdrService:
                                               Path(self.environ["HOME"]) / ".local/share/herdr-companion") / "chat-skims.sqlite3")
                                               if self.environ.get("HERDR_STATE_DIR") or self.environ.get("HOME") else ":memory:"))
             return self._skims
+
+    def _observe_pi_skim_snapshot(self, snapshot: dict) -> None:
+        if not self._stop_event.is_set():
+            self.skims.observe_pi_snapshot(snapshot)
 
     def _dispatch_pi_event(self, envelope: dict) -> None:
         self._publish_pi_event(envelope)

@@ -1,5 +1,21 @@
 # Next macOS update, unreleased
 
+## Share Agent Roles with teammates
+
+- **Settings → Agent Roles → Share** exports your First Mate roles and PR review
+  agents, with the skills they use, to a JSON file, and imports a file a
+  teammate shared. PR review agents are grouped by team; a team's checkbox picks
+  its members. Built-in roles at their defaults and Agent Profiles aren't shared.
+- Import shows a plan first: new roles are selected, roles that would replace
+  yours show what changes and stay unselected, and each skill says whether it's
+  new, already on the computer, kept separate, or unavailable. Prompts, skill
+  files and `SKILL.md` can be read before importing.
+- Imported skill copies show on the Skills tab as **Saved copies on
+  <computer>** instead of a missing-skill warning.
+- Requires the matching companion server package (`agent-roles-share-v1`),
+  installed separately. With an older companion, Share explains that the
+  companion needs an update.
+
 ## PR Review Agents: teams, prompts and skill search
 
 - In **Settings → Agent Roles → PR Review Agents**, **Team** is now a drop-down

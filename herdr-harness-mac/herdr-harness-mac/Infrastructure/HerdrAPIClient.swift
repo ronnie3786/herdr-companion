@@ -757,6 +757,64 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         try await request(path: "/api/v1/agent-roles", method: "POST", body: mutation)
     }
 
+    func fetchAgentRolesSharePreview() async throws -> AgentRolesSharePreview {
+        try await request(path: "/api/v1/agent-roles/export", query: [URLQueryItem(name: "preview", value: "1")])
+    }
+
+    /// The document is never decoded into roles. It is re-serialized from the
+    /// response's raw JSON, so unknown keys and exact values reach the file.
+    func exportAgentRoles(roleIDs: [String]) async throws -> AgentRolesExport {
+        let query = roleIDs.isEmpty ? [] : [URLQueryItem(name: "roleIds", value: roleIDs.joined(separator: ","))]
+        let request = makeRequest(path: "/api/v1/agent-roles/export", method: "GET", query: query)
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response: response, data: data)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["ok"] as? Bool == true,
+              let document = object["document"] as? [String: Any],
+              JSONSerialization.isValidJSONObject(document) else { throw APIError.invalidResponse }
+        let documentData = try JSONSerialization.data(withJSONObject: document,
+                                                      options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        guard let header = try? AgentRolesShareFileHeader(validating: documentData) else { throw APIError.invalidResponse }
+        let envelope = try decoder.decode(AgentRolesExportEnvelope.self, from: data)
+        let summary = envelope.summary
+            ?? AgentRolesExport.Summary(roles: header.roleCount, skills: header.skillCount, files: 0, bytes: documentData.count)
+        return AgentRolesExport(document: documentData, summary: summary, warnings: envelope.warnings ?? [])
+    }
+
+    /// The file's bytes are spliced into the request as the `document` value, so
+    /// fields this version doesn't understand still reach the companion.
+    func importAgentRoles(document: Data, dryRun: Bool, expectedRevision: Int?, planDigest: String?,
+                          roleIDs: [String]?, replaceRoleIDs: [String]?,
+                          localSkills: [String: String]?) async throws -> AgentRolesImportPlan {
+        let fields = AgentRolesImportFields(dryRun: dryRun, expectedRevision: expectedRevision, planDigest: planDigest,
+                                            roleIds: roleIDs, replaceRoleIds: replaceRoleIDs, localSkills: localSkills)
+        let fieldEncoder = JSONEncoder()
+        fieldEncoder.outputFormatting = [.sortedKeys]
+        var request = makeRequest(path: "/api/v1/agent-roles/import", method: "POST")
+        request.httpBody = try Self.importBody(document: document, fields: fieldEncoder.encode(fields))
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await session.data(for: request)
+        try Self.validate(response: response, data: data)
+        return try decoder.decode(AgentRolesImportPlan.self, from: data)
+    }
+
+    /// `{"document":<file bytes>,<other fields>}`. The file must hold one JSON object.
+    static func importBody(document: Data, fields: Data) throws -> Data {
+        let whitespace: Set<UInt8> = [0x20, 0x09, 0x0A, 0x0D]
+        guard document.first(where: { !whitespace.contains($0) }) == UInt8(ascii: "{"),
+              document.last(where: { !whitespace.contains($0) }) == UInt8(ascii: "}"),
+              fields.first == UInt8(ascii: "{"), fields.last == UInt8(ascii: "}") else {
+            throw AgentRolesShareFileError("This isn't a Herdr roles file. Choose a file exported from Settings › Agent Roles.")
+        }
+        var body = Data("{\"document\":".utf8)
+        body.reserveCapacity(document.count + fields.count + 16)
+        body.append(document)
+        let remaining = fields.dropFirst()
+        if remaining.first != UInt8(ascii: "}") { body.append(UInt8(ascii: ",")) }
+        body.append(contentsOf: remaining)
+        return body
+    }
+
     func fetchAgentProfile(id: String) async throws -> AgentProfileHistoryResponse {
         guard UUID(uuidString: id) != nil else { throw APIError.invalidResponse }
         return try await request(path: "/api/v1/agent-profiles/profiles/\(id)")
@@ -1973,6 +2031,10 @@ actor HerdrAPIClient: HerdrNotesClient, FirstMateClient, PRReviewClient, PRRevie
         if path.hasPrefix("/api/v1/agent-profiles") {
             return 30
         }
+        if path.hasPrefix("/api/v1/agent-roles/export") || path.hasPrefix("/api/v1/agent-roles/import") {
+            // Roles files carry skill packages of up to 15 MiB each way.
+            return 120
+        }
         if path.hasPrefix("/api/v1/response-audio/") {
             return 150
         }
@@ -2283,6 +2345,23 @@ private struct ServerErrorEnvelope: Decodable {
     }
 
     let error: Payload
+}
+
+/// Everything in an export response except the document.
+private struct AgentRolesExportEnvelope: Decodable, Sendable {
+    let summary: AgentRolesExport.Summary?
+    let warnings: [String]?
+}
+
+/// Import fields other than the document. Absent values are omitted.
+private struct AgentRolesImportFields: Encodable, Sendable {
+    let dryRun: Bool
+    let expectedRevision: Int?
+    let planDigest: String?
+    let roleIds: [String]?
+    let replaceRoleIds: [String]?
+    /// Skill ID to content hash for the file's skills that this Mac has.
+    let localSkills: [String: String]?
 }
 
 private struct StarBody: Encodable, Sendable {

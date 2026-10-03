@@ -20,6 +20,7 @@ from .agent_role_skills import install_bundle, validate_bundles
 CAPABILITY = "agent-roles-v1"
 PR_REVIEW_CAPABILITY = "pr-review-agents-v1"
 PR_REVIEW_TEAMS_CAPABILITY = "pr-review-teams-v1"
+SHARE_CAPABILITY = "agent-roles-share-v1"
 PR_REVIEW_BUILTIN_ID = "pr-review-comprehensive"
 PR_REVIEW_PROMPT = ("Perform an adversarial code review of this pull request. Focus on actionable correctness, regression, "
                     "and missing-test issues. Verify each finding against the code and explain its impact.\n\nPull request: {url}")
@@ -337,7 +338,8 @@ class AgentRoles:
     def overview(self):
         with self._lock:
             state = self._state()
-        return {"ok": True, "capability": CAPABILITY, "capabilities": [PR_REVIEW_CAPABILITY, PR_REVIEW_TEAMS_CAPABILITY],
+        return {"ok": True, "capability": CAPABILITY,
+                "capabilities": [PR_REVIEW_CAPABILITY, PR_REVIEW_TEAMS_CAPABILITY, SHARE_CAPABILITY],
                 "machineId": self.machine_id, "revision": state["revision"], "roles": list(state["roles"].values()),
                 "teams": sorted(state["teams"].values(), key=lambda team: (team["name"].casefold(), team["id"])),
                 **self._catalog(state)}

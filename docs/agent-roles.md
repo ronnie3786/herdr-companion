@@ -91,6 +91,55 @@ The allowlist controls Pi's skill discovery and prompt catalog. It is not a
 filesystem sandbox. Existing repository instructions, tools, extensions, trust,
 and authentication rules still apply.
 
+## Share roles with teammates
+
+On a companion advertising `agent-roles-share-v1`, the **Share** menu in
+**Settings → Agent Roles** exports roles to a file and imports a file someone
+shared with you. Roles always move between files and the computer shown in
+**Runs on**.
+
+**Export Roles…** lists the roles on that computer. First Mate roles come first;
+PR review agents are grouped by team, and a team's checkbox selects its members.
+Custom roles, PR review agents, and built-in roles you changed are included.
+Built-in roles still at their defaults are listed as **Default** and are never
+written to the file. Recovery Advisor is never shared. Each role carries its
+name, guidance, prompts, delegation setting, model profile, avatar, team name,
+and the exact skill copies it runs on that computer, including scripts. A skill
+without a stored copy, such as one found in a host skill folder, is shared by
+name only. Agent Profiles, machine names, revisions, and file paths are not
+included. Export stops if a prompt or skill file contains a private key and names
+where it is. The file is plain JSON named `herdr-roles-<date>.json`, so it can be
+read before it is shared.
+
+**Import Roles…** checks the file, then shows a plan for the computer in **Runs
+on** before anything changes:
+
+- **New** roles are selected. Roles whose skills aren't all available start
+  unselected and say which skills they would leave out.
+- A role with an ID the computer already has, including a built-in role, shows
+  **Replaces your …** with the fields that would change. It starts unselected
+  unless it replaces a built-in that was never changed. Import never changes an
+  existing role you didn't select.
+- Roles that already match are summarized in one line.
+- PR review agents join a team with the same name, ignoring case, or create it.
+- Each skill shows whether its copy is new, already on the computer, kept
+  separate, already available by name, or not available. Skill files and
+  `SKILL.md` can be read before importing.
+
+Skills are matched by their files, not by name. A shared copy identical to one
+the computer already has is reused. If the computer already uses that skill ID
+for different files, the shared copy is saved under its own ID and the existing
+copy and the roles using it are untouched. Imported copies appear on the Skills
+tab as **Saved copies on <computer>**; they can be removed but not refreshed from
+your Mac. Saving or updating a role later from a Mac that has a skill at the
+same location replaces that role's copy with the Mac's, as it does today.
+
+Importing applies every selected role in one change. If the roles or skills on
+that computer change while the plan is open, Herdr shows the updated plan
+instead of importing something you didn't review. Running and queued work keeps
+its pinned snapshot. Imported prompts and skills run with your permissions on
+that computer, so review them as you would code from a teammate.
+
 ## Compatibility and storage
 
 Requires a companion advertising `agent-roles-v1`, the matching First Mate Pi
@@ -116,6 +165,27 @@ picker. Older companions remain supported through their available-package catalo
 client's changes. Optional `skillBundles` contain only selected packages, with
 relative file paths and base64 contents. Role contents and packages require full
 authentication and are unavailable to scoped agent credentials.
+
+For sharing, `GET /api/v1/agent-roles/export?preview=1` lists exportable roles
+and their stored skill sizes. `GET /api/v1/agent-roles/export?roleIds=…` returns
+`{document, summary, warnings}`, where `document` is the file:
+`{format: "herdr-agent-roles", version: 1, exportedAt, roles, skills}`. Roles use
+the role fields above plus `skillContent` (skill ID → content hash); skills use
+the `skillBundles` shape plus `contentHash`, or only `{id, name, description,
+source}` for a name-only reference. Readers reject other formats and newer
+versions and ignore unknown fields with a warning; new optional fields do not
+change the version. `POST /api/v1/agent-roles/import` with `dryRun: true`
+returns the plan and a `planDigest`; the commit repeats the digest with
+`expectedRevision`, `roleIds`, and `replaceRoleIds` for every selected role
+that replaces an existing one. The Mac also sends `localSkills`, the content
+hash of its own copy of each skill in the file, on both requests. A shared copy
+that differs from the Mac's own copy, or from a copy already on the computer,
+is stored under a derived ID; without `localSkills`, Mac catalog skills are kept
+separate unless the computer already has identical files. A stale revision returns 409
+`agent_role_conflict`, and a changed plan returns 409 `import_plan_changed`.
+Dry runs and imports that change nothing do not bump the revision or publish
+`agent_roles.changed`. Files are limited to 128 roles, 1,000 skill files, 8 MiB
+of skill files, and 2 MiB per file.
 
 For operator-managed host catalogs, `[first_mate.skill_sources]` in private TOML
 maps source labels to directories. Machine overrides use the existing configuration

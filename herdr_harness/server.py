@@ -52,6 +52,7 @@ from .network import public_base_url
 from .notes import NotesError, MAX_NOTE_BYTES, MAX_NOTES
 from .agent_profiles import ProfileError
 from .agent_roles import AgentRoleError
+from . import agent_roles_share
 from .pi_semantic import PI_SEMANTIC_PROTOCOL, PiSemanticError, valid_pi_session_id
 from .secret_file import (
     SecretFileError,
@@ -492,6 +493,7 @@ def api_description() -> dict:
             "agent-control-v1",
             "agent-profiles-v1",
             "agent-roles-v1",
+            "agent-roles-share-v1",
             "discovery-v1",
             "chat-tab-colors-v1",
             "issue-reports-v1",
@@ -563,6 +565,8 @@ def api_description() -> dict:
             "resultArtifacts": "/api/v1/result-artifacts",
             "agentProfiles": "/api/v1/agent-profiles",
             "agentRoles": "/api/v1/agent-roles",
+            "agentRolesExport": "/api/v1/agent-roles/export",
+            "agentRolesImport": "/api/v1/agent-roles/import",
             "notes": "/api/v1/notes",
             "note": "/api/v1/notes/{noteId}",
             "notesImport": "/api/v1/notes/import",
@@ -608,6 +612,7 @@ def api_description() -> dict:
             "POST /api/v1/first-mate/projects/{projectId}/archive",
             "POST /api/v1/agent-profiles",
             "POST /api/v1/agent-roles",
+            "POST /api/v1/agent-roles/import",
             "POST /api/v1/notes|notes/import",
             "POST /api/v1/first-mate/features/{featureId}/attachments",
             "POST /api/v1/first-mate/feedback-categories",
@@ -886,7 +891,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
             raw = self.rfile.read(length)
             try:
                 value = json.loads(raw.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
                 raise HTTPValidationError("request body must be valid JSON") from exc
             if not isinstance(value, dict):
                 raise HTTPValidationError("request body must be a JSON object")
@@ -1015,7 +1020,7 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     maximum = issue_reports.MAX_ISSUE_REPORT_JSON_BYTES
                 elif voice_upload:
                     maximum = voice.MAX_VOICE_JSON_BYTES
-                elif method == "POST" and segments == ["api", "v1", "agent-roles"]:
+                elif method == "POST" and segments in (["api", "v1", "agent-roles"], ["api", "v1", "agent-roles", "import"]):
                     maximum = 16 * 1024 * 1024  # 8 MiB skill bundles plus base64 and bounded metadata.
                 elif method == "POST" and segments[2:] == ["notes", "import"]:
                     maximum = MAX_NOTE_BYTES * MAX_NOTES
@@ -2183,6 +2188,21 @@ def make_handler(service: HerdrService, *, api_token: Optional[str] = None):
                     result = service.agent_roles.mutate(body)
                     service.broker.publish("agent_roles.changed", {"generatedAt": utc_now()})
                     return result
+            if tail == ["agent-roles", "export"] and method == "GET":
+                if self._authorization_scope != "main":
+                    return self._error(403, "agent_roles_scope_forbidden", "Agent Roles require full authentication")
+                if (query.get("preview") or ["0"])[0] in {"1", "true"}:
+                    return agent_roles_share.export_preview(service.agent_roles)
+                raw_ids = (query.get("roleIds") or [None])[0]
+                role_ids = None if raw_ids is None else [item for item in raw_ids.split(",") if item]
+                return agent_roles_share.export_document(service.agent_roles, role_ids)
+            if tail == ["agent-roles", "import"] and method == "POST":
+                if self._authorization_scope != "main":
+                    return self._error(403, "agent_roles_scope_forbidden", "Agent Roles require full authentication")
+                result, changed = agent_roles_share.import_document(service.agent_roles, body)
+                if changed:
+                    service.broker.publish("agent_roles.changed", {"generatedAt": utc_now()})
+                return result
             if tail and tail[0] == "agent-profiles":
                 if self._authorization_scope != "main":
                     return self._error(403, "agent_profiles_scope_forbidden", "Agent profiles require full authentication")

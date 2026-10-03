@@ -21,9 +21,7 @@ struct AgentRoleSkillSelectionBar: View {
                 HStack(spacing: 10) { actions }
                 VStack(alignment: .leading, spacing: 8) { actions }
             }
-            Text(store.missingIDs.isEmpty
-                ? "Save copies packages to \(store.selectedMachine?.name ?? "the execution computer"). Update Copies refreshes them after local file changes. Clear allows no skills."
-                : "Missing local skills keep any existing saved copy. Token estimate excludes them. Copies on other computers are unchanged.")
+            Text(caption)
                 .herdrFont(.caption2)
                 .foregroundStyle(HerdrTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -32,6 +30,17 @@ struct AgentRoleSkillSelectionBar: View {
         .padding(.vertical, 10)
         .background(HerdrTheme.inkFill(0.015))
         .overlay(alignment: .top) { Divider() }
+    }
+
+    private var caption: String {
+        let machine = store.selectedMachine?.name ?? "the execution computer"
+        if !store.unavailableSkillIDs.isEmpty {
+            return "Missing local skills keep any existing saved copy. Token estimate excludes them. Copies on other computers are unchanged."
+        }
+        if !store.savedCopyIDs.isEmpty {
+            return "Save copies packages from this Mac to \(machine). Saved copies there stay as they are, and the token estimate excludes them."
+        }
+        return "Save copies packages to \(machine). Update Copies refreshes them after local file changes. Clear allows no skills."
     }
 
     @ViewBuilder private var actions: some View {

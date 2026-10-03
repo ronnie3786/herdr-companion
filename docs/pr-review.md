@@ -190,7 +190,7 @@ saved review agents finish from their managed process result.
 **Legacy skills.** Existing clients and the CLI retain their skill endpoints, templates,
 output globs, and marks. The older companion's Skills tab can run and manage these entries.
 New saved-agent reviews compose selected skills inside an agent profile instead of launching
-the old specialist-grouping skill. No operator-specific specialist or team is bundled.
+the old specialist-grouping skill. No operator-specific specialist or team is bundled. To give teammates your reviewers and teams, use **Share → Export Roles…** in Settings → Agent Roles; see [Agent Roles](agent-roles.md#share-roles-with-teammates).
 
 **Archive.** Archiving hides a review from the Active list and keeps every file, run, document
 and event; Archived lists them and Unarchive brings one back.

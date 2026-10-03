@@ -46,7 +46,8 @@ struct AgentRoleSkillsView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                             Color.clear.frame(height: 0).id(Self.topID)
-                            if !store.missingIDs.isEmpty { AgentRoleMissingSkills(store: store) }
+                            if !store.savedCopyIDs.isEmpty { AgentRoleSavedCopies(store: store) }
+                            if !store.unavailableSkillIDs.isEmpty { AgentRoleMissingSkills(store: store) }
                             ForEach(sections) { section in
                                 Section {
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10)], spacing: 10) {

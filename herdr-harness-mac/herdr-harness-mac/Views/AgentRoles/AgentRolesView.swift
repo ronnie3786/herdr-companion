@@ -3,7 +3,7 @@ import SwiftUI
 
 struct AgentRolesView: View {
     private enum Navigation: Equatable {
-        case role(String), machine(String), newRole, newPRReviewRole, reload
+        case role(String), machine(String), newRole, newPRReviewRole, reload, importRoles
     }
 
     @Bindable var store: AgentRolesStore
@@ -12,11 +12,22 @@ struct AgentRolesView: View {
     @State private var pendingNavigation: Navigation?
     @State private var confirmsDiscard = false
     @State private var showsSources = false
+    @State private var share: AgentRolesShareModel
+    @State private var showsExport = false
+    @State private var showsImport = false
+
+    init(store: AgentRolesStore, initialTab: AgentRoleEditor.Tab = .profile, refreshConnections: @escaping () -> Void = {}) {
+        self.store = store
+        self.initialTab = initialTab
+        self.refreshConnections = refreshConnections
+        _share = State(initialValue: AgentRolesShareModel(store: store))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             AgentRolesHeader(store: store, selectMachine: { request(.machine($0)) },
-                             reload: { request(.reload) }, showSources: { showsSources = true })
+                             reload: { request(.reload) }, showSources: { showsSources = true },
+                             exportRoles: exportRoles, importRoles: { request(.importRoles) })
             Divider()
             if store.machines.isEmpty && store.draft == nil {
                 ContentUnavailableView("No machines yet", systemImage: "desktopcomputer",
@@ -78,7 +89,15 @@ struct AgentRolesView: View {
                 Task { await store.loadIfNeeded() }
             }
         }
+        .onChange(of: store.isImporting) { _, importing in
+            if !importing {
+                refreshConnections()
+                Task { await store.loadIfNeeded() }
+            }
+        }
         .sheet(isPresented: $showsSources) { AgentRoleSourcesSheet(catalog: store.catalog) }
+        .sheet(isPresented: $showsExport, onDismiss: { share.closeExport() }) { AgentRolesExportSheet(model: share) }
+        .sheet(isPresented: $showsImport, onDismiss: { share.closeImport() }) { AgentRolesImportSheet(model: share) }
         .confirmationDialog("Discard unsaved role edits?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
             Button("Discard Edits", role: .destructive, action: confirmDiscard)
             Button("Keep Editing", role: .cancel) { pendingNavigation = nil }
@@ -92,8 +111,15 @@ struct AgentRolesView: View {
         Task { await store.load() }
     }
 
+    /// Exports what's saved on the companion, so unsaved edits can stay open.
+    private func exportRoles() {
+        guard store.canShareRoles else { return }
+        share.closeExport()
+        showsExport = true
+    }
+
     private func request(_ navigation: Navigation) {
-        guard !store.isSaving else { return }
+        guard !store.isSaving, !store.isImporting else { return }
         if case let .role(id) = navigation, id == store.draft?.id { return }
         if case let .machine(id) = navigation, id == store.selectedMachineID { return }
         if store.hasUnsavedChanges {
@@ -120,6 +146,12 @@ struct AgentRolesView: View {
             Task {
                 await store.catalog.refresh()
                 await store.load()
+            }
+        case .importRoles:
+            guard store.canShareRoles else { return }
+            AgentRolesSharePanels.chooseImportFile { url in
+                showsImport = true
+                Task { await share.openImport(url: url) }
             }
         }
     }

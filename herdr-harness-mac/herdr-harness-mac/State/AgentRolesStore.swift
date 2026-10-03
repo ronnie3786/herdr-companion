@@ -15,6 +15,8 @@ final class AgentRolesStore {
     private(set) var status = Status.loading
     private(set) var isSaving = false
     private(set) var isSavingTeams = false
+    /// An import request is in flight. Nothing else changes roles meanwhile.
+    private(set) var isImporting = false
     /// Team changes report here so their sheets can show the result.
     private(set) var teamErrorMessage: String?
     private(set) var errorMessage: String?
@@ -61,10 +63,10 @@ final class AgentRolesStore {
     var isLoading: Bool { status == .loading }
     var supportsPRReviewAgents: Bool { overview?.supportsPRReviewAgents == true }
     var canCreatePRReviewRole: Bool {
-        status == .loaded && supportsPRReviewAgents && !isSaving && !requiresConnectionReload
+        status == .loaded && supportsPRReviewAgents && !isSaving && !isImporting && !requiresConnectionReload
     }
     var canEdit: Bool {
-        status == .loaded && draft?.locked == false && !isSaving && !requiresConnectionReload
+        status == .loaded && draft?.locked == false && !isSaving && !isImporting && !requiresConnectionReload
             && (draft?.isPRReview != true || supportsPRReviewAgents)
     }
     var canSave: Bool {
@@ -113,6 +115,19 @@ final class AgentRolesStore {
     var allTokens: Int { skills.reduce(0) { $0 + max(0, $1.estimatedTokens) } }
     var missingIDs: [String] {
         selectedIDs.subtracting(Set(skills.map(\.id))).sorted()
+    }
+    /// Selected skills this Mac doesn't have but the execution computer keeps a
+    /// copy of, such as skills that arrived with imported roles.
+    var savedCopyIDs: [String] {
+        guard let overview, let roleID = draft?.id else { return [] }
+        let stored = Set(overview.skills.map(\.id))
+        let missingThere = Set(overview.missingRoleSkills?[roleID] ?? [])
+        return missingIDs.filter { stored.contains($0) && !missingThere.contains($0) }
+    }
+    /// Selected skills neither this Mac nor the execution computer can supply.
+    var unavailableSkillIDs: [String] {
+        let saved = Set(savedCopyIDs)
+        return missingIDs.filter { !saved.contains($0) }
     }
     var missingExecutionSkillIDs: [String] {
         guard let overview, let roleID = draft?.id else { return [] }
@@ -164,7 +179,7 @@ final class AgentRolesStore {
         (supportsTeams ? draft?.teamId : draft?.group.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
     }
     var canEditTeams: Bool {
-        status == .loaded && supportsTeams && !isSaving && !requiresConnectionReload && !hasConflict
+        status == .loaded && supportsTeams && !isSaving && !isImporting && !requiresConnectionReload && !hasConflict
     }
 
     func memberCount(ofTeam id: String) -> Int {
@@ -248,8 +263,8 @@ final class AgentRolesStore {
 
     func refreshConnections(machines: [HerdrMachine], configurations: [String: ServerConfiguration],
                             clients: [String: any AgentRolesClient]) {
-        // The pane retries this after an in-flight save finishes.
-        guard !isSaving else { return }
+        // The pane retries this after an in-flight save or import finishes.
+        guard !isSaving, !isImporting else { return }
         let previousMachine = selectedMachine
         let selectedID = selectedMachineID
         let selectedExists = machines.contains { $0.id == selectedID }
@@ -273,12 +288,12 @@ final class AgentRolesStore {
     }
 
     func loadIfNeeded() async {
-        guard overview == nil, !isSaving else { return }
+        guard overview == nil, !isSaving, !isImporting else { return }
         await load()
     }
 
     func load() async {
-        guard !isSaving, !requiresConnectionReload, let machineID = selectedMachineID else { return }
+        guard !isSaving, !isImporting, !requiresConnectionReload, let machineID = selectedMachineID else { return }
         generation &+= 1
         let currentGeneration = generation
         status = .loading
@@ -302,7 +317,7 @@ final class AgentRolesStore {
     /// Navigation callers confirm any discard first. The store also refuses to
     /// discard implicitly, so keyboard or future navigation cannot lose edits.
     func selectMachine(_ id: String) async {
-        guard !isSaving, !hasUnsavedChanges,
+        guard !isSaving, !isImporting, !hasUnsavedChanges,
               machines.contains(where: { $0.id == id }) else { return }
         if id == selectedMachineID {
             await loadIfNeeded()
@@ -316,13 +331,13 @@ final class AgentRolesStore {
     }
 
     func selectRole(_ id: String) {
-        guard !isSaving, !requiresConnectionReload, !hasUnsavedChanges,
+        guard !isSaving, !isImporting, !requiresConnectionReload, !hasUnsavedChanges,
               let role = overview?.roles.first(where: { $0.id == id }) else { return }
         adopt(role)
     }
 
     func newRole() {
-        guard status == .loaded, !requiresConnectionReload, !isSaving, !hasUnsavedChanges else { return }
+        guard status == .loaded, !requiresConnectionReload, !isSaving, !isImporting, !hasUnsavedChanges else { return }
         baseline = nil
         baselineRevision = overview?.revision ?? 0
         draft = withTeamField(.custom())
@@ -338,7 +353,7 @@ final class AgentRolesStore {
     }
 
     func discard() {
-        guard !isSaving else { return }
+        guard !isSaving, !isImporting else { return }
         if requiresConnectionReload {
             resetForCurrentConnection()
             return
@@ -402,7 +417,7 @@ final class AgentRolesStore {
     }
 
     private func mutate(role: AgentRole, deleting: Bool) async {
-        guard let machineID = selectedMachineID, let client = clients[machineID] else { return }
+        guard !isImporting, let machineID = selectedMachineID, let client = clients[machineID] else { return }
         isSaving = true
         clearError()
         let currentGeneration = generation
@@ -430,6 +445,52 @@ final class AgentRolesStore {
                 errorMessage = "The change wasn't confirmed. Your edits are still here. \(error.localizedDescription)"
             }
         }
+    }
+
+    // MARK: Sharing
+
+    var supportsSharing: Bool { overview?.supportsSharing == true }
+    /// The Share menu opens; its items also need `supportsSharing`.
+    var canOpenShareMenu: Bool {
+        status == .loaded && !isSaving && !isImporting && !requiresConnectionReload && selectedMachine != nil
+    }
+    var canShareRoles: Bool { canOpenShareMenu && supportsSharing }
+
+    /// Pins the selected machine, its client and its connection for one export
+    /// or import. Imports start only without unsaved edits.
+    func beginShareSession(importing: Bool) -> AgentRolesShareSession? {
+        guard canShareRoles, !(importing && hasUnsavedChanges), let machineID = selectedMachineID,
+              let client = clients[machineID] else { return nil }
+        return AgentRolesShareSession(machineID: machineID, machineName: selectedMachine?.name ?? "the execution computer",
+                                      client: client, generation: generation)
+    }
+
+    /// False once the machine, its connection or its loaded roles were replaced.
+    func isCurrent(_ session: AgentRolesShareSession) -> Bool {
+        generation == session.generation && selectedMachineID == session.machineID && !requiresConnectionReload
+    }
+
+    func beginImportRequest(_ session: AgentRolesShareSession) -> Bool {
+        guard isCurrent(session), !isSaving, !isImporting, !hasUnsavedChanges else { return false }
+        isImporting = true
+        savedMessage = nil
+        return true
+    }
+
+    func endImportRequest() { isImporting = false }
+
+    /// Shows the roles as the committed import left them.
+    func adoptImport(_ response: AgentRolesOverview, importedCount: Int, session: AgentRolesShareSession) throws {
+        guard isCurrent(session), !isImporting, !hasUnsavedChanges else { throw APIError.invalidResponse }
+        let response = try response.validated()
+        overview = response
+        status = .loaded
+        adopt(response.roles.first { $0.id == draft?.id } ?? response.roles.first)
+        savedMessage = "Imported \(importedCount) \(importedCount == 1 ? "role" : "roles") to \(session.machineName). Applies to new sessions."
+    }
+
+    func reportExported(roleCount: Int) {
+        savedMessage = "Exported \(roleCount) \(roleCount == 1 ? "role" : "roles"). Teammates import them in Settings › Agent Roles › Share."
     }
 
     /// Companions with saved teams return every role with a team ID, so new
@@ -505,4 +566,13 @@ final class AgentRolesStore {
         hasConflict = false
         savedMessage = nil
     }
+}
+
+/// The machine, client and connection one export or import runs against.
+struct AgentRolesShareSession: Sendable {
+    let id = UUID()
+    let machineID: String
+    let machineName: String
+    let client: any AgentRolesClient
+    fileprivate let generation: UInt64
 }

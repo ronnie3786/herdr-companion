@@ -10,7 +10,7 @@ struct AgentRoleMissingSkills: View {
                 .foregroundStyle(HerdrTheme.warning)
             Text("These selected skills are not in your local folders. Restore the folder to update their packages, or remove them from this role.")
                 .herdrFont(.caption).foregroundStyle(HerdrTheme.secondaryText)
-            ForEach(store.missingIDs, id: \.self) { id in
+            ForEach(store.unavailableSkillIDs, id: \.self) { id in
                 HStack(spacing: 8) {
                     Text(store.missingSkillName(id))
                         .herdrFont(.caption, monospaced: true)

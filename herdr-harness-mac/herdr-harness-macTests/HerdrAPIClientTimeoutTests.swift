@@ -51,4 +51,11 @@ struct HerdrAPIClientTimeoutTests {
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/panes/p/pi/prompt", method: "POST") > 30)
         #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/first-mate/features/f/messages", method: "POST") == 86_400)
     }
+
+    @Test func roleFilesAllowLargeTransfers() {
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/agent-roles/export", method: "GET") == 120)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/agent-roles/import", method: "POST") == 120)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/agent-roles", method: "GET") == 45)
+        #expect(HerdrAPIClient.timeoutInterval(path: "/api/v1/agent-roles", method: "POST") == 45)
+    }
 }

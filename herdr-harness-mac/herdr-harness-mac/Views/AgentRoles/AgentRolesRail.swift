@@ -72,7 +72,7 @@ struct AgentRolesRail: View {
         .frame(width: 194)
         .frame(maxHeight: .infinity)
         .background(HerdrTheme.inkFill(0.015))
-        .disabled(store.isSaving || store.requiresConnectionReload)
+        .disabled(store.isSaving || store.isImporting || store.requiresConnectionReload)
         .accessibilityLabel("Agent roles")
         .onAppear(perform: revealSelectedReviewAgent)
         .onChange(of: store.draft?.id) { _, _ in revealSelectedReviewAgent() }

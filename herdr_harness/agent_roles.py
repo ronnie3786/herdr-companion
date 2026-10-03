@@ -19,6 +19,7 @@ from .agent_role_skills import install_bundle, validate_bundles
 
 CAPABILITY = "agent-roles-v1"
 PR_REVIEW_CAPABILITY = "pr-review-agents-v1"
+PR_REVIEW_TEAMS_CAPABILITY = "pr-review-teams-v1"
 PR_REVIEW_BUILTIN_ID = "pr-review-comprehensive"
 PR_REVIEW_PROMPT = ("Perform an adversarial code review of this pull request. Focus on actionable correctness, regression, "
                     "and missing-test issues. Verify each finding against the code and explain its impact.\n\nPull request: {url}")
@@ -27,6 +28,9 @@ MAX_SKILLS = 2000
 MAX_SCAN_ENTRIES = 10000
 MAX_SCAN_DEPTH = 8
 MAX_ROLES = 128
+MAX_TEAMS = 64
+# Stable IDs for teams migrated from the names earlier companions stored on each role.
+_TEAM_NAMESPACE = uuid.UUID("5b0e7c1e-3f4a-4d55-9a27-6f1f1c2b8d40")
 MAX_PROMPT_BYTES = 32 * 1024
 SOURCE_ENV = "HERDR_FIRST_MATE_SKILL_SOURCES"
 
@@ -72,17 +76,34 @@ def _role_id(value):
     raise AgentRoleError("Role ID must be a built-in identity or a canonical UUID")
 
 
+def _team_id(value):
+    try:
+        parsed = str(uuid.UUID(value))
+        if parsed == value:
+            return parsed
+    except (ValueError, TypeError, AttributeError):
+        pass
+    raise AgentRoleError("Team ID must be a canonical UUID")
+
+
+def _team_name(value):
+    name = _text(value, "name", 120).strip()
+    if not name or any(char in name for char in "\n\r\t"):
+        raise AgentRoleError("Team name must be one nonempty line")
+    return name
+
+
 def _seed_roles():
     roles = {rid: {"id": rid, "name": name, "builtin": True,
                   "locked": rid == "recovery_advisor", "whenToUse": description,
                   "systemPrompt": "", "modelProfile": profile,
                   "allowDelegation": rid != "recovery_advisor",
                   "skillIds": [] if rid == "recovery_advisor" else None,
-                  "purpose": "worker", "reviewPrompt": "", "group": "", "avatar": "review"}
+                  "purpose": "worker", "reviewPrompt": "", "group": "", "teamId": "", "avatar": "review"}
             for rid, name, description, profile in _BUILTINS}
     roles[PR_REVIEW_BUILTIN_ID] = {"id": PR_REVIEW_BUILTIN_ID, "name": "Comprehensive", "builtin": True,
         "locked": False, "whenToUse": "", "systemPrompt": "", "modelProfile": "default", "allowDelegation": False,
-        "skillIds": [], "purpose": "pr_review", "reviewPrompt": "", "group": "", "avatar": "review"}
+        "skillIds": [], "purpose": "pr_review", "reviewPrompt": "", "group": "", "teamId": "", "avatar": "review"}
     return roles
 
 
@@ -250,7 +271,7 @@ class AgentRoles:
         self._db.execute("PRAGMA synchronous=FULL")
         self._db.execute("CREATE TABLE IF NOT EXISTS agent_roles (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)")
         self._db.execute("INSERT OR IGNORE INTO agent_roles VALUES (1, ?)",
-                         (json.dumps({"revision": 0, "roles": _seed_roles(), "packages": {}, "rolePackages": {}}),))
+                         (json.dumps({"revision": 0, "roles": _seed_roles(), "teams": {}, "packages": {}, "rolePackages": {}}),))
 
     def close(self):
         with self._lock:
@@ -266,6 +287,20 @@ class AgentRoles:
         for role in state["roles"].values():
             for key, value in {"purpose": "worker", "reviewPrompt": "", "group": "", "avatar": "review"}.items():
                 role.setdefault(key, value)
+        if "teams" not in state:
+            # Earlier companions stored a team name on each role. Name-derived IDs
+            # stay stable across reads until the first mutation persists them.
+            state["teams"] = {}
+            for role in state["roles"].values():
+                name = role["group"].strip()
+                if name and not role.get("teamId"):
+                    tid = str(uuid.uuid5(_TEAM_NAMESPACE, name.casefold()))
+                    state["teams"].setdefault(tid, {"id": tid, "name": name})
+                    role["teamId"] = tid
+        # Membership is the team ID. The name is derived so older clients still read it.
+        for role in state["roles"].values():
+            team = state["teams"].get(role.get("teamId", ""))
+            role["teamId"], role["group"] = (team["id"], team["name"]) if team else ("", "")
         return state
 
     def _catalog(self, state):
@@ -302,8 +337,9 @@ class AgentRoles:
     def overview(self):
         with self._lock:
             state = self._state()
-        return {"ok": True, "capability": CAPABILITY, "capabilities": [PR_REVIEW_CAPABILITY], "machineId": self.machine_id,
-                "revision": state["revision"], "roles": list(state["roles"].values()),
+        return {"ok": True, "capability": CAPABILITY, "capabilities": [PR_REVIEW_CAPABILITY, PR_REVIEW_TEAMS_CAPABILITY],
+                "machineId": self.machine_id, "revision": state["revision"], "roles": list(state["roles"].values()),
+                "teams": sorted(state["teams"].values(), key=lambda team: (team["name"].casefold(), team["id"])),
                 **self._catalog(state)}
 
     def snapshot(self, role_id):
@@ -337,11 +373,11 @@ class AgentRoles:
         with self._lock:
             return [role for role in self._state()["roles"].values() if role["purpose"] == "pr_review"]
 
-    def _validate_role(self, value, old, catalog):
+    def _validate_role(self, value, old, catalog, teams):
         if not isinstance(value, dict):
             raise AgentRoleError("role must be an object")
         fields = {"id", "name", "builtin", "locked", "whenToUse", "systemPrompt", "modelProfile", "allowDelegation", "skillIds",
-                  "purpose", "reviewPrompt", "group", "avatar"}
+                  "purpose", "reviewPrompt", "group", "teamId", "avatar"}
         if set(value) - fields:
             raise AgentRoleError("role contains unsupported fields")
         rid = _role_id(value.get("id"))
@@ -373,9 +409,7 @@ class AgentRoles:
         if purpose == "pr_review" and delegation:
             raise AgentRoleError("PR reviewers cannot delegate")
         review_prompt = _text(value.get("reviewPrompt", old.get("reviewPrompt", "") if old else ""), "reviewPrompt", MAX_PROMPT_BYTES)
-        group = _text(value.get("group", old.get("group", "") if old else ""), "group", 120).strip()
-        if any(char in group for char in "\n\r\t"):
-            raise AgentRoleError("Group must be a single line")
+        team_id = self._role_team(value, old, teams)
         avatar = value.get("avatar", old.get("avatar", "review") if old else "review")
         if not isinstance(avatar, str) or avatar not in ROLE_AVATARS:
             raise AgentRoleError("Unknown agent avatar")
@@ -392,7 +426,61 @@ class AgentRoles:
                 raise AgentRoleError("A selected skill is unavailable. Refresh the catalog before adding it.")
         return {"id": rid, "name": name, "builtin": builtin, "locked": False, "whenToUse": when,
                 "systemPrompt": prompt, "modelProfile": profile, "allowDelegation": delegation, "skillIds": skills,
-                "purpose": purpose, "reviewPrompt": review_prompt, "group": group, "avatar": avatar}
+                "purpose": purpose, "reviewPrompt": review_prompt, "group": teams[team_id]["name"] if team_id else "",
+                "teamId": team_id, "avatar": avatar}
+
+    @staticmethod
+    def _role_team(value, old, teams):
+        """Clients with saved teams send an ID. Older clients send only a name."""
+        if "teamId" in value:
+            team_id = value["teamId"]
+            if not isinstance(team_id, str):
+                raise AgentRoleError("teamId must be a saved team ID or empty")
+            if team_id and team_id not in teams:
+                raise AgentRoleError("The selected team no longer exists. Reload and choose another team.",
+                                     code="agent_role_team_missing", status=409)
+            return team_id
+        if "group" not in value:
+            return old.get("teamId", "") if old else ""
+        name = _text(value["group"], "group", 120).strip()
+        if any(char in name for char in "\n\r\t"):
+            raise AgentRoleError("Group must be a single line")
+        if not name:
+            return ""
+        if old and old.get("teamId") in teams and teams[old["teamId"]]["name"] == name:
+            return old["teamId"]
+        existing = next((tid for tid, team in teams.items() if team["name"].casefold() == name.casefold()), None)
+        if existing:
+            return existing
+        if len(teams) >= MAX_TEAMS:
+            raise AgentRoleError("The maximum number of teams has been reached")
+        team_id = str(uuid.uuid4())
+        teams[team_id] = {"id": team_id, "name": name}
+        return team_id
+
+    @staticmethod
+    def _save_team(state, value):
+        if not isinstance(value, dict) or set(value) - {"id", "name"}:
+            raise AgentRoleError("team must be an object with an ID and a name")
+        team_id, name = _team_id(value.get("id")), _team_name(value.get("name"))
+        teams = state["teams"]
+        if any(tid != team_id and team["name"].casefold() == name.casefold() for tid, team in teams.items()):
+            raise AgentRoleError("A team with this name already exists")
+        if team_id not in teams and len(teams) >= MAX_TEAMS:
+            raise AgentRoleError("The maximum number of teams has been reached")
+        teams[team_id] = {"id": team_id, "name": name}
+        for role in state["roles"].values():
+            if role.get("teamId") == team_id:
+                role["group"] = name
+
+    @staticmethod
+    def _delete_team(state, value):
+        team_id = _team_id(value)
+        if state["teams"].pop(team_id, None) is None:
+            raise AgentRoleError("Team no longer exists", code="agent_role_team_missing", status=404)
+        for role in state["roles"].values():
+            if role.get("teamId") == team_id:
+                role["teamId"], role["group"] = "", ""
 
     def mutate(self, body):
         if not isinstance(body, dict):
@@ -401,8 +489,8 @@ class AgentRoles:
         if type(expected) is not int or expected < 0:
             raise AgentRoleError("expectedRevision must be a nonnegative integer")
         action = body.get("action")
-        if not isinstance(action, str) or action not in {"save", "delete"}:
-            raise AgentRoleError("action must be save or delete")
+        if not isinstance(action, str) or action not in {"save", "delete", "saveTeam", "deleteTeam"}:
+            raise AgentRoleError("action must be save, delete, saveTeam, or deleteTeam")
         bundles = validate_bundles(body.get("skillBundles", []), error=AgentRoleError, parse_metadata=_metadata)
         if action != "save" and bundles:
             raise AgentRoleError("Skill packages can only accompany a saved role")
@@ -419,7 +507,7 @@ class AgentRoles:
                     value = body.get("role")
                     rid = _role_id(value.get("id")) if isinstance(value, dict) else None
                     old = state["roles"].get(rid)
-                    role = self._validate_role(value, old, catalog | set(state.get("packages", {})))
+                    role = self._validate_role(value, old, catalog | set(state.get("packages", {})), state["teams"])
                     chosen_metadata = {**catalog_rows, **state.get("packages", {}), **bundles}
                     names = set()
                     for sid in role["skillIds"] or []:
@@ -446,6 +534,10 @@ class AgentRoles:
                         chosen[sid] = installed.name
                     bindings[role["id"]] = {sid: digest for sid, digest in chosen.items() if digest is not None}
                     state["roles"][role["id"]] = role
+                elif action == "saveTeam":
+                    self._save_team(state, body.get("team"))
+                elif action == "deleteTeam":
+                    self._delete_team(state, body.get("teamId"))
                 else:
                     rid = _role_id(body.get("roleId"))
                     if rid in BUILTIN_IDS:

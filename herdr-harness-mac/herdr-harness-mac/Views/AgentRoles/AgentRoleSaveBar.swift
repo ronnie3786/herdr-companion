@@ -28,7 +28,7 @@ struct AgentRoleSaveBar: View {
                 .accessibilityIdentifier("agent-role-save-error")
             }
             HStack(spacing: 10) {
-                Text(store.isSaving ? "Saving role and skill packages…" : store.hasUnsavedChanges ? "Unsaved changes" : store.savedMessage ?? "Changes apply to new sessions.")
+                Text(store.isSavingTeams ? "Saving teams…" : store.isSaving ? "Saving role and skill packages…" : store.hasUnsavedChanges ? "Unsaved changes" : store.savedMessage ?? "Changes apply to new sessions.")
                     .herdrFont(.caption)
                     .foregroundStyle(HerdrTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)

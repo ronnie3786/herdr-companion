@@ -133,6 +133,33 @@ struct AgentRolesRenderTests {
         result.expectSubstantial()
     }
 
+    @Test("Saved teams render in the profile drop-down and the Edit Teams sheet")
+    func reviewTeams() async throws {
+        let store = await makeStore(client: AgentRoleTestClient(overview: AgentRoleTestFixtures.teamsOverview(
+            teams: [AgentRoleTestFixtures.sampleTeam, AgentRoleTeam(id: "9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f", name: "Another team")])))
+        store.selectRole("sample-review-agent")
+        let profile = try await HerdrRenderHarness.render("agent-roles-review-teams-profile.png", size: Self.settingsSize) {
+            AgentRolesView(store: store)
+        }
+        profile.expectSubstantial()
+        let sheet = try await HerdrRenderHarness.render("agent-roles-review-teams-sheet.png", size: CGSize(width: 520, height: 480)) {
+            AgentRoleTeamsSheet(store: store)
+        }
+        sheet.expectSubstantial()
+    }
+
+    @Test("Skill search shows one ranked section without the letter rail")
+    func rankedSearch() async throws {
+        let store = await makeStore()
+        store.selectRole("worker")
+        store.search = "chng smry"
+        #expect(store.filteredSkills.map(\.id) == ["skill_charlie"])
+        let result = try await HerdrRenderHarness.render("agent-roles-skills-search.png", size: Self.settingsSize) {
+            AgentRolesView(store: store, initialTab: .skills)
+        }
+        result.expectSubstantial()
+    }
+
     private func makeStore(client: AgentRoleTestClient = AgentRoleTestClient()) async -> AgentRolesStore {
         let store = AgentRolesStore(machines: AgentRoleTestFixtures.machines,
             clients: ["desktop": client], catalog: AgentRoleTestCatalog())

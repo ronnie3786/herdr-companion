@@ -47,10 +47,22 @@ enum AgentRoleTestFixtures {
         overview(roles: roles + reviewRoles, machineID: machineID, capabilities: ["pr-review-agents-v1"])
     }
 
+    static let sampleTeam = AgentRoleTeam(id: "4f7a6c2e-1b9d-4e3a-8c55-2d6b9e0f1a11", name: "Sample team")
+
+    /// A companion with saved teams returns a team ID on every role.
+    static func teamsOverview(revision: Int = 0, teams: [AgentRoleTeam] = [sampleTeam]) -> AgentRolesOverview {
+        let roles = (roles + reviewRoles).map { role in
+            var role = role
+            role.teamId = role.group.isEmpty ? "" : sampleTeam.id
+            return role
+        }
+        return overview(revision: revision, roles: roles, capabilities: ["pr-review-agents-v1", "pr-review-teams-v1"], teams: teams)
+    }
+
     static func overview(revision: Int = 0, roles: [AgentRole] = roles, machineID: String = "server-desktop",
-                         capabilities: [String]? = nil) -> AgentRolesOverview {
+                         capabilities: [String]? = nil, teams: [AgentRoleTeam]? = nil) -> AgentRolesOverview {
         AgentRolesOverview(ok: true, capability: "agent-roles-v1", machineId: machineID, revision: revision,
-            roles: roles, skills: skills, sources: [], warnings: [], capabilities: capabilities)
+            roles: roles, skills: skills, sources: [], warnings: [], capabilities: capabilities, teams: teams)
     }
 }
 
@@ -100,12 +112,30 @@ actor AgentRoleTestClient: AgentRolesClient {
             throw APIError.server(status: 409, message: "Changed elsewhere")
         }
         var roles = overview.roles
-        if let role = mutation.role {
-            if let index = roles.firstIndex(where: { $0.id == role.id }) { roles[index] = role }
-            else { roles.append(role) }
-        } else { roles.removeAll { $0.id == mutation.roleId } }
+        var teams = overview.teams
+        switch mutation.action {
+        case "saveTeam":
+            guard let team = mutation.team else { throw APIError.invalidResponse }
+            teams = ((teams ?? []).filter { $0.id != team.id } + [team])
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            for index in roles.indices where roles[index].teamId == team.id { roles[index].group = team.name }
+        case "deleteTeam":
+            guard teams?.contains(where: { $0.id == mutation.teamId }) == true else {
+                throw APIError.server(status: 404, message: "Team no longer exists")
+            }
+            teams?.removeAll { $0.id == mutation.teamId }
+            for index in roles.indices where roles[index].teamId == mutation.teamId {
+                roles[index].teamId = ""
+                roles[index].group = ""
+            }
+        default:
+            if let role = mutation.role {
+                if let index = roles.firstIndex(where: { $0.id == role.id }) { roles[index] = role }
+                else { roles.append(role) }
+            } else { roles.removeAll { $0.id == mutation.roleId } }
+        }
         overview = AgentRoleTestFixtures.overview(revision: overview.revision + 1, roles: roles, machineID: overview.machineId,
-            capabilities: overview.capabilities)
+            capabilities: overview.capabilities, teams: teams)
         return overview
     }
 }

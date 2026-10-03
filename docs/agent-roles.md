@@ -20,7 +20,10 @@ update or run a skill.
    locations when access is needed; **Add folders** accepts other project or shared
    locations. Access is saved as a read-only security-scoped bookmark on this Mac.
 5. Configure the selection, search or filter by source, and toggle skill tiles.
-   **Select shown** adds the filtered results. **Clear** removes the whole
+   Search is fuzzy: letters typed in order match across words (`swui` finds
+   `swiftui-pro`), small typos still match, and every word must match a skill's
+   name or description. Results are ranked with name matches first; clearing the
+   search returns to the alphabetical sections. **Select shown** adds the filtered results. **Clear** removes the whole
    selection. **Copy from role** copies a saved selection on this execution host.
 6. Save. A successful response confirms that the role and its copies are stored
    on the selected computer. **Update Copies** sends changed local skill files
@@ -129,7 +132,21 @@ On a companion advertising `pr-review-agents-v1`, Settings shows a separate,
 collapsed **PR Review Agents** section. Each saved reviewer has a name, avatar,
 optional team, review prompt, and the same explicit skill selection and package
 copying controls as other Agent Roles. Only **Comprehensive** is bundled. Private
-specialists and team names belong in the companion's role store.
+specialists and teams belong in the companion's role store.
+
+The review prompt is a multi-line editor, so Return starts a new line.
+
+**Team** is a drop-down of the teams saved on the selected computer. **New Team…**
+saves a team and puts the agent on it; **Edit Teams…** renames or deletes teams.
+On a companion advertising `pr-review-teams-v1`, each team has a stable ID and
+agents store that ID (`teamId`), so a rename keeps every member and two teams never
+merge by name. Team names are unique, ignoring case. Deleting a team leaves its
+agents without a team; existing reviews keep their reports. The first read on an
+upgraded companion turns team names saved by earlier versions into teams with
+stable IDs. Older Mac clients still send a team name; the companion matches it to
+a saved team or creates one. Against an older companion, the drop-down offers the
+team names agents already use and **New Team…** stores the name when the agent is
+saved; renaming and deleting teams need the companion update.
 
 A blank review prompt remains blank in storage and uses the faded adversarial
 review example at launch, with the actual PR URL inserted. Review agents use the

@@ -14,7 +14,10 @@ struct AgentRole: Codable, Equatable, Identifiable, Sendable {
     var skillIds: [String]?
     var purpose: String
     var reviewPrompt: String
+    /// The team's name, for display and for companions without saved teams.
     var group: String
+    /// nil when the companion predates saved teams. Empty means no team.
+    var teamId: String?
     var avatar: String
 
     var isPRReview: Bool { purpose == "pr_review" }
@@ -28,7 +31,8 @@ struct AgentRole: Codable, Equatable, Identifiable, Sendable {
 
     init(id: String, builtin: Bool, locked: Bool, name: String, whenToUse: String,
          systemPrompt: String, modelProfile: String, allowDelegation: Bool, skillIds: [String]?,
-         purpose: String = "worker", reviewPrompt: String = "", group: String = "", avatar: String = "review") {
+         purpose: String = "worker", reviewPrompt: String = "", group: String = "", teamId: String? = nil,
+         avatar: String = "review") {
         self.id = id
         self.builtin = builtin
         self.locked = locked
@@ -41,12 +45,13 @@ struct AgentRole: Codable, Equatable, Identifiable, Sendable {
         self.purpose = purpose
         self.reviewPrompt = reviewPrompt
         self.group = group
+        self.teamId = teamId
         self.avatar = avatar
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, builtin, locked, name, whenToUse, systemPrompt, modelProfile, allowDelegation, skillIds
-        case purpose, reviewPrompt, group, avatar
+        case purpose, reviewPrompt, group, teamId, avatar
     }
 
     init(from decoder: any Decoder) throws {
@@ -63,6 +68,7 @@ struct AgentRole: Codable, Equatable, Identifiable, Sendable {
         purpose = try container.decodeIfPresent(String.self, forKey: .purpose) ?? "worker"
         reviewPrompt = try container.decodeIfPresent(String.self, forKey: .reviewPrompt) ?? ""
         group = try container.decodeIfPresent(String.self, forKey: .group) ?? ""
+        teamId = try container.decodeIfPresent(String.self, forKey: .teamId)
         avatar = try container.decodeIfPresent(String.self, forKey: .avatar) ?? "review"
     }
 
@@ -86,6 +92,8 @@ struct AgentRole: Codable, Equatable, Identifiable, Sendable {
             try container.encode(group, forKey: .group)
             try container.encode(avatar, forKey: .avatar)
         }
+        // Only companions with saved teams send this field, so only they receive it.
+        try container.encodeIfPresent(teamId, forKey: .teamId)
     }
 
     static func custom() -> Self {

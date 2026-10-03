@@ -14,6 +14,9 @@ final class AgentRolesStore {
     private(set) var overview: AgentRolesOverview?
     private(set) var status = Status.loading
     private(set) var isSaving = false
+    private(set) var isSavingTeams = false
+    /// Team changes report here so their sheets can show the result.
+    private(set) var teamErrorMessage: String?
     private(set) var errorMessage: String?
     private(set) var savedMessage: String?
     private(set) var hasConflict = false
@@ -28,6 +31,15 @@ final class AgentRolesStore {
     private var baseline: AgentRole?
     private var baselineRevision = 0
     private var generation: UInt64 = 0
+    @ObservationIgnored private var skillSearch = AgentRoleSkillSearch()
+    @ObservationIgnored private var searchCache: SkillSearchResults?
+
+    private struct SkillSearchResults {
+        let query: String
+        let source: String
+        let sections: [AgentRoleSkillSearch.Section]
+        let skills: [AgentRoleSkill]
+    }
 
     convenience init(model: HerdrAppModel) {
         self.init(machines: [], clients: [:], catalog: AgentRoleLocalCatalog())
@@ -73,6 +85,9 @@ final class AgentRolesStore {
         if draft.systemPrompt.utf8.count > 32768 { return "Shorten the system prompt to at most 32,768 bytes." }
         if draft.isPRReview {
             if !supportsPRReviewAgents { return "Update this companion to edit PR review agents." }
+            if supportsTeams, let teamID = draft.teamId, !teamID.isEmpty, !teams.contains(where: { $0.id == teamID }) {
+                return "This team was deleted. Choose another team."
+            }
             if draft.group.utf8.count > 120 || draft.group.contains(where: \.isNewline) || draft.group.contains("\t") {
                 return "Use a single-line team name of at most 120 bytes."
             }
@@ -92,7 +107,8 @@ final class AgentRolesStore {
     var prReviewRoles: [AgentRole] { roles.filter(\.isPRReview) }
     var selectedIDs: Set<String> { Set(draft?.skillIds ?? []) }
     var selectedTokens: Int {
-        skills.filter { selectedIDs.contains($0.id) }.reduce(0) { $0 + max(0, $1.estimatedTokens) }
+        let selected = selectedIDs
+        return skills.filter { selected.contains($0.id) }.reduce(0) { $0 + max(0, $1.estimatedTokens) }
     }
     var allTokens: Int { skills.reduce(0) { $0 + max(0, $1.estimatedTokens) } }
     var missingIDs: [String] {
@@ -106,24 +122,113 @@ final class AgentRolesStore {
         // Older companions expose their available packages without per-role bindings.
         return selectedIDs.subtracting(Set(overview.skills.map(\.id))).sorted()
     }
-    var filteredSkills: [AgentRoleSkill] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return skills.filter { skill in
-            (sourceFilter.isEmpty || skill.source == sourceFilter)
-                && (query.isEmpty || skill.name.localizedStandardContains(query)
-                    || skill.description.localizedStandardContains(query))
-        }.sorted { lhs, rhs in
-            if lhs.letter != rhs.letter { return lhs.letter < rhs.letter }
-            let order = lhs.name.localizedStandardCompare(rhs.name)
-            return order == .orderedSame ? lhs.id < rhs.id : order == .orderedAscending
-        }
-    }
-    var letters: [String] { Array(Set(filteredSkills.map(\.letter))).sorted() }
+    /// Letter sections while browsing; one best-first section while searching.
+    var skillSections: [AgentRoleSkillSearch.Section] { skillSearchResults.sections }
+    var filteredSkills: [AgentRoleSkill] { skillSearchResults.skills }
+    var isSearchingSkills: Bool { !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var letters: [String] { isSearchingSkills ? [] : skillSections.map(\.id) }
     var canChangeSkills: Bool { canEdit && draft?.skillIds != nil }
     var unsavedEditsText: String {
         guard let draft, let data = try? JSONEncoder().encode(draft) else { return "" }
         return String(decoding: data, as: UTF8.self)
     }
+
+    /// Views read the results several times per render, so they are cached per
+    /// catalog, query, and source. The index is rebuilt only when the catalog changes.
+    private var skillSearchResults: SkillSearchResults {
+        let skills = catalog.skills
+        if skillSearch.skills != skills {
+            skillSearch = AgentRoleSkillSearch(skills)
+            searchCache = nil
+        }
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let searchCache, searchCache.query == query, searchCache.source == sourceFilter { return searchCache }
+        let sections = skillSearch.sections(query: query, source: sourceFilter)
+        let results = SkillSearchResults(query: query, source: sourceFilter, sections: sections,
+                                         skills: sections.flatMap(\.skills))
+        searchCache = results
+        return results
+    }
+
+    // MARK: Teams
+
+    var supportsTeams: Bool { overview?.supportsPRReviewTeams == true }
+    /// Saved teams. Older companions only know the team names agents already use.
+    var teams: [AgentRoleTeam] {
+        if supportsTeams { return overview?.teams ?? [] }
+        let names = Set(prReviewRoles.map { $0.group.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map { AgentRoleTeam(id: $0, name: $0) }
+    }
+    /// Empty when the agent being edited has no team.
+    var draftTeamID: String {
+        (supportsTeams ? draft?.teamId : draft?.group.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
+    }
+    var canEditTeams: Bool {
+        status == .loaded && supportsTeams && !isSaving && !requiresConnectionReload && !hasConflict
+    }
+
+    func memberCount(ofTeam id: String) -> Int {
+        prReviewRoles.filter { supportsTeams ? $0.teamId == id : $0.group.trimmingCharacters(in: .whitespacesAndNewlines) == id }.count
+    }
+
+    func assignTeam(_ id: String) {
+        guard canEdit, draft?.isPRReview == true else { return }
+        guard supportsTeams else {
+            draft?.group = id
+            return
+        }
+        guard id.isEmpty || teams.contains(where: { $0.id == id }) else { return }
+        draft?.teamId = id
+        draft?.group = teams.first { $0.id == id }?.name ?? ""
+    }
+
+    func teamNameProblem(_ name: String, renaming id: String? = nil) -> String? {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "Enter a team name." }
+        if name.utf8.count > 120 || name.contains(where: \.isNewline) || name.contains("\t") {
+            return "Use a single-line team name of at most 120 bytes."
+        }
+        if teams.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            return "A team with this name already exists."
+        }
+        return nil
+    }
+
+    /// Saves a new team on the companion, then optionally puts the agent being
+    /// edited on it. Older companions store the name when the agent is saved.
+    @discardableResult
+    func createTeam(named name: String, assigningDraft: Bool = true) async -> Bool {
+        guard teamNameProblem(name) == nil else { return false }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard supportsTeams else {
+            guard assigningDraft, canEdit, draft?.isPRReview == true else { return false }
+            draft?.group = name
+            return true
+        }
+        let team = AgentRoleTeam(id: UUID().uuidString.lowercased(), name: name)
+        guard await mutateTeams(AgentRoleMutation(action: "saveTeam", expectedRevision: 0, role: nil, roleId: nil,
+                                                  skillBundles: [], team: team)) else { return false }
+        if assigningDraft { assignTeam(team.id) }
+        return true
+    }
+
+    @discardableResult
+    func renameTeam(_ id: String, to name: String) async -> Bool {
+        guard teams.contains(where: { $0.id == id }), teamNameProblem(name, renaming: id) == nil else { return false }
+        let team = AgentRoleTeam(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        return await mutateTeams(AgentRoleMutation(action: "saveTeam", expectedRevision: 0, role: nil, roleId: nil,
+                                                   skillBundles: [], team: team))
+    }
+
+    /// Agents on a deleted team keep their other settings and have no team.
+    @discardableResult
+    func deleteTeam(_ id: String) async -> Bool {
+        guard teams.contains(where: { $0.id == id }) else { return false }
+        return await mutateTeams(AgentRoleMutation(action: "deleteTeam", expectedRevision: 0, role: nil, roleId: nil,
+                                                   skillBundles: [], teamId: id))
+    }
+
+    func clearTeamError() { teamErrorMessage = nil }
 
     func sourceName(_ id: String) -> String { catalog.sources.first { $0.id == id }?.name ?? id }
     func missingSkillName(_ id: String) -> String { overview?.skills.first { $0.id == id }?.name ?? id }
@@ -220,7 +325,7 @@ final class AgentRolesStore {
         guard status == .loaded, !requiresConnectionReload, !isSaving, !hasUnsavedChanges else { return }
         baseline = nil
         baselineRevision = overview?.revision ?? 0
-        draft = .custom()
+        draft = withTeamField(.custom())
         clearError()
     }
 
@@ -228,7 +333,7 @@ final class AgentRolesStore {
         guard canCreatePRReviewRole, !hasUnsavedChanges else { return }
         baseline = nil
         baselineRevision = overview?.revision ?? 0
-        draft = .customPRReview()
+        draft = withTeamField(.customPRReview())
         clearError()
     }
 
@@ -324,6 +429,67 @@ final class AgentRolesStore {
             } else {
                 errorMessage = "The change wasn't confirmed. Your edits are still here. \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// Companions with saved teams return every role with a team ID, so new
+    /// drafts carry one too and the saved role compares equal to the draft.
+    private func withTeamField(_ role: AgentRole) -> AgentRole {
+        var role = role
+        if supportsTeams { role.teamId = "" }
+        return role
+    }
+
+    /// Team saves share the role revision. When this change is the only one since
+    /// the editor loaded, the editor moves to the new revision and keeps its edits.
+    private func mutateTeams(_ request: AgentRoleMutation) async -> Bool {
+        guard canEditTeams, let previous = overview, let machineID = selectedMachineID,
+              let client = clients[machineID] else { return false }
+        isSaving = true
+        isSavingTeams = true
+        teamErrorMessage = nil
+        savedMessage = nil
+        let currentGeneration = generation
+        defer {
+            if generation == currentGeneration {
+                isSaving = false
+                isSavingTeams = false
+            }
+        }
+        let mutation = AgentRoleMutation(action: request.action, expectedRevision: previous.revision, role: nil, roleId: nil,
+                                         skillBundles: [], team: request.team, teamId: request.teamId)
+        do {
+            let response = try await client.mutateAgentRoles(mutation).validated()
+            guard generation == currentGeneration, selectedMachineID == machineID else { return false }
+            let savedTeams = response.teams ?? []
+            let confirmed = request.team.map { savedTeams.contains($0) }
+                ?? !savedTeams.contains { $0.id == request.teamId }
+            guard response.revision > previous.revision, response.supportsPRReviewTeams, confirmed
+            else { throw APIError.invalidResponse }
+            let wasClean = !hasUnsavedChanges
+            let editorIsCurrent = baselineRevision == previous.revision && response.revision == previous.revision + 1
+            overview = response
+            if wasClean {
+                adopt(response.roles.first { $0.id == draft?.id } ?? response.roles.first)
+            } else if editorIsCurrent {
+                baselineRevision = response.revision
+                if let id = baseline?.id { baseline = response.roles.first { $0.id == id } }
+                // Team names are derived from the team, so follow renames and deletions.
+                if let teamID = draft?.teamId, !teamID.isEmpty {
+                    let team = savedTeams.first { $0.id == teamID }
+                    draft?.teamId = team?.id ?? ""
+                    draft?.group = team?.name ?? ""
+                }
+            }
+            return true
+        } catch {
+            guard generation == currentGeneration else { return false }
+            if case APIError.server(409, _) = error {
+                teamErrorMessage = "Agent Roles changed elsewhere. Reload, then try again. Your edits are still here."
+            } else {
+                teamErrorMessage = "The team change wasn't confirmed. \(error.localizedDescription)"
+            }
+            return false
         }
     }
 

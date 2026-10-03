@@ -11,6 +11,7 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
+import uuid
 
 from herdr_harness.agent_roles import AgentRoleError, AgentRoles, PR_REVIEW_BUILTIN_ID
 from herdr_harness.agent_runs import AgentRunError, AgentRunManager, PR_REVIEW_AGENT_PROFILE
@@ -351,6 +352,69 @@ class ReviewerProfileTests(unittest.TestCase):
         for fields in ({"skillIds": None}, {"allowDelegation": True}, {"avatar": "arbitrary-symbol"}, {"modelProfile": "execution"}, {"purpose": "worker"}):
             with self.subTest(fields=fields), self.assertRaises(AgentRoleError):
                 roles.mutate({"action": "save", "role": {**editable, **fields}, "expectedRevision": 0})
+
+    def test_teams_are_saved_by_id_and_survive_renames(self):
+        roles = AgentRoles(environ={})
+        self.addCleanup(roles.close)
+        team_id, other_id = str(uuid.uuid4()), str(uuid.uuid4())
+        roles.mutate({"action": "saveTeam", "team": {"id": team_id, "name": " Sample team "}, "expectedRevision": 0})
+        overview = roles.overview()
+        self.assertIn("pr-review-teams-v1", overview["capabilities"])
+        self.assertEqual(overview["teams"], [{"id": team_id, "name": "Sample team"}])
+        reviewer = custom_role(name="Atlas", purpose="pr_review", modelProfile="default", teamId=team_id)
+        roles.mutate({"action": "save", "role": reviewer, "expectedRevision": 1})
+        self.assertEqual(roles.snapshot(reviewer["id"])["group"], "Sample team")
+        # A second team with the same name would make the drop-down ambiguous.
+        with self.assertRaises(AgentRoleError):
+            roles.mutate({"action": "saveTeam", "team": {"id": other_id, "name": "sample TEAM"}, "expectedRevision": 2})
+        roles.mutate({"action": "saveTeam", "team": {"id": team_id, "name": "Renamed team"}, "expectedRevision": 2})
+        saved = next(role for role in roles.review_catalog() if role["id"] == reviewer["id"])
+        self.assertEqual((saved["teamId"], saved["group"]), (team_id, "Renamed team"))
+        roles.mutate({"action": "saveTeam", "team": {"id": other_id, "name": "Sample team"}, "expectedRevision": 3})
+        self.assertEqual(roles.snapshot(reviewer["id"])["teamId"], team_id)
+        roles.mutate({"action": "deleteTeam", "teamId": team_id, "expectedRevision": 4})
+        saved = roles.snapshot(reviewer["id"])
+        self.assertEqual((saved["teamId"], saved["group"]), ("", ""))
+        self.assertEqual([team["id"] for team in roles.overview()["teams"]], [other_id])
+        with self.assertRaises(AgentRoleError) as caught:
+            roles.mutate({"action": "save", "role": {**reviewer, "teamId": team_id}, "expectedRevision": 5})
+        self.assertEqual(caught.exception.status, 409)
+        for body in ({"action": "saveTeam", "team": {"id": "not-a-uuid", "name": "Team"}},
+                     {"action": "saveTeam", "team": {"id": str(uuid.uuid4()), "name": "One\nTwo"}},
+                     {"action": "saveTeam", "team": {"id": str(uuid.uuid4()), "name": "  "}},
+                     {"action": "saveTeam", "team": {"id": str(uuid.uuid4()), "name": "Team", "extra": True}},
+                     {"action": "deleteTeam", "teamId": team_id}):
+            with self.subTest(body=body), self.assertRaises(AgentRoleError):
+                roles.mutate({**body, "expectedRevision": 5})
+        self.assertEqual(roles.overview()["revision"], 5)
+
+    def test_team_names_from_earlier_companions_migrate_to_stable_ids(self):
+        roles = AgentRoles(environ={})
+        self.addCleanup(roles.close)
+        first = custom_role(name="Atlas", purpose="pr_review", modelProfile="default")
+        second = custom_role(name="Beacon", purpose="pr_review", modelProfile="default")
+        roles.mutate({"action": "save", "role": first, "expectedRevision": 0})
+        roles.mutate({"action": "save", "role": second, "expectedRevision": 1})
+        state = roles._state()
+        del state["teams"]
+        for role, name in ((state["roles"][first["id"]], "Sample team"), (state["roles"][second["id"]], "sample team")):
+            role.pop("teamId")
+            role["group"] = name
+        roles._db.execute("UPDATE agent_roles SET payload=?", (json.dumps(state),))
+        teams = roles.overview()["teams"]
+        self.assertEqual(len(teams), 1)
+        self.assertEqual(teams, roles.overview()["teams"])
+        self.assertEqual({roles.snapshot(rid)["teamId"] for rid in (first["id"], second["id"])}, {teams[0]["id"]})
+        # Older Mac clients send only the name; it resolves to the saved team or creates one.
+        legacy = {key: value for key, value in roles.snapshot(first["id"]).items()
+                  if key not in {"revision", "skillPaths", "missingSkillIds", "teamId"}}
+        roles.mutate({"action": "save", "role": {**legacy, "reviewPrompt": "Edited"}, "expectedRevision": 2})
+        self.assertEqual(roles.snapshot(first["id"])["teamId"], teams[0]["id"])
+        roles.mutate({"action": "save", "role": {**legacy, "group": "Another team"}, "expectedRevision": 3})
+        self.assertEqual([team["name"] for team in roles.overview()["teams"]], ["Another team", "Sample team"])
+        roles.mutate({"action": "save", "role": {**legacy, "group": ""}, "expectedRevision": 4})
+        self.assertEqual(roles.snapshot(first["id"])["teamId"], "")
+        self.assertEqual(len(roles.overview()["teams"]), 2)
 
     def test_managed_session_keeps_strict_skills_default_model_and_dispatch_identity(self):
         with tempfile.TemporaryDirectory() as temporary:

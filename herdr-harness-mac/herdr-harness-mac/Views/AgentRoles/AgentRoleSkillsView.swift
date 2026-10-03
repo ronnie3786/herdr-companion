@@ -3,8 +3,14 @@ import SwiftUI
 struct AgentRoleSkillsView: View {
     @Bindable var store: AgentRolesStore
     var showSources: () -> Void = {}
+    /// Typing updates only the field; the grid follows after a short pause.
+    @State private var query = ""
+    private static let topID = "agent-role-skill-grid-top"
 
     var body: some View {
+        let sections = store.skillSections
+        let selected = store.selectedIDs
+        let sourceNames = Dictionary(store.catalog.sources.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 if store.draft?.skillIds == nil {
@@ -39,30 +45,33 @@ struct AgentRoleSkillsView: View {
                 HStack(spacing: 0) {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            Color.clear.frame(height: 0).id(Self.topID)
                             if !store.missingIDs.isEmpty { AgentRoleMissingSkills(store: store) }
-                            ForEach(store.letters, id: \.self) { letter in
+                            ForEach(sections) { section in
                                 Section {
                                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10)], spacing: 10) {
-                                        ForEach(store.filteredSkills.filter { $0.letter == letter }) { skill in
-                                            AgentRoleSkillTile(skill: skill, sourceName: store.sourceName(skill.source),
-                                                selected: store.selectedIDs.contains(skill.id), enabled: store.canChangeSkills) {
+                                        ForEach(section.skills) { skill in
+                                            AgentRoleSkillTile(skill: skill, sourceName: sourceNames[skill.source] ?? skill.source,
+                                                selected: selected.contains(skill.id), enabled: store.canChangeSkills) {
                                                     store.toggleSkill(skill.id)
                                                 }
                                         }
                                     }
                                     .padding(.vertical, 10)
                                 } header: {
-                                    Text(letter)
+                                    Text(section.id == AgentRoleSkillSearch.matchesID
+                                         ? "\(section.skills.count) \(section.skills.count == 1 ? "match" : "matches")"
+                                         : section.id)
                                         .herdrFont(.caption, weight: .bold)
                                         .foregroundStyle(HerdrTheme.secondaryText)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.vertical, 8)
                                         .background { HerdrGlassBackground(level: 0.96) }
-                                        .id(letter)
+                                        .id(section.id)
                                         .accessibilityAddTraits(.isHeader)
                                 }
                             }
-                            if store.filteredSkills.isEmpty {
+                            if sections.isEmpty {
                                 ContentUnavailableView {
                                     Label(store.skills.isEmpty ? "Connect your skill folders" : "No matching skills",
                                           systemImage: store.skills.isEmpty ? "folder.badge.plus" : "magnifyingglass")
@@ -82,41 +91,59 @@ struct AgentRoleSkillsView: View {
                         .padding(.bottom, 14)
                     }
                     .accessibilityIdentifier("agent-role-skill-grid")
-                    ScrollView {
-                        VStack(spacing: 1) {
-                            ForEach(["#"] + "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map(String.init), id: \.self) { letter in
-                                Button(letter) { proxy.scrollTo(letter, anchor: .top) }
-                                    .buttonStyle(.borderless)
-                                    .herdrFont(.caption2, weight: .semibold)
-                                    .foregroundStyle(store.letters.contains(letter)
-                                        ? HerdrTheme.secondaryText : HerdrTheme.secondaryText.opacity(0.3))
-                                    .frame(width: 24, height: 18)
-                                    .disabled(!store.letters.contains(letter))
-                                    .accessibilityLabel("Jump to \(letter)")
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .scrollIndicators(.hidden)
-                    .frame(width: 28)
-                    .overlay(alignment: .leading) { Divider() }
+                    .onChange(of: store.search) { _, _ in proxy.scrollTo(Self.topID, anchor: .top) }
+                    // Ranked search results have no letter sections to jump between.
+                    if !store.isSearchingSkills { letterRail(proxy) }
                 }
             }
             if store.draft?.skillIds != nil { AgentRoleSkillSelectionBar(store: store) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { query = store.search }
+        .task(id: query) {
+            guard query != store.search else { return }
+            // Clearing is immediate; typing waits for a pause so each keystroke stays responsive.
+            if !query.isEmpty {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { return }
+            }
+            store.search = query
+        }
         .onChange(of: store.catalog.sources.map(\.id)) { _, ids in
             if !store.sourceFilter.isEmpty, !ids.contains(store.sourceFilter) { store.sourceFilter = "" }
         }
     }
 
+    private func letterRail(_ proxy: ScrollViewProxy) -> some View {
+        let letters = Set(store.letters)
+        return ScrollView {
+            VStack(spacing: 1) {
+                ForEach(["#"] + "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map(String.init), id: \.self) { letter in
+                    Button(letter) { proxy.scrollTo(letter, anchor: .top) }
+                        .buttonStyle(.borderless)
+                        .herdrFont(.caption2, weight: .semibold)
+                        .foregroundStyle(letters.contains(letter)
+                            ? HerdrTheme.secondaryText : HerdrTheme.secondaryText.opacity(0.3))
+                        .frame(width: 24, height: 18)
+                        .disabled(!letters.contains(letter))
+                        .accessibilityLabel("Jump to \(letter)")
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 28)
+        .overlay(alignment: .leading) { Divider() }
+    }
+
     private var searchField: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass").foregroundStyle(HerdrTheme.secondaryText).accessibilityHidden(true)
-            TextField("Search skills", text: $store.search).textFieldStyle(.plain)
+            TextField("Search skills", text: $query).textFieldStyle(.plain)
+                .onSubmit { store.search = query }
                 .accessibilityIdentifier("agent-role-skill-search")
-            if !store.search.isEmpty {
-                Button("Clear search", systemImage: "xmark.circle.fill") { store.search = "" }
+            if !query.isEmpty {
+                Button("Clear search", systemImage: "xmark.circle.fill") { query = "" }
                     .labelStyle(.iconOnly).buttonStyle(.borderless)
             }
         }

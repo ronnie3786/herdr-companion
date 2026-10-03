@@ -20,7 +20,8 @@ On the review host:
 3. Install Pi and configure its default provider and model on the review computer.
    In **Settings → Agent Roles**, choose that computer and expand **PR Review Agents**.
    **Comprehensive** is the one bundled reviewer and needs no additional skills.
-   Create private specialists with a name, avatar, optional team, review prompt, and
+   Create private specialists with a name, avatar, optional team (choose a saved team or
+   **New Team…**; **Edit Teams…** renames or deletes them), review prompt, and
    selected skills. The skill picker reads this Mac's authorized folders and copies
    selected packages when saved. Review agents use only these copied packages;
    checkout-local settings, extensions, and discovered skills are not inherited.
@@ -73,8 +74,9 @@ also changes which machine's reviews appear on the Dashboard.
 
 **Starting a review.** Paste a link such as `https://github.com/example-owner/example-repo/pull/42`
 and press Return, or choose **New review** and enter the link. Choose reviewers using the
-avatar cards and checkmarks. A named team selects its members together; Comprehensive stays
-independent unless you assign it to a team. Selection is remembered per review computer.
+avatar cards and checkmarks. A team selects its members together; Comprehensive stays
+independent unless you assign it to a team. Agents are grouped by their saved team ID, so
+renaming a team keeps its members and two teams with similar names stay separate. Selection is remembered per review computer.
 **Add only** prepares the review without starting reviewers. Older companions can still add
 reviews and expose their legacy Skills tab, but need a separate companion update for saved agents.
 

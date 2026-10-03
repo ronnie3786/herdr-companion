@@ -480,6 +480,7 @@ def api_description() -> dict:
             "pr-review-v1",
             "pr-review-comments-v1",
             "pr-review-agents-v1",
+            "pr-review-teams-v1",
             "pr-review-guide-v1",
             "pr-review-walkthroughs-v1",
             "pr-review-context-v2",

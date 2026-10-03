@@ -6,4 +6,6 @@ struct AgentRoleMutation: Encodable, Sendable {
     let role: AgentRole?
     let roleId: String?
     let skillBundles: [AgentRoleSkillBundle]
+    var team: AgentRoleTeam? = nil
+    var teamId: String? = nil
 }

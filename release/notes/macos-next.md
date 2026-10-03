@@ -1,5 +1,20 @@
 # Next macOS update, unreleased
 
+## PR Review Agents: teams, prompts and skill search
+
+- In **Settings → Agent Roles → PR Review Agents**, **Team** is now a drop-down
+  of saved teams. **New Team…** creates one and **Edit Teams…** renames or
+  deletes them. Agents follow a team's ID, so renaming a team keeps its members,
+  and starting a review groups agents by team ID instead of by name.
+- The review prompt is a multi-line editor: Return starts a new line.
+- Skill search stays responsive with hundreds of skills. It is fuzzy and ranked:
+  letters typed in order match across words, small typos still match, and name
+  matches come before description matches.
+- Saved teams need the matching companion server package (`pr-review-teams-v1`),
+  installed separately. With an older companion, the drop-down lists team names
+  already in use and **New Team…** still works; renaming and deleting teams wait
+  for the companion update.
+
 ## First Mate checkpoint direction
 
 - A new instruction received during a stage can authorize the next stage when

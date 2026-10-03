@@ -33,8 +33,8 @@ struct FirstMateUsageSummaryView: View {
                 Text(FirstMateUsageFormatting.coverage(usage))
                     .summaryFont(.footnote)
                     .foregroundStyle(.secondary)
-                if usage.status == "partial" || usage.stale == true {
-                    Label(usage.stale == true ? "Showing the last reported total; the usage source is temporarily unreadable." : "Some retained usage or cost records are unavailable.", systemImage: "exclamationmark.triangle")
+                if let warning = FirstMateUsageFormatting.coverageWarning(usage) {
+                    Label(warning, systemImage: "exclamationmark.triangle")
                         .summaryFont(.footnote)
                         .foregroundStyle(summaryWarning)
                 }

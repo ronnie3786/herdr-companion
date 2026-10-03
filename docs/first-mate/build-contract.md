@@ -29,6 +29,31 @@ Usage accounting is additive. Feature objects, assignment objects and session ob
 
 A usage summary has `currency` (`USD`), nullable `cost_usd`, `status` (`complete`, `partial`, or `unavailable`), nonnegative integer `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `total_tokens`, `usage_records`, `missing_cost_records`, `session_count`, `known_cost_sessions`, `models`, and `updated_at`. Public integer counters are bounded to the cross-client JSON-safe range `0...(2^53-1)`; an invalid or overflowing value is skipped and lowers coverage instead of emitting a rounded or un-decodable number. Each model row repeats the cost/status/token/record fields and adds nullable `provider` and `model`. Optional `stale:true` means a previously parsed amount was preserved after its source became temporarily unreadable; its status is never complete. Explicit Pi-reported zero is valid. Unknown cost is `null`, never an invented zero. These are Pi-reported estimates rather than provider invoices, and subscription-backed providers may report zero.
 
+### Usage coverage for large records
+
+Usage summaries also expose additive `skipped_records` and `unaccounted_records`
+counters. Older servers omit them. `skipped_records` counts records whose full
+content exceeded the 4 MiB retention cap, including repeated records; it does not
+mean their usage was skipped. The accountant validates these records incrementally
+and retains a bounded projection of their accounting metadata (64 KiB budget,
+64 nesting levels). Assistant and tool-result usage, compaction usage, and branch
+summary usage are accounted for regardless of field order. Nested retained history
+and JSON-looking transcript text are never treated as new usage. Duplicate records
+remain deduplicated across formatting and field-order changes.
+
+`unaccounted_records` counts records that could not be validated or classified,
+including conflicting duplicate IDs. An unreadable record also increments
+`missing_cost_records` because its cost coverage cannot be established. Missing or
+invalid reported costs increment `missing_cost_records` even when the record is
+readable. Neither counter asserts a known dollar loss. A successfully checked large
+record with no usage leaves coverage complete; its `skipped_records` count alone
+does not trigger a warning. Unknown cost is still unavailable rather than zero.
+`known_cost_sessions` means sessions with a reported amount, not sessions guaranteed
+to contain every cost record. Clients show explicit incomplete coverage instead of
+the full-session ratio beside missing-cost, unverified-coverage, or stale warnings.
+The accounting correction requires a separate companion update; the native app
+update only changes presentation and remains compatible with older summaries.
+
 ## Chat parity API additions
 
 `GET /api/v1/first-mate/capabilities` additionally advertises

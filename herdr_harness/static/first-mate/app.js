@@ -62,13 +62,24 @@
   };
   const modelName = model => [model?.provider,model?.model].filter(value=>typeof value==='string'&&value.trim()).join(' / ')||'Unknown model';
   const modelNames = usage => usage?.models?.length ? usage.models.map(modelName).join(', ') : 'Unknown model';
-  const coverage = usage => `${number(usage?.known_cost_sessions)} of ${number(usage?.session_count)} ${usage?.session_count===1?'session':'sessions'} report cost`;
+  const coverage = usage => {
+    if(usage?.missing_cost_records>0)return `Cost coverage incomplete · ${number(usage.missing_cost_records)} ${usage.missing_cost_records===1?'record':'records'} missing cost`;
+    if(usage?.status!=='complete'||usage?.stale)return `Cost reported in ${number(usage?.known_cost_sessions)} sessions · full coverage unverified`;
+    return `${number(usage?.known_cost_sessions)} of ${number(usage?.session_count)} ${usage?.session_count===1?'session':'sessions'} report cost`;
+  };
+  const coverageWarning = usage => {
+    if(usage.stale)return 'Showing the last reported total; the usage source is temporarily unreadable.';
+    if(usage.missing_cost_records>0)return 'Some retained usage or cost records are unavailable.';
+    if(usage.unaccounted_records>0)return `${number(usage.unaccounted_records)} transcript ${usage.unaccounted_records===1?'record could':'records could'} not be checked. The total may understate actual usage.`;
+    if(usage.status==='partial')return 'Full usage coverage could not be verified. The total may understate actual usage.';
+    return '';
+  };
   const usageDescription = usage => {
     if(!usage)return 'Usage unavailable. This companion did not report usage and may need an update.';
     const amount=costAmount(usage);
     const estimate=amount==='Unavailable'?'Estimated USD cost unavailable':`${amount} estimated USD reported by Pi`;
     const qualifiers=coverageLabels(usage).map(value=>` · ${value.toLowerCase()}`).join('');
-    return `${estimate} · ${number(usage.total_tokens)} tokens · ${coverage(usage)}${qualifiers}. Not a provider invoice.`;
+    return `${estimate} · ${number(usage.total_tokens)} tokens · ${coverage(usage)}${qualifiers}. ${coverageWarning(usage)} Not a provider invoice.`;
   };
   const taskUsageDescription = usage => `Task total across all retained managed sessions. ${usageDescription(usage)}`;
   const usageInline = usage => {
@@ -79,7 +90,8 @@
   function usagePanel(usage,title='Usage and estimated cost'){
     if(!usage)return `<section class="usage-panel"><h2>${escape(title)}</h2><strong>Usage unavailable</strong><p>This companion did not report usage. Update the companion server to inspect Pi-reported estimates.</p></section>`;
     const models=(usage.models||[]).map(model=>`<div class="usage-model"><span><strong>${escape(modelName(model))}</strong><small>${escape(number(model.total_tokens))} tokens · ${escape(model.usage_records||0)} usage records</small></span><strong class="usage-cost">${escape(compactCost({...usage,cost_usd:model.cost_usd,status:model.status}))}</strong></div>`).join('');
-    const warning=usage.status==='partial'||usage.stale?`<p class="usage-warning">⚠ ${usage.stale?'Showing the last reported total; the source is temporarily unreadable.':'Partial coverage: some retained usage or cost records are unavailable.'}</p>`:'';
+    const warningText=coverageWarning(usage);
+    const warning=warningText?`<p class="usage-warning">⚠ ${escape(warningText)}</p>`:'';
     const cache=(nonnegative(usage.cache_read_tokens)&&usage.cache_read_tokens>0)||(nonnegative(usage.cache_write_tokens)&&usage.cache_write_tokens>0)?`<p>Cache · ${escape(number(usage.cache_read_tokens))} read · ${escape(number(usage.cache_write_tokens))} write</p>`:'';
     return `<section class="usage-panel" aria-label="${escape(title)}" title="${escape(usageDescription(usage))}"><div class="usage-heading"><h2>${escape(title)}</h2><strong class="usage-total">${escape(compactCost(usage))}</strong></div><p>Pi-reported estimated USD. Not a provider invoice; subscription providers may report $0.00.</p><p><strong>${escape(number(usage.total_tokens))}</strong> total tokens · ${escape(number(usage.input_tokens))} input · ${escape(number(usage.output_tokens))} output</p>${cache}<p>${escape(coverage(usage))}</p>${warning}${models?`<div class="usage-models">${models}</div>`:''}</section>`;
   }

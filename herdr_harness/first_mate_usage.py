@@ -5,7 +5,6 @@ read.  Transcript content is never returned by this module.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -16,6 +15,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+from .usage_json import UsageJSON, usage_fingerprint
 
 MAX_RECORD = 4 * 1024 * 1024
 MAX_SAFE_INTEGER = (1 << 53) - 1
@@ -87,6 +88,7 @@ def _empty_summary(updated_at: str, *, session_count: int = 1) -> dict:
         "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
         "cache_write_tokens": 0, "total_tokens": 0,
         "usage_records": 0, "missing_cost_records": 0,
+        "skipped_records": 0, "unaccounted_records": 0,
         "session_count": session_count, "known_cost_sessions": 0,
         "models": [], "updated_at": updated_at,
     }
@@ -99,7 +101,8 @@ def aggregate_usage(summaries: Iterable[dict], *, updated_at: str) -> dict:
     result = _empty_summary(updated_at, session_count=session_count)
     result["updated_at"] = max([updated_at, *(str(item.get("updated_at") or "") for item in items)])
     for name in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
-                 "total_tokens", "usage_records", "missing_cost_records", "known_cost_sessions"):
+                 "total_tokens", "usage_records", "missing_cost_records", "known_cost_sessions",
+                 "skipped_records", "unaccounted_records"):
         result[name], valid = _bounded_sum(item.get(name, 0) for item in items)
         counters_complete = counters_complete and valid
 
@@ -342,7 +345,7 @@ class FirstMateUsage:
         usage_records = 0
         gaps = False
         header_seen = False
-        seen: dict[str, str] = {}
+        seen: dict[str, bytes] = {}
         actual_model = None
         actual_thinking = None
         # Scalar accumulators avoid retaining one summary object per usage record.
@@ -377,33 +380,60 @@ class FirstMateUsage:
                     line = read_chunk()
                     if not line:
                         break
+                    canonical = None
                     if len(line) > MAX_RECORD:
                         if not header_seen:
                             summary["_source_state"] = "malformed_header"
                             return summary
-                        gaps = True
-                        while line and not line.endswith(b"\n"):
-                            line = read_chunk()
-                        continue
+                        # Skip retaining bulky content, not the record's usage.
+                        add_counter(summary, "skipped_records", 1)
+
+                        def chunks():
+                            nonlocal line
+                            while line:
+                                yield line
+                                if line.endswith(b"\n"):
+                                    return
+                                line = read_chunk()
+
+                        source = chunks()
+                        try:
+                            reader = UsageJSON(source, check_cancelled=self._check_cancelled)
+                            entry = reader.record()
+                        except (ValueError, UnicodeError, RecursionError):
+                            # Finish this record so the next line is independent.
+                            for _ in source:
+                                pass
+                            gaps = True
+                            add_counter(summary, "unaccounted_records", 1)
+                            missing_costs = min(MAX_SAFE_INTEGER, missing_costs + 1)
+                            continue
+                        canonical = reader.fingerprint
                     if not line.endswith(b"\n"):
                         if not header_seen:
                             summary["_source_state"] = "truncated_header"
                             return summary
                         gaps = True
+                        add_counter(summary, "unaccounted_records", 1)
+                        missing_costs = min(MAX_SAFE_INTEGER, missing_costs + 1)
                         break
-                    try:
-                        entry = json.loads(line)
-                    except (ValueError, UnicodeError):
-                        if not header_seen:
-                            summary["_source_state"] = "malformed_header"
-                            return summary
-                        gaps = True
-                        continue
+                    if canonical is None:
+                        try:
+                            entry = json.loads(line)
+                        except (ValueError, UnicodeError, RecursionError):
+                            if not header_seen:
+                                summary["_source_state"] = "malformed_header"
+                                return summary
+                            gaps = True
+                            add_counter(summary, "unaccounted_records", 1)
+                            missing_costs = min(MAX_SAFE_INTEGER, missing_costs + 1)
+                            continue
                     if not isinstance(entry, dict):
                         if not header_seen:
                             summary["_source_state"] = "malformed_header"
                             return summary
                         gaps = True
+                        add_counter(summary, "unaccounted_records", 1)
                         continue
                     if not header_seen:
                         native_id = entry.get("id") if entry.get("type") == "session" else None
@@ -417,6 +447,10 @@ class FirstMateUsage:
                         header_seen = True
                         continue
 
+                    if not isinstance(entry.get("type"), str):
+                        gaps = True
+                        add_counter(summary, "unaccounted_records", 1)
+                        continue
                     if entry.get("type") == "model_change":
                         model_value = entry.get("model")
                         if isinstance(model_value, dict):
@@ -435,11 +469,20 @@ class FirstMateUsage:
                         continue
 
                     identity = entry.get("id")
-                    canonical = hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-                    key = "id:" + identity if isinstance(identity, str) and identity else "hash:" + canonical
+                    if canonical is None:
+                        try:
+                            canonical = usage_fingerprint(entry)
+                        except RecursionError:
+                            gaps = True
+                            add_counter(summary, "unaccounted_records", 1)
+                            missing_costs = min(MAX_SAFE_INTEGER, missing_costs + 1)
+                            continue
+                    key = "id:" + identity if isinstance(identity, str) and identity else "hash:" + canonical.hex()
                     if key in seen:
                         if seen[key] != canonical:
                             gaps = True
+                            add_counter(summary, "unaccounted_records", 1)
+                            missing_costs = min(MAX_SAFE_INTEGER, missing_costs + 1)
                         continue
                     seen[key] = canonical
                     usage: Any = None
@@ -448,6 +491,7 @@ class FirstMateUsage:
                     if entry.get("type") == "message":
                         if not isinstance(entry.get("message"), dict):
                             gaps = True
+                            add_counter(summary, "unaccounted_records", 1)
                             continue
                         message = entry["message"]
                         if message.get("role") == "assistant":
@@ -463,11 +507,12 @@ class FirstMateUsage:
                             expected_usage = True
                             usage = message.get("usage")
                             provider, model = message.get("provider"), message.get("model")
-                        elif message.get("role") not in {
+                        elif not isinstance(message.get("role"), str) or message.get("role") not in {
                             "user", "system", "toolResult", "bashExecution", "custom",
                             "branchSummary", "compactionSummary",
                         }:
                             gaps = True
+                            add_counter(summary, "unaccounted_records", 1)
                     elif entry.get("type") in {"compaction", "branch_summary"}:
                         # These summaries can represent a model call. Missing usage
                         # is unknown coverage, not proof that the call was free.

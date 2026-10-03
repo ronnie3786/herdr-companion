@@ -54,8 +54,32 @@ enum FirstMateUsageFormatting {
     }
 
     static func coverage(_ usage: FirstMateUsage) -> String {
+        if usage.missingCostRecords > 0 {
+            let records = usage.missingCostRecords == 1 ? "record" : "records"
+            return "Cost coverage incomplete · \(usage.missingCostRecords) \(records) missing cost"
+        }
+        if usage.status != "complete" || usage.stale == true {
+            return "Cost reported in \(usage.knownCostSessions) sessions · full coverage unverified"
+        }
         let sessions = usage.sessionCount == 1 ? "session" : "sessions"
         return "\(usage.knownCostSessions) of \(usage.sessionCount) \(sessions) report cost"
+    }
+
+    static func coverageWarning(_ usage: FirstMateUsage) -> String? {
+        if usage.stale == true {
+            return "Showing the last reported total; the usage source is temporarily unreadable."
+        }
+        if usage.missingCostRecords > 0 {
+            return "Some retained usage or cost records are unavailable."
+        }
+        if let count = usage.unaccountedRecords, count > 0 {
+            let records = count == 1 ? "record could" : "records could"
+            return "\(count) transcript \(records) not be checked. The total may understate actual usage."
+        }
+        if usage.status == "partial" {
+            return "Full usage coverage could not be verified. The total may understate actual usage."
+        }
+        return nil
     }
 
     static func accessibilityDescription(_ usage: FirstMateUsage?) -> String {
@@ -71,6 +95,7 @@ enum FirstMateUsageFormatting {
         var parts = [estimate, "\(tokens(usage.totalTokens)) tokens", coverage(usage)]
         if usage.status == "partial" { parts.append("Partial coverage") }
         if usage.stale == true { parts.append("Last reported value; source is temporarily unreadable") }
+        if let warning = coverageWarning(usage) { parts.append(warning) }
         parts.append("This is not a provider invoice")
         return parts.joined(separator: ". ") + "."
     }

@@ -50,7 +50,7 @@ struct FirstMateArchiveReviewContent: View {
                     Button("Keep all") {
                         for index in model.choices.indices { model.choices[index].delete = false }
                     }
-                    .buttonStyle(.plain).foregroundStyle(HerdrTheme.accent)
+                    .buttonStyle(.herdrPlain).foregroundStyle(HerdrTheme.accent)
                     .disabled(model.selectedCount == 0)
                 }
                 VStack(spacing: 0) {

@@ -10,6 +10,7 @@ struct FirstMateSidebarView: View {
     var openFeature: ((String) -> Void)?
     var surface = FirstMateSurface.workspace
     @Environment(\.colorScheme) private var scheme
+    @State private var showsHistory = false
     @State private var archiveCandidate: FirstMateFeature? = nil
     private var palette: FirstMatePalette { FirstMatePalette(scheme: scheme) }
 
@@ -65,11 +66,17 @@ struct FirstMateSidebarView: View {
         .sheet(item: $archiveCandidate) { feature in
             FirstMateArchiveSheet(store: store, feature: feature)
         }
+        .sheet(isPresented: $showsHistory) { FirstMateHistorySearchView(store: store) }
         .accessibilityIdentifier("first-mate-sidebar")
     }
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if store.archiveCleanupSupported {
+                Button("Search completed work", systemImage: "archivebox") { showsHistory = true }
+                    .buttonStyle(.herdrPlain)
+                    .herdrFont(size: HerdrTheme.TextSize.small)
+            }
             Toggle(isOn: $store.showArchived) {
                 Text("Show archived")
                     .herdrFont(size: HerdrTheme.TextSize.small)
@@ -110,10 +117,7 @@ struct FirstMateSidebarView: View {
                     .herdrFont(size: HerdrTheme.TextSize.caption)
                     .foregroundStyle(palette.tertiaryText)
                 Spacer()
-                Button(store.isDark ? "Use light appearance" : "Use dark appearance", systemImage: store.isDark ? "sun.max" : "moon") { store.isDark.toggle() }
-                    .buttonStyle(HerdrIconButtonStyle(tint: palette.iconTint))
-                    .help(store.isDark ? "Use light appearance" : "Use dark appearance")
-                    .accessibilityIdentifier("first-mate-theme")
+
             }
         }
         .padding(8)

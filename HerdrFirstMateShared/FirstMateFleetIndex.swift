@@ -77,6 +77,16 @@ final class FirstMateFleetIndex {
         .init(machineID: machineID, feature: feature, lifecycle: lifecycle)
     }
 
+    /// A frozen archive destination. Callers recheck it before and after each await.
+    func isCurrent(_ target: ArchiveTarget) -> Bool {
+        target.lifecycle == lifecycle && clients[target.machineID] != nil
+    }
+
+    func archiveClient(for target: ArchiveTarget) -> (any FirstMateClient)? {
+        guard isCurrent(target) else { return nil }
+        return clients[target.machineID]
+    }
+
     /// Route to the captured owner even when the main conversation changes.
     /// Reject old list responses so polling cannot resurrect a just-archived row.
     func archive(_ target: ArchiveTarget, reason: FirstMateArchiveReason?) async -> String? {

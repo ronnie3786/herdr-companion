@@ -15,6 +15,7 @@ struct FirstMateChatSidebar: View {
 
     enum Focus: Hashable { case search, list }
     @FocusState private var focus: Focus?
+    @State private var history: CompletedWorkTarget?
     @State private var hovered: FirstMateChatWindowSession.Selection?
 
     static let titleBarBand: CGFloat = HerdrTheme.ControlHeight.titleBar
@@ -43,12 +44,42 @@ struct FirstMateChatSidebar: View {
                 .onKeyPress(.downArrow) { moveSelection(by: 1, proxy: proxy) }
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            Menu {
+                ForEach(session.hosts) { host in
+                    Button(host.machineName) {
+                        if let store = session.store(for: host.machineID) {
+                            history = CompletedWorkTarget(id: host.machineID, store: store)
+                        }
+                    }
+                }
+            } label: {
+                if isRail {
+                    Image(systemName: "archivebox").accessibilityLabel("Completed work")
+                } else {
+                    Label("Completed work", systemImage: "archivebox")
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize().padding(12)
+            .help("Search saved records on a companion")
+            .accessibilityIdentifier("first-mate-chat-completed-work")
+        }
+        .sheet(item: $history) { target in
+            FirstMateHistorySearchView(store: target.store)
+        }
         .onChange(of: searchFocusRequest) { _, _ in
             if isRail { return }
             focus = .search
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Conversations")
+    }
+
+    private struct CompletedWorkTarget: Identifiable {
+        let id: String
+        let store: FirstMateStore
     }
 
     // MARK: Header

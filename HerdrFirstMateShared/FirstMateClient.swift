@@ -23,6 +23,12 @@ protocol FirstMateClient: Sendable {
     func transcribeFirstMateVoice(fileURL: URL) async throws -> VoiceTranscriptionResponse
     func performFirstMateAction(featureID: String, action: String, requestID: String) async throws -> FirstMateSnapshot
     func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot
+    func fetchFirstMateArchivePage(featureID: String, archiveID: String?, offset: Int, sha256: String?) async throws -> FirstMateArchivePage
+    func retryFirstMateCleanup(featureID: String, requestID: String) async throws -> FirstMateCleanupResponse
+    func fetchFirstMateArchivePreview(featureID: String) async throws -> FirstMateArchivePreviewResponse
+    func confirmFirstMateArchive(featureID: String, request: FirstMateArchiveRequest) async throws -> FirstMateArchiveReceipt
+    func fetchFirstMateArchiveProgress(featureID: String, archiveID: String?, after: Int) async throws -> FirstMateArchiveProgress
+    func searchFirstMateHistory(query: String, offset: Int) async throws -> FirstMateHistoryResponse
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse
     func fetchFirstMateSession(_ id: String, before: Int?) async throws -> FirstMateSessionResponse
     func fetchFirstMateFeedbackCategories() async throws -> FirstMateFeedbackCategoriesResponse
@@ -153,6 +159,8 @@ struct FirstMateCapabilities: Decodable, Sendable {
     var serverID: String? = nil
     var supportsReadViews: Bool { capabilities.contains("first-mate-read-views-v1") }
     var supportsArchive: Bool { capabilities.contains("first-mate-archive-v1") }
+    var supportsArchiveCleanup: Bool { capabilities.contains("first-mate-archive-cleanup-v1") }
+    var supportsArchiveReview: Bool { capabilities.contains("first-mate-archive-review-v1") }
     var supportsAttachments: Bool { capabilities.contains("first-mate-attachments-v1") }
     var supportsContext: Bool { capabilities.contains("first-mate-context-v1") }
     var supportsSafeModelSettings: Bool { capabilities.contains("first-mate-safe-model-settings-v1") }
@@ -349,6 +357,24 @@ extension FirstMateClient {
         try await fetchFirstMateFeature(id)
     }
     func setFirstMateArchived(featureID: String, archived: Bool, reason: FirstMateArchiveReason?, requestID: String) async throws -> FirstMateSnapshot {
+        throw APIError.invalidResponse
+    }
+    func fetchFirstMateArchivePage(featureID: String, archiveID: String?, offset: Int, sha256: String?) async throws -> FirstMateArchivePage {
+        throw APIError.invalidResponse
+    }
+    func retryFirstMateCleanup(featureID: String, requestID: String) async throws -> FirstMateCleanupResponse {
+        throw APIError.invalidResponse
+    }
+    func fetchFirstMateArchivePreview(featureID: String) async throws -> FirstMateArchivePreviewResponse {
+        throw APIError.invalidResponse
+    }
+    func confirmFirstMateArchive(featureID: String, request: FirstMateArchiveRequest) async throws -> FirstMateArchiveReceipt {
+        throw APIError.invalidResponse
+    }
+    func fetchFirstMateArchiveProgress(featureID: String, archiveID: String?, after: Int) async throws -> FirstMateArchiveProgress {
+        throw APIError.invalidResponse
+    }
+    func searchFirstMateHistory(query: String, offset: Int) async throws -> FirstMateHistoryResponse {
         throw APIError.invalidResponse
     }
     func fetchFirstMateModels() async throws -> FirstMateModelCatalog { throw APIError.invalidResponse }

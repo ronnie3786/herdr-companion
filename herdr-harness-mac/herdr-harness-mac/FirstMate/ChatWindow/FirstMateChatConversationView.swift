@@ -206,11 +206,19 @@ private struct FirstMateFeatureChat: View {
                     .padding(.bottom, 4)
             }
             if isClosed {
-                Label("This feature is closed. Its conversation and evidence remain available.", systemImage: "archivebox")
-                    .herdrFont(size: HerdrTheme.TextSize.small)
-                    .foregroundStyle(HerdrTheme.tertiaryText)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                VStack(spacing: 8) {
+                    Label("This feature is closed. Its conversation and evidence remain available.", systemImage: "checkmark.circle")
+                        .herdrFont(size: HerdrTheme.TextSize.small)
+                        .foregroundStyle(HerdrTheme.tertiaryText)
+                    if !snapshot.feature.isArchived {
+                        Button("Archive session…", systemImage: "archivebox") { session.requestArchive(id) }
+                            .buttonStyle(HerdrButtonStyle(kind: .outline))
+                            .disabled(!store.archiveSupported || store.isSending)
+                            .accessibilityIdentifier("first-mate-chat-archive-completed")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
             } else {
                 FirstMateChatConversationView.composerZone {
                     VStack(alignment: .leading, spacing: 0) {

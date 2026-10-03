@@ -118,6 +118,24 @@ class FirstMateCLITests(unittest.TestCase):
         self.run_cli(['session','native-1','--before','40','--limit','20'])
         self.assertTrue(self.requests[0].full_url.endswith('/sessions/native-1?limit=20&before=40'))
 
+    def test_cleanup_commands_use_exact_feature_and_request_identity(self):
+        self.run_cli(['allocate-resource', 'fmf_sample', '--kind', 'temporary_build', '--request-id', 'space'])
+        self.assertTrue(self.requests[0].full_url.endswith('/features/fmf_sample/resources'))
+        self.assertEqual(json.loads(self.requests[0].data), {'kind': 'temporary_build', 'request_id': 'space'})
+        self.run_cli(['retry-cleanup', 'fmf_sample', '--request-id', 'retry'])
+        self.assertTrue(self.requests[0].full_url.endswith('/features/fmf_sample/archive-cleanup/retry'))
+        self.assertEqual(json.loads(self.requests[0].data), {'request_id': 'retry'})
+
+    def test_completion_report_pages_keep_the_same_fingerprint(self):
+        code, result = self.run_cli(['archive-report', 'fmf_sample'], responses={
+            '/archive-record?': {'ok': True, 'report': 'first', 'next_offset': 5, 'sha256': 'digest', 'cleanup': {}},
+            '/archive-record?offset=5&sha256=digest': {'ok': True, 'report': 'second', 'next_offset': None, 'sha256': 'digest', 'cleanup': {}},
+        })
+        self.assertEqual(code, 0)
+        self.assertEqual(result['report'], 'firstsecond')
+        self.run_cli(['history', '--query', 'garden notes', '--offset', '50'])
+        self.assertTrue(self.requests[0].full_url.endswith('/history?q=garden+notes&offset=50'))
+
     def test_rejects_remote_plain_http_and_missing_auth(self):
         code,_=self.run_cli(['--base-url','http://host.example.test','list']);self.assertEqual(code,2);self.assertEqual(self.requests,[])
         out=io.StringIO();self.assertEqual(cli.main(['list'],environ={},stderr=out),2)

@@ -36,6 +36,20 @@ test("ordinary Pi sessions gain no First Mate tools", () => {
   createFirstMateExtension({})({registerTool() { assert.fail("unexpected tool"); }, on() { assert.fail("unexpected session hook"); }});
 });
 
+test("only managed coordinators and workers can allocate disposable resources", () => {
+  for (const role of ["coordinator", "worker", "advisor"]) {
+    const f = fixture(role);
+    try {
+      assert.equal(f.tools.has("fm_allocate_resource"), role !== "advisor");
+      if (role !== "advisor") {
+        assert.match(f.tools.get("fm_allocate_resource").description, /final documents/);
+        assert.match(f.tools.get("fm_allocate_resource").description, /human reviews/);
+        assert.equal(f.handlers.get("tool_call")({toolName: "fm_allocate_resource"}), undefined);
+      }
+    } finally { f.cleanup(); }
+  }
+});
+
 test("configured skills filter extension-discovered skills before the prompt renders", () => {
   const f = fixture("worker", {agent_role_snapshot:{skillPaths:[]}});
   try {

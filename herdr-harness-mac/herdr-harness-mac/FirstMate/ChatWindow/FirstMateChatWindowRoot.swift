@@ -213,8 +213,9 @@ struct FirstMateChatWindowRoot: View {
             }
         }
         .sheet(item: $session.archiveCandidate) { target in
-            FirstMateArchiveConfirmation(feature: target.feature) { reason in
-                await session.archive(target, reason: reason)
+            FirstMateFleetArchiveSheet(index: shell.firstMateFleet, target: target,
+                demoStore: session.isDemo ? session.store(for: target.machineID) : nil) {
+                session.didArchive(target)
             }
         }
     }

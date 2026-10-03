@@ -84,6 +84,130 @@ function inspector() {
   };
 }
 
+test('archive cleanup shows historical progress and escapes retained reasons', async () => {
+  const app = inspector();
+  await app.reply('/features', {ok: true, features: [feature('a')]});
+  const value = detail('a');
+  value.feature.status = 'completed';
+  value.feature.archived_at = '2026-10-01T12:00:00Z';
+  value.feature.archive_cleanup = {id: 'archive_a', status: 'failed', attempt: 1, message: '<script>unsafe</script>',
+    history_available: true, removed: 2, retained: 4, failed: 1, bytes_reclaimed: 1234};
+  await app.reply('/features/a', value);
+  const html = app.element('#workspace').innerHTML;
+  assert.match(html, /historical facts saved at archive/);
+  assert.match(html, /1,234 bytes reclaimed/);
+  assert.match(html, /data-retry-cleanup="a"/);
+  assert.ok(!html.includes('<script>unsafe</script>'));
+});
+
+test('completion report pagination is bounded, fingerprinted, and rendered as literal text', async () => {
+  const app = inspector();
+  await app.refresh('a');
+  const opening = app.click({archiveReport: 'a', recordId: 'archive_a'});
+  await app.reply('/features/a/archive-record?offset=0&id=archive_a', {ok: true, report: '<script>', next_offset: 8, sha256: 'digest'});
+  await app.reply('/features/a/archive-record?offset=8&id=archive_a&sha256=digest', {ok: true, report: 'saved', next_offset: null, sha256: 'digest'});
+  await opening;
+  assert.match(app.element('#dialog-body').innerHTML, /&lt;script&gt;saved/);
+  assert.match(app.element('#dialog-body').innerHTML, /Export Markdown/);
+});
+
+test('a closed completion report cannot be reopened by its pending response', async () => {
+  const app = inspector();
+  await app.refresh('a');
+  const opening = app.click({archiveReport: 'a'});
+  app.element('#dialog').close();
+  await app.reply('/features/a/archive-record?offset=0', {ok: true, report: 'stale completion record', next_offset: null, sha256: 'digest'});
+  await opening;
+  assert.equal(app.element('#dialog').open, false);
+  assert.ok(!app.element('#dialog-body').innerHTML.includes('stale completion record'));
+});
+
+test('reviewed archive posts the exact preview tuple and selected cleanup options', async () => {
+  const app = inspector();
+  const completed = {...feature('a'), status: 'completed', revision: 7};
+  await app.reply('/features', {ok: true, features: [completed]});
+  await app.reply('/features/a', {...detail('a'), feature: completed});
+  const opening = app.click({archiveFeature: 'a'});
+  await app.reply('/features/a/archive-preview', {ok: true, preview: {
+    feature_id: 'a', feature_revision: 7, token: 'preview-token', eligible: true, ineligible_reason: null,
+    resources: [
+      {id: 'safe-owned-resource', kind: 'temporary_build', path: '/tmp/synthetic-build', estimated_bytes: 123, can_delete: true, reason: 'Owned and disposable.', selected_by_default: true},
+      {id: 'unsafe/id/for/selectors', kind: 'worktree', path: '<retained>', estimated_bytes: null, can_delete: false, reason: 'Dirty worktree.', selected_by_default: false},
+    ],
+    cleanup_options: {resource_ids: ['safe-owned-resource'], keep_documents: true, keep_chat: true},
+    retention: {documents: {keep: 'Keep live documents.'}, chat: {keep: 'Keep live chat.'}},
+  }});
+  await opening;
+  assert.match(app.element('#dialog-body').innerHTML, /archive-resource-0/);
+  assert.doesNotMatch(app.element('#dialog-body').innerHTML, /id="unsafe\/id\/for\/selectors"/);
+  app.element('#archive-resource-0').checked = true;
+  app.element('#archive-resource-1').checked = true;
+  app.element('#archive-keep-documents').checked = false;
+  app.element('#archive-keep-chat').checked = true;
+  app.element('#archive-reason').value = 'completed';
+  const submission = app.element('#archive-feature').onsubmit({preventDefault() {}});
+  const request = app.requests.find(item => !item.resolved && item.url.endsWith('/features/a/actions') && item.options.method === 'POST');
+  assert.ok(request);
+  const body = JSON.parse(request.options.body);
+  assert.deepEqual(body, {
+    action: 'archive', request_id: 'synthetic-request-1', reason: 'completed', expected_revision: 7,
+    preview_token: 'preview-token',
+    cleanup_options: {resource_ids: ['safe-owned-resource'], keep_documents: false, keep_chat: true},
+  });
+  request.respond({ok: true, archive_id: 'archive-a', cleanup: {id: 'archive-a'}});
+  await flush();
+  await app.reply('/features', {ok: true, features: []});
+  await submission;
+});
+
+test('ordinary archive remains a legacy visibility-only request', async () => {
+  const app = inspector();
+  await app.refresh('a');
+  await app.click({archiveFeature: 'a'});
+  assert.equal(app.requests.filter(item => !item.resolved && item.url.endsWith('/archive-preview')).length, 0);
+  app.element('#archive-reason').value = 'other';
+  const submission = app.element('#archive-without-cleanup').onclick();
+  const request = app.requests.find(item => !item.resolved && item.url.endsWith('/features/a/actions') && item.options.method === 'POST');
+  const body = JSON.parse(request.options.body);
+  assert.deepEqual(body, {action: 'archive', request_id: 'synthetic-request-1', reason: 'other'});
+  assert.equal('preview_token' in body, false);
+  assert.equal('cleanup_options' in body, false);
+  request.respond({ok: true, feature: {...feature('a'), archived_at: '2026-10-03T12:00:00Z'}});
+  await flush();
+  await app.reply('/features', {ok: true, features: []});
+  await submission;
+});
+
+test('failed cleanup preview offers only a visibility-only archive', async () => {
+  const app = inspector();
+  const completed = {...feature('a'), status: 'completed'};
+  await app.reply('/features', {ok: true, features: [completed]});
+  await app.reply('/features/a', {...detail('a'), feature: completed});
+  const opening = app.click({archiveFeature: 'a'});
+  await app.reply('/features/a/archive-preview', {error: {message: 'Full authorization required'}}, 'GET', 403);
+  await opening;
+  const html = app.element('#dialog-body').innerHTML;
+  assert.match(html, /Cleanup review is unavailable: Full authorization required/);
+  assert.match(html, /Archive without cleanup/);
+  assert.doesNotMatch(html, /Archive and clean selected/);
+});
+
+test('closing a cleanup review fences its pending preview', async () => {
+  const app = inspector();
+  const completed = {...feature('a'), status: 'completed'};
+  await app.reply('/features', {ok: true, features: [completed]});
+  await app.reply('/features/a', {...detail('a'), feature: completed});
+  const opening = app.click({archiveFeature: 'a'});
+  app.element('#dialog').close();
+  await app.reply('/features/a/archive-preview', {ok: true, preview: {
+    feature_id: 'a', feature_revision: 1, token: 'stale-token', eligible: true,
+    resources: [], cleanup_options: {resource_ids: [], keep_documents: true, keep_chat: true},
+  }});
+  await opening;
+  assert.equal(app.element('#dialog').open, false);
+  assert.doesNotMatch(app.element('#dialog-body').innerHTML, /Archive and clean selected/);
+});
+
 test('revised workflow resource menus include carried evidence without rewriting its producer visit', async () => {
   const app = inspector();
   await app.reply('/features', {ok:true,features:[feature('a')]});

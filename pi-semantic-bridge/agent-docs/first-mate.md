@@ -174,8 +174,15 @@ herdr-first-mate documents FEATURE_ID
 The CLI also supports models, list/create, messages, assignments, Documents,
 session pages, events, pause/resume/cancel, archive/unarchive, model settings,
 feature links (`links`, `add-link`, `hide-link`, `restore-link`), and native
-navigation. Archive changes visibility only; it does not stop or
-steer work. Resume does not authorize the next stage. Mutations use stable
+navigation. The CLI archive command changes visibility only; it does not stop,
+steer, or clean up work. Review-capable apps can preserve a searchable
+completion record and remove only the exact owned disposable resources selected
+by the human in a completed-session cleanup review. Coordinators and workers can
+use `fm_allocate_resource` (`temporary_build` or `cache`) for new temporary
+output directories. Keep final deliverables, source, shared resources and
+backups outside those disposable directories. `history`, `archive-report` and
+`retry-cleanup` expose preserved records after reviewed cleanup. Resume does not
+authorize the next stage. Mutations use stable
 request IDs, and conflicts must be reloaded and reconciled rather than
 overwritten. Link commands require a companion that advertises
 `first-mate-links-v1`; older companions return upgrade guidance. Follow the

@@ -202,11 +202,11 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     const roleTools = new Set(lead ? LEAD_TOOLS : role === "coordinator" ? [
       "fm_status", "fm_delegate", "fm_begin_stage", "fm_recover",
       "fm_resolve_gate", "fm_steer", "fm_retry", "fm_complete_stage", "fm_notify_human",
-      "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session", "fm_save_link",
+      "fm_revise", "fm_finish_feature", "fm_read_document", "fm_read_session", "fm_save_link", "fm_allocate_resource",
     ] : role === "worker" ? [
       "fm_status", "fm_read_document", "fm_read_session", "fm_outcome", "fm_record_verification",
       "fm_handoff", "fm_acknowledge_handoff", "fm_acknowledge_recovery", "fm_progress", "fm_request_human",
-      "fm_delegate", "fm_retry", "fm_wait_for_children", "fm_save_link",
+      "fm_delegate", "fm_retry", "fm_wait_for_children", "fm_save_link", "fm_allocate_resource",
     ] : [
       "fm_status", "fm_read_document", "fm_read_session", "fm_advice",
       "fm_recovery_brief",
@@ -288,6 +288,9 @@ export function createFirstMateExtension(environment: NodeJS.ProcessEnv = proces
     if (!lead) register("fm_read_document", "Read a retained source document belonging to this feature before evaluating or synthesizing its evidence.", Type.Object({ document_id: text("Exact document ID"), offset: Type.Optional(Type.Integer({ minimum: 0 })), length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
     if (!lead) register("fm_read_session", "Inspect a retained native Pi conversation belonging to this feature when the actual execution evidence is needed.", Type.Object({ native_session_id: text("Exact native session ID"), before: Type.Optional(Type.Integer({ minimum: 0 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), message_index: Type.Optional(Type.Integer({ minimum: 0 })), text_offset: Type.Optional(Type.Integer({ minimum: 0 })), text_length: Type.Optional(Type.Integer({ minimum: 1000, maximum: 80000 })) }));
     if (!lead && (role === "coordinator" || role === "worker")) {
+      register("fm_allocate_resource", "Allocate task-owned disposable local space for temporary app builds or caches. Use the returned path for build output. It is deleted only after the human reviews the exact cleanup candidates and confirms cleanup while archiving the completed task. Keep final documents, deliverables, published builds, source and backups elsewhere. Never move existing shared resources into this directory.", Type.Object({
+        kind: Type.Union([Type.Literal("temporary_build"), Type.Literal("cache")]),
+      }));
       register("fm_save_link", "Retain the PR implementing or reviewing this feature's ticket, or a share link needed for this work. Match the feature goal, ticket, and repository. Skip background, historical, dependency, example, or research PRs unless the human explicitly asks to retain them. Provide the exact absolute http(s) URL; never open, fetch, preview, or create the destination, and never create a pull request or advance a stage to obtain a link.", Type.Object({
         url: text("Exact absolute http(s) URL to retain"),
         title: Type.Optional(text("Short human-readable label; omit to derive one from the URL")),

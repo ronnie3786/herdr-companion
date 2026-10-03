@@ -52,6 +52,20 @@ def parser(environ):
     list_scope.add_argument("--all", action="store_true", help="List active and archived features")
     for name in ("capabilities", "models"):
         commands.add_parser(name)
+    history = commands.add_parser("history", help="Search retained completion records")
+    history.add_argument("--query", default="")
+    history.add_argument("--offset", type=int, default=0)
+    report = commands.add_parser("archive-report", help="Read or export the completion record and cleanup log")
+    report.add_argument("feature_id")
+    report.add_argument("--record-id")
+    report.add_argument("--output", help="Write Markdown to a new local file")
+    retry = commands.add_parser("retry-cleanup")
+    retry.add_argument("feature_id")
+    retry.add_argument("--request-id")
+    resource = commands.add_parser("allocate-resource", help="Allocate disposable build or cache space on the companion host")
+    resource.add_argument("feature_id")
+    resource.add_argument("--kind", required=True, choices=("temporary_build", "cache"))
+    resource.add_argument("--request-id")
     create = commands.add_parser("create")
     for field in ("title", "goal", "cwd"):
         create.add_argument("--" + field, required=True)
@@ -130,6 +144,8 @@ def execute(args, client, *, stdin, launch):
             path += "/" + quote(args.link_id) + "/visibility"
         result = client.request("POST", path, body)
         return {"ok": True, "link": result.get("link")}
+    if args.command == "history":
+        return client.request("GET", "/history?" + urllib.parse.urlencode({"q": args.query, "offset": args.offset}))
     if args.command == "list":
         view = "all" if args.all else "archived" if args.archived else "active"
         query = "" if view == "active" else "?" + urllib.parse.urlencode({"view": view})
@@ -145,6 +161,26 @@ def execute(args, client, *, stdin, launch):
         if args.command == "session" and args.before is not None: query["before"] = args.before
         return client.request("GET", path + quote(args.id) + ("?" + urllib.parse.urlencode(query) if query else ""))
     path = "/features/" + quote(args.feature_id)
+    if args.command == "retry-cleanup":
+        return client.request("POST", path + "/archive-cleanup/retry", {"request_id": args.request_id or str(uuid.uuid4())})
+    if args.command == "allocate-resource":
+        return client.request("POST", path + "/resources", {"kind": args.kind, "request_id": args.request_id or str(uuid.uuid4())})
+    if args.command == "archive-report":
+        chunks, query = [], {}
+        if args.record_id: query["id"] = args.record_id
+        while True:
+            page = client.request("GET", path + "/archive-record?" + urllib.parse.urlencode(query))
+            chunks.append(page["report"])
+            if page.get("next_offset") is None: break
+            query.update(offset=page["next_offset"], sha256=page["sha256"])
+        report = "".join(chunks)
+        if args.output:
+            # Export is explicit; never overwrite an existing user document.
+            descriptor = os.open(Path(args.output).expanduser(), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                output.write(report)
+            return {"ok": True, "output": args.output, "cleanup": page["cleanup"]}
+        return {"ok": True, "report": report, "cleanup": page["cleanup"]}
     if args.command == "set-model":
         body = {
             "model": args.model, "thinking": args.thinking,

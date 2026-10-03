@@ -117,6 +117,23 @@ actor HerdrAPIClient: FirstMateClient {
         return try await request(path: firstMatePath("features", id: featureID) + "/actions", method: "POST", body: body)
     }
 
+    func fetchFirstMateArchivePage(featureID: String, archiveID: String?, offset: Int, sha256: String?) async throws -> FirstMateArchivePage {
+        var query = [URLQueryItem(name: "offset", value: String(offset))]
+        if let archiveID { query.append(URLQueryItem(name: "id", value: archiveID)) }
+        if let sha256 { query.append(URLQueryItem(name: "sha256", value: sha256)) }
+        return try await request(path: firstMatePath("features", id: featureID) + "/archive-record", query: query)
+    }
+
+    func retryFirstMateCleanup(featureID: String, requestID: String) async throws -> FirstMateCleanupResponse {
+        try await request(path: firstMatePath("features", id: featureID) + "/archive-cleanup/retry", method: "POST", body: ["request_id": requestID])
+    }
+
+    func searchFirstMateHistory(query: String, offset: Int) async throws -> FirstMateHistoryResponse {
+        try await request(path: "/api/v1/first-mate/history", query: [
+            URLQueryItem(name: "q", value: query), URLQueryItem(name: "offset", value: String(offset)),
+        ])
+    }
+
     func fetchFirstMateDocument(_ id: String) async throws -> FirstMateDocumentResponse {
         try await request(path: firstMatePath("documents", id: id))
     }

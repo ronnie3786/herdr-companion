@@ -14,6 +14,7 @@ struct FirstMateOverviewView: View {
         let buildsQuery = MobileAppHubSettings.firstMateQuery(hubURLText: buildsHubURL, featureID: snapshot.feature.id)
         VStack(alignment: .leading, spacing: 12) {
             FirstMateActivityView(store: store, snapshot: snapshot)
+            FirstMateArchiveSection(store: store, feature: snapshot.feature)
             if !snapshot.pullRequestLinks.isEmpty {
                 FirstMatePullRequestsSection(store: store, snapshot: snapshot, surface: .overview)
                     .padding(12)

@@ -107,13 +107,7 @@ struct FirstMateFleetSidebarView: View {
                     .foregroundStyle(palette.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Button(
-                    appearanceStore.isDark ? "Use light appearance" : "Use dark appearance",
-                    systemImage: appearanceStore.isDark ? "sun.max" : "moon"
-                ) { appearanceStore.isDark.toggle() }
-                .buttonStyle(HerdrIconButtonStyle(tint: palette.iconTint))
-                .help(appearanceStore.isDark ? "Use light appearance" : "Use dark appearance")
-                .accessibilityIdentifier("first-mate-theme")
+
             }
             .padding(8)
             .herdrHairline(.top, color: palette.hairline)
@@ -146,12 +140,11 @@ struct FirstMateFleetSidebarView: View {
                 .accessibilityIdentifier("first-mate-fleet-refresh")
         }
         .sheet(item: $archiveCandidate) { target in
-            FirstMateArchiveConfirmation(feature: target.feature) { reason in
-                let error = await index.archive(target, reason: reason)
-                if error == nil, selectedMachineID == target.machineID {
-                    await appearanceStore.refresh()
+            FirstMateFleetArchiveSheet(index: index, target: target) {
+                Task {
+                    await index.refresh()
+                    if selectedMachineID == target.machineID { await appearanceStore.refresh() }
                 }
-                return error
             }
         }
         .accessibilityIdentifier("first-mate-fleet-sidebar")

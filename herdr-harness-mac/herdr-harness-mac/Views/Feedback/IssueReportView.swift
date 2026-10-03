@@ -46,41 +46,55 @@ struct IssueReportView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                HerdrBackground()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        intro
-                        if let record = composer.submittedRecord {
-                            successCard(record)
-                        } else {
-                            form
-                        }
+        VStack(spacing: 0) {
+            HStack {
+                Text("Report")
+                    .herdrFont(.callout, weight: .medium)
+                    .foregroundStyle(HerdrTheme.secondaryText)
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .frame(height: HerdrTheme.ControlHeight.titleBar)
+            .herdrHairline(.bottom)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    intro
+                    if let record = composer.submittedRecord {
+                        successCard(record)
+                    } else {
+                        form
                     }
-                    .frame(maxWidth: 720, alignment: .leading)
-                    .padding(24)
-                    .frame(maxWidth: .infinity)
                 }
-                .scrollIndicators(.hidden)
+                .frame(maxWidth: 720, alignment: .leading)
+                .padding(24)
+                .frame(maxWidth: .infinity)
             }
-            // ⌘V while the title field is focused; see the monitor's doc comment.
-            .background(
-                IssueReportPasteMonitor(
-                    composer: composer,
-                    isTextEditingFocused: focusedField == .body || focusedField == .smartInput,
-                    isEnabled: composer.submittedRecord == nil && !composer.isSubmitting
-                )
-            )
-            .navigationTitle("Report")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(composer.submittedRecord == nil ? "Cancel" : "Close") { dismiss() }
-                        .disabled(composer.isSubmitting)
-                        .accessibilityIdentifier("issue-report-cancel")
-                }
+            .scrollIndicators(.hidden)
+
+            HStack {
+                Spacer()
+                Button(composer.submittedRecord == nil ? "Cancel" : "Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(composer.isSubmitting)
+                    .accessibilityIdentifier("issue-report-cancel")
             }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .herdrHairline(.top)
         }
+        .scrollEdgeEffectHidden()
+        .foregroundStyle(HerdrTheme.primaryText)
+        .background(alignment: .top) { HerdrHazeBand() }
+        .background { HerdrGlassBackground(level: HerdrTheme.Glass.pane, drawsDusk: true) }
+        // ⌘V while the title field is focused; see the monitor's doc comment.
+        .background(
+            IssueReportPasteMonitor(
+                composer: composer,
+                isTextEditingFocused: focusedField == .body || focusedField == .smartInput,
+                isEnabled: composer.submittedRecord == nil && !composer.isSubmitting
+            )
+        )
         .frame(minWidth: 640, minHeight: 620)
         .interactiveDismissDisabled(composer.isSubmitting)
         .onPasteCommand(of: [.image, .fileURL]) { providers in
@@ -173,7 +187,11 @@ struct IssueReportView: View {
             submitRow
         }
         .padding(18)
-        .background(HerdrTheme.elevated.opacity(0.42))
+        .background(HerdrTheme.cardFill)
+        .overlay {
+            RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
+                .strokeBorder(HerdrTheme.outline)
+        }
         .clipShape(.rect(cornerRadius: HerdrTheme.cardRadius))
         .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
             guard !composer.isSubmitting else { return false }
@@ -225,7 +243,7 @@ struct IssueReportView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .background(HerdrTheme.input)
+            .background(HerdrTheme.fieldFill)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                     .strokeBorder(focusedField == .smartInput ? HerdrTheme.accent : HerdrTheme.separator, lineWidth: 1)
@@ -244,7 +262,7 @@ struct IssueReportView: View {
             smartInputNotices
         }
         .padding(12)
-        .background(HerdrTheme.elevated.opacity(0.6))
+        .background(HerdrTheme.insetFill)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                 .strokeBorder(HerdrTheme.accent.opacity(0.25), lineWidth: 1)
@@ -330,7 +348,7 @@ struct IssueReportView: View {
         } label: {
             ZStack {
                 Circle()
-                    .fill(HerdrTheme.surface)
+                    .fill(HerdrTheme.insetFill)
                 if IssueReportSmartInputPresentation.isGlowing(voiceState: smartInput.voiceState) {
                     Circle()
                         .strokeBorder(HerdrTheme.alert.opacity(0.85), lineWidth: 2)
@@ -438,7 +456,7 @@ struct IssueReportView: View {
                 .textFieldStyle(.plain)
                 .herdrFont(size: 15, relativeTo: .body)
                 .padding(12)
-                .background(HerdrTheme.input)
+                .background(HerdrTheme.fieldFill)
                 .overlay {
                     RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                         .strokeBorder(focusedField == .title ? HerdrTheme.accent : HerdrTheme.separator, lineWidth: 1)
@@ -470,7 +488,7 @@ struct IssueReportView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .background(HerdrTheme.input)
+            .background(HerdrTheme.fieldFill)
             .overlay {
                 RoundedRectangle(cornerRadius: HerdrTheme.compactRadius)
                     .strokeBorder(focusedField == .body ? HerdrTheme.accent : HerdrTheme.separator, lineWidth: 1)
@@ -635,7 +653,7 @@ struct IssueReportView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HerdrTheme.elevated.opacity(0.42))
+        .background(HerdrTheme.cardFill)
         .overlay {
             RoundedRectangle(cornerRadius: HerdrTheme.cardRadius)
                 .strokeBorder(HerdrTheme.success.opacity(0.4), lineWidth: 1)

@@ -62,8 +62,11 @@ class AgentActivityWiringTests(unittest.TestCase):
             manager.handle_event(envelope("p1", {"type": "tool_execution_start", "toolName": "read"}))
         self.assertEqual(updates, ["p1"])
         received.clear()
-        manager.start()
-        self.assertTrue(received.wait(2))
+        # Keep both sides of the restart on the controlled clock. A fresh CI
+        # host can have a real monotonic clock below the synthetic value 100.
+        with patch("herdr_harness.agent_activity.time.monotonic", return_value=101):
+            manager.start()
+            self.assertTrue(received.wait(2))
         self.assertEqual(updates, ["p1", "p1"])
         manager.stop()
         self.assertIsNone(manager._thread)

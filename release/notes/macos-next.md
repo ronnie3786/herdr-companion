@@ -1,5 +1,16 @@
 # Next macOS update, unreleased
 
+## First Mate usage coverage
+
+- In a feature's **Overview → Full task usage**, a checked large image record
+  without usage no longer makes the task partial. Large assistant, tool-result,
+  compaction, and branch-summary records retain their reported costs.
+- Missing cost and unverified transcript coverage have distinct warnings. A
+  warning no longer sits beside a claim that every session reports complete cost.
+- The accounting fix needs the matching companion server package, installed
+  separately. The Mac updater only delivers the presentation changes. Older
+  companion summaries remain compatible; iOS and web use the same coverage rules.
+
 ## Watchers
 
 - Open **Watchers** below **PR Review** in the sidebar, or press **Command-9**.

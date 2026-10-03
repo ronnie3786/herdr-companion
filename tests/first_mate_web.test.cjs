@@ -360,10 +360,29 @@ test('task usage uses the server aggregate instead of summing a truncated sessio
   assert.match(sidebar, /Task total across all retained managed sessions/);
   assert.match(sidebar, /status running/);
   assert.match(overview, /\$9\.99\*/);
-  assert.match(overview, /1,199 of 1,200 sessions report cost/);
-  assert.match(overview, /partial coverage/i);
+  assert.match(overview, /Cost reported in 1,199 sessions · full coverage unverified/);
+  assert.match(overview, /Full usage coverage could not be verified/);
   assert.match(overview, /Cache · 30 read · 7 write/);
   assert.doesNotMatch(overview, /\$170\.00/);
+});
+
+test('usage coverage distinguishes checked large content, missing cost, and uncertainty', async () => {
+  for (const [overrides, expected, forbidden] of [
+    [{ skipped_records: 1, unaccounted_records: 0 }, /1 of 1 session report cost/, /usage-warning|\$1\.25\*/],
+    [{ status: 'partial', missing_cost_records: 1, unaccounted_records: 1 }, /Some retained usage or cost records are unavailable/, /1 of 1 session report cost/],
+    [{ status: 'partial', unaccounted_records: 1 }, /1 transcript record could not be checked/, /1 of 1 session report cost|records are unavailable/],
+    [{ status: 'partial' }, /Full usage coverage could not be verified/, /1 of 1 session report cost|records are unavailable/],
+    [{ status: 'partial', stale: true }, /Showing the last reported total/, /1 of 1 session report cost/],
+  ]) {
+    const app = inspector();
+    await app.reply('/features', { ok: true, features: [feature('a')] });
+    const snapshot = detail('a');
+    snapshot.feature.usage = usage(overrides);
+    await app.reply('/features/a', snapshot);
+    const overview = app.element('#workspace').innerHTML;
+    assert.match(overview, expected);
+    assert.doesNotMatch(overview, forbidden);
+  }
 });
 
 test('agent and session usage preserve tiny costs, descendants, models, and advisor roles', async () => {

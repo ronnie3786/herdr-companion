@@ -10,7 +10,7 @@ from unittest import mock
 
 from herdr_harness.first_mate_runtime import FirstMateRuntime, _write_json
 from herdr_harness.first_mate_store import FirstMateStore
-from herdr_harness.first_mate_usage import FirstMateUsage, MAX_SAFE_INTEGER, aggregate_usage
+from herdr_harness.first_mate_usage import FirstMateUsage, MAX_RECORD, MAX_SAFE_INTEGER, aggregate_usage
 
 
 def usage(cost=1.0, *, input=10, output=2, cache_read=3, cache_write=1, total=16):
@@ -44,6 +44,86 @@ class FirstMateUsageParserTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "sessions"
         self.root.mkdir()
         self.accountant = FirstMateUsage(self.root)
+
+    def test_large_image_without_usage_keeps_feature_complete(self):
+        path = self.root / "image.jsonl"
+        write_session(path, "native-image", [assistant("paid", 1.25), {
+            "type": "message", "id": "image", "message": {
+                "role": "toolResult", "toolName": "read", "content": [
+                    {"type": "image", "mimeType": "image/png", "data": "a" * (5 * 1024 * 1024)}]}}])
+        session = self.accountant.public_summary(self.accountant.session_usage(path, "native-image"))
+        for result in (session, aggregate_usage([session], updated_at=session["updated_at"])):
+            self.assertEqual((result["status"], result["cost_usd"], result["total_tokens"]),
+                             ("complete", 1.25, 16))
+            self.assertEqual((result["skipped_records"], result["unaccounted_records"],
+                              result["missing_cost_records"]), (1, 0, 0))
+
+    def test_large_paid_shapes_account_metadata_before_and_after_content(self):
+        for kind in ("assistant", "toolResult", "compaction", "branch_summary"):
+            for usage_first in (True, False):
+                with self.subTest(kind=kind, usage_first=usage_first):
+                    payload = {"usage": usage(.75), "provider": "synthetic", "model": "large"}
+                    # Nested payloads and apparent JSON inside text must never be charged.
+                    content = {"content": [{"text": '\\" usage: ' + "x" * MAX_RECORD},
+                                           {"usage": usage(999)}]}
+                    body = {**payload, **content} if usage_first else {**content, **payload}
+                    entry = {"type": kind, "id": "large", **body}
+                    if kind in {"assistant", "toolResult"}:
+                        entry = {"type": "message", "id": "large", "message": {"role": kind, **body}}
+                    path = self.root / f"{kind}-{usage_first}.jsonl"
+                    write_session(path, "native-large", [assistant("small", 1.25), entry, entry])
+                    result = self.accountant.session_usage(path, "native-large")
+                    self.assertEqual((result["status"], result["cost_usd"], result["usage_records"]),
+                                     ("complete", 2.0, 2))
+                    self.assertEqual(result["total_tokens"], 32)
+                    self.assertEqual(result["skipped_records"], 2)
+                    self.assertEqual(result["missing_cost_records"], 0)
+
+    def test_unreadable_large_record_marks_cost_missing_and_recovers_next_record(self):
+        for suffix in (b'"},"usage":bad}\n', b'"}\n', b'"}}'):
+            with self.subTest(suffix=suffix):
+                path = self.root / "broken-large.jsonl"
+                write_session(path, "native-broken-large", [assistant("small", 1.25)])
+                with path.open("ab") as handle:
+                    handle.write(b'{"type":"message","message":{"role":"assistant","content":"')
+                    handle.write(b"a" * (MAX_RECORD + 1))
+                    handle.write(suffix)
+                    if suffix.endswith(b"\n"):
+                        handle.write(json.dumps(assistant("later", .75)).encode() + b"\n")
+                result = self.accountant.session_usage(path, "native-broken-large")
+                self.assertEqual(result["status"], "partial")
+                self.assertEqual(result["cost_usd"], 2.0 if suffix.endswith(b"\n") else 1.25)
+                self.assertEqual((result["missing_cost_records"], result["unaccounted_records"]), (1, 1))
+
+    def test_large_record_with_invalid_usage_is_not_treated_as_free(self):
+        path = self.root / "invalid-large-usage.jsonl"
+        row = assistant("large", use={"cost": {"total": "unknown"}})
+        row["message"]["content"] = "x" * MAX_RECORD
+        write_session(path, "native-invalid-large", [assistant("paid", 1.25), row])
+        result = self.accountant.session_usage(path, "native-invalid-large")
+        self.assertEqual((result["status"], result["cost_usd"], result["missing_cost_records"]),
+                         ("partial", 1.25, 1))
+
+    def test_large_duplicate_with_changed_discarded_content_is_uncertain(self):
+        path = self.root / "large-conflict.jsonl"
+        first = assistant("conflict", 1.25)
+        first["message"]["content"] = "x" * MAX_RECORD
+        second = {**first, "message": {**first["message"], "content": "y" * MAX_RECORD}}
+        write_session(path, "native-conflict", [first, second])
+        result = self.accountant.session_usage(path, "native-conflict")
+        self.assertEqual((result["status"], result["cost_usd"], result["missing_cost_records"]),
+                         ("partial", 1.25, 1))
+
+    def test_large_idless_duplicate_deduplicates_key_order_and_whitespace(self):
+        path = self.root / "large-idless.jsonl"
+        row = assistant("removed", .75)
+        row.pop("id")
+        row["message"]["content"] = "x" * MAX_RECORD
+        write_session(path, "native-large-idless", [row])
+        with path.open("a") as handle:
+            handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+        result = self.accountant.session_usage(path, "native-large-idless")
+        self.assertEqual((result["cost_usd"], result["usage_records"], result["status"]), (.75, 1, "complete"))
 
     def test_all_paid_entry_shapes_are_counted_once_and_retained_tail_is_not(self):
         path = self.root / "all.jsonl"

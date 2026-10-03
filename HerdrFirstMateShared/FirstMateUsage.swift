@@ -16,6 +16,8 @@ struct FirstMateUsage: Codable, Equatable, Sendable {
     var models: [FirstMateModelUsage]
     var updatedAt: String
     var stale: Bool? = nil
+    var skippedRecords: Int? = nil
+    var unaccountedRecords: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case currency, status, models, stale
@@ -24,6 +26,7 @@ struct FirstMateUsage: Codable, Equatable, Sendable {
         case cacheReadTokens = "cache_read_tokens", cacheWriteTokens = "cache_write_tokens"
         case totalTokens = "total_tokens", usageRecords = "usage_records"
         case missingCostRecords = "missing_cost_records"
+        case skippedRecords = "skipped_records", unaccountedRecords = "unaccounted_records"
         case sessionCount = "session_count", knownCostSessions = "known_cost_sessions"
         case updatedAt = "updated_at"
     }

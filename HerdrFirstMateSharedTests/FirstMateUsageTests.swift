@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 #if os(macOS)
 @testable import herdr_harness_mac
@@ -34,6 +35,69 @@ struct FirstMateUsageTests {
         #expect(FirstMateUsageFormatting.inlineSummary(stale).contains("Last reported"))
         #expect(FirstMateUsageFormatting.taskAccessibilityDescription(stale).contains("all retained managed sessions"))
     }
+
+    @Test("Large checked records have no warning; incomplete costs never claim full session coverage")
+    func explicitCoverage() throws {
+        var complete = usage(cost: 1.25)
+        complete.skippedRecords = 1
+        complete.unaccountedRecords = 0
+        #expect(FirstMateUsageFormatting.compactCost(complete) == "$1.25")
+        #expect(FirstMateUsageFormatting.coverageWarning(complete) == nil)
+        #expect(FirstMateUsageFormatting.coverage(complete) == "1 of 1 session report cost")
+
+        var missing = complete
+        missing.status = "partial"
+        missing.missingCostRecords = 1
+        #expect(FirstMateUsageFormatting.coverageWarning(missing) == "Some retained usage or cost records are unavailable.")
+        #expect(!FirstMateUsageFormatting.coverage(missing).contains("1 of 1"))
+        #expect(FirstMateUsageFormatting.accessibilityDescription(missing).contains("1 record missing cost"))
+
+        var unchecked = complete
+        unchecked.status = "partial"
+        unchecked.unaccountedRecords = 1
+        #expect(FirstMateUsageFormatting.coverageWarning(unchecked)?.contains("1 transcript record could not be checked") == true)
+        #expect(!FirstMateUsageFormatting.coverage(unchecked).contains("1 of 1"))
+
+        var legacy = complete
+        legacy.status = "partial"
+        legacy.skippedRecords = nil
+        legacy.unaccountedRecords = nil
+        #expect(FirstMateUsageFormatting.coverageWarning(legacy)?.contains("could not be verified") == true)
+        #expect(FirstMateUsageFormatting.coverageWarning(legacy)?.contains("records are unavailable") == false)
+        legacy.stale = true
+        #expect(FirstMateUsageFormatting.coverageWarning(legacy)?.contains("last reported total") == true)
+
+        let encoded = try JSONEncoder().encode(complete)
+        #expect(try JSONDecoder().decode(FirstMateUsage.self, from: encoded) == complete)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "skipped_records")
+        object.removeValue(forKey: "unaccounted_records")
+        let old = try JSONDecoder().decode(FirstMateUsage.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(old.skippedRecords == nil)
+        #expect(old.unaccountedRecords == nil)
+        #expect(FirstMateUsageFormatting.coverageWarning(old) == nil)
+    }
+
+    #if os(macOS)
+    @Test("Synthetic usage cards render checked images and incomplete coverage")
+    func coverageCardsRender() async throws {
+        for state in ["complete", "missing", "unchecked"] {
+            var summary = usage(cost: 1.25, status: state == "complete" ? "complete" : "partial")
+            summary.skippedRecords = 1
+            summary.unaccountedRecords = state == "unchecked" ? 1 : 0
+            summary.missingCostRecords = state == "missing" ? 1 : 0
+            let result = try await HerdrRenderHarness.render(
+                "first-mate-usage-\(state).png", size: CGSize(width: 440, height: 400)
+            ) {
+                FirstMateUsageSummaryView(usage: summary, title: "Full task usage")
+                    .environment(\.herdrFontScale, .xxxLarge)
+                    .padding(24)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+            result.expectSubstantial()
+        }
+    }
+    #endif
 
     @Test("Mixed historical models decode independently from the configured coordinator model")
     func mixedModels() throws {

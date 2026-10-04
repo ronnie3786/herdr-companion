@@ -28,6 +28,14 @@ struct HomeHostView: View {
                                                     enabled: request.enabled)
             }
             .onDisappear { shell.homeQuickReply?.pauseHydration() }
+            .task(id: home.statusRevision) {
+                // A status is a confirmation, not a banner: it leaves on its own,
+                // keeping Undo long enough to reach.
+                let revision = home.statusRevision
+                guard home.status != nil else { return }
+                do { try await Task.sleep(for: .seconds(home.canUndoSnooze ? 8 : 5)) } catch { return }
+                home.dismissStatus(revision: revision)
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if !outcomes.isEmpty || home.status != nil || searchStatus != nil {
                     VStack(spacing: 10) {

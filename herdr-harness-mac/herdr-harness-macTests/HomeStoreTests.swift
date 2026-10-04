@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import herdr_harness_mac
 
@@ -11,9 +12,9 @@ struct HomeStoreTests {
         UserDefaults(suiteName: "HomeStoreTests.\(UUID().uuidString)")!
     }
 
-    private func item(_ id: String, fingerprint: String = "question-1") -> HomeFocusItem {
+    private func item(_ id: String, fingerprint: String = "question-1", priority: Int = 50) -> HomeFocusItem {
         HomeFocusItem(id: id, title: id, reason: "Your call", body: HomeText("Question for \(id)"),
-                      route: .firstMate(machineID: "garden", featureID: id), fingerprint: fingerprint)
+                      route: .firstMate(machineID: "garden", featureID: id), priority: priority, fingerprint: fingerprint)
     }
 
     private func source(_ items: [HomeFocusItem]) -> HomeSnapshot {
@@ -25,18 +26,84 @@ struct HomeStoreTests {
         return value
     }
 
-    @Test("Skip rotates without resolving and unrelated refresh preserves the selected card")
+    @Test("Skip advances through the priority order and unrelated refresh preserves the selected card")
     func skipAndRefresh() {
         let store = HomeStore(defaults: defaults(), now: { start })
         let snapshot = source([item("A"), item("B"), item("C")])
         store.receive(snapshot)
+        #expect(store.selectedFocusID == "A")
         store.skip()
         #expect(store.selectedFocusID == "B")
-        #expect(store.snapshot.focus.map(\.id) == ["B", "C", "A"])
+        #expect(store.snapshot.focus.map(\.id) == ["A", "B", "C"])
         store.receive(snapshot)
         #expect(store.selectedFocusID == "B")
         #expect(store.snapshot.focusCount == 3)
-        #expect(store.snapshot.focus.map(\.id) == ["B", "C", "A"])
+        store.skip()
+        store.skip()
+        #expect(store.selectedFocusID == "A", "Skipping past the last card comes back around")
+    }
+
+    @Test("Work that arrives later takes the front until the person chooses a card")
+    func laterPriorityWork() {
+        let store = HomeStore(defaults: defaults(), now: { start })
+        store.receive(source([item("ready-review", priority: 40)]))
+        store.receive(source([item("blocked", priority: 10), item("ready-review", priority: 40)]))
+        #expect(store.snapshot.focus.map(\.id) == ["blocked", "ready-review"])
+        #expect(store.selectedFocusID == "blocked")
+        store.skip()
+        store.receive(source([item("outage", priority: 0), item("blocked", priority: 10), item("ready-review", priority: 40)]))
+        #expect(store.snapshot.focus.map(\.id) == ["outage", "blocked", "ready-review"])
+        #expect(store.selectedFocusID == "ready-review", "A chosen card stays in front while new work joins in order")
+    }
+
+    @Test("Undo returns a snoozed card to its priority place and selects it")
+    func undoKeepsPriorityPlace() {
+        let store = HomeStore(defaults: defaults(), now: { start })
+        store.receive(source([item("A", priority: 10), item("B", priority: 20), item("C", priority: 30)]))
+        store.snooze("A")
+        #expect(store.selectedFocusID == "B")
+        store.undoLastSnooze()
+        #expect(store.snapshot.focus.map(\.id) == ["A", "B", "C"])
+        #expect(store.selectedFocusID == "A")
+    }
+
+    @Test("A status dismisses only itself, and an expired snooze withdraws its Undo")
+    func statusLifetime() {
+        let store = HomeStore(defaults: defaults(), now: { start })
+        let snapshot = source([item("A"), item("B")])
+        store.receive(snapshot)
+        store.snooze("A")
+        let snoozed = store.statusRevision
+        #expect(store.canUndoSnooze)
+        store.showStatus("That item is no longer on Home.")
+        #expect(!store.canUndoSnooze, "Undo belongs to the status that offered it")
+        store.dismissStatus(revision: snoozed)
+        #expect(store.status == "That item is no longer on Home.")
+        store.dismissStatus(revision: store.statusRevision)
+        #expect(store.status == nil)
+        store.snooze("B")
+        #expect(store.canUndoSnooze)
+        store.receive(snapshot, now: start.addingTimeInterval(7_200))
+        #expect(store.status == nil)
+        #expect(!store.canUndoSnooze)
+        #expect(store.snapshot.focus.map(\.id) == ["A", "B"])
+    }
+
+    @Test("An identical refresh publishes nothing")
+    func identicalRefreshIsSilent() {
+        let store = HomeStore(defaults: defaults(), now: { start })
+        let snapshot = source([item("A"), item("B")])
+        store.receive(snapshot)
+        store.skip()
+        let changed = ChangeFlag()
+        withObservationTracking {
+            _ = store.snapshot
+            _ = store.selectedFocusID
+        } onChange: {
+            changed.set()
+        }
+        store.receive(snapshot)
+        #expect(!changed.value)
     }
 
     @Test("Snooze keeps global counts, expires, and new evidence reappears immediately")
@@ -50,7 +117,7 @@ struct HomeStoreTests {
         store.receive(source([item("A", fingerprint: "question-2"), item("B")]))
         #expect(store.snapshot.focus.contains { $0.id == "A" })
         store.snooze("A")
-        store.refreshLocalTime(now: start.addingTimeInterval(3_600))
+        store.receive(source([item("A", fingerprint: "question-2"), item("B")]), now: start.addingTimeInterval(3_600))
         #expect(store.snapshot.focus.contains { $0.id == "A" })
         #expect(!store.canUndoSnooze)
     }
@@ -101,16 +168,19 @@ struct HomeStoreTests {
         #expect(store.selectedFocusID == "C")
     }
 
-    @Test("Search preserves the locally rotated stack through refresh and clearing")
+    @Test("Search keeps the priority order and returns to the chosen card when cleared")
     func searchPreservesOrder() {
         let store = HomeStore(defaults: defaults(), now: { start })
         let snapshot = source([item("A"), item("B"), item("C")])
         store.receive(snapshot)
         store.skip()
-        store.search = "A"
+        store.search = "for A"
+        #expect(store.snapshot.focus.map(\.id) == ["A"])
+        #expect(store.selectedFocusID == "A")
         store.receive(snapshot)
         store.search = ""
-        #expect(store.snapshot.focus.map(\.id) == ["B", "C", "A"])
+        #expect(store.snapshot.focus.map(\.id) == ["A", "B", "C"])
+        #expect(store.selectedFocusID == "B")
         #expect(store.snapshot.focusCount == 3)
     }
 
@@ -140,4 +210,12 @@ struct HomeStoreTests {
         #expect(stored.snoozes.isEmpty)
         #expect(stored.dismissals.keys.sorted() == ["recent"])
     }
+}
+
+/// Observation reports changes on a Sendable callback.
+private final class ChangeFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool { lock.withLock { flag } }
+    func set() { lock.withLock { flag = true } }
 }

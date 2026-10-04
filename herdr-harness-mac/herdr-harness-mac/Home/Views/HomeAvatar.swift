@@ -2,6 +2,10 @@ import SwiftUI
 
 /// The reference face rendered as vectors, including its sixty-tick instrument ring.
 /// Animation stays inside this small view and stops when the scene is inactive.
+/// The face is a geometry group: its own position is resolved by the parent's
+/// transaction, so a repeat-forever animation started in the same update as a
+/// layout change (a new tab badge re-centring the strip) can't capture and
+/// replay that move forever.
 struct HomeAvatar: View {
     var mood: HomeMood = .calm
     var size: CGFloat = 26
@@ -34,9 +38,10 @@ struct HomeAvatar: View {
             disc
                 .frame(width: size * (showsRing ? 0.84 : 1), height: size * (showsRing ? 0.84 : 1))
                 .offset(y: showsRing && moving ? (motion ? -3 : 3) : 0)
-                .animation(moving ? .easeInOut(duration: 3).repeatForever(autoreverses: true) : nil, value: motion)
+                .animation(showsRing && moving ? .easeInOut(duration: 3).repeatForever(autoreverses: true) : nil, value: motion)
         }
         .frame(width: size, height: size)
+        .geometryGroup()
         .onAppear { isMounted = true }
         .onDisappear { isMounted = false }
         .onScrollVisibilityChange(threshold: 0.01) { isOnscreen = $0 }

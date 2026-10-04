@@ -185,7 +185,7 @@ def standard_ui_actions():
             "ui.segment",
             properties={"segment": {"type": "string", "enum": [
                 "chat", "terminal", "git", "skills", "pr-review",
-                "watchers", "first-mate", "fleet", "activity",
+                "watchers", "first-mate", "fleet", "home", "activity",
             ]}},
             required=("segment",),
         ),
@@ -1369,6 +1369,21 @@ url = "https://beta.example.test"
         self.assertEqual(output["requestId"], "segment-plan")
         self.assertEqual(output["command"]["parameters"], {"segment": "activity"})
         self.assertEqual(len(opener.requests), 1)
+
+    def test_home_segment_matches_the_mac_receiver(self):
+        receiver = ui_client("ui_one")
+        for arguments in (["ui", "segment", "home"], ["ui", "segment", "--segment", "home"]):
+            with self.subTest(arguments=arguments):
+                status, output, error, opener = self.run_cli(
+                    [
+                        "--control-machine", "alpha", *arguments,
+                        "--client", "ui_one", "--request-id", "segment-home", "--dry-run",
+                    ],
+                    FakeResponse(clients(receiver)),
+                )
+                self.assertEqual(status, 0, error)
+                self.assertEqual(output["command"]["parameters"], {"segment": "home"})
+                self.assertEqual(len(opener.requests), 1)
 
     def test_unified_actions_can_select_ui_domain_without_data_machine(self):
         receiver = ui_client("ui_one")

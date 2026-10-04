@@ -1527,7 +1527,7 @@ class ControlCLI:
 # (tests/fixtures/agent-control-v1.json).
 UI_SEGMENTS = (
     "chat", "terminal", "git", "skills", "pr-review",
-    "watchers", "first-mate", "fleet", "activity",
+    "watchers", "first-mate", "fleet", "home", "activity",
 )
 
 

@@ -110,6 +110,26 @@ struct HomeChatTests {
         #expect(fixture.controller.availabilityMessage == nil)
     }
 
+    @Test("An open already in flight finishes before the chat re-resolves its lead")
+    func releaseWaitsForOpen() async throws {
+        let fixture = Fixture()
+        let gate = ChatTestGate()
+        fixture.client.beforeEnsure = { await gate.wait() }
+        fixture.controller.open()
+        let first = Task { await fixture.controller.prepare() }
+        try await waitFor(gate)
+        fixture.model.connectionGeneration += 1
+        await fixture.controller.prepare()
+        #expect(fixture.controller.isOpening, "Try again during an open keeps that open's lifecycle")
+        fixture.client.beforeEnsure = nil
+        await gate.open()
+        await first.value
+        #expect(!fixture.controller.isOpening)
+        await fixture.controller.prepare()
+        #expect(fixture.controller.owner?.target.generation == fixture.model.connectionGeneration)
+        #expect(fixture.controller.availabilityMessage == nil)
+    }
+
     @Test("A Home chat holding a draft keeps its lead when the connection changes")
     func draftKeepsItsLead() async {
         let fixture = Fixture()

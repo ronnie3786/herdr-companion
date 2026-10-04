@@ -249,9 +249,11 @@ final class HomeChatController {
     }
 
     /// With nothing held, a replaced connection or a different lead (failover
-    /// or a new pin) starts over with the current lead policy.
+    /// or a new pin) starts over with the current lead policy. An open already
+    /// in flight finishes first: reconfiguring its store mid-open would leave
+    /// `isOpening` set for a lifecycle that no longer exists.
     private func releaseTargetIfIdle() {
-        guard let target, !holdsMaterial else { return }
+        guard let target, !isOpening, !holdsMaterial else { return }
         let lead = chooseMachine()
         let moved = lead != nil && lead != target.machineID
         guard moved || !target.isCurrent(model: model, configuration: configurationProvider) else { return }

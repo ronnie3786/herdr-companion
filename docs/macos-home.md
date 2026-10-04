@@ -33,11 +33,16 @@ control accepts both `home` and the compatible `activity` alias for Home.
 Home projects existing lightweight stores into factual text and typed entity chips. It does
 not request a generated fleet briefing on each visit. Machine outages come first, then blocked
 First Mates, decisions, failed review preparation, ready reviews, and incoming review requests.
-Stable machine-scoped identities break ties. Closed, archived, and lead conversations do not
-inflate the ordinary feature count; unknown review attention stays unknown.
+Stable machine-scoped identities break ties. The stack always shows that order, including for
+work that loads later, and the front card follows it until you choose one. Closed, archived,
+and lead conversations do not inflate the ordinary feature count; unknown review attention
+stays unknown.
 
 Prepared reviews cover the configured fleet independently of the selected detail host.
-Incoming GitHub requests come from the configured primary companion only. Home validates
+Incoming GitHub requests come from the configured primary companion only. Each inbox load makes
+that companion run a GitHub search and a Jira query, so automatic loads wait 60 seconds after
+the last one; review events refresh only prepared reviews, and the Work inbox sheet's refresh
+always loads. Home validates
 repository host, repository, and PR number before deduplicating an incoming request against
 prepared work. Separate prepared reviews retain their operational owners. Work inbox continues
 to expose the configured GitHub and Jira providers.
@@ -45,8 +50,9 @@ to expose the configured GitHub and Jira providers.
 Waiting chat counts include actual blocked/input state. Unread completed replies can also
 appear, labeled separately. Reserved shells and explicitly identified review/First Mate
 workers are excluded. Chat title, location, and tab color come from existing pane data.
-The recap merges dated current and historical alerts, preferring current evidence. Its
-previous-visit cutoff stays fixed for that visit; it is bounded history, not a complete audit.
+The recap merges dated current and historical alerts, preferring current evidence. History is
+read at most once a minute per connection, when alerts join or leave. Its previous-visit
+cutoff stays fixed for that visit; it is bounded history, not a complete audit.
 
 **All clear** requires current source coverage and no outstanding input or unknown work state.
 Loading, no machines, disconnected sources, unsupported capabilities, and stale information
@@ -56,8 +62,11 @@ not mark conversations read.
 
 ## Local actions and exact destinations
 
-**Skip for now** rotates the focus stack. **Later** snoozes a non-idea item on this Mac for
-one hour, with **Undo snooze** above the Ask bar. New evidence can resurface it immediately.
+**Skip for now** moves to the next card in priority order and the counter advances; the
+skipped card comes around again after the rest. **Then** links jump to a card. **Later**
+snoozes a non-idea item on this Mac for one hour and offers **Undo snooze** above the Ask bar
+for a few seconds; Undo returns the card to its priority place. Status notes dismiss
+themselves. New evidence can resurface a snoozed item immediately.
 **Dismiss** hides a radar note until its evidence changes. Home explains when work is
 snoozed locally. Preferences store versioned presentation metadata, scoped identifiers,
 fingerprints, and visit/disclosure state. Expired and long-absent choices are pruned.
@@ -100,7 +109,8 @@ and the latest content visible.
 the exact lead. It appends beneath an existing window draft. Home clears only the material
 acknowledged by the receiving window and then closes. Uploads, sends, and uncertain delivery
 keep their operation on Home until resolved. A missing machine, replaced connection, or changed
-lead cannot redirect the draft. Selecting another feature in the window does not retarget Home.
+lead cannot redirect the draft. With nothing held, the tray re-resolves the current lead instead
+of staying on the old connection. Selecting another feature in the window does not retarget Home.
 Draft retention covers this app session; relaunch and crash durability are not promised.
 
 ## Compatibility and source limits

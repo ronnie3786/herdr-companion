@@ -95,6 +95,53 @@ struct HomeChatTests {
         #expect(fixture.controller.availabilityMessage?.contains("changed") == true)
     }
 
+    @Test("An idle Home chat reopens its lead after the connection changes")
+    func idleChatRecoversAfterReconnect() async {
+        let fixture = Fixture()
+        fixture.controller.open()
+        await fixture.controller.prepare()
+        #expect(fixture.controller.owner?.target.generation == fixture.model.connectionGeneration)
+        fixture.controller.dismiss()
+        fixture.model.connectionGeneration += 1
+        fixture.controller.open()
+        await fixture.controller.prepare()
+        #expect(fixture.controller.owner?.target.generation == fixture.model.connectionGeneration)
+        #expect(fixture.controller.isOwnerCurrent)
+        #expect(fixture.controller.availabilityMessage == nil)
+    }
+
+    @Test("A Home chat holding a draft keeps its lead when the connection changes")
+    func draftKeepsItsLead() async {
+        let fixture = Fixture()
+        fixture.controller.open(draft: "Stay with this lead")
+        await fixture.controller.prepare()
+        let original = fixture.controller.owner
+        fixture.model.connectionGeneration += 1
+        await fixture.controller.prepare()
+        #expect(fixture.controller.owner == original)
+        #expect(fixture.controller.draft == "Stay with this lead")
+        #expect(fixture.controller.availabilityMessage?.contains("changed") == true)
+    }
+
+    @Test("An idle Home chat follows the lead to another machine")
+    func idleChatFollowsLead() async {
+        let fixture = Fixture()
+        let lead = LeadChoice()
+        let configuration = fixture.configuration
+        let transport = fixture.client
+        let controller = HomeChatController(model: fixture.model, shell: fixture.shell,
+                                            configuration: { _ in configuration }, makeClient: { _ in transport },
+                                            chooseMachine: { lead.machineID })
+        controller.open()
+        await controller.prepare()
+        #expect(controller.owner?.target.machineID == "alpha")
+        controller.dismiss()
+        lead.machineID = "beta"
+        controller.open()
+        await controller.prepare()
+        #expect(controller.owner?.target.machineID == "beta")
+    }
+
     @Test("A different lead on the same machine cannot consume a transfer")
     func rejectsWrongLead() async throws {
         let fixture = Fixture()
@@ -441,4 +488,9 @@ struct HomeChatTests {
             return client
         }
     }
+}
+
+@MainActor
+private final class LeadChoice {
+    var machineID = "alpha"
 }

@@ -2,9 +2,9 @@ import Foundation
 import Observation
 
 /// Owns the Home lead conversation beyond tray and tab lifetimes. Its target
-/// is chosen once by the existing lead policy, then held exactly while the
-/// user has a draft or an unresolved operation. A missing owner cannot select
-/// a different machine's lead.
+/// comes from the existing lead policy and is held exactly while the user has
+/// a draft or an unresolved operation. With nothing held, a changed connection
+/// or lead re-resolves it. A missing owner never moves material to another lead.
 @MainActor @Observable
 final class HomeChatController {
     @ObservationIgnored let model: HerdrAppModel
@@ -111,6 +111,7 @@ final class HomeChatController {
 
     func open(context: HomeChatContext? = nil, draft: String? = nil) {
         isPresented = true
+        releaseTargetIfIdle()
         if target == nil { configureInitialTarget() }
         if let context { stage(context) }
         if let draft, !draft.isEmpty { appendDraft(draft) }
@@ -143,6 +144,7 @@ final class HomeChatController {
     }
 
     func prepare() async {
+        releaseTargetIfIdle()
         if target == nil { configureInitialTarget() }
         guard let target, isOwnerCurrent, !isOpening, !Task.isCancelled else { return }
         let lifecycle = store.lifecycle
@@ -173,8 +175,10 @@ final class HomeChatController {
         defer { if refreshOwner == run { lease.release() } }
         while !Task.isCancelled, isPresented {
             await prepare()
-            guard !Task.isCancelled, isOwnerCurrent else { return }
-            if owner != nil { await store.refreshLead() }
+            guard !Task.isCancelled else { return }
+            // Keep looping while not current: an idle chat recovers once the
+            // fleet or connection settles, and held material stays put.
+            if owner != nil, isOwnerCurrent { await store.refreshLead() }
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
         }
     }
@@ -230,15 +234,43 @@ final class HomeChatController {
         dismiss()
     }
 
+    /// Drafts, attachments, quotes, dictation, sends and transfers belong to
+    /// the conversation they started in. Home contexts are re-staged instead.
+    private var holdsMaterial: Bool {
+        if pendingTransfer != nil || !stagedDraft.isEmpty { return true }
+        guard let owner else { return false }
+        let drafts = store.composerDrafts
+        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !drafts.attachments(for: owner.featureID).isEmpty
+            || drafts.quotes(for: owner.featureID).contains { contextByID[$0.id] == nil }
+            || drafts.containsDictation(for: owner.featureID)
+            || store.isSending
+            || !store.outgoingMessages(for: owner.featureID).isEmpty
+    }
+
+    /// With nothing held, a replaced connection or a different lead (failover
+    /// or a new pin) starts over with the current lead policy.
+    private func releaseTargetIfIdle() {
+        guard let target, !holdsMaterial else { return }
+        let lead = chooseMachine()
+        let moved = lead != nil && lead != target.machineID
+        guard moved || !target.isCurrent(model: model, configuration: configurationProvider) else { return }
+        stagedContext = contexts.last ?? stagedContext
+        lease.release()
+        self.target = nil
+        owner = nil
+        statusMessage = nil
+    }
+
     private func configureInitialTarget() {
         guard let machineID = chooseMachine() else {
-            statusMessage = "Connect a companion with lead First Mate support to use Home chat."
+            setStatusMessage("Connect a companion with lead First Mate support to use Home chat.")
             return
         }
         let demo = model.isDemoMode
         let configuration = demo ? nil : configurationProvider(machineID)
         guard demo || configuration != nil else {
-            statusMessage = "This lead's machine is not configured. Your draft is kept here."
+            setStatusMessage("This lead's machine is not configured. Your draft is kept here.")
             return
         }
         target = .init(machineID: machineID, generation: model.connectionGeneration, isDemo: demo, configuration: configuration)
@@ -260,6 +292,11 @@ final class HomeChatController {
         quotes.removeAll { contextByID[$0.id] != nil }
         quotes.append(context.quote)
         store.composerDrafts.setQuotes(quotes, for: owner.featureID)
+    }
+
+    /// The run loop retries while unconfigured; repeating a message must not republish.
+    private func setStatusMessage(_ message: String) {
+        if statusMessage != message { statusMessage = message }
     }
 
     static func appending(_ incoming: String, to existing: String) -> String {

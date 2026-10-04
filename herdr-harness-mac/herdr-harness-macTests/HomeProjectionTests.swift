@@ -34,6 +34,22 @@ struct HomeProjectionTests {
         #expect(HomeIdentity.scoped(kind: "a", machineID: "b:c", entityID: "d") != HomeIdentity.scoped(kind: "a", machineID: "b", entityID: "c:d"))
     }
 
+    @Test("Each card's title row is its only Ask about this entry point")
+    func singleAskEntryPoint() throws {
+        let identity = try #require(HomePullRequestIdentity(url: "https://github.com/example/tools/pull/17", repository: "example/tools", number: 17))
+        let fleet = [HomeMachineFact(id: "one", name: "North", state: .offline, needsAttention: true),
+                     HomeMachineFact(id: "two", name: "South", state: .online)]
+        let value = project(HomeInput(machines: fleet, sources: current,
+                                      features: [feature(machine: "two", id: "blocked", state: .blocked)],
+                                      reviews: [review(machine: "two", id: "ready", state: .ready, needsUser: true)],
+                                      reviewRequests: [.init(pullRequest: identity, title: "Incoming request")]))
+        #expect(value.focus.count == 4)
+        for item in value.focus {
+            #expect(item.actions.map(\.id) == ["open"], "\(item.id) repeats the card's own Ask about this control")
+            #expect(!item.actions.contains { if case .ask = $0.command { true } else { false } })
+        }
+    }
+
     @Test("Lead, closed, archived and removed-host features never inflate attention")
     func retainedFeatureScope() {
         let features = [feature(id: "decision", state: .needsDecision), feature(id: "closed", state: .closed),

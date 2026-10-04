@@ -109,7 +109,7 @@ enum HomeProjection {
             let detail = machine.notice ?? "The companion is unreachable. Check its connection in Machines."
             return HomeFocusItem(id: id, title: "\(machine.name) needs a look", reason: "Machine unreachable",
                                  body: HomeText(detail), symbol: "wifi.exclamationmark", tone: .alert,
-                                 actions: [openAction(route, title: "Open Machines"), askAction(route, title: machine.name)],
+                                 actions: [openAction(route, title: "Open Machines")],
                                  route: route, isStale: true, updatedAt: machine.failureBeganAt, priority: 0,
                                  fingerprint: HomeIdentity.fingerprint([id, machine.state.rawValue, detail,
                                                                        machine.failureBeganAt.map { String($0.timeIntervalSince1970) } ?? ""]))
@@ -124,7 +124,7 @@ enum HomeProjection {
                                  body: HomeText(feature.preview.isEmpty ? "Open the conversation to see what needs your input." : feature.preview),
                                  symbol: blocked ? "exclamationmark.bubble" : "bubble.left.and.bubble.right",
                                  emoji: feature.emoji, tone: blocked ? .alert : .attention,
-                                 actions: [openAction(feature.route, title: "Open conversation"), askAction(feature.route, title: feature.title)],
+                                 actions: [openAction(feature.route, title: "Open conversation")],
                                  route: feature.route, isStale: feature.isStale, updatedAt: feature.activityAt,
                                  priority: blocked ? 10 : 20,
                                  fingerprint: HomeIdentity.fingerprint([feature.id, feature.state.rawValue,
@@ -140,7 +140,7 @@ enum HomeProjection {
             return HomeFocusItem(id: review.id, title: review.title,
                                  reason: failed ? "Preparation needs attention" : "Ready for your review",
                                  body: HomeText(detail), symbol: "arrow.triangle.pull", tone: failed ? .alert : .signal,
-                                 actions: [openAction(review.route, title: "Open review"), askAction(review.route, title: review.title)],
+                                 actions: [openAction(review.route, title: "Open review")],
                                  route: review.route, isStale: review.isStale, updatedAt: review.activityAt,
                                  priority: failed ? 30 : 40,
                                  fingerprint: HomeIdentity.fingerprint([review.id, review.state.rawValue,
@@ -155,7 +155,7 @@ enum HomeProjection {
             return HomeFocusItem(id: id, title: request.title, reason: "Review requested",
                                  body: HomeText("\(request.pullRequest.label) is waiting in the configured GitHub inbox."),
                                  symbol: "arrow.triangle.pull", tone: .accent,
-                                 actions: [openAction(route, title: "Prepare this review"), askAction(route, title: request.title)],
+                                 actions: [openAction(route, title: "Prepare this review")],
                                  route: route, isStale: request.isStale, priority: 50,
                                  fingerprint: HomeIdentity.fingerprint([id, "open", request.title, request.author]))
         }
@@ -304,11 +304,6 @@ enum HomeProjection {
 
     private static func openAction(_ route: HomeRoute, title: String) -> HomeAction {
         HomeAction(id: "open", title: title, style: .primary, command: .open(route))
-    }
-
-    private static func askAction(_ route: HomeRoute, title: String) -> HomeAction {
-        HomeAction(id: "ask", title: "Ask about this", style: .ghost,
-                   command: .ask("What should I know about \(title)?", context: route))
     }
 
     private static func newestFirst(_ left: Date?, _ right: Date?, _ leftID: String, _ rightID: String) -> Bool {

@@ -9,7 +9,7 @@ enum HomeActionPresentation {
             var item = original
             let command = HomeCommand.snooze(item.id)
             if !item.isIdea, !item.actions.contains(where: { $0.command == command }) {
-                item.actions.append(.init(id: "later", title: "Later", style: .ghost, command: command))
+                item.actions.append(.init(id: "later", title: "Later", command: command))
             }
             return item
         }

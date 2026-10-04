@@ -7,6 +7,11 @@ private struct ShellRefreshTaskIdentity: Equatable {
     let canPoll: Bool
 }
 
+private struct AlertHistoryTrigger: Equatable {
+    let alertIDs: [String]
+    let canPoll: Bool
+}
+
 private struct ShellReviewRequestIdentity: Equatable {
     let requestID: UUID?
     let machineID: String?
@@ -43,13 +48,18 @@ struct ShellRefreshModifier: ViewModifier {
             .task(id: model.prReviewRefreshTick) {
                 guard canPoll, model.prReviewRefreshTick > 0 else { return }
                 do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                // Review events change prepared reviews, not GitHub's request inbox.
                 await shell.prReviewFleet.refresh()
-                await shell.refreshCoordinator.refreshSummaries(model: model, shell: shell)
             }
-            .task(id: model.alerts) {
-                guard canPoll else { return }
-                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
-                await model.refreshActivityFeed()
+            .task(id: AlertHistoryTrigger(alertIDs: model.alerts.map(\.id), canPoll: canPoll)) {
+                // Status and read-state changes are already current; only alerts
+                // joining or leaving need history, at most once per interval.
+                let coordinator = shell.refreshCoordinator
+                guard canPoll, coordinator.historyIsBehind(alertIDs: model.alerts.map(\.id)) else { return }
+                do { try await Task.sleep(for: coordinator.historyDelay()) } catch { return }
+                await coordinator.refreshHistory(identity: .current(model: model), alertIDs: model.alerts.map(\.id)) {
+                    await model.refreshActivityFeed()
+                }
             }
             .onChange(of: shell.prReview.reviews.map(\.id)) { _, _ in
                 guard canPoll else { return }

@@ -151,6 +151,30 @@ struct WorkInboxTests {
         #expect(!store.isRefreshing)
     }
 
+    @Test("Automatic refreshes wait out the minimum interval, but an explicit refresh does not")
+    @MainActor
+    func minimumInterval() async {
+        let store = WorkInboxStore()
+        let first = identity()
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        var loads = 0
+        store.configure(identity: first)
+        await store.refresh(for: first, minimumInterval: 60, now: start) { throw URLError(.cancelled) }
+        await store.refresh(for: first, minimumInterval: 60, now: start) { loads += 1; return response(number: 1) }
+        #expect(loads == 1, "A cancelled load does not start the interval")
+        await store.refresh(for: first, minimumInterval: 60, now: start.addingTimeInterval(30)) { loads += 1; return response(number: 2) }
+        #expect(loads == 1)
+        await store.refresh(for: first, now: start.addingTimeInterval(31)) { loads += 1; return response(number: 3) }
+        #expect(loads == 2)
+        await store.refresh(for: first, minimumInterval: 60, now: start.addingTimeInterval(95)) { loads += 1; return response(number: 4) }
+        #expect(loads == 3)
+        #expect(store.response.reviewRequests.items.map(\.number) == [4])
+        let replacement = identity(generation: 1)
+        store.configure(identity: replacement)
+        await store.refresh(for: replacement, minimumInterval: 60, now: start.addingTimeInterval(96)) { loads += 1; return response(number: 5) }
+        #expect(loads == 4, "A new primary loads at once")
+    }
+
     @Test("Cancelled loads do not publish a result or an error banner")
     @MainActor
     func ignoresCancellation() async {

@@ -76,7 +76,7 @@ struct HomeShellView: View {
                 ScrollView {
                     SidebarWorkInboxView(store: shell.workInbox, refreshID: model.connectionGeneration,
                                          automaticallyRefresh: false,
-                                         refresh: { await shell.refreshCoordinator.refreshSummaries(model: model, shell: shell) })
+                                         refresh: { await shell.refreshCoordinator.refreshSummaries(model: model, shell: shell, force: true) })
                 }
             }
             .padding(24).frame(width: 620, height: 560)

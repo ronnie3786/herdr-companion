@@ -22,6 +22,8 @@ final class WorkInboxStore {
     private(set) var transportError: String?
     @ObservationIgnored private var identity: WorkInboxConnectionIdentity?
     @ObservationIgnored private var requestID: UUID?
+    /// When the last load for this identity finished, successfully or not.
+    @ObservationIgnored private var lastAttemptAt: Date?
 
     var totalCount: Int {
         response.reviewRequests.items.count + response.jiraTickets.items.count
@@ -45,6 +47,7 @@ final class WorkInboxStore {
         guard self.identity != identity else { return }
         self.identity = identity
         requestID = nil
+        lastAttemptAt = nil
         response = .empty
         isRefreshing = false
         hasLoaded = false
@@ -54,11 +57,16 @@ final class WorkInboxStore {
         transportError = nil
     }
 
+    /// Each load makes the companion run a GitHub search and a Jira query, so
+    /// automatic callers pass a `minimumInterval`; a person's refresh passes none.
     func refresh(
         for identity: WorkInboxConnectionIdentity,
+        minimumInterval: TimeInterval = 0,
+        now: Date = .now,
         using load: () async throws -> WorkInboxResponse
     ) async {
         guard self.identity == identity, !Task.isCancelled, !isRefreshing else { return }
+        if minimumInterval > 0, let lastAttemptAt, now.timeIntervalSince(lastAttemptAt) < minimumInterval { return }
         let request = UUID()
         requestID = request
         isRefreshing = true
@@ -69,26 +77,28 @@ final class WorkInboxStore {
         do {
             var received = try await load().prioritizingActiveJiraStatuses()
             guard !Task.isCancelled, self.identity == identity, requestID == request else { return }
-            let now = Date.now
+            lastAttemptAt = now
+            let completedAt = Date.now
             if received.reviewRequests.ok, received.reviewRequests.error == nil {
-                reviewRequestsUpdatedAt = now
+                reviewRequestsUpdatedAt = completedAt
             } else {
                 received.reviewRequests.items = response.reviewRequests.items
                 received.reviewRequests.error = received.reviewRequests.error ?? "GitHub requests could not be refreshed."
             }
             if received.jiraTickets.ok, received.jiraTickets.error == nil {
-                jiraTicketsUpdatedAt = now
+                jiraTicketsUpdatedAt = completedAt
             } else {
                 received.jiraTickets.items = response.jiraTickets.items
                 received.jiraTickets.error = received.jiraTickets.error ?? "Jira tickets could not be refreshed."
             }
             response = received
             transportError = nil
-            lastUpdated = now
+            lastUpdated = completedAt
             hasLoaded = true
         } catch {
             guard !Task.isCancelled, !HerdrCancellation.isCancellation(error),
                   self.identity == identity, requestID == request else { return }
+            lastAttemptAt = now
             transportError = error.localizedDescription
             hasLoaded = true
         }

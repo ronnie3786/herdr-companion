@@ -26,8 +26,21 @@ struct ShellRefreshConnectionIdentity: Hashable {
 /// activity; configuration reconciliation still runs in that state.
 @MainActor
 final class ShellRefreshCoordinator {
+    /// A Work inbox load makes the primary companion run a GitHub search and a Jira query.
+    static let inboxMinimumInterval: TimeInterval = 60
+    /// Alert history reads up to 500 alerts from every machine.
+    static let historyMinimumInterval: TimeInterval = 60
+
     private var runID: UUID?
     private(set) var isPolling = false
+    private let now: () -> Date
+    private var historyIdentity: ShellRefreshConnectionIdentity?
+    private var historyRefreshedAt: Date?
+    private var historyAlertIDs: [String]?
+
+    init(now: @escaping () -> Date = Date.init) {
+        self.now = now
+    }
 
     func reconcile(model: HerdrAppModel, shell: HerdrShellState) {
         let identity = ShellRefreshConnectionIdentity.current(model: model)
@@ -65,13 +78,46 @@ final class ShellRefreshCoordinator {
         _ = await (watchers, reviews, summaries)
     }
 
-    func refreshSummaries(model: HerdrAppModel, shell: HerdrShellState) async {
+    /// Polls, activations and events share interval floors; `force` is for a
+    /// person's explicit refresh.
+    func refreshSummaries(model: HerdrAppModel, shell: HerdrShellState, force: Bool = false) async {
         let identity = model.workInboxConnectionIdentity
-        async let inbox: Void = shell.workInbox.refresh(for: identity) {
+        let instant = now()
+        async let inbox: Void = shell.workInbox.refresh(
+            for: identity, minimumInterval: force ? 0 : Self.inboxMinimumInterval, now: instant
+        ) {
             try await model.fetchWorkInbox(expectedIdentity: identity)
         }
-        async let activity: Void = model.refreshActivityFeed()
-        _ = await (inbox, activity)
+        await refreshHistory(identity: .current(model: model), alertIDs: model.alerts.map(\.id), force: force) {
+            await model.refreshActivityFeed()
+        }
+        await inbox
+    }
+
+    /// Fetches alert history at most once per interval for one connection;
+    /// a new connection identity fetches immediately.
+    func refreshHistory(identity: ShellRefreshConnectionIdentity, alertIDs: [String], force: Bool = false,
+                        refresh: () async -> Void) async {
+        if historyIdentity != identity {
+            historyIdentity = identity
+            historyRefreshedAt = nil
+            historyAlertIDs = nil
+        }
+        let instant = now()
+        if !force, let historyRefreshedAt,
+           instant.timeIntervalSince(historyRefreshedAt) < Self.historyMinimumInterval { return }
+        historyRefreshedAt = instant
+        historyAlertIDs = alertIDs
+        await refresh()
+    }
+
+    /// True when the current alerts differ from those seen by the last history fetch.
+    func historyIsBehind(alertIDs: [String]) -> Bool { historyAlertIDs != alertIDs }
+
+    /// A short debounce, or the wait until the history interval allows another fetch.
+    func historyDelay() -> Duration {
+        let remaining = historyRefreshedAt.map { Self.historyMinimumInterval - now().timeIntervalSince($0) } ?? 0
+        return .milliseconds(Int(max(0.5, remaining) * 1_000))
     }
 
     private func poll(interval: @MainActor @Sendable () -> Duration, refresh: @MainActor @Sendable () async -> Void) async {

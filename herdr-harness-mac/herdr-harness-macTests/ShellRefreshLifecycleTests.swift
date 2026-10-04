@@ -109,6 +109,31 @@ struct ShellRefreshLifecycleTests {
         #expect(!shell.workInbox.hasLoaded)
     }
 
+    @Test("Alert history refreshes at most once per interval and at once for a new connection")
+    func historyInterval() async {
+        let fixture = fixture()
+        defer { fixture.cleanUp() }
+        var clock = Date(timeIntervalSince1970: 1_790_000_000)
+        let coordinator = ShellRefreshCoordinator(now: { clock })
+        let identity = ShellRefreshConnectionIdentity.current(model: fixture.model)
+        var fetches = 0
+        await coordinator.refreshHistory(identity: identity, alertIDs: ["a"]) { fetches += 1 }
+        clock += 30
+        await coordinator.refreshHistory(identity: identity, alertIDs: ["a", "b"]) { fetches += 1 }
+        #expect(fetches == 1)
+        #expect(coordinator.historyIsBehind(alertIDs: ["a", "b"]))
+        #expect(coordinator.historyDelay() == .seconds(30))
+        await coordinator.refreshHistory(identity: identity, alertIDs: ["a", "b"], force: true) { fetches += 1 }
+        #expect(fetches == 2)
+        #expect(!coordinator.historyIsBehind(alertIDs: ["a", "b"]))
+        clock += 61
+        await coordinator.refreshHistory(identity: identity, alertIDs: ["a", "b"]) { fetches += 1 }
+        #expect(fetches == 3)
+        fixture.model.connectionGeneration += 1
+        await coordinator.refreshHistory(identity: .current(model: fixture.model), alertIDs: []) { fetches += 1 }
+        #expect(fetches == 4)
+    }
+
     @Test("Stable shell updates summaries independently of its selected destination")
     func pollsAcrossDestinations() async {
         let fixture = fixture(demo: true)

@@ -32,12 +32,19 @@ struct HomeShellView: View {
 
     private var surface: some View {
         ZStack(alignment: .top) {
-            HomePalette.base.ignoresSafeArea()
             if shell.detailScope == .home {
+                // Only Home paints its own surface. The retained screens' glass
+                // sits over the window's dusk, as it did before the tab shell.
+                HomePalette.base.ignoresSafeArea()
                 HomeHostView(model: model, shell: shell, home: shell.home,
                              onScroll: { hasScrolled = $0 },
                              openWindow: { NSApp.activate(); openWindow(id: $0) }, openSettings: { openSettings() })
             } else {
+                // The band under the strip gets Home's dusk glass: the window's
+                // dusk tinted by the 80% surface.
+                HomePalette.base.opacity(0.8)
+                    .frame(height: 86)
+                    .accessibilityHidden(true)
                 WorkspaceNavigationView(model: model, shell: shell, modelFavorites: modelFavorites, updates: updates)
                     .padding(.top, 86)
             }
